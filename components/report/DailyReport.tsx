@@ -949,7 +949,13 @@ function artifactStageLabel(stage: DailyReportArtifactError['stage']) {
   }
 }
 
-export function DailyReport({ embedded = false }: { embedded?: boolean } = {}) {
+export function DailyReport({
+  embedded = false,
+  onOpenLegacy,
+}: {
+  embedded?: boolean;
+  onOpenLegacy?: () => void;
+} = {}) {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -1514,6 +1520,21 @@ export function DailyReport({ embedded = false }: { embedded?: boolean } = {}) {
                   embedded={embedded}
                   footer={embedded ? null : <BriefFooter report={report} />}
                 />
+              </motion.div>
+            ) : embedded && report?.html ? (
+              // An edition from before the current format carries its own
+              // full-bleed cover inside its HTML. Inlined under Today's plate
+              // that is two mastheads and two dates on one page, so an old
+              // edition is offered rather than unrolled.
+              <motion.div key="artifact-legacy" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+                  <p className="text-[12.5px] text-[var(--color-text-muted)]">
+                    This edition was written in the older format, with a cover of its own.
+                  </p>
+                  <Button type="button" size="sm" variant="outline" onClick={onOpenLegacy}>
+                    Open it
+                  </Button>
+                </div>
               </motion.div>
             ) : report?.html ? (
               <motion.div

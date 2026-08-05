@@ -141,22 +141,23 @@ struct BriefChromeTests {
 
     @Test
     func mastheadCrossfadeFiresExactlyPastTheThreshold() {
-        // Today carries its own dateline masthead now, so the threshold is that
-        // one's height rather than the brief cover's — the brief brings no
-        // masthead into the merged scroll.
-        let threshold = TodayView.mastheadHeight - 56
-        #expect(!TodayView.mastheadScrolledPast(offset: 0, containerWidth: 402))
-        #expect(!TodayView.mastheadScrolledPast(offset: threshold, containerWidth: 402))
-        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 402))
+        // Today carries the art plate, and the plate carries the dateline. The
+        // bar takes the date over only once the plate has gone.
+        let width: CGFloat = 402
+        let threshold = DailyBriefMasthead.height(forWidth: width) - 56
+        #expect(!TodayView.mastheadScrolledPast(offset: 0, containerWidth: width))
+        #expect(!TodayView.mastheadScrolledPast(offset: threshold, containerWidth: width))
+        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: width))
     }
 
     @Test
-    func crossfadeThresholdDoesNotDependOnWidth() {
-        // The date is a fixed block now, not a cover plate that scales with the
-        // viewport, so a narrow phone and a wide iPad cross at the same point.
-        let threshold = TodayView.mastheadHeight - 56
-        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 320))
-        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 1_024))
+    func crossfadeFollowsThePlateAcrossWidths() {
+        // The plate is a fixed-aspect image, so a narrow phone crosses sooner
+        // than a wide iPad. A constant threshold would hand the bar the date
+        // while the plate still showed it.
+        let narrow = DailyBriefMasthead.height(forWidth: 320) - 56
+        #expect(TodayView.mastheadScrolledPast(offset: narrow + 1, containerWidth: 320))
+        #expect(!TodayView.mastheadScrolledPast(offset: narrow + 1, containerWidth: 1_024))
     }
 
     @Test

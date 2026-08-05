@@ -7,6 +7,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
 import { AlbatrossRow } from '@/components/albatross/primitives';
+import { BriefMasthead } from '@/components/report/brief-canvas/BriefMasthead';
 import { DayRibbon } from '@/components/report/DayRibbon';
 import { api } from '@/convex/_generated/api';
 import { reEntryDaysAway, reviewBatch, shouldOfferReEntry } from '@/lib/albatross/forgiveness';
@@ -25,7 +26,6 @@ import {
   type TodayEvent,
   type TodayPractice,
   type TodayWork,
-  todayDateline,
   waitingOnSomebody,
 } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
@@ -135,281 +135,279 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
 
   return (
     <section className="report-paper flex h-full min-h-0 flex-col">
-      <header className="border-b border-[var(--color-border)] px-5 py-4">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-x-6 gap-y-3">
-          <div className="min-w-0">
-            {/* A dateline, not a page title: rule, day, deck. The one place
-                the product lets itself be a newspaper. */}
-            <div className="flex items-center gap-2">
-              <span aria-hidden className="h-px w-6 bg-[var(--color-accent)]" />
-              <span className="font-mono text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
-                {new Date(nowMs).toLocaleDateString('en-US', { year: 'numeric' })}
-              </span>
+      <div className="@container min-h-0 flex-1 overflow-y-auto">
+        {/* The plate. It carries the day's art, its dateline and its edition
+          title, and it derives all three from today rather than from the brief
+          — so it is right on a morning when nothing has been written yet, and
+          there is only ever one of it on the page. It scrolls away with the
+          page; a plate this size pinned to the top would eat the day. */}
+        <BriefMasthead generatedAt={nowMs} bleed={false} />
+
+        <header className="border-b border-[var(--color-border)] px-5 pb-4">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0">
+              <p className="max-w-xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">{shape}</p>
             </div>
-            <h1 className="mt-1.5 font-serif text-[clamp(22px,3.6vw,30px)] font-semibold leading-none tracking-tight">
-              {todayDateline(nowMs)}
-            </h1>
-            <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-              {shape}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {/* The user states their own capacity. Albatross may later notice a
+            <div className="flex shrink-0 items-center gap-1">
+              {/* The user states their own capacity. Albatross may later notice a
                 pattern, but it does not diagnose anybody's day for them. */}
-            <button
-              type="button"
-              aria-expanded={dayChangedOpen}
-              onClick={() => setDayChangedOpen((value) => !value)}
-              className={cn(
-                'mr-2 rounded-lg border border-dashed px-3 py-1 text-[12px] transition-colors',
-                dayChangedOpen
-                  ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)]',
-              )}
-            >
-              My day changed
-            </button>
-            <span aria-hidden className="mr-1 h-4 w-px bg-[var(--color-border)]" />
-            {(['low', 'normal', 'high'] as Capacity[]).map((option) => (
               <button
-                key={option}
                 type="button"
-                aria-pressed={capacity === option}
-                onClick={() => setCapacity(option)}
+                aria-expanded={dayChangedOpen}
+                onClick={() => setDayChangedOpen((value) => !value)}
                 className={cn(
-                  'rounded-full px-3 py-1 text-[12px] transition-colors',
-                  capacity === option
-                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+                  'mr-2 rounded-lg border border-dashed px-3 py-1 text-[12px] transition-colors',
+                  dayChangedOpen
+                    ? 'border-[var(--color-accent)] text-[var(--color-accent)]'
+                    : 'border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)]',
                 )}
               >
-                {CAPACITY_LABEL[option]}
+                My day changed
               </button>
-            ))}
-          </div>
-        </div>
-        {dayChangedOpen ? (
-          <div className="mx-auto mt-3 max-w-5xl rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
-            <p className="text-[13px] font-medium">What changed?</p>
-            <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-              Today's plan was a guess. Tell Albatross how the day actually looks and it will use less of it —
-              nothing is lost either way.
-            </p>
-            <div className="mt-2.5 flex flex-wrap gap-1.5">
-              {(
-                [
-                  ['I have less time than I thought', 'low'],
-                  ['I have more room than I thought', 'high'],
-                  ['It is about what I expected', 'normal'],
-                ] as Array<[string, Capacity]>
-              ).map(([label, next]) => (
+              <span aria-hidden className="mr-1 h-4 w-px bg-[var(--color-border)]" />
+              {(['low', 'normal', 'high'] as Capacity[]).map((option) => (
                 <button
-                  key={next}
+                  key={option}
                   type="button"
-                  onClick={() => {
-                    setCapacity(next);
-                    setDayChangedOpen(false);
-                  }}
-                  className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                  aria-pressed={capacity === option}
+                  onClick={() => setCapacity(option)}
+                  className={cn(
+                    'rounded-full px-3 py-1 text-[12px] transition-colors',
+                    capacity === option
+                      ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+                      : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+                  )}
                 >
-                  {label}
+                  {CAPACITY_LABEL[option]}
                 </button>
               ))}
             </div>
           </div>
-        ) : null}
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-6">
-        <div className="mx-auto grid max-w-5xl gap-8 @container lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <div className="min-w-0">
-            {showReEntry && !reEntryDismissed ? (
-              <div className="mb-8">
-                <ReEntry
-                  days={awayDays}
-                  onShowUrgent={() => {
-                    setCapacity('low');
-                    setReEntryDismissed(true);
-                  }}
-                  onReviewOld={() => {
-                    setReviewDismissed(false);
-                    setReEntryDismissed(true);
-                  }}
-                  onDismiss={() => setReEntryDismissed(true)}
-                />
-              </div>
-            ) : null}
-
-            {stale.length && !reviewDismissed ? (
-              <div className="mb-8">
-                <ReviewBatch items={stale} />
-              </div>
-            ) : null}
-
-            {loading ? (
-              <p className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                <LoaderCircle className="size-4 animate-spin" /> Loading
+          {dayChangedOpen ? (
+            <div className="mx-auto mt-3 max-w-5xl rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
+              <p className="text-[13px] font-medium">What changed?</p>
+              <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+                Today's plan was a guess. Tell Albatross how the day actually looks and it will use less of it
+                — nothing is lost either way.
               </p>
-            ) : null}
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ['I have less time than I thought', 'low'],
+                    ['I have more room than I thought', 'high'],
+                    ['It is about what I expected', 'normal'],
+                  ] as Array<[string, Capacity]>
+                ).map(([label, next]) => (
+                  <button
+                    key={next}
+                    type="button"
+                    onClick={() => {
+                      setCapacity(next);
+                      setDayChangedOpen(false);
+                    }}
+                    className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </header>
 
-            {attention.work.length || attention.approvals.length ? (
-              <Section title="Needs you" note="Albatross cannot move these without you.">
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {attention.approvals.map((approval) => (
-                    <li key={approval._id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (approval.intentId) openAlbatross(approval.intentId);
-                        }}
-                        className="flex w-full items-start gap-3 px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block font-serif text-[16px] font-semibold">{approval.title}</span>
-                          <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
-                            Waiting for your approval
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                  {attention.work.map((item) => (
-                    <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                    </li>
-                  ))}
-                </ul>
-              </Section>
-            ) : !loading ? (
-              <Section title="Needs you" note="Albatross cannot move these without you.">
-                <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
-                  Nothing needs you right now.
+        <div className="px-5 pb-16 pt-6">
+          <div className="mx-auto grid max-w-5xl gap-8 @container lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+            <div className="min-w-0">
+              {showReEntry && !reEntryDismissed ? (
+                <div className="mb-8">
+                  <ReEntry
+                    days={awayDays}
+                    onShowUrgent={() => {
+                      setCapacity('low');
+                      setReEntryDismissed(true);
+                    }}
+                    onReviewOld={() => {
+                      setReviewDismissed(false);
+                      setReEntryDismissed(true);
+                    }}
+                    onDismiss={() => setReEntryDismissed(true)}
+                  />
+                </div>
+              ) : null}
+
+              {stale.length && !reviewDismissed ? (
+                <div className="mb-8">
+                  <ReviewBatch items={stale} />
+                </div>
+              ) : null}
+
+              {loading ? (
+                <p className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                  <LoaderCircle className="size-4 animate-spin" /> Loading
                 </p>
-              </Section>
-            ) : null}
+              ) : null}
 
-            {readyItems.length ? (
-              <Section title="Could move today" note="Albatross is carrying these. None of them is booked.">
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {readyItems.map((item) => (
-                    <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                    </li>
-                  ))}
-                </ul>
-                {/* Capacity shortens the day; it never hides it. */}
-                {ready.heldBack && !showAllReady ? (
+              {attention.work.length || attention.approvals.length ? (
+                <Section title="Needs you" note="Albatross cannot move these without you.">
+                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    {attention.approvals.map((approval) => (
+                      <li key={approval._id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (approval.intentId) openAlbatross(approval.intentId);
+                          }}
+                          className="flex w-full items-start gap-3 px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-serif text-[16px] font-semibold">
+                              {approval.title}
+                            </span>
+                            <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
+                              Waiting for your approval
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                    {attention.work.map((item) => (
+                      <li key={item._id}>
+                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              ) : !loading ? (
+                <Section title="Needs you" note="Albatross cannot move these without you.">
+                  <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
+                    Nothing needs you right now.
+                  </p>
+                </Section>
+              ) : null}
+
+              {readyItems.length ? (
+                <Section title="Could move today" note="Albatross is carrying these. None of them is booked.">
+                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    {readyItems.map((item) => (
+                      <li key={item._id}>
+                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Capacity shortens the day; it never hides it. */}
+                  {ready.heldBack && !showAllReady ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllReady(true)}
+                      className="mt-2 text-[12px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+                    >
+                      {ready.heldBack === 1
+                        ? 'One more is held back for the capacity you set — show it'
+                        : `${ready.heldBack} more are held back for the capacity you set — show them`}
+                    </button>
+                  ) : null}
+                </Section>
+              ) : null}
+
+              {practices?.length ? (
+                <Section title="Ongoing practices" note="Kept over time, not scored week by week.">
+                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    {practices.map((practice) => (
+                      <li key={practice._id} className="px-4 py-3">
+                        <p className="text-[13.5px] font-medium">{practice.title}</p>
+                        <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+                          {practiceLine(practice, nowMs)}
+                          {practice.areaName ? ` · ${practice.areaName}` : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              ) : null}
+
+              {checkin ? (
+                <Section title="Evening check-in" note="How did the day actually go?">
                   <button
                     type="button"
-                    onClick={() => setShowAllReady(true)}
-                    className="mt-2 text-[12px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+                    onClick={() => setCheckinOpen(true)}
+                    className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
                   >
-                    {ready.heldBack === 1
-                      ? 'One more is held back for the capacity you set — show it'
-                      : `${ready.heldBack} more are held back for the capacity you set — show them`}
+                    <span className="block text-[13.5px] font-medium">
+                      {carryoverCheckin ? 'Yesterday’s check-in is still open' : 'Ready when you are'}
+                    </span>
+                    <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
+                      What moved, what changed, and what tomorrow should protect.
+                    </span>
                   </button>
-                ) : null}
-              </Section>
-            ) : null}
+                </Section>
+              ) : null}
 
-            {practices?.length ? (
-              <Section title="Ongoing practices" note="Kept over time, not scored week by week.">
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {practices.map((practice) => (
-                    <li key={practice._id} className="px-4 py-3">
-                      <p className="text-[13.5px] font-medium">{practice.title}</p>
-                      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-                        {practiceLine(practice, nowMs)}
-                        {practice.areaName ? ` · ${practice.areaName}` : ''}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </Section>
-            ) : null}
+              {mail.length ? (
+                <Section title="Important mail" note="Only what bears on an open Albatross or on today.">
+                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    {mail.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => setPrimaryView('mail')}
+                          className="w-full px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
+                        >
+                          <span className="block truncate text-[13.5px] font-medium">{item.subject}</span>
+                          <span className="mt-0.5 block truncate text-[12px] text-[var(--color-text-muted)]">
+                            {item.reason || item.from}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              ) : null}
 
-            {checkin ? (
-              <Section title="Evening check-in" note="How did the day actually go?">
-                <button
-                  type="button"
-                  onClick={() => setCheckinOpen(true)}
-                  className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
-                >
-                  <span className="block text-[13.5px] font-medium">
-                    {carryoverCheckin ? 'Yesterday’s check-in is still open' : 'Ready when you are'}
-                  </span>
-                  <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
-                    What moved, what changed, and what tomorrow should protect.
-                  </span>
-                </button>
-              </Section>
-            ) : null}
+              {waiting.length ? (
+                <Section title="Waiting, not forgotten" note="These depend on somebody or something else.">
+                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                    {waiting.map((item) => (
+                      <li key={item._id}>
+                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
+                      </li>
+                    ))}
+                  </ul>
+                </Section>
+              ) : null}
 
-            {mail.length ? (
-              <Section title="Important mail" note="Only what bears on an open Albatross or on today.">
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {mail.map((item) => (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => setPrimaryView('mail')}
-                        className="w-full px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
-                      >
-                        <span className="block truncate text-[13.5px] font-medium">{item.subject}</span>
-                        <span className="mt-0.5 block truncate text-[12px] text-[var(--color-text-muted)]">
-                          {item.reason || item.from}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </Section>
-            ) : null}
-
-            {waiting.length ? (
-              <Section title="Waiting, not forgotten" note="These depend on somebody or something else.">
-                <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  {waiting.map((item) => (
-                    <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                    </li>
-                  ))}
-                </ul>
-              </Section>
-            ) : null}
-
-            {!loading && !attention.work.length && !attention.approvals.length && !readyItems.length ? (
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={() => setCaptureOpen(true)}
-                  className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
-                >
-                  Get this off my mind
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="min-w-0">
-            <Section title="Your day" note="Solid is booked. Dashed is open air.">
-              {schedule.length ? (
-                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-3">
-                  <DayRibbon events={schedule} nowMs={nowMs} />
+              {!loading && !attention.work.length && !attention.approvals.length && !readyItems.length ? (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCaptureOpen(true)}
+                    className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+                  >
+                    Get this off my mind
+                  </button>
                 </div>
-              ) : (
-                <p className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
-                  <CalendarDays className="size-4 shrink-0" aria-hidden />
-                  Nothing is booked today. The whole day is open air.
-                </p>
-              )}
-            </Section>
-          </div>
-        </div>
+              ) : null}
+            </div>
 
-        {/* The synthesis layer. It gets the full measure, because it is the
+            <div className="min-w-0">
+              <Section title="Your day" note="Solid is booked. Dashed is open air.">
+                {schedule.length ? (
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-3">
+                    <DayRibbon events={schedule} nowMs={nowMs} />
+                  </div>
+                ) : (
+                  <p className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
+                    <CalendarDays className="size-4 shrink-0" aria-hidden />
+                    Nothing is booked today. The whole day is open air.
+                  </p>
+                )}
+              </Section>
+            </div>
+          </div>
+
+          {/* The synthesis layer. It gets the full measure, because it is the
             longer read and not a footnote to the columns above it. */}
-        {brief ? <div className="mx-auto mt-12 max-w-5xl">{brief}</div> : null}
+          {brief ? <div className="mx-auto mt-12 max-w-5xl">{brief}</div> : null}
+        </div>
       </div>
       <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </section>

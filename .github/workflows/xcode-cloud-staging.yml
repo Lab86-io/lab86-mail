@@ -1,25 +1,13 @@
 name: Xcode Cloud staging trigger
 
+# Disabled on push. Tier 2 replaced what this was for: a dev-signed build from
+# the working tree lands on the phone in about a minute, without a commit, and
+# the staging Xcode Cloud build had been failing in ci_post_clone for weeks
+# without anybody needing it. The production trigger is the one that matters.
+#
+# The machinery stays, and stays tested, so it can be run by hand if the
+# question is ever specifically "does a staging archive still build".
 on:
-  push:
-    branches:
-      - staging
-    paths:
-      - apps/ios/**
-      - .github/scripts/start-xcode-cloud.mjs
-      - .github/scripts/app-store-connect.mjs
-      - .github/scripts/app-store-connect.test.mjs
-      - .github/scripts/wait-for-xcode-cloud.mjs
-      - .github/scripts/xcode-cloud-artifacts.mjs
-      - .github/scripts/xcode-cloud-artifacts.test.mjs
-      - .github/scripts/xcode-cloud-diagnostics.mjs
-      - .github/scripts/xcode-cloud-diagnostics.test.mjs
-      - .github/scripts/upload-ios-export.mjs
-      - .github/scripts/upload-ios-export.test.mjs
-      - .github/scripts/xcode-cloud-workflows.test.mjs
-      - .github/scripts/verify-ios-export.sh
-      - .github/scripts/wait-for-testflight.mjs
-      - .github/workflows/xcode-cloud-staging.yml
   workflow_dispatch:
 
 concurrency:
