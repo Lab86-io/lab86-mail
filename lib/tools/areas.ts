@@ -363,6 +363,25 @@ export const workHome = defineTool({
   },
 });
 
+export const workList = defineTool({
+  name: 'work_list',
+  description:
+    "List every Albatross the user is carrying — each unresolved outcome, with its state, its area, and how many questions are waiting on the user. Read-only. This is what the Albatrosses page shows; use it to answer 'what am I carrying' without walking every area one at a time.",
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    limit: z.number().int().min(1).max(500).optional().describe('Default: 200'),
+  }),
+  output: z.object({ work: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const work = await deps.convexQuery<any[]>(workApi().allWork, {
+      userId: requireUserId(ctx.userId),
+      ...(args.limit ? { limit: args.limit } : {}),
+    });
+    return { work };
+  },
+});
+
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:

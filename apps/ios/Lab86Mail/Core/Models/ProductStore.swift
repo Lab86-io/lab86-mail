@@ -111,6 +111,9 @@ final class ProductStore {
     // a substitute for the authoritative server read — only what was last seen.
     private(set) var areaDetails: [String: AreaDetail] = [:]
     private(set) var workDetails: [String: WorkDetail] = [:]
+    /// Every Albatross the user is carrying. This is what the Albatrosses page
+    /// shows; areas are how they are filed, not what they are.
+    private(set) var allWork: [WorkListItem] = []
     private var mailSearchGeneration = 0
     private var projectPaneLoadGeneration: [String: Int] = [:]
     private var projectPaneSessionGeneration = 0
@@ -1059,6 +1062,11 @@ final class ProductStore {
         do {
             let result = try await tools.invoke("area_list", arguments: ["status": .string("active")])
             areas = (result["areas"]?.arrayValue ?? []).compactMap(AreaSummary.init)
+            // The Albatrosses page lists work, not areas. A failure here keeps
+            // the last-good list rather than blanking the page.
+            if let listed = try? await tools.invoke("work_list", arguments: [:]) {
+                allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
+            }
             workDidLoad = true
             workError = nil
             await persistCache()

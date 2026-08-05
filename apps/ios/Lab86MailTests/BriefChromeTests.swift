@@ -141,11 +141,22 @@ struct BriefChromeTests {
 
     @Test
     func mastheadCrossfadeFiresExactlyPastTheThreshold() {
-        let width: CGFloat = 402
-        let threshold = DailyBriefMasthead.height(forWidth: width) - 56
-        #expect(!TodayView.mastheadScrolledPast(offset: 0, containerWidth: width))
-        #expect(!TodayView.mastheadScrolledPast(offset: threshold, containerWidth: width))
-        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: width))
+        // Today carries its own dateline masthead now, so the threshold is that
+        // one's height rather than the brief cover's — the brief brings no
+        // masthead into the merged scroll.
+        let threshold = TodayView.mastheadHeight - 56
+        #expect(!TodayView.mastheadScrolledPast(offset: 0, containerWidth: 402))
+        #expect(!TodayView.mastheadScrolledPast(offset: threshold, containerWidth: 402))
+        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 402))
+    }
+
+    @Test
+    func crossfadeThresholdDoesNotDependOnWidth() {
+        // The date is a fixed block now, not a cover plate that scales with the
+        // viewport, so a narrow phone and a wide iPad cross at the same point.
+        let threshold = TodayView.mastheadHeight - 56
+        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 320))
+        #expect(TodayView.mastheadScrolledPast(offset: threshold + 1, containerWidth: 1_024))
     }
 
     @Test

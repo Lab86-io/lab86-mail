@@ -13,6 +13,7 @@ import {
   areaUpdateIdentity,
   TEACH_SYSTEM_PROMPT,
   workHome,
+  workList,
 } from '../lib/tools/areas';
 import { runTool, TEST_USER } from './tools/harness';
 
@@ -34,6 +35,7 @@ const apiMock = {
   albatrossWorkV2: {
     areaWork: 'albatrossWorkV2.areaWork',
     workDetail: 'albatrossWorkV2.workDetail',
+    allWork: 'albatrossWorkV2.allWork',
   },
 };
 
@@ -69,6 +71,12 @@ beforeEach(() => {
             status: 'active',
             factCounts: { verified: 2, candidate: 1 },
           },
+        ];
+      }
+      if (fn === apiMock.albatrossWorkV2.allWork) {
+        return [
+          { _id: 'work_1', title: 'Set up a gold allocation', openQuestions: 3, areaName: 'Money' },
+          { _id: 'work_2', title: 'Renew the passport', openQuestions: 0, areaName: null },
         ];
       }
       if (fn === apiMock.albatross.getArea) {
@@ -478,6 +486,39 @@ describe('work_home', () => {
     await expect(runTool(workHome.handler, { workId: 'work_1' }, { userId: null })).rejects.toThrow(
       'Not authenticated.',
     );
+  });
+});
+
+describe('work_list', () => {
+  test('lists every Albatross the user is carrying, not one area at a time', async () => {
+    // The native Albatrosses page listed Areas because nothing server-callable
+    // could answer "what am I carrying". This is that answer.
+    const result: any = await runTool(workList.handler, {});
+    expect(queryCalls[0]).toMatchObject({
+      fn: apiMock.albatrossWorkV2.allWork,
+      args: { userId: TEST_USER.userId },
+    });
+    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(workList.mutating).toBe(false);
+  });
+
+  test('passes a limit through only when one was asked for', async () => {
+    await runTool(workList.handler, { limit: 25 });
+    expect(queryCalls[0].args.limit).toBe(25);
+    queryCalls.length = 0;
+    await runTool(workList.handler, {});
+    expect(queryCalls[0].args.limit).toBeUndefined();
+  });
+
+  test('refuses a limit outside what the query will honour', () => {
+    expect(workList.input.safeParse({ limit: 0 }).success).toBe(false);
+    expect(workList.input.safeParse({ limit: 501 }).success).toBe(false);
+    expect(workList.input.safeParse({ limit: 12.5 }).success).toBe(false);
+    expect(workList.input.safeParse({}).success).toBe(true);
+  });
+
+  test('requires the same authenticated user boundary as the rest', async () => {
+    await expect(runTool(workList.handler, {}, { userId: null })).rejects.toThrow('Not authenticated.');
   });
 });
 

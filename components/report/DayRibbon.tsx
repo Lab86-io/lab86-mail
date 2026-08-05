@@ -105,7 +105,10 @@ export function DayRibbon({
             <div
               key={block.id}
               className={cn(
-                'absolute inset-x-1 z-[1] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 shadow-[var(--shadow-soft)]',
+                // The leading bar reads as a spine down the day: it separates
+                // what somebody expects of you from open air before any word is
+                // read.
+                'absolute inset-x-1 z-[1] overflow-hidden rounded-lg border border-l-2 border-[var(--color-border)] border-l-[var(--color-accent)] bg-[var(--color-bg-elevated)] px-2.5 shadow-[var(--shadow-soft)]',
                 block.compact ? 'flex items-center gap-2 py-0' : 'py-1.5',
               )}
               style={{ top: `${block.top * 100}%`, height: `${block.height * 100}%` }}

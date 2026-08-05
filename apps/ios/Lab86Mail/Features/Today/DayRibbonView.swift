@@ -375,11 +375,20 @@ struct DayRibbonView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(.secondarySystemGroupedBackground))
         )
+        // A leading bar on each booked block. It reads as a spine down the
+        // day, and it separates what somebody expects of you from open air at a
+        // glance, before any word is read.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(width: 2)
+                .padding(.vertical, 2)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.secondary.opacity(0.18))
         )
-        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
         if let onSelect, let event = events.first(where: { $0.id == block.id }) {
             Button { onSelect(event) } label: { content }
