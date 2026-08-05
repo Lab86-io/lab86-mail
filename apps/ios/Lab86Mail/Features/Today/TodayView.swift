@@ -21,39 +21,29 @@ struct TodayView: View {
         report.document != nil && report.artifactSource == "document-v2"
     }
 
-    // Whether the masthead's dateline has scrolled far enough off screen that
-    // the navigation bar should carry the date instead.
-    static func mastheadScrolledPast(offset: CGFloat, containerWidth: CGFloat) -> Bool {
-        offset > DailyBriefMasthead.height(forWidth: containerWidth) - 56
-    }
+    /// How tall Today's own dateline masthead stands: the accent rule, the
+    /// serif date, and the day-shape line under it.
+    static let mastheadHeight: CGFloat = 132
 
-    // Whether the current render path shows the native masthead (which carries
-    // its own dateline). While it's on screen the navigation title stays
-    // suppressed so the date never appears twice; once the masthead scrolls
-    // away the date crossfades into the bar.
-    private var hasNativeMasthead: Bool {
-        guard let report = store.dailyReport, report.hasArtifact else { return false }
-        return Self.rendersNativeDocument(report)
+    // Whether the masthead's dateline has scrolled far enough off screen that
+    // the navigation bar should carry the date instead. It measures Today's own
+    // masthead now, not the brief's — the brief no longer brings one.
+    static func mastheadScrolledPast(offset: CGFloat, containerWidth _: CGFloat = 0) -> Bool {
+        offset > mastheadHeight - 56
     }
 
     var body: some View {
-        Group {
-            if let report = store.dailyReport, report.hasArtifact {
-                artifactBody(report)
-            } else {
-                fallbackBody
-            }
-        }
-        .navigationTitle(hasNativeMasthead ? "" : dateline)
+        todayBody
+        .navigationTitle("")
         .toolbar {
-            if hasNativeMasthead {
-                ToolbarItem(placement: .principal) {
-                    Text(dateline)
-                        .font(.headline)
-                        .opacity(showsInlineDate ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.15), value: showsInlineDate)
-                        .accessibilityHidden(!showsInlineDate)
-                }
+            // The dateline lives in the masthead. It crossfades into the bar
+            // only once the masthead has scrolled away, so it never reads twice.
+            ToolbarItem(placement: .principal) {
+                Text(dateline)
+                    .font(.headline)
+                    .opacity(showsInlineDate ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: showsInlineDate)
+                    .accessibilityHidden(!showsInlineDate)
             }
             ToolbarItem(placement: .primaryAction) {
                 regenerateButton
@@ -83,50 +73,235 @@ struct TodayView: View {
         .shellToolbar()
     }
 
-    // v2 editions render as native SwiftUI. Historical editions keep the
-    // sandboxed HTML path so saved report history remains readable.
-    @ViewBuilder
-    private func artifactBody(_ report: DailyReportModel) -> some View {
-        if let document = report.document, Self.rendersNativeDocument(report) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    DailyBriefMasthead(
-                        generatedAt: report.generatedAt,
-                        art: report.art
-                    )
-                    DailyBriefLede(text: document.summary)
-                    BriefDocumentView(
-                        document: document,
-                        isComposing: report.artifactStatus == "composing",
-                        onReview: { artifactReview = $0 }
-                    )
-                    DailyBriefFooter(report: report)
-                        .padding(.bottom, 24)
+    /// Today is one page read in layers down one scroll.
+    ///
+    /// The live layer comes first and is read from live work, approvals and
+    /// calendar rows, so the top of the page can never be stale. The brief's
+    /// synthesis follows underneath it, stamped with when it was written.
+    ///
+    /// It used to be two whole surfaces: when a brief existed the live day
+    /// vanished behind it, and a three-week-old edition could present itself as
+    /// the current one. The web merged them; this is the same page.
+    private var todayBody: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                todayMasthead
+                liveLayer
+                briefLayer
+                    .padding(.bottom, 32)
+            }
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            Self.mastheadScrolledPast(
+                offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                containerWidth: geometry.containerSize.width
+            )
+        } action: { _, crossed in
+            showsInlineDate = crossed
+        }
+        .refreshable { await store.refreshToday() }
+        .overlay {
+            if store.isLoading && store.dailyReport == nil && store.events.isEmpty && store.approvals.isEmpty {
+                ProgressView("Putting your day together…")
+            }
+        }
+    }
+
+    /// The editorial dateline: an accent rule, the year set small in mono, the
+    /// date in serif, and one sentence about the shape of the day.
+    private var todayMasthead: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 22, height: 1)
+                Text(Date.now.formatted(.dateTime.year()))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            Text(dateline)
+                .font(.system(.largeTitle, design: .serif).weight(.semibold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+            Text(dayShape)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 18)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    /// What actually needs the user: approvals waiting, plus every Albatross the
+    /// Albatrosses page would file under "Needs you". Counting approvals alone
+    /// let the masthead say "Nothing needs you today" while that page showed a
+    /// needs-you group.
+    private var needsYouCount: Int {
+        store.approvals.count + store.allWork.filter(\.needsYou).count
+    }
+
+    /// What Albatross is carrying on its own. The sentence says "Albatross is
+    /// carrying N things", which describes Albatrosses, not board cards.
+    private var carryingCount: Int {
+        store.allWork.filter { !$0.isClosed && !$0.needsYou }.count
+    }
+
+    private var dayShape: String {
+        TodayComposition.dayShapeLine(
+            needsYouCount: needsYouCount,
+            eventCount: store.todaysEvents.count,
+            capacity: .normal,
+            carryingCount: carryingCount
+        )
+    }
+
+    /// The short list of Albatrosses that cannot move without the user, ordered
+    /// by how much is waiting on them.
+    private var needsYouWork: [WorkListItem] {
+        store.allWork.filter(\.needsYou).sorted { $0.openQuestions > $1.openQuestions }
+    }
+
+    /// Always current, because it is read rather than written.
+    @ViewBuilder private var liveLayer: some View {
+        if !store.approvals.isEmpty || !needsYouWork.isEmpty {
+            todaySection("Needs you", note: "Albatross cannot move these without you.") {
+                VStack(spacing: 0) {
+                    ForEach(needsYouWork.prefix(3)) { item in
+                        Button {
+                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.displayTitle)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                Text(item.standingLine)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        Divider()
+                    }
+                    ForEach(store.approvals.prefix(3)) { approval in
+                        Button {
+                            environment.navigation.sheet = .activity
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(approval.title)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                Text(approval.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        if approval.id != store.approvals.prefix(3).last?.id { Divider() }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+            }
+        }
+
+        // The day drawn to scale rather than listed. Where the open air is
+        // decides what can move today, and a list never says it.
+        todaySection("Your day", note: "Solid is booked. Dashed is open air.") {
+            if store.todaysEvents.isEmpty {
+                scheduleEmptyState
+            } else {
+                DayRibbonView(events: store.todaysEvents, now: Date()) { event in
+                    environment.navigation.openEvent(event)
                 }
             }
-            // The masthead carries the dateline; once it scrolls past, the
-            // date crossfades into the bar (the principal item above).
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                Self.mastheadScrolledPast(
-                    offset: geometry.contentOffset.y + geometry.contentInsets.top,
-                    containerWidth: geometry.containerSize.width
-                )
-            } action: { _, crossed in
-                showsInlineDate = crossed
-            }
-            .refreshable { await store.refreshToday() }
-        } else {
-            ScrollView {
-                DailyBriefView(
-                    report: report,
-                    lastRefresh: store.lastRefresh,
-                    isOffline: store.briefError != nil,
-                    onAction: handleBriefAction
-                )
-                .padding(.bottom, 24)
-            }
-            .refreshable { await store.refreshToday() }
         }
+
+        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou }
+        if !moving.isEmpty {
+            todaySection("Could move today", note: "Albatross is carrying these.") {
+                VStack(spacing: 0) {
+                    ForEach(moving.prefix(6)) { item in
+                        Button {
+                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.displayTitle)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary)
+                                Text(item.standingLine)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+
+        let openTasks = store.tasks.filter { !$0.completed }
+        if !openTasks.isEmpty {
+            todaySection("Tasks", note: "From your boards.") {
+                VStack(spacing: 0) {
+                    ForEach(openTasks.prefix(8)) { task in
+                        TaskRow(task: task)
+                            .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+
+        if !store.areas.isEmpty {
+            todaySection("In motion", note: "Areas Albatross is carrying.") {
+                VStack(spacing: 0) {
+                    ForEach(store.areas.prefix(5)) { area in
+                        Button {
+                            environment.navigation.openArea(id: area.id, name: area.name)
+                        } label: {
+                            AreaMotionRow(area: area)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    /// A section rule in the editorial voice: a hairline, a serif heading, a
+    /// quiet note, and a rule running out to the margin.
+    @ViewBuilder
+    private func todaySection<Content: View>(
+        _ title: String,
+        note: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.45))
+                    .frame(width: 18, height: 1)
+                Text(title).font(.system(.subheadline, design: .serif).weight(.semibold))
+                Text(note).font(.caption2).foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 
     // Regenerate is busy — progress shown, button disabled — while a rebuild
@@ -157,128 +332,101 @@ struct TodayView: View {
         .disabled(busy)
     }
 
-    // Fallback when no artifact exists yet (no edition, still generating, or a
-    // local load error): a useful native structured day rather than a blank
-    // screen. The day's real context stays present regardless of the brief.
-    private var fallbackBody: some View {
-        List {
-            briefStatusSection
+    /// The synthesis layer. It is generated, so it says when it was written and
+    /// says it louder when it describes an older day. A missing brief thins the
+    /// page; it never replaces the live day above it.
+    @ViewBuilder private var briefLayer: some View {
+        let report = store.dailyReport
+        let standing = TodayComposition.briefStandingLine(generatedAt: report?.generatedAt, now: Date())
+        let stale = TodayComposition.briefIsStale(generatedAt: report?.generatedAt, now: Date())
+        let busy = Self.regenerateInFlight(isRegenerating: isRegenerating, report: report)
 
-            if !store.approvals.isEmpty {
-                Section("Needs your call") {
-                    ForEach(store.approvals.prefix(3)) { approval in
-                        Button {
-                            environment.navigation.sheet = .activity
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(approval.title).foregroundStyle(.primary)
-                                Text(approval.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.45))
+                    .frame(width: 18, height: 1)
+                Text("The brief").font(.system(.subheadline, design: .serif).weight(.semibold))
+                Text(standing)
+                    .font(.caption2)
+                    .foregroundStyle(stale ? Color.orange : Color.secondary)
+                Spacer(minLength: 0)
+                Button {
+                    isRegenerating = true
+                    Task {
+                        await store.generateBrief()
+                        isRegenerating = false
                     }
+                } label: {
+                    Text(busy ? "Writing…" : (report == nil ? "Write today\u{2019}s brief" : "Write it again"))
+                        .font(.caption)
                 }
+                .disabled(busy)
             }
+            .padding(.horizontal, 20)
 
-            Section("Schedule") {
-                let today = store.todaysEvents
-                if today.isEmpty {
-                    scheduleEmptyState
-                } else {
-                    ForEach(today) { event in
-                        Button { environment.navigation.openEvent(event) } label: {
-                            EventRow(event: event)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-
-            Section("Tasks") {
-                let open = store.tasks.filter { !$0.completed }
-                if open.isEmpty {
-                    ContentUnavailableView("No open tasks", systemImage: "checkmark.circle")
-                } else {
-                    ForEach(open.prefix(8)) { task in
-                        TaskRow(task: task)
-                    }
-                }
-            }
-
-            if !store.areas.isEmpty {
-                Section("In motion") {
-                    ForEach(store.areas.prefix(5)) { area in
-                        Button {
-                            environment.navigation.openArea(id: area.id, name: area.name)
-                        } label: {
-                            AreaMotionRow(area: area)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            briefContent(report)
         }
-        .refreshable { await store.refreshToday() }
-        .overlay {
-            if store.isLoading && store.dailyReport == nil && store.events.isEmpty && store.approvals.isEmpty {
-                ProgressView("Putting your day together…")
-            }
-        }
+        .padding(.top, 20)
     }
 
-    @ViewBuilder private var briefStatusSection: some View {
-        Section("Brief") {
-            if let report = store.dailyReport {
-                // A report exists but has no self-contained artifact — show its
-                // structured summary rather than a blank brief.
-                VStack(alignment: .leading, spacing: 8) {
-                    if report.isGenerating {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Putting today’s brief together…")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let progress = report.progress, progress.total > 0 {
-                            ProgressView(value: progress.fraction)
-                        }
-                    }
-                    if let text = report.legacyText {
-                        Text(text)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    briefCountSummary(report.sectionCounts)
-                }
-                .padding(.vertical, 2)
-            } else if let error = store.briefError {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Couldn’t load today’s brief", systemImage: "exclamationmark.triangle")
-                        .font(.subheadline.weight(.medium))
-                    Text(error).font(.caption).foregroundStyle(.secondary)
-                    Button("Try Again") { Task { await store.refreshBrief() } }
-                        .buttonStyle(.bordered)
-                }
-                .padding(.vertical, 2)
-            } else if store.isLoading {
+    @ViewBuilder
+    private func briefContent(_ report: DailyReportModel?) -> some View {
+        if let report, report.hasArtifact {
+            if let document = report.document, Self.rendersNativeDocument(report) {
+                // Today has already given the date, so the brief brings no
+                // masthead of its own into the same scroll.
+                DailyBriefLede(text: document.summary)
+                BriefDocumentView(
+                    document: document,
+                    isComposing: report.artifactStatus == "composing",
+                    onReview: { artifactReview = $0 }
+                )
+                DailyBriefFooter(report: report)
+            } else {
+                DailyBriefView(
+                    report: report,
+                    lastRefresh: store.lastRefresh,
+                    isOffline: store.briefError != nil,
+                    onAction: handleBriefAction
+                )
+            }
+        } else if let report, report.isGenerating {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading your brief…").foregroundStyle(.secondary)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("No brief for today yet.")
+                    Text("Putting today\u{2019}s brief together…")
                         .font(.subheadline)
-                    Text("Generate a Daily Report from your recent mail, calendar, and tasks.")
-                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Generate today’s brief") { Task { await store.generateBrief() } }
-                        .buttonStyle(.borderedProminent)
                 }
-                .padding(.vertical, 2)
+                if let progress = report.progress, progress.total > 0 {
+                    ProgressView(value: progress.fraction)
+                }
             }
+            .padding(.horizontal, 20)
+        } else if let report {
+            VStack(alignment: .leading, spacing: 8) {
+                if let text = report.legacyText {
+                    Text(text).font(.body).textSelection(.enabled)
+                }
+                briefCountSummary(report.sectionCounts)
+            }
+            .padding(.horizontal, 20)
+        } else if let error = store.briefError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn\u{2019}t load today\u{2019}s brief", systemImage: "exclamationmark.triangle")
+                    .font(.subheadline.weight(.medium))
+                Text(error).font(.caption).foregroundStyle(.secondary)
+                Button("Try Again") { Task { await store.refreshBrief() } }
+                    .buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 20)
+        } else {
+            Text("Albatross writes this each morning from your mail and calendar. There is no edition for today yet.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
         }
     }
 

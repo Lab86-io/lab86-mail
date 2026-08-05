@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runWithAiRequestContext } from '../lib/ai/context';
+
 import { buildNativeDailyReportArtifact } from '../lib/mail/report-artifact';
 
 function sampleReport(sections?: any): any {

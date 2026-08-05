@@ -12,9 +12,7 @@ import { Mic } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GooeyMorphText } from '@/components/albatross/GooeyMorphText';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
-import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { useClientStore } from '@/lib/client-state';
@@ -31,21 +29,9 @@ const DancingLetters = dynamic(() => import('@/components/dancing-letters'), { s
 /* Pure helpers (exported for bun:test - keep them DOM-free)           */
 /* ------------------------------------------------------------------ */
 
-/** Rotating button copy. The accessible name stays "New Intent" - this list
- *  only feeds the aria-hidden gooey label so screen readers get stability. */
-export const CAPTURE_BUTTON_LABELS = [
-  'New Work',
-  'New Idea',
-  'New Procrastination',
-  'Make This Real',
-  'Unload Thought',
-] as const;
-
-/** Deterministic label for a rotation tick (modulo, negative-safe). */
-export function rotatingLabelAt(tick: number): string {
-  const length = CAPTURE_BUTTON_LABELS.length;
-  return CAPTURE_BUTTON_LABELS[((tick % length) + length) % length];
-}
+/** The one name for the one door into the product. It used to rotate through
+ *  five labels, so the most important control in the app had no fixed name. */
+export const CAPTURE_BUTTON_LABEL = 'Get this off my mind';
 
 export type CaptureState = 'closed' | 'editing' | 'split' | 'discard' | 'saving' | 'saved';
 
@@ -252,6 +238,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // The floating assistant panel (Cmd+K) shares the bottom-right slot; the
   // launcher yields while it is open, exactly like Ask Assistant used to.
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const captureOpen = useClientStore((s) => s.captureOpen);
+  const captureSeed = useClientStore((s) => s.captureSeed);
+  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
 
   const [state, setState] = useState<CaptureState>('closed');
   const [text, setText] = useState('');
@@ -274,6 +263,16 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   }, []);
 
   const overlayOpen = state !== 'closed';
+
+  // The rail button and the empty states open capture through the store.
+  useEffect(() => {
+    if (!captureOpen) return;
+    setCaptureOpen(false);
+    // A thread or a selection arrives as the starting text; the user still
+    // edits it in their own words before handing it over.
+    if (captureSeed) setText(captureSeed);
+    send({ type: 'open' });
+  }, [captureOpen, captureSeed, send, setCaptureOpen]);
 
   // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
   useEffect(() => {
@@ -424,6 +423,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           Albatross is on; the assistant stays on Cmd+K). Ghost until hovered:
           transparent pill that fills with the accent on hover/focus. The orb
           is a still gradient pearl — its rotation is paused by request. */}
+      {/* Bottom-right, and the only floating control in the app. One name,
+          one door. Ghost until hovered: a transparent pill that fills with the
+          accent. No glyph before the text. */}
       <div className={cn('pointer-events-none fixed bottom-6 right-6 z-50', aiBarOpen && 'hidden')}>
         <button
           ref={launcherRef}
@@ -432,36 +434,13 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           aria-haspopup="dialog"
-          aria-label="New Work"
-          className="group pointer-events-auto flex h-10 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 pr-4 pl-2.5 text-[var(--color-text)] shadow-[var(--shadow-soft)] backdrop-blur-sm transition-colors duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]"
+          aria-label={CAPTURE_BUTTON_LABEL}
+          className={cn(
+            'group pointer-events-auto flex h-10 cursor-pointer items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-4 text-[13px] font-medium leading-5 text-[var(--color-text)] shadow-[var(--shadow-soft)] backdrop-blur-sm transition-[colors,transform] duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]',
+            squished && 'scale-[1.03]',
+          )}
         >
-          <motion.span
-            aria-hidden
-            className="flex shrink-0 items-center justify-center [&_.siri-orb::before]:[animation-play-state:paused]"
-            initial={false}
-            animate={squished ? { scaleX: 0.68, scaleY: 1.32 } : { scaleX: 1, scaleY: 1 }}
-            transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 22 }}
-          >
-            {/* Orb colors derive from the live accent (relative OKLCH) so any
-                theme keeps it coherent; bg transparent so it sits on both the
-                ghost and the hovered accent fill. */}
-            <SiriOrb
-              size="18px"
-              animationDuration={26}
-              colors={{
-                bg: 'transparent',
-                c1: 'oklch(from var(--color-accent) calc(l + 0.25) calc(c * 0.6) h)',
-                c2: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h + 50))',
-                c3: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h - 50))',
-              }}
-            />
-          </motion.span>
-          <GooeyMorphText
-            texts={CAPTURE_BUTTON_LABELS}
-            morphTime={1.2}
-            cooldownTime={4}
-            className="text-[13px] leading-5 font-medium"
-          />
+          {CAPTURE_BUTTON_LABEL}
         </button>
       </div>
 

@@ -40,6 +40,7 @@ import {
   areaList,
   areaUpdateIdentity,
   workHome,
+  workList,
 } from './areas';
 import { listAuditEntries, logAction } from './audit-tools';
 import {
@@ -338,6 +339,7 @@ const allTools: AnyTool[] = [
   areaList,
   areaHome,
   workHome,
+  workList,
   areaCreate,
   areaDiscoverContext,
   areaUpdateIdentity,

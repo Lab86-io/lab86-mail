@@ -85,7 +85,7 @@ export function AreasLive({ openSetup }: { openSetup?: boolean }) {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setPrimaryView('unassigned')}>
+          <Button type="button" variant="outline" size="sm" onClick={() => setPrimaryView('albatrosses')}>
             Review queue
           </Button>
           <Button type="button" size="sm" onClick={() => setWizardOpen(true)}>

@@ -80,3 +80,22 @@ export function confirmDailyReportAction(
   const review = dailyReportActionReview(action, payload);
   return review ? confirm(review.message) : true;
 }
+
+/** The tallest a brief may ask to be. Roughly forty screens. */
+export const MAX_ARTIFACT_FRAME_HEIGHT = 40_000;
+/** What the frame stands at before the artifact has measured itself. */
+export const DEFAULT_ARTIFACT_FRAME_HEIGHT = 640;
+
+/**
+ * How tall to draw the embedded brief.
+ *
+ * Embedded in Today the artifact flows in the page scroll, so it reports its own
+ * height. That number crosses from model-authored, mailbox-derived HTML, so it
+ * is a value to distrust: rubbish falls back to the default, and a number large
+ * enough to break the page is clamped rather than obeyed.
+ */
+export function artifactFrameHeight(raw: unknown): number {
+  const height = Number(raw);
+  if (!Number.isFinite(height) || height <= 0) return DEFAULT_ARTIFACT_FRAME_HEIGHT;
+  return Math.min(Math.ceil(height), MAX_ARTIFACT_FRAME_HEIGHT);
+}

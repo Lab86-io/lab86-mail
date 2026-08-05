@@ -961,23 +961,39 @@ MASTHEAD (signature element — replaces any app header):
 - Small monospace caption beneath or inside the image: data.art.credit + " · " + data.art.source.
 - Image fallback is REQUIRED: use an <img> for the art with data.art.imageUrl as src and wire data.art.fallbacks through an onerror handler or equivalent inline JS so the masthead never shows a broken image. If all art URLs fail, hide the img and use a theme-token background.
 
-WEATHER MODULE (required whenever data.weather is non-null; omit entirely when null):
-- Place it near the masthead/lede — in the lede's margin rail, as a slim band directly beneath the masthead, or docked beside the dateline. It is part of the paper's front matter, not a buried section.
-- Visual anatomy (a designed weather instrument, matching the polish of a native weather widget): ONE large temperature figure in the display face (data.weather.current.temp + data.weather.unit), a condition line beneath it (data.weather.current.condition, with high/low as "H 78° / L 61°"), then a compact strip — either the next hours (data.weather.hourly: hour label + small temp, 6–8 entries) or the week (data.weather.daily: day label + condition + high/low range), whichever better serves the day. Location name in small caps-free muted type.
-- Optional refinement when daily data is rich: render the 7-day span as slim horizontal range bars (min→max) on a shared temperature scale — hairline track in var(--brief-hairline), filled span in var(--brief-accent-2, var(--brief-accent)).
-- Style with theme tokens only: temperature figure in var(--brief-ink), condition and strip labels in var(--brief-muted), accents/rules on the module in var(--brief-accent-2, var(--brief-accent)). No weather clip-art, no emoji; a minimal inline-SVG glyph per condition (sun disc, cloud outline, rain strokes) drawn with token strokes is welcome.
-- Weave it into the lede when relevant ("rain by 3 PM argues for the morning errand"), and never invent weather — data.weather is real.
-- When data.weather.source is "Apple Weather", include a small visible "Weather data by Apple Weather" attribution link using data.weather.attributionURL. Attribution is part of the module, never hidden in comments or omitted.
+WEATHER LINE (only when data.weather is non-null; omit entirely when null):
+- Weather carries no responsibility, so it never gets the largest graphic on the
+  page. Render it as ONE quiet line, not a module: the current temperature
+  (data.weather.current.temp + data.weather.unit), the condition, the day's high
+  and low as "H 78° / L 61°", and data.weather.location. Nothing more.
+- No temperature chart, no range bars, no hourly strip, no seven-day grid, no
+  weather widget. Those belong to a weather app; this is a brief about what the
+  reader is carrying.
+- Place it in the dateline row or the lede's margin rail, at body-copy size or
+  smaller, in var(--brief-muted). It is context for the day, not a headline.
+- Weave it into the lede when it changes a decision ("rain by 3 PM argues for
+  the morning errand"), and never invent weather — data.weather is real.
+- When data.weather.source is "Apple Weather", include a small visible
+  "Weather data by Apple Weather" attribution link using data.weather.attributionURL.
+  Attribution is part of the line, never hidden in comments or omitted.
+
+WHAT THE READER OWES (the brief's real subject):
+- The first thing under the masthead must be what needs the reader — questions
+  waiting on them, approvals prepared and unsent, decisions nobody else can make.
+  It gets the largest type in the body and it comes before any other section.
+- If nothing needs them, say that plainly in one line and move on. Do not
+  manufacture a section to fill the space.
 
 STYLIZED LEDE SYSTEM (required after the masthead):
 - The lede is a designed editorial object, not a plain paragraph block. Implement it with your own CSS in the document; do not use external libraries.
-- Choose exactly ONE treatment from this internal lede treatment library, based on the day's content:
-  1. Illuminated brief: large drop initial, 2-3 short body paragraphs, and a narrow margin rail naming the day's main tension.
-  2. Dispatch deck: a compact headline/deck, a ruled side note, and 2-3 short paragraphs in a constrained measure.
-  3. Correspondence map: names/entities as small connected labels around the lede, showing who needs what.
-  4. Agenda score: a lede paired with a tiny inline timeline or beat marks for today's sequence.
-  5. Decision ledger: a lede split into "respond / wait / prepare" columns when the day is action-heavy.
-  6. Quiet bulletin: restrained paragraph stack with a pull quote and captioned rule for light days.
+- Choose exactly ONE treatment below, based on the day's content. These are
+  layout choices; never print their names as section headers.
+  1. A large drop initial, 2-3 short body paragraphs, and a narrow margin rail naming what matters most today.
+  2. A compact headline and deck, a ruled side note, and 2-3 short paragraphs in a constrained measure.
+  3. Names as small connected labels around the lede, showing who needs what.
+  4. A lede paired with a tiny inline timeline or beat marks for today's sequence.
+  5. A lede split into "respond / wait / prepare" columns when the day is action-heavy.
+  6. A restrained paragraph stack with a pull quote and captioned rule, for light days.
 - The lede must still read cleanly as 2-3 short body paragraphs in the user's tone from data.voiceSamples. No emoji.
 
 THEME — TWO fonts, honoring the user's app theme (host injects live):

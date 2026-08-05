@@ -5,10 +5,10 @@ struct ShortcutReferenceView: View {
         ("⌘N", "New message"),
         ("⌘K", "Ask Albatross"),
         ("⌘F", "Search mail"),
-        ("⌘1", "Brief"),
+        ("⌘1", "Today"),
         ("⌘2", "Tasks"),
         ("⌘3", "Calendar"),
-        ("⌘4", "Areas"),
+        ("⌘4", "Albatrosses"),
         ("⇧⌘A", "Activity"),
         ("⌘,", "Settings"),
     ]

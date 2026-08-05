@@ -497,6 +497,36 @@ export const listEvents = query({
   },
 });
 
+// Today needs the day's real events, live, without waiting on a generated
+// brief. The internal-secret listEvents above is for the server's sync paths;
+// this is the signed-in user reading their own day.
+export const dayEvents = query({
+  args: {
+    startAt: v.number(),
+    endAt: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    // The limit crosses from a client argument, so it is clamped rather than
+    // trusted: a caller asking for a million rows would read the whole table.
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+    const rows = await queryEventsInWindow(ctx, userId, args.startAt, args.endAt, limit);
+    return rows
+      .map((row: any) => ({
+        _id: String(row._id),
+        title: row.title || 'Untitled event',
+        startAt: row.startAt,
+        endAt: row.endAt,
+        allDay: Boolean(row.allDay),
+        location: row.location ?? null,
+        status: row.status ?? null,
+        calendarName: row.calendarName ?? null,
+      }))
+      .sort((a: any, b: any) => a.startAt - b.startAt);
+  },
+});
+
 export const searchEvents = query({
   args: {
     internalSecret: v.optional(v.string()),

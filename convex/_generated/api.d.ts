@@ -30,6 +30,7 @@ import type * as documents from "../documents.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
+import type * as mailOneTimeCodes from "../mailOneTimeCodes.js";
 import type * as mcp from "../mcp.js";
 import type * as mcpSync from "../mcpSync.js";
 import type * as mobile from "../mobile.js";
@@ -69,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   lib: typeof lib;
   liveMail: typeof liveMail;
   mailCorpus: typeof mailCorpus;
+  mailOneTimeCodes: typeof mailOneTimeCodes;
   mcp: typeof mcp;
   mcpSync: typeof mcpSync;
   mobile: typeof mobile;

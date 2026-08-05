@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { isClosed } from '@/lib/albatross/work-state';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 import { SuggestionsTray } from './SuggestionsTray';
@@ -44,7 +45,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
   ) as
     | Array<{
         question: { _id: string; prompt: string; reason?: string };
-        work: null | { _id: string; title?: string; rawText: string };
+        work: null | { _id: string; title?: string; rawText: string; workState?: string; status?: string };
         project: null | { _id: string; title: string; areaId?: string };
         routine: null | { _id: string; title: string; areaId?: string };
       }>
@@ -64,7 +65,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
     await mark({ notificationId: row._id as Id<'albatrossNotifications'>, status: 'acted' });
     if (row.entityKind === 'work' && row.entityId) {
       setSelectedWorkId(row.entityId);
-      setPrimaryView('areas');
+      setPrimaryView('albatrosses');
       setOpen(false);
       return;
     }
@@ -76,12 +77,24 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
       setOpen(false);
       return;
     }
-    if (row.deepLink?.includes('daily')) setPrimaryView('daily_report');
+    if (row.deepLink?.includes('daily')) setPrimaryView('today');
     setOpen(false);
   };
 
   const rows = center?.notifications || [];
-  const attentionCount = (center?.unread || 0) + (questions?.length || 0) + (approvals?.length || 0);
+  // Live questions first: an Albatross the user put down must not outrank one
+  // that is actually waiting on them.
+  const orderedQuestions = [...(questions || [])].sort((a, b) => {
+    const aClosed = a.work ? isClosed({ workState: a.work.workState, status: a.work.status }) : false;
+    const bClosed = b.work ? isClosed({ workState: b.work.workState, status: b.work.status }) : false;
+    return Number(aClosed) - Number(bClosed);
+  });
+  // The badge counts what needs the user. Questions on a put-down Albatross
+  // stay reachable in the list but never demand attention from the chrome.
+  const liveQuestionCount = orderedQuestions.filter(
+    (row) => !(row.work && isClosed({ workState: row.work.workState, status: row.work.status })),
+  ).length;
+  const attentionCount = (center?.unread || 0) + liveQuestionCount + (approvals?.length || 0);
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -124,15 +137,18 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
             ) : null}
           </div>
           <div className="max-h-[55vh] overflow-y-auto">
-            {questions?.map((row) => (
+            {orderedQuestions.map((row) => (
               <button
                 key={row.question._id}
                 type="button"
                 onClick={() => {
                   setSelectedWorkId(row.work ? String(row.work._id) : null);
+                  // The row lands on Albatrosses, so the area selection changes
+                  // nothing here. Clearing it anyway would quietly move where
+                  // Areas opens next time, including to no area at all.
                   const areaId = row.routine?.areaId || row.project?.areaId;
-                  setSelectedAreaId(areaId ? String(areaId) : null);
-                  setPrimaryView('areas');
+                  if (areaId) setSelectedAreaId(String(areaId));
+                  setPrimaryView('albatrosses');
                   setOpen(false);
                 }}
                 className="flex w-full gap-2 border-b border-[var(--color-border)]/60 bg-[var(--color-warning-soft)]/45 px-3.5 py-3 text-left hover:bg-[var(--color-warning-soft)]"
@@ -146,6 +162,11 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                       row.project?.title ||
                       row.routine?.title ||
                       'Albatross needs an answer'}
+                    {/* A question on an Albatross you put down is still real,
+                        but it is not live work. Say which it is. */}
+                    {row.work && isClosed({ workState: row.work.workState, status: row.work.status })
+                      ? ' · you put this down'
+                      : ''}
                   </span>
                 </span>
               </button>
@@ -157,7 +178,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                 onClick={() => {
                   if (approval.intentId) {
                     setSelectedWorkId(approval.intentId);
-                    setPrimaryView('areas');
+                    setPrimaryView('albatrosses');
                   }
                   setOpen(false);
                 }}

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { confirmDailyReportAction, dailyReportActionReview } from '@/lib/daily-report-action-review';
+import {
+  artifactFrameHeight,
+  confirmDailyReportAction,
+  DEFAULT_ARTIFACT_FRAME_HEIGHT,
+  dailyReportActionReview,
+  MAX_ARTIFACT_FRAME_HEIGHT,
+} from '@/lib/daily-report-action-review';
 
 describe('daily report action review policy', () => {
   test('uses one review message for artifact and structured task mutations', () => {
@@ -69,5 +75,24 @@ describe('daily report action review policy', () => {
     expect(messages).toEqual(['Open this external link in a new tab?']);
     expect(dailyReportActionReview('open_thread', {})).toBeNull();
     expect(confirmDailyReportAction('open_thread', {}, () => false)).toBeTrue();
+  });
+});
+
+describe('the embedded brief frame height', () => {
+  test('grows to the height the artifact reports', () => {
+    expect(artifactFrameHeight(1834.2)).toBe(1835);
+  });
+
+  test('falls back rather than collapsing on rubbish', () => {
+    // The number crosses from model-authored, mailbox-derived HTML. A brief
+    // that reports nonsense must not erase itself from Today.
+    for (const value of [undefined, null, 'tall', Number.NaN, 0, -400, {}]) {
+      expect(artifactFrameHeight(value)).toBe(DEFAULT_ARTIFACT_FRAME_HEIGHT);
+    }
+  });
+
+  test('clamps a height large enough to break the page', () => {
+    expect(artifactFrameHeight(9_000_000)).toBe(MAX_ARTIFACT_FRAME_HEIGHT);
+    expect(artifactFrameHeight(Number.POSITIVE_INFINITY)).toBe(DEFAULT_ARTIFACT_FRAME_HEIGHT);
   });
 });

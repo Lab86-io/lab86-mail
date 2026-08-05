@@ -696,6 +696,12 @@ export default defineSchema({
     title: v.string(),
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
+    // What this artifact is claimed to prove, and what it cannot settle.
+    // Storing only "email 123" makes an attachment list; storing the claim
+    // makes an evidence graph, where one artifact can support several claims
+    // and one claim can rest on several artifacts.
+    claim: v.optional(v.string()),
+    limits: v.optional(v.string()),
     occurredAt: v.number(),
     weight: v.number(),
     confidence: v.number(),
@@ -943,7 +949,31 @@ export default defineSchema({
         v.literal('waiting'),
         v.literal('blocked'),
         v.literal('done'),
+        // Put down on purpose. Distinct from 'archived', which only means
+        // hidden: collapsing the two would make it impossible to ever report
+        // "you consciously stopped carrying twelve things", which is the whole
+        // point of offering release as an ending rather than a failure.
+        v.literal('released'),
         v.literal('archived'),
+      ),
+    ),
+    // Why it was put down, who suggested it, and when to look again. A release
+    // the system proposed reads differently from one the user chose.
+    releaseReason: v.optional(v.string()),
+    releaseProposedBy: v.optional(v.union(v.literal('user'), v.literal('system'))),
+    releasedAt: v.optional(v.number()),
+    reviewAt: v.optional(v.number()),
+    // What kind of outcome this is. A practice is not a project waiting to be
+    // finished, and rendering it as one is why lifestyle changes read as
+    // permanent failures.
+    shape: v.optional(
+      v.union(
+        v.literal('quick'),
+        v.literal('project'),
+        v.literal('practice'),
+        v.literal('decision'),
+        v.literal('monitor'),
+        v.literal('recurring'),
       ),
     ),
     agentState: v.optional(
@@ -983,6 +1013,36 @@ export default defineSchema({
         }),
       ),
     ),
+    // The outcome contract. Before Albatross can say something is done it has
+    // to know what done means and what would prove it — otherwise "closed" is
+    // just a status somebody typed.
+    contract: v.optional(
+      v.object({
+        // Not "work on renter's insurance" — "an active policy meeting the
+        // lease requirement exists, and proof was delivered to the office".
+        outcome: v.string(),
+        // The things that would settle it, each in plain words.
+        proofs: v.array(
+          v.object({
+            id: v.string(),
+            what: v.string(),
+            satisfiedBy: v.optional(v.string()),
+            satisfiedAt: v.optional(v.number()),
+          }),
+        ),
+        // How much proof is enough before Albatross may close it by itself.
+        // Some outcomes must never close without a person saying so.
+        closeWhen: v.union(
+          v.literal('action_succeeded'),
+          v.literal('outcome_likely'),
+          v.literal('outcome_confirmed'),
+          v.literal('never_automatically'),
+        ),
+        // What would reopen it: a bounce, a reversal, a cancellation.
+        contradictions: v.optional(v.array(v.string())),
+        updatedAt: v.number(),
+      }),
+    ),
     planError: v.optional(v.string()),
     // Auto-retry counter for the plan-reconcile cron: generations killed by a
     // deploy/restart leave the intent stuck in 'planning' with no planError.
@@ -1005,6 +1065,62 @@ export default defineSchema({
   // A generated plan for one intent. digitalActions match the work-model
   // contract so albatross_apply_intent_plan can execute the plan as stored.
   // artifactHtml is the self-contained HTML plan brief rendered in a sandbox.
+  // A step that did not happen, and what came of that.
+  //
+  // This is the table that makes forgiveness a behaviour rather than a tone of
+  // voice. Recording only that something was missed teaches nothing; recording
+  // the reason, the recovery the user chose, and whether that recovery actually
+  // held is what lets Albatross learn that morning blocks fail and evening ones
+  // do not.
+  albatrossLapses: defineTable({
+    userId: v.string(),
+    workId: v.id('albatrossIntents'),
+    stepKey: v.optional(v.string()),
+    stepTitle: v.optional(v.string()),
+    plannedAt: v.optional(v.number()),
+    // What the user said, in their own words or from the offered set.
+    reason: v.optional(v.string()),
+    reasonKind: v.optional(
+      v.union(
+        v.literal('no_energy'),
+        v.literal('no_time'),
+        v.literal('something_else_came_first'),
+        v.literal('blocked'),
+        v.literal('need_help'),
+        v.literal('step_too_large'),
+        v.literal('matters_less_now'),
+        v.literal('forgot'),
+        v.literal('other'),
+      ),
+    ),
+    // Inferred reasons are guesses and must never be presented as the user's
+    // own account of their day.
+    reasonSource: v.union(v.literal('user'), v.literal('inferred')),
+    recovery: v.optional(
+      v.union(
+        v.literal('move'),
+        v.literal('shrink'),
+        v.literal('wait'),
+        v.literal('delegate'),
+        v.literal('pause'),
+        v.literal('release'),
+        v.literal('rebuild'),
+      ),
+    ),
+    // The smaller step the user accepted, when they shrank it.
+    revisedStep: v.optional(v.string()),
+    // Whether the revision actually happened. Null until it resolves — this is
+    // the signal that says which recoveries work for this person.
+    revisionHeld: v.optional(v.boolean()),
+    resolvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_work', ['workId'])
+    .index('by_user_unresolved', ['userId', 'resolvedAt']),
+
   albatrossIntentPlans: defineTable({
     userId: v.string(),
     intentId: v.id('albatrossIntents'),

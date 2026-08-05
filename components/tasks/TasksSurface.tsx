@@ -22,8 +22,6 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  Share2,
-  Sparkles,
   SquareKanban,
   Trash2,
   UploadCloud,
@@ -549,17 +547,9 @@ function BoardView({
                     <Plus className="size-3" /> Column
                   </Button>
                 ) : null}
-                {board.role === 'owner' ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 gap-1.5 px-2 text-[12px]"
-                    onClick={() => setShareOpen(true)}
-                  >
-                    <Share2 className="size-3" /> Share
-                  </Button>
-                ) : null}
+                {/* Share is hidden: Albatross is a single-person product for
+                    now, so a collaboration control here promises something
+                    that does not exist. The dialog and its API are untouched. */}
               </>,
               headerSlot,
             )
@@ -598,7 +588,7 @@ function BoardView({
                         setRenameColumn({ columnId: column.id, name: String(column.name) })
                       }
                       title={canEdit ? 'Double-click to rename' : undefined}
-                      className="text-left text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]"
+                      className="text-left text-[12px] font-semibold text-[var(--color-text-muted)]"
                     >
                       {column.name}
                     </button>
@@ -861,9 +851,7 @@ function ListView({
         return (
           <section key={column.columnId} className="mb-5">
             <div className="mb-1.5 flex items-center gap-2">
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-                {column.name}
-              </h2>
+              <h2 className="text-[12px] font-semibold text-[var(--color-text-muted)]">{column.name}</h2>
               <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{cards.length}</span>
               {canEdit ? (
                 <button
@@ -966,7 +954,7 @@ function AssigneeStack({ emails, max = 3 }: { emails?: string[]; max?: number })
           key={email}
           title={email}
           aria-hidden="true"
-          className="grid size-5 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8.5px] font-semibold uppercase text-[var(--color-accent)] ring-2 ring-[var(--color-bg-elevated)]"
+          className="grid size-5 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[8.5px] font-semibold  text-[var(--color-accent)] ring-2 ring-[var(--color-bg-elevated)]"
         >
           {emailInitials(email)}
         </span>
@@ -1809,7 +1797,7 @@ function CardPanel({
                     ) : (
                       <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)]/40">
                         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3.5 py-2">
-                          <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-faint)]">
+                          <span className="text-[11px] font-medium text-[var(--color-text-faint)]">
                             Description
                           </span>
                           {canEdit && description.trim() ? (
@@ -1859,7 +1847,7 @@ function CardPanel({
                     />
                     <span
                       className={cn(
-                        'relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-[9px] font-semibold uppercase shadow-[var(--shadow-soft)]',
+                        'relative z-10 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full text-[9px] font-semibold  shadow-[var(--shadow-soft)]',
                         node.kind === 'comment'
                           ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)]'
                           : 'border border-[var(--color-border)] bg-[var(--color-bg-subtle)] text-[var(--color-text-faint)]',
@@ -2081,7 +2069,7 @@ function CardPanel({
                             : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
                         )}
                       >
-                        <span className="grid size-3.5 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold uppercase">
+                        <span className="grid size-3.5 shrink-0 place-items-center rounded-full bg-[var(--color-bg-muted)] text-[8px] font-semibold ">
                           {emailInitials(email)}
                         </span>
                         <span className="truncate">{email}</span>
@@ -2427,7 +2415,7 @@ function CreateCardDialog({
                 onClick={() => void parseNl()}
                 disabled={parsing || !nlText.trim()}
               >
-                <Sparkles className="size-3.5" /> {parsing ? 'Reading…' : 'Autofill'}
+                {parsing ? 'Reading…' : 'Autofill'}
               </Button>
             </div>
             <p className="px-0.5 text-[11px] text-[var(--color-text-faint)]">

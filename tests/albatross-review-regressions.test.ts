@@ -61,6 +61,9 @@ describe('CodeRabbit Albatross regressions', () => {
     expect(artifactFrame).toContain('sandbox="allow-scripts allow-popups"');
     expect(artifactFrame).not.toContain('allow-popups-to-escape-sandbox');
     expect(detail).toContain('aria-label="Answer in your own words"');
-    expect(companion.match(/aria-label="Answer Albatross in your own words"/g)).toHaveLength(2);
+    // The floating card was removed in the Albatross shell round — the
+    // questions live on the Albatross page now. Only the picture-in-picture
+    // input remains here, and it keeps its label.
+    expect(companion.match(/aria-label="Answer Albatross in your own words"/g)).toHaveLength(1);
   });
 });

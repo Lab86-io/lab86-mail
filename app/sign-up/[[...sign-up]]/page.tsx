@@ -26,7 +26,7 @@ export default async function SignUpPage() {
         <div className="max-w-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 text-center">
           <h1 className="text-base font-semibold text-[var(--color-text)]">Signups are paused</h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-            Lab86 Mail is temporarily not accepting new accounts.
+            Albatross is temporarily not accepting new accounts.
           </p>
         </div>
       </main>

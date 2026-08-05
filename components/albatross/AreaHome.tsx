@@ -31,6 +31,7 @@ import {
   ArrowRight,
   CheckSquare,
   ChevronDown,
+  CircleDot,
   FolderInput,
   Inbox,
   LayoutTemplate,
@@ -43,6 +44,8 @@ import {
 } from 'lucide-react';
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { groupWork, type WorkListItem } from '@/components/albatross/AlbatrossesSurface';
+import { AlbatrossRow } from '@/components/albatross/primitives';
 import { InboxThreadRow, inboxDateGroupLabel, type ThreadRow } from '@/components/inbox/Inbox';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
@@ -94,6 +97,7 @@ import {
 } from '@/lib/albatross/area-home';
 import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from '@/lib/albatross/area-mail';
 import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
+import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -325,6 +329,10 @@ function useMinuteNow() {
   return now;
 }
 
+// The Area page is a lens on one part of a life: what it says right now, what
+// is being carried inside it, and the mail that feeds it.
+export type AreaView = 'brief' | 'albatrosses' | 'inbox';
+
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
@@ -387,9 +395,7 @@ function AreaChooser() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <h2 className="text-[15px] font-semibold tracking-tight">Areas</h2>
-        {areas ? (
-          <span className="text-[11.5px] text-[var(--color-text-faint)]">{areas.length} active</span>
-        ) : null}
+
         <ManageLink className="ml-auto" />
       </header>
       {areas === undefined ? (
@@ -397,12 +403,10 @@ function AreaChooser() {
       ) : areas.length === 0 ? (
         <div className="px-4 py-8">
           <p className="max-w-md text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-            No areas yet. Set up the parts of your life you are responsible for and the classifier starts
-            sorting mail, events, and tasks against them.
+            No areas yet. Name the parts of your life you are responsible for, and Albatross starts sorting
+            your mail, events and work into them.
           </p>
-          <Button asChild size="sm" className="mt-4">
-            <a href="/settings?tab=areas">Set up areas</a>
-          </Button>
+          <NewAreaField className="mt-4" />
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -456,15 +460,13 @@ function AreaChooserCard({ area, onOpen }: { area: AreaOverviewRow; onOpen: () =
         </p>
       ) : (
         <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
-          {area.factCounts.verified} verified context facts · {area.factCounts.candidate} waiting.
+          Albatross is still learning what belongs here.
         </p>
       )}
       <div className="mt-auto flex flex-wrap gap-1.5 pt-3">
-        {badges.length ? (
-          badges.map((badge) => <OverviewBadge key={badge.id} label={badge.label} tone={badge.tone} />)
-        ) : (
-          <OverviewBadge label={`${area.factCounts.verified} verified`} tone="quiet" />
-        )}
+        {badges.map((badge) => (
+          <OverviewBadge key={badge.id} label={badge.label} tone={badge.tone} />
+        ))}
       </div>
       <span className="mt-3 flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100">
         Open brief <ArrowRight className="size-3" aria-hidden />
@@ -500,7 +502,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   const [artifactRefreshing, setArtifactRefreshing] = useState(false);
   const [artifactRefreshError, setArtifactRefreshError] = useState<string | null>(null);
   const [showStructuredFallback, setShowStructuredFallback] = useState(false);
-  const [areaView, setAreaView] = useState<'brief' | 'inbox'>('brief');
+  const [areaView, setAreaView] = useState<AreaView>('brief');
   const requestedInitialArtifact = useRef(false);
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade honestly, not crash the surface.
@@ -602,6 +604,16 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
 
   const home = result.data as AreaHomeData;
 
+  if (areaView === 'albatrosses') {
+    return (
+      <AreaAlbatrosses
+        areaId={home.area._id}
+        areaName={home.area.name}
+        onAllAreas={() => setSelectedAreaId(null)}
+        onViewChange={setAreaView}
+      />
+    );
+  }
   if (areaView === 'inbox') {
     return <AreaInbox home={home} onAllAreas={() => setSelectedAreaId(null)} onViewChange={setAreaView} />;
   }
@@ -845,8 +857,8 @@ function AreaViewSwitcher({
   onChange,
   compact = false,
 }: {
-  value: 'brief' | 'inbox';
-  onChange: (view: 'brief' | 'inbox') => void;
+  value: AreaView;
+  onChange: (view: AreaView) => void;
   compact?: boolean;
 }) {
   return (
@@ -860,7 +872,8 @@ function AreaViewSwitcher({
     >
       {[
         { id: 'brief' as const, label: 'Brief', icon: LayoutTemplate },
-        { id: 'inbox' as const, label: 'Inbox', icon: Inbox },
+        { id: 'albatrosses' as const, label: 'Albatrosses', icon: CircleDot },
+        { id: 'inbox' as const, label: 'Mail', icon: Inbox },
       ].map((item) => {
         const Icon = item.icon;
         return (
@@ -893,7 +906,7 @@ function AreaInbox({
 }: {
   home: AreaHomeData;
   onAllAreas: () => void;
-  onViewChange: (view: 'brief' | 'inbox') => void;
+  onViewChange: (view: AreaView) => void;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
@@ -1449,7 +1462,7 @@ function AreaArtifactCanvas({
   onRefresh: () => void;
   onDiscuss: () => void;
   onAllAreas: () => void;
-  onViewChange: (view: 'brief' | 'inbox') => void;
+  onViewChange: (view: AreaView) => void;
   onStructuredFallback: () => void;
   pulse?: AreaPulseData;
 }) {
@@ -1732,7 +1745,7 @@ function AreaArtifactUnavailable({
   error: string | null;
   onRefresh: () => void;
   onAllAreas: () => void;
-  onViewChange: (view: 'brief' | 'inbox') => void;
+  onViewChange: (view: AreaView) => void;
   onStructuredFallback: () => void;
 }) {
   return (
@@ -1756,7 +1769,7 @@ function AreaArtifactUnavailable({
         <p className="mx-auto mt-3 max-w-md text-[13px] leading-relaxed text-[var(--color-text-muted)]">
           {failed
             ? 'The full HTML artifact was not available. Your scoped Work and evidence are unchanged.'
-            : 'Albatross is shaping this Area’s Work, Projects, calendar, tasks, and evidence into one living document.'}
+            : 'Albatross is pulling this part of your life together — what is being carried, what is booked, and what it has seen.'}
         </p>
         {error ? <p className="mt-2 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
@@ -1984,7 +1997,7 @@ function NeedsYouSection({ rows, bounded }: { rows: NeedsYouRow[]; bounded: bool
       {bounded ? (
         <div className="flex items-center gap-2 border-t border-[var(--color-warning)]/15 px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
           <span className="min-w-0 flex-1">This is a bounded preview; more may be waiting.</span>
-          <ViewLink view="intents">Open work</ViewLink>
+          <ViewLink view="albatrosses">Open work</ViewLink>
           <ViewLink view="tasks">Open tasks</ViewLink>
         </div>
       ) : null}
@@ -2205,7 +2218,7 @@ function PlacesSection({ places, count }: { places: AreaPlaceRow[]; count: numbe
       <OverflowRow
         overflow={rows.overflow}
         noun="places"
-        action={<ViewLink view="intents">Open plans</ViewLink>}
+        action={<ViewLink view="albatrosses">Open plans</ViewLink>}
       />
     </section>
   );
@@ -2533,7 +2546,7 @@ function ViewLink({
   view,
   children,
 }: {
-  view: 'mail' | 'calendar' | 'tasks' | 'intents';
+  view: 'mail' | 'calendar' | 'tasks' | 'albatrosses';
   children: ReactNode;
 }) {
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -2703,5 +2716,136 @@ function ManageLink({ className }: { className?: string }) {
     >
       Manage
     </a>
+  );
+}
+
+function AreaAlbatrosses({
+  areaId,
+  areaName,
+  onAllAreas,
+  onViewChange,
+}: {
+  areaId: string;
+  areaName: string;
+  onAllAreas: () => void;
+  onViewChange: (view: AreaView) => void;
+}) {
+  const { isAuthenticated } = useConvexAuth();
+  const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+  const rows = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as
+    | WorkListItem[]
+    | undefined;
+  const mine = (rows || []).filter((row) => row.primaryAreaId === areaId);
+  const groups = groupWork(mine);
+  const open = groups.filter((group) => group.key !== 'done' && group.key !== 'archived');
+
+  return (
+    <section className="flex h-full min-h-0 flex-col">
+      <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+        <button
+          type="button"
+          onClick={onAllAreas}
+          className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        >
+          All areas
+        </button>
+        <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{areaName}</span>
+        <AreaViewSwitcher value="albatrosses" onChange={onViewChange} compact />
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
+        <div className="mx-auto max-w-3xl">
+          {open.length === 0 ? (
+            <div className="mx-auto max-w-md py-20 text-center">
+              <h2 className="font-serif text-[19px] font-semibold">Nothing open in {areaName}</h2>
+              <p className="mt-2 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+                Anything you hand Albatross about this part of your life shows up here.
+              </p>
+              <button
+                type="button"
+                onClick={() => setCaptureOpen(true)}
+                className="mt-5 rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+              >
+                Get this off my mind
+              </button>
+            </div>
+          ) : null}
+          {open.map((group) => (
+            <div key={group.key} className="mb-8">
+              <div className="mb-2 flex items-baseline gap-2">
+                <h2 className="font-serif text-[15px] font-semibold">{WORK_STATE_LABEL[group.key]}</h2>
+                <p className="text-[12px] text-[var(--color-text-faint)]">{WORK_STATE_HINT[group.key]}</p>
+              </div>
+              <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                {group.items.map((item) => (
+                  <li key={item._id}>
+                    <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Naming a part of your life takes one field. Both the rail and the empty Areas
+ * page use this; neither throws the user into a settings tab to do it.
+ */
+function NewAreaField({ className }: { className?: string }) {
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  const createArea = useMutation(api.albatross.createArea);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const clean = name.trim();
+    if (!clean || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const areaId = await createArea({ name: clean });
+      setName('');
+      if (areaId) {
+        setSelectedAreaId(String(areaId));
+        setPrimaryView('areas');
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create that area.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={className}>
+      <form
+        className="flex max-w-sm gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Work, Money, Home…"
+          aria-label="Name your first area"
+          disabled={busy}
+          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
+        />
+        <Button size="sm" type="submit" disabled={busy || !name.trim()}>
+          {busy ? 'Adding…' : 'Add area'}
+        </Button>
+      </form>
+      {error ? <p className="mt-2 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
   );
 }

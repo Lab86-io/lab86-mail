@@ -363,6 +363,25 @@ export const workHome = defineTool({
   },
 });
 
+export const workList = defineTool({
+  name: 'work_list',
+  description:
+    "List the user's Albatrosses in every state — open, waiting, paused, finished, put down and archived — each with its state, its area, and how many questions are waiting on the user. Read-only. This is the whole Albatrosses page; filter by workState yourself when the question is only about what is still open.",
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    limit: z.number().int().min(1).max(500).optional().describe('Default: 200'),
+  }),
+  output: z.object({ work: z.array(z.any()) }),
+  async handler(args, ctx) {
+    const work = await deps.convexQuery<any[]>(workApi().allWork, {
+      userId: requireUserId(ctx.userId),
+      ...(args.limit ? { limit: args.limit } : {}),
+    });
+    return { work };
+  },
+});
+
 export const areaDomainActivity = defineTool({
   name: 'area_domain_activity',
   description:

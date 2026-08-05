@@ -1,32 +1,25 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  CAPTURE_BUTTON_LABELS,
+  CAPTURE_BUTTON_LABEL,
   type CaptureState,
   looksLikeMultipleIntents,
   nextCaptureState,
   resolveCapturePieces,
-  rotatingLabelAt,
   splitIntentText,
 } from '../components/albatross/IntentCapture';
 
-describe('rotatingLabelAt', () => {
-  test('cycles deterministically through the label set', () => {
-    for (let i = 0; i < CAPTURE_BUTTON_LABELS.length; i += 1) {
-      expect(rotatingLabelAt(i)).toBe(CAPTURE_BUTTON_LABELS[i]);
-    }
+describe('the capture launcher name', () => {
+  // It used to rotate through five labels, so the most important control in
+  // the product had no fixed name and its accessible name drifted from the
+  // visible one.
+  test('is one stable phrase', () => {
+    expect(CAPTURE_BUTTON_LABEL).toBe('Get this off my mind');
   });
 
-  test('wraps past the end of the set', () => {
-    expect(rotatingLabelAt(CAPTURE_BUTTON_LABELS.length)).toBe(CAPTURE_BUTTON_LABELS[0]);
-    expect(rotatingLabelAt(CAPTURE_BUTTON_LABELS.length * 3 + 2)).toBe(CAPTURE_BUTTON_LABELS[2]);
-  });
-
-  test('is negative-safe', () => {
-    expect(rotatingLabelAt(-1)).toBe(CAPTURE_BUTTON_LABELS[CAPTURE_BUTTON_LABELS.length - 1]);
-  });
-
-  test('tick 0 matches the stable accessible name', () => {
-    expect(rotatingLabelAt(0)).toBe('New Work');
+  test('does not describe the object as a task, an idea, or work', () => {
+    expect(CAPTURE_BUTTON_LABEL.toLowerCase()).not.toContain('idea');
+    expect(CAPTURE_BUTTON_LABEL.toLowerCase()).not.toContain('work');
+    expect(CAPTURE_BUTTON_LABEL.toLowerCase()).not.toContain('task');
   });
 });
 

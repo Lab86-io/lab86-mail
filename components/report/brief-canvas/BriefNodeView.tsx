@@ -188,7 +188,7 @@ function BriefGroup({
       >
         <span>
           {node.kicker ? (
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-accent-2)]">
+            <span className="mb-1 block text-[10px] font-semibold text-[var(--color-accent-2)]">
               {node.kicker}
             </span>
           ) : null}
@@ -232,8 +232,7 @@ function BriefLeaf({
           className={cn(
             'max-w-none text-pretty [&_p]:my-0',
             node.role === 'lede' && 'font-display text-xl leading-relaxed @[600px]:text-2xl',
-            node.role === 'kicker' &&
-              'text-[11px] font-semibold uppercase tracking-[0.17em] text-[var(--color-accent-2)]',
+            node.role === 'kicker' && 'text-[11px] font-semibold text-[var(--color-accent-2)]',
             node.role === 'body' && 'text-sm leading-relaxed @[600px]:text-[15px]',
             node.role === 'aside' && 'border-l-2 border-[var(--color-accent-2)] pl-3 text-sm italic',
             node.role === 'caption' && 'text-xs text-[var(--color-text-muted)]',
@@ -254,10 +253,12 @@ function BriefLeaf({
       return <BriefPrompt node={node} context={context} />;
     case 'divider':
       if (node.variant === 'space') return <div aria-hidden className="h-3" />;
+      // A dinkus, not a star. The house rules forbid star and sparkle marks
+      // outright, and the brief now sits on Today rather than on its own page.
       if (node.variant === 'flourish')
         return (
-          <div aria-hidden className="text-center font-display text-[var(--color-text-faint)]">
-            ✦
+          <div aria-hidden className="flex justify-center py-1">
+            <span className="h-px w-10 bg-[var(--color-border-strong)]" />
           </div>
         );
       return <hr className="border-[var(--color-border)]" />;
@@ -531,7 +532,7 @@ function BriefLeaf({
                 ) : null}
                 <div className={cn('min-w-0', node.variant === 'list' ? 'flex-1' : 'p-3')}>
                   {item.badge ? (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-accent-3)]">
+                    <span className="text-[10px] font-semibold r text-[var(--color-accent-3)]">
                       {item.badge}
                     </span>
                   ) : null}
@@ -836,7 +837,7 @@ function BriefEntityRow({
       <div className="flex flex-col gap-3 @[520px]:flex-row @[520px]:items-start @[520px]:justify-between">
         <div className="min-w-0 flex-1">
           {item.lane ? (
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent-3)]">
+            <span className="text-[10px] font-semibold text-[var(--color-accent-3)]">
               {item.lane.replaceAll('_', ' ')}
             </span>
           ) : null}
@@ -857,7 +858,7 @@ function BriefEntityRow({
                 {item.handoff.assessment}
               </p>
               <div className="mt-2 rounded-lg bg-[var(--color-bg-muted)] px-3 py-2">
-                <span className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                <span className="block text-[10px] font-semibold text-[var(--color-text-muted)]">
                   {item.handoff.recommendations.length > 1 ? 'Your moves' : 'Your move'}
                 </span>
                 {item.handoff.recommendations.length > 1 ? (

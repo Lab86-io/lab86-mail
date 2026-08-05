@@ -11,17 +11,18 @@ import {
   useState,
 } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
-import { AlbatrossSurface } from '@/components/albatross/AlbatrossSurfaces';
+import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
 import { AreaHome } from '@/components/albatross/AreaHome';
 import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
-import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
+import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
-import { DailyReport } from '@/components/report/DailyReport';
+import { Today } from '@/components/report/Today';
 import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
@@ -29,15 +30,16 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
 import {
+  areaIdFromSearch,
   hasPersistedPrimaryViewValue,
-  isAlbatrossPrimaryView,
   normalizePrimaryView,
   type PrimaryView,
   primaryViewFromSearch,
   resolveInitialPrimaryView,
+  workIdFromSearch,
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
-import { AIBarTrigger, AssistantChat } from './AIBar';
+import { AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
@@ -47,11 +49,9 @@ import { ShortcutsSheet } from './ShortcutsSheet';
 // The navigation rail is no longer part of this group — it's a shadcn Sidebar
 // that collapses to an icon strip rather than unmounting.
 export function AppShell({
-  albatrossEnabled,
   clerkEnabled,
   initialView,
 }: {
-  albatrossEnabled: boolean;
   clerkEnabled: boolean;
   initialView?: PrimaryView;
 }) {
@@ -68,19 +68,15 @@ export function AppShell({
   const mobileHistoryThreadRef = useRef<string | null>(null);
   const initialViewAppliedRef = useRef(false);
   const [hasSavedPrimaryView] = useState(() => hasPersistedPrimaryView());
-  const normalizedPrimaryView = normalizePrimaryView(primaryView, albatrossEnabled);
-  const initialPrimaryView = resolveInitialPrimaryView(
-    primaryView,
-    albatrossEnabled,
-    initialView,
-    hasSavedPrimaryView,
-  );
+  const normalizedPrimaryView = normalizePrimaryView(primaryView);
+  const initialPrimaryView = resolveInitialPrimaryView(primaryView, initialView, hasSavedPrimaryView);
   const [bootView, setBootView] = useState<PrimaryView | null>(() =>
     initialPrimaryView !== normalizedPrimaryView ? initialPrimaryView : null,
   );
-  const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView, albatrossEnabled);
+  const visiblePrimaryView = normalizePrimaryView(bootView ?? primaryView);
   const selectedWorkId = useClientStore((s) => s.selectedWorkId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
+  const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   // Settings deep-links back into the area setup wizard via /?setup=areas.
   const [openAreaSetup] = useState<boolean>(
     () =>
@@ -90,10 +86,20 @@ export function AppShell({
     if (typeof window === 'undefined') return null;
     return primaryViewFromSearch(window.location.search);
   });
+  // `?work=<id>` and `?area=<id>` address one Albatross or one Area directly,
+  // so a link out of a notification or a brief opens the thing it names.
+  const [deepLinkedWorkId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : workIdFromSearch(window.location.search),
+  );
+  const [deepLinkedAreaId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : areaIdFromSearch(window.location.search),
+  );
+  // Capture lands on the new Albatross itself — the plan is the payoff for
+  // dumping the thought, so the user should see it, not a list.
   const handleWorkCaptured = useCallback(
     (workId: string) => {
       setSelectedWorkId(workId);
-      setPrimaryView('areas');
+      setPrimaryView('albatrosses');
     },
     [setPrimaryView, setSelectedWorkId],
   );
@@ -118,23 +124,43 @@ export function AppShell({
 
   useEffect(() => {
     // The deep link must win over whatever view was persisted.
-    if (openAreaSetup && albatrossEnabled) setPrimaryView('areas');
-  }, [openAreaSetup, albatrossEnabled, setPrimaryView]);
+    if (openAreaSetup) setPrimaryView('areas');
+  }, [openAreaSetup, setPrimaryView]);
 
   useEffect(() => {
+    if (deepLinkedWorkId) {
+      initialViewAppliedRef.current = true;
+      setBootView(null);
+      setSelectedWorkId(deepLinkedWorkId);
+      setPrimaryView('albatrosses');
+      return;
+    }
+    if (deepLinkedAreaId) {
+      initialViewAppliedRef.current = true;
+      setBootView(null);
+      setSelectedAreaId(deepLinkedAreaId);
+      setPrimaryView('areas');
+      return;
+    }
     if (!deepLinkedView) return;
     initialViewAppliedRef.current = true;
     setBootView(null);
-    if (isAlbatrossPrimaryView(deepLinkedView) && !albatrossEnabled) return;
     setPrimaryView(deepLinkedView);
-  }, [albatrossEnabled, deepLinkedView, setPrimaryView]);
+  }, [
+    deepLinkedAreaId,
+    deepLinkedView,
+    deepLinkedWorkId,
+    setPrimaryView,
+    setSelectedAreaId,
+    setSelectedWorkId,
+  ]);
 
   // The thread reader rides along with the mail-ish surfaces; calendar and
   // tasks keep their pane to themselves. Compose stays available everywhere.
   // Areas count as mail-ish: opening a thread from an area home slides the
   // reader in beside it instead of yanking the user back to the inbox.
   const mailish =
-    visiblePrimaryView === 'mail' || visiblePrimaryView === 'daily_report' || visiblePrimaryView === 'areas';
+    visiblePrimaryView === 'mail' || visiblePrimaryView === 'today' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
   // The assistant is a floating overlay now (AssistantChat), not a docked
   // panel, so it no longer participates in the resizable layout.
@@ -160,7 +186,6 @@ export function AppShell({
         const currentState = useClientStore.getState();
         const nextView = resolveInitialPrimaryView(
           currentState.primaryView,
-          albatrossEnabled,
           initialView,
           hasSavedPrimaryView,
         );
@@ -175,7 +200,7 @@ export function AppShell({
     return () => {
       for (const timer of timers) window.clearTimeout(timer);
     };
-  }, [albatrossEnabled, deepLinkedView, hasSavedPrimaryView, initialView]);
+  }, [deepLinkedView, hasSavedPrimaryView, initialView]);
 
   useEffect(() => {
     if (!isMobile || !selectedThreadId || mobileHistoryThreadRef.current === selectedThreadId) return;
@@ -211,11 +236,7 @@ export function AppShell({
           style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
           className="h-dvh overflow-hidden bg-[var(--color-bg)]"
         >
-          <Rail
-            albatrossEnabled={albatrossEnabled}
-            clerkEnabled={clerkEnabled}
-            activeViewOverride={bootView ?? undefined}
-          />
+          <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
           <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
             <SidebarTrigger
               title="Show sidebar"
@@ -230,11 +251,7 @@ export function AppShell({
                 className="absolute inset-0 h-full w-full"
                 aria-hidden={readerVisible}
               >
-                <PrimarySurface
-                  albatrossEnabled={albatrossEnabled}
-                  view={visiblePrimaryView}
-                  selectedWorkId={selectedWorkId}
-                />
+                <PrimarySurface view={visiblePrimaryView} selectedWorkId={selectedWorkId} />
               </motion.div>
 
               <AnimatePresence initial={false}>
@@ -252,17 +269,16 @@ export function AppShell({
                 ) : null}
               </AnimatePresence>
             </div>
-            <AIBarTrigger buttonHidden={albatrossEnabled} />
             <AssistantChat />
-            {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
-            {albatrossEnabled ? <AlbatrossCompanion /> : null}
+            <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
+            <AlbatrossCompanion />
           </main>
         </SidebarProvider>
 
         <CommandPalette />
         <ShortcutsSheet />
         <ShortcutsBinding />
-        <FirstRunRedirect />
+        <RecordMailboxesConnected />
       </TooltipProvider>
     );
   }
@@ -276,11 +292,7 @@ export function AppShell({
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
         className="h-dvh overflow-hidden bg-[var(--color-bg)]"
       >
-        <Rail
-          albatrossEnabled={albatrossEnabled}
-          clerkEnabled={clerkEnabled}
-          activeViewOverride={bootView ?? undefined}
-        />
+        <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen ? <RailResizeHandle /> : null}
         <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
@@ -297,11 +309,7 @@ export function AppShell({
             >
               <Panel id="inbox" defaultSize={panelIds.length === 1 ? '100%' : '40%'} minSize="280px">
                 <ReflowPanel>
-                  <PrimarySurface
-                    albatrossEnabled={albatrossEnabled}
-                    view={visiblePrimaryView}
-                    selectedWorkId={selectedWorkId}
-                  />
+                  <PrimarySurface view={visiblePrimaryView} selectedWorkId={selectedWorkId} />
                 </ReflowPanel>
               </Panel>
 
@@ -324,58 +332,57 @@ export function AppShell({
               ) : null}
             </Group>
           </TooltipProvider>
-          <AIBarTrigger buttonHidden={albatrossEnabled} />
           <AssistantChat />
-          {albatrossEnabled ? <IntentCaptureLauncher onCaptured={handleWorkCaptured} /> : null}
-          {albatrossEnabled ? <AlbatrossCompanion /> : null}
+          <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
+          <AlbatrossCompanion />
         </main>
       </SidebarProvider>
 
       <CommandPalette />
       <ShortcutsSheet />
       <ShortcutsBinding />
-      <FirstRunRedirect />
+      <RecordMailboxesConnected />
     </TooltipProvider>
   );
 }
 
-function PrimarySurface({
-  albatrossEnabled,
-  view,
-  selectedWorkId,
-}: {
-  albatrossEnabled: boolean;
-  view: PrimaryView;
-  selectedWorkId?: string | null;
-}) {
+function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedWorkId?: string | null }) {
   switch (view) {
-    case 'daily_report':
-      return <DailyReport />;
-    case 'calendar':
-      return <CalendarSurface />;
-    case 'tasks':
-      return <TasksSurface />;
-    case 'files':
-      return <FilesSurface />;
-    case 'intents':
-      // Compatibility only: persisted Plans routes normalize to Areas.
-      return albatrossEnabled ? <AreaHome /> : <DailyReport />;
+    case 'today':
+      return (
+        <SurfaceErrorBoundary surface="Today">
+          <Today />
+        </SurfaceErrorBoundary>
+      );
+    case 'albatrosses':
+      // One Albatross when the user picked one, otherwise the whole list.
+      return (
+        <SurfaceErrorBoundary surface="Albatrosses">
+          {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AlbatrossesSurface />}
+        </SurfaceErrorBoundary>
+      );
     case 'areas':
       // The area home page: mail, events, tasks, and context for the selected
       // area. Management/teach flows live in /settings?tab=areas now.
-      return albatrossEnabled ? (
+      return (
         <SurfaceErrorBoundary surface="Areas">
           {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AreaHome />}
         </SurfaceErrorBoundary>
-      ) : (
-        <DailyReport />
       );
-    case 'unassigned':
-      return albatrossEnabled && isAlbatrossPrimaryView(view) ? (
-        <AlbatrossSurface kind={view} />
-      ) : (
-        <DailyReport />
+    case 'activity':
+      return (
+        <SurfaceErrorBoundary surface="Activity">
+          <ActivitySurface />
+        </SurfaceErrorBoundary>
       );
+    case 'calendar':
+      return <CalendarSurface />;
+    case 'files':
+      return <FilesSurface />;
+    case 'tasks':
+      // The board left the rail. It stays routable for saved links and for the
+      // people who turn it back on in Settings.
+      return <TasksSurface />;
     default:
       return <Inbox />;
   }

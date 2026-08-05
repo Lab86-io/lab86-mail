@@ -1,96 +1,113 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { migratePersistedClientState } from '../lib/client-state';
-import { isAlbatrossEnabled } from '../lib/hosted/controls';
 import {
+  areaIdFromSearch,
   hasPersistedPrimaryViewValue,
-  isAlbatrossPrimaryView,
+  isPrimaryView,
+  LEGACY_PRIMARY_VIEWS,
+  migratePrimaryView,
   normalizePrimaryView,
+  PRIMARY_VIEWS,
   persistedPrimaryViewFromStorage,
   primaryViewFromSearch,
   resolveInitialPrimaryView,
+  workIdFromSearch,
 } from '../lib/shared/types';
 
-describe('Albatross shell flag', () => {
-  const previous = process.env.LAB86_ENABLE_ALBATROSS;
-
-  afterEach(() => {
-    if (previous === undefined) delete process.env.LAB86_ENABLE_ALBATROSS;
-    else process.env.LAB86_ENABLE_ALBATROSS = previous;
+describe('the Albatross surfaces', () => {
+  test('are the ones the rail offers, plus the optional board', () => {
+    expect([...PRIMARY_VIEWS]).toEqual([
+      'today',
+      'albatrosses',
+      'mail',
+      'calendar',
+      'files',
+      'areas',
+      'activity',
+      'tasks',
+    ]);
   });
 
-  test('LAB86_ENABLE_ALBATROSS opts into the guarded shell', () => {
-    delete process.env.LAB86_ENABLE_ALBATROSS;
-    expect(isAlbatrossEnabled()).toBe(false);
-
-    process.env.LAB86_ENABLE_ALBATROSS = '1';
-    expect(isAlbatrossEnabled()).toBe(true);
-
-    process.env.LAB86_ENABLE_ALBATROSS = 'true';
-    expect(isAlbatrossEnabled()).toBe(true);
+  test('no longer include a view that renders a different product', () => {
+    expect(isPrimaryView('daily_report')).toBe(false);
+    expect(isPrimaryView('intents')).toBe(false);
+    expect(isPrimaryView('unassigned')).toBe(false);
   });
 });
 
-describe('Albatross primary view guards', () => {
-  test('migrates the removed Plans destination to Areas without dropping Work selection', () => {
-    const persisted = migratePersistedClientState({ primaryView: 'intents', selectedWorkId: 'work_123' });
-    expect(persisted.primaryView).toBe('areas');
+describe('legacy views map forward', () => {
+  // A saved URL or a persisted store value must never render a blank pane, and
+  // must never quietly land the user on a different surface. Areas used to fall
+  // back to the Daily Report with no message at all.
+  test('every legacy name resolves to a real surface', () => {
+    for (const [legacy, target] of Object.entries(LEGACY_PRIMARY_VIEWS)) {
+      expect(migratePrimaryView(legacy)).toBe(target);
+      expect(isPrimaryView(target)).toBe(true);
+    }
+  });
+
+  test('the named replacements are the ones we intend', () => {
+    expect(normalizePrimaryView('daily_report')).toBe('today');
+    expect(normalizePrimaryView('intents')).toBe('albatrosses');
+    expect(normalizePrimaryView('unassigned')).toBe('albatrosses');
+    expect(normalizePrimaryView('inbox')).toBe('mail');
+  });
+
+  test('an unknown value lands on Today rather than nothing', () => {
+    expect(normalizePrimaryView('missing_surface')).toBe('today');
+    expect(normalizePrimaryView(undefined)).toBe('today');
+    expect(migratePrimaryView('missing_surface')).toBeNull();
+  });
+
+  test('the persisted store migrates without dropping the open Albatross', () => {
+    const persisted = migratePersistedClientState({
+      primaryView: 'intents',
+      selectedWorkId: 'work_123',
+    });
+    expect(persisted.primaryView).toBe('albatrosses');
     expect(persisted.selectedWorkId).toBe('work_123');
   });
-  test('recognizes the hidden Albatross views', () => {
-    expect(isAlbatrossPrimaryView('areas')).toBe(true);
-    expect(isAlbatrossPrimaryView('intents')).toBe(true);
-    expect(isAlbatrossPrimaryView('unassigned')).toBe(true);
-    expect(isAlbatrossPrimaryView('mail')).toBe(false);
-  });
 
-  test('normalizes persisted views when the flag is disabled', () => {
-    expect(normalizePrimaryView('mail', false)).toBe('mail');
-    expect(normalizePrimaryView('files', false)).toBe('files');
-    expect(normalizePrimaryView('areas', false)).toBe('daily_report');
-    expect(normalizePrimaryView('intents', false)).toBe('daily_report');
-    expect(normalizePrimaryView('unknown', false)).toBe('daily_report');
+  test('a persisted Daily Report becomes Today', () => {
+    expect(migratePersistedClientState({ primaryView: 'daily_report' }).primaryView).toBe('today');
   });
+});
 
-  test('keeps current Albatross views reachable and folds legacy Plans into Areas', () => {
-    expect(normalizePrimaryView('areas', true)).toBe('areas');
-    expect(normalizePrimaryView('intents', true)).toBe('areas');
-    expect(normalizePrimaryView('unassigned', true)).toBe('unassigned');
-  });
-
-  test('can boot an enabled Albatross preview into the first Albatross surface when no view is saved', () => {
-    expect(resolveInitialPrimaryView('daily_report', true, 'areas', false)).toBe('areas');
-    expect(resolveInitialPrimaryView('daily_report', false, 'areas', false)).toBe('daily_report');
-  });
-
-  test('keeps the saved primary view authoritative after hydration', () => {
-    expect(resolveInitialPrimaryView('daily_report', true, 'areas', true)).toBe('daily_report');
-    expect(resolveInitialPrimaryView('mail', true, 'areas', true)).toBe('mail');
-  });
-
-  test('invalid persisted primary views do not suppress an explicit boot surface', () => {
+describe('persisted view resolution', () => {
+  test('an invalid persisted view does not suppress the boot surface', () => {
     const raw = JSON.stringify({ state: { primaryView: 'missing_surface' } });
-    const hasSavedPrimaryView = hasPersistedPrimaryViewValue(raw);
-
-    expect(hasSavedPrimaryView).toBe(false);
+    expect(hasPersistedPrimaryViewValue(raw)).toBe(false);
     expect(persistedPrimaryViewFromStorage(raw)).toBeNull();
     expect(persistedPrimaryViewFromStorage(null)).toBeNull();
     expect(persistedPrimaryViewFromStorage('{not-json')).toBeNull();
-    expect(resolveInitialPrimaryView('daily_report', true, 'areas', hasSavedPrimaryView)).toBe('areas');
+    expect(resolveInitialPrimaryView('missing_surface', 'today', false)).toBe('today');
   });
 
-  test('saved Albatross views remain valid persisted preferences while hidden by the flag', () => {
-    const raw = JSON.stringify({ state: { primaryView: 'areas' } });
-
+  test('a legacy persisted view still counts as saved, and migrates', () => {
+    const raw = JSON.stringify({ state: { primaryView: 'daily_report' } });
     expect(hasPersistedPrimaryViewValue(raw)).toBe(true);
-    expect(persistedPrimaryViewFromStorage(raw)).toBe('areas');
-    expect(resolveInitialPrimaryView('areas', true, 'mail', true)).toBe('areas');
-    expect(resolveInitialPrimaryView('areas', false, 'mail', true)).toBe('daily_report');
+    expect(persistedPrimaryViewFromStorage(raw)).toBe('today');
   });
 
-  test('accepts valid surface deep links and ignores unknown values', () => {
+  test('the saved view stays authoritative after hydration', () => {
+    expect(resolveInitialPrimaryView('mail', 'today', true)).toBe('mail');
+    expect(resolveInitialPrimaryView('albatrosses', 'today', true)).toBe('albatrosses');
+  });
+});
+
+describe('deep links', () => {
+  test('accept a surface and ignore unknown values', () => {
     expect(primaryViewFromSearch('?view=files')).toBe('files');
-    expect(primaryViewFromSearch('?view=areas')).toBe('areas');
+    expect(primaryViewFromSearch('?view=albatrosses')).toBe('albatrosses');
+    expect(primaryViewFromSearch('?view=daily_report')).toBe('today');
     expect(primaryViewFromSearch('?view=missing_surface')).toBeNull();
     expect(primaryViewFromSearch('?setup=areas')).toBeNull();
+  });
+
+  test('address one Albatross or one Area directly', () => {
+    expect(workIdFromSearch('?work=abc123')).toBe('abc123');
+    expect(workIdFromSearch('?view=albatrosses')).toBeNull();
+    expect(areaIdFromSearch('?area=area_9')).toBe('area_9');
+    expect(areaIdFromSearch('?view=areas')).toBeNull();
   });
 });

@@ -1,71 +1,228 @@
 import SwiftUI
 
+/// The Albatrosses page: every unresolved outcome the user is carrying.
+///
+/// It used to list Areas, which is how Albatrosses are filed, not what they
+/// are. A page named after the thing the product is about has to show that
+/// thing. Areas keep their own place at the foot of the list.
 struct WorkView: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var filter: WorkFilter = .all
+    @State private var showsClosed = false
 
     private var store: ProductStore { environment.store }
 
+    private var groups: [(state: WorkState, items: [WorkListItem])] {
+        WorkGrouping.group(WorkGrouping.filter(store.allWork, by: filter, areaID: nil))
+    }
+
+    private var openGroups: [(state: WorkState, items: [WorkListItem])] {
+        groups.filter { !WorkState.closed.contains($0.state) }
+    }
+
+    private var closedGroups: [(state: WorkState, items: [WorkListItem])] {
+        groups.filter { WorkState.closed.contains($0.state) }
+    }
+
+    private var unhomedCount: Int {
+        store.allWork.filter { $0.primaryAreaID == nil }.count
+    }
+
     var body: some View {
-        List {
-            Section {
-                Button {
-                    environment.navigation.sheet = .assistant
-                } label: {
-                    Label("Get something out of your head", systemImage: "plus.bubble")
+        @Bindable var navigation = environment.navigation
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                filters
+
+                if store.workError != nil {
+                    WorkRefreshWarning(retry: retryWork)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                }
+
+                if openGroups.isEmpty && closedGroups.isEmpty {
+                    emptyState
+                } else if openGroups.isEmpty && !showsClosed {
+                    // Everything left is finished and finished is hidden. Saying
+                    // so beats a page that looks broken.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Nothing open. Everything here is finished.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Button("Show finished") { showsClosed = true }
+                            .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 28)
+                } else {
+                    ForEach(openGroups, id: \.state) { group in
+                        workGroup(group.state, items: group.items)
+                    }
+                    if showsClosed {
+                        ForEach(closedGroups, id: \.state) { group in
+                            workGroup(group.state, items: group.items)
+                        }
+                    }
+                }
+
+                if !store.areas.isEmpty {
+                    areasFooter
                 }
             }
-
-            Section("Areas") {
-                if store.areas.isEmpty {
-                    emptyAreasState
-                } else {
-                    if store.workError != nil {
-                        WorkRefreshWarning(retry: retryWork)
+            .padding(.bottom, 40)
+        }
+        // The list is now a place you open an Albatross from, so the detail has
+        // to be reachable here and not only from inside an Area.
+        .navigationDestination(item: $navigation.workRoute) { route in
+            WorkDetailView(route: route)
+        }
+        .navigationTitle("Albatrosses")
+        .toolbar {
+            if !closedGroups.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(showsClosed ? "Hide finished" : "Show finished") {
+                        showsClosed.toggle()
                     }
-                    ForEach(store.areas) { area in
-                        Button {
-                            environment.navigation.openArea(id: area.id, name: area.name)
-                        } label: {
-                            AreaListRow(area: area)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    .font(.footnote)
                 }
             }
         }
-        .navigationTitle("Areas")
         .refreshable { await store.refreshWork() }
         .shellToolbar()
     }
 
-    // With no last-good areas to keep readable, distinguish the three honest
-    // states: still loading (no cache yet), a failed first load with retry, and a
-    // genuine empty result after a successful load.
+    /// Filters as a glass capsule row: the material Apple uses for controls that
+    /// float over content, so the list reads as the page and these read as the
+    /// handles on it.
+    private var filters: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                filterPill(.all)
+                filterPill(.needsYou)
+                if unhomedCount > 0 { filterPill(.unhomed) }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private func filterPill(_ value: WorkFilter) -> some View {
+        let active = filter == value
+        return Button {
+            filter = value
+        } label: {
+            Text(value.label)
+                .font(.footnote.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? Color.accentColor : Color.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
+    /// A section rule, weighted by whether the group is asking for anything.
+    /// Needs-you carries the accent; everything else is a hairline.
     @ViewBuilder
-    private var emptyAreasState: some View {
-        if let error = store.workError {
-            ContentUnavailableView {
-                Label("Couldn’t load areas", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(error)
-            } actions: {
-                Button("Try Again", action: retryWork)
+    private func workGroup(_ state: WorkState, items: [WorkListItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Rectangle()
+                    .fill(state.asksForYou ? Color.accentColor : Color.secondary.opacity(0.45))
+                    .frame(width: 18, height: 1)
+                Text(state.label).font(.system(.subheadline, design: .serif).weight(.semibold))
+                Text(state.hint).font(.caption2).foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
             }
-        } else if store.isLoadingWork || !store.workDidLoad {
-            HStack(spacing: 10) {
-                ProgressView()
-                Text("Loading areas…").foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                ForEach(items) { item in
+                    Button {
+                        environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                    } label: {
+                        WorkListRow(item: item)
+                    }
+                    .buttonStyle(.plain)
+                    if item.id != items.last?.id {
+                        Divider().padding(.leading, 14)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 12)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Loading areas")
-        } else {
-            ContentUnavailableView(
-                "No active areas",
-                systemImage: "square.stack.3d.up",
-                description: Text("Capture what you’re trying to move forward and Albatross will help place it.")
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
             )
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
+    }
+
+    private var areasFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Rectangle().fill(Color.secondary.opacity(0.45)).frame(width: 18, height: 1)
+                Text("Areas").font(.system(.subheadline, design: .serif).weight(.semibold))
+                Text("The parts of life these belong to.").font(.caption2).foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            }
+            VStack(spacing: 0) {
+                ForEach(store.areas) { area in
+                    Button {
+                        environment.navigation.openArea(id: area.id, name: area.name)
+                    } label: {
+                        AreaListRow(area: area)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    // With no last-good work to keep readable, distinguish the three honest
+    // states: still loading (no cache yet), a failed first load with retry, and
+    // a genuine empty result after a successful load.
+    @ViewBuilder
+    private var emptyState: some View {
+        if !store.workDidLoad && store.workError == nil {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Loading what you are carrying…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 40)
+        } else if let error = store.workError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn’t load your Albatrosses", systemImage: "exclamationmark.triangle")
+                    .font(.subheadline.weight(.medium))
+                Text(error).font(.caption).foregroundStyle(.secondary)
+                Button("Try Again") { retryWork() }.buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 24)
+        } else {
+            ContentUnavailableView {
+                Label(
+                    filter == .all ? "Nothing on your mind yet" : "Nothing under this filter",
+                    systemImage: "checkmark.circle"
+                )
+            } description: {
+                Text(
+                    filter == .all
+                        ? "Tell Albatross what you are carrying and it starts here."
+                        : "Try Everything to see the rest."
+                )
+            } actions: {
+                if filter == .all {
+                    Button("Get something out of your head") {
+                        environment.navigation.sheet = .assistant
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(.vertical, 20)
         }
     }
 
@@ -74,9 +231,56 @@ struct WorkView: View {
     }
 }
 
-// Cached (last-good) areas stay visible when a refresh fails; a compact, quiet
-// banner explains the staleness and offers a local retry without blanking the
-// list or raising the app-wide alert.
+/// One Albatross: what it is, where it stands, and the area it belongs to.
+private struct WorkListRow: View {
+    let item: WorkListItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.displayTitle)
+                    .font(item.state.asksForYou ? .system(.subheadline, design: .serif).weight(.semibold) : .subheadline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 6) {
+                    Text(item.standingLine)
+                    if let areaName = item.areaName {
+                        Text("·")
+                        Text(areaName)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            StateChip(state: item.state)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+}
+
+/// The state, said in words. A chip that asks for you is outlined in a dashed
+/// rule, so an unanswered thing never reads as settled.
+private struct StateChip: View {
+    let state: WorkState
+
+    var body: some View {
+        Text(state.label)
+            .font(.caption2)
+            .foregroundStyle(state.asksForYou ? Color.accentColor : Color.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .overlay(
+                Capsule().strokeBorder(
+                    state.asksForYou ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.3),
+                    style: StrokeStyle(lineWidth: 1, dash: state == .unresolved ? [3, 2] : [])
+                )
+            )
+            .fixedSize()
+    }
+}
 private struct WorkRefreshWarning: View {
     let retry: () -> Void
 
@@ -87,7 +291,7 @@ private struct WorkRefreshWarning: View {
                 .accessibilityHidden(true)
             // Keep the message and the Retry control as separate accessibility
             // elements so VoiceOver can still activate the button.
-            Text("Showing saved areas — couldn’t refresh.")
+            Text("Showing what was saved — couldn’t refresh.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)

@@ -131,6 +131,26 @@ struct WorkDetailView: View {
                     }
                 }
 
+                // The contract sits above everything Albatross made, because it
+                // is the thing that decides whether any of it counts as done.
+                if let contract = detail.contract {
+                    bareSection {
+                        OutcomeContractView(
+                            contract: contract,
+                            canClose: detail.proofStanding.isConfirmed
+                        )
+                    }
+                }
+
+                if !detail.evidence.isEmpty {
+                    bareSection {
+                        ProofTimelineView(
+                            evidence: detail.evidence,
+                            standing: detail.proofStanding
+                        )
+                    }
+                }
+
                 if let project = detail.project {
                     documentSection("Project") {
                         VStack(alignment: .leading, spacing: 5) {
@@ -301,10 +321,9 @@ struct WorkDetailView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Sentence case, not small caps. A shouted micro-label is decoration.
             Text(title)
-                .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
-                .tracking(1.2)
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
             content()
         }
@@ -312,6 +331,15 @@ struct WorkDetailView: View {
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    /// A section whose content already carries its own heading.
+    private func bareSection<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .top) { Divider() }
     }
 
     private func errorState(_ message: String) -> some View {

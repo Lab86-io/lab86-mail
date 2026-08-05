@@ -435,7 +435,7 @@ function PreferencesSection({
   if (section.heading) {
     return (
       <fieldset className="flex flex-col">
-        <legend className="text-muted-foreground pb-1 text-xs tracking-widest uppercase">
+        <legend className="text-muted-foreground pb-1 text-xs tracking-widest ">
           {section.heading}
         </legend>
         {content}

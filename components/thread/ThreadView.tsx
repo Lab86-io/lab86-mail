@@ -19,6 +19,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -62,6 +63,7 @@ export function ThreadView() {
   const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  const openCaptureWith = useClientStore((s) => s.openCaptureWith);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
@@ -461,6 +463,21 @@ export function ThreadView() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            title="Hand this to Albatross"
+            onClick={() =>
+              openCaptureWith(
+                `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
+              )
+            }
+            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <span className="hidden @[560px]:inline">Hand to Albatross</span>
+            <span className="@[560px]:hidden">Albatross</span>
+          </Button>
           {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
           <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
             <Button
@@ -539,6 +556,10 @@ export function ThreadView() {
           </div>
         </div>
       </header>
+
+      {/* Most proof that a real-life thing happened arrives by email. The offer
+          sits directly under the thread that might be it. */}
+      <ProofOffer threadId={threadId || ''} subject={data.subject} />
 
       <div className="scrollable flex-1 px-5 py-4">
         {canSummarizeThread ? (

@@ -764,9 +764,7 @@ export function FilesSurface() {
           </div>
           <div className="mt-3 hidden sm:block">
             <div className="mb-1 flex items-center justify-between px-2">
-              <span className="text-[10px] font-medium uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
-                Locations
-              </span>
+              <span className="text-[10px] font-medium text-[var(--color-text-faint)]">Locations</span>
               <button
                 type="button"
                 aria-label="Manage drives"
@@ -1039,7 +1037,7 @@ function FileList({
     <div className="min-w-[560px]">
       <div
         className={cn(
-          'sticky top-0 z-10 grid h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 px-4 text-[10px] font-medium uppercase tracking-[0.07em] text-[var(--color-text-faint)] backdrop-blur',
+          'sticky top-0 z-10 grid h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 px-4 text-[10px] font-medium text-[var(--color-text-faint)] backdrop-blur',
           showLocation
             ? 'grid-cols-[minmax(240px,1fr)_150px_110px_76px_28px]'
             : 'grid-cols-[minmax(240px,1fr)_140px_110px_28px]',

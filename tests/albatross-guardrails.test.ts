@@ -173,12 +173,17 @@ describe('projects lens progress contract (frozen shape)', () => {
   });
 });
 
-describe('feature flag off regression guard (re-check)', () => {
-  test('albatross views fall back when the flag is off', async () => {
+describe('the product is not behind a flag', () => {
+  test('every Albatross view resolves, and legacy names map forward', async () => {
     const { normalizePrimaryView } = await import('../lib/shared/types');
-    expect(normalizePrimaryView('mail', false)).toBe('mail');
-    expect(normalizePrimaryView('areas', false)).not.toBe('areas');
-    expect(normalizePrimaryView('intents', false)).not.toBe('intents');
+    expect(normalizePrimaryView('mail')).toBe('mail');
+    expect(normalizePrimaryView('areas')).toBe('areas');
+    expect(normalizePrimaryView('albatrosses')).toBe('albatrosses');
+    // Legacy names route to the surface that replaced them, never to a
+    // different product (Areas used to render the Daily Report silently).
+    expect(normalizePrimaryView('intents')).toBe('albatrosses');
+    expect(normalizePrimaryView('daily_report')).toBe('today');
+    expect(normalizePrimaryView('unassigned')).toBe('albatrosses');
   });
 });
 

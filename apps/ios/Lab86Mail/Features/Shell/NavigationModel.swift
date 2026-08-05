@@ -18,11 +18,11 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .today: "Brief"
+        case .today: "Today"
         case .mail: "Mail"
         case .calendar: "Calendar"
         case .tasks: "Tasks"
-        case .work: "Areas"
+        case .work: "Albatrosses"
         case .files: "Files"
         case .chat: "Chat"
         }
@@ -30,11 +30,11 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
 
     var symbol: String {
         switch self {
-        case .today: "doc.text.image"
+        case .today: "sun.horizon"
         case .mail: "envelope"
         case .calendar: "calendar"
         case .tasks: "checklist"
-        case .work: "square.stack.3d.up"
+        case .work: "checkmark.circle"
         case .files: "folder"
         case .chat: "bubble"
         }
@@ -42,7 +42,9 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
 
     // Files belongs with the personal productivity destinations. Areas stays
     // last as the handoff into the user's contextual workspace hierarchy.
-    static let sourceList: [PrimaryTab] = [.today, .tasks, .calendar, .files, .work]
+    // Same order as the web rail: the day, the things being carried, then the
+    // systems those things run on. The board is not a peer destination.
+    static let sourceList: [PrimaryTab] = [.today, .work, .calendar, .files, .tasks]
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {

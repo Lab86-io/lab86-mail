@@ -3,13 +3,18 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReleaseSheet } from '@/components/albatross/Forgiveness';
+import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
+import { OutcomeHeader } from '@/components/albatross/primitives';
 import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import type { OutcomeContract } from '@/lib/albatross/contract';
 import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
+import type { EvidenceLike } from '@/lib/albatross/proof';
+import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
@@ -54,21 +59,14 @@ interface WorkDetailData {
   project: null | { _id: string; title: string; outcome?: string; status: string; activeSprintId?: string };
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
+  contract: OutcomeContract | null;
+  evidence: EvidenceLike[];
   application: null | {
     _id: string;
     status: string;
     operationIds: string[];
     artifacts: Array<{ kind: string; id: string; title?: string; operationId?: string }>;
   };
-}
-
-function stateLabel(work: WorkDetailData['work']) {
-  if (work.agentState === 'needs_input') return 'Needs you';
-  if (work.agentState === 'researching') return 'Researching';
-  if (work.agentState === 'applying') return 'Creating';
-  if (work.agentState === 'error') return 'Needs attention';
-  if (work.workState === 'done') return 'Done';
-  return work.workState || work.status;
 }
 
 export function WorkDetail({ workId }: { workId: string }) {
@@ -88,6 +86,7 @@ export function WorkDetail({ workId }: { workId: string }) {
       : 'skip',
   ) as Array<{ cardId: string; title: string; completedAt?: number }> | undefined;
   const [advancing, setAdvancing] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   const artifactFrameRef = useRef<HTMLIFrameElement>(null);
@@ -125,9 +124,9 @@ export function WorkDetail({ workId }: { workId: string }) {
         body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not continue this Work.');
+      if (!response.ok) throw new Error(body.error || 'Could not continue this Albatross.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not continue this Work.');
+      setError(cause instanceof Error ? cause.message : 'Could not continue this Albatross.');
     } finally {
       setAdvancing(false);
     }
@@ -136,7 +135,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   if (detail === undefined) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-        <LoaderCircle className="size-4 animate-spin" /> Loading Work…
+        <LoaderCircle className="size-4 animate-spin" /> Loading
       </div>
     );
   }
@@ -144,9 +143,9 @@ export function WorkDetail({ workId }: { workId: string }) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center">
         <div>
-          <p className="text-[14px] font-medium">This Work is no longer available.</p>
+          <p className="text-[14px] font-medium">This Albatross is no longer available.</p>
           <Button className="mt-4" size="sm" variant="outline" onClick={() => setSelectedWorkId(null)}>
-            Back to Area
+            Back to Albatrosses
           </Button>
         </div>
       </div>
@@ -154,66 +153,89 @@ export function WorkDetail({ workId }: { workId: string }) {
   }
 
   const { work, plan, project } = detail;
-  const pendingQuestion = detail.questions.find((question) => question.status === 'pending');
+  const pendingQuestions = detail.questions.filter((question) => question.status === 'pending');
   const completedTasks = projectTasks?.filter((task) => task.completedAt).length ?? 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <Button type="button" size="xs" variant="ghost" onClick={() => setSelectedWorkId(null)}>
-          <ArrowLeft className="size-3.5" /> Back to Area
+          <ArrowLeft className="size-3.5" /> Back
         </Button>
         <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Work</span>
-        <Badge variant="outline" className="capitalize">
-          {stateLabel(work)}
-        </Badge>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Albatross</span>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-14 pt-6">
         <div className="mx-auto max-w-4xl">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--color-border)] pb-6">
-            <div className="min-w-0 max-w-2xl">
-              <p className="font-serif text-[10.5px] uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
-                Desired outcome
-              </p>
-              <h1 className="mt-2 font-serif text-[clamp(25px,4vw,38px)] font-semibold leading-[1.08] tracking-tight">
-                {plan?.outcome || work.title || work.rawText}
-              </h1>
-              {plan?.summary ? (
-                <p className="mt-3 max-w-2xl text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
-                  {plan.summary}
-                </p>
-              ) : null}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setChatScope({ kind: 'work', workId });
-                  setAiBarOpen(true);
-                }}
-              >
-                <MessageCircle className="size-3.5" /> Discuss
-              </Button>
-              <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
-                <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
-                {advancing ? 'Working…' : 'Continue'}
-              </Button>
-            </div>
-          </div>
+          <OutcomeHeader
+            outcome={plan?.outcome || work.title || work.rawText}
+            summary={plan?.summary}
+            work={{ ...work, openQuestions: pendingQuestions.length }}
+            evidence={detail.evidence || []}
+            state={workStateKey({ ...work, openQuestions: pendingQuestions.length })}
+            actions={
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setChatScope({ kind: 'work', workId });
+                    setAiBarOpen(true);
+                  }}
+                >
+                  <MessageCircle className="size-3.5" /> Discuss
+                </Button>
+                <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
+                  <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
+                  {advancing ? 'Working…' : 'Continue'}
+                </Button>
+                {/* Putting something down is a first-class ending, so it sits
+                    beside the action that continues it — not buried in a menu. */}
+                {work.workState !== 'released' && work.workState !== 'done' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setReleasing((value) => !value)}
+                  >
+                    Put it down
+                  </Button>
+                ) : null}
+              </>
+            }
+          />
 
-          {pendingQuestion ? <WorkQuestionCard question={pendingQuestion} /> : null}
+          {releasing ? (
+            <div className="mt-6">
+              <ReleaseSheet
+                workId={workId}
+                title={plan?.outcome || work.title || work.rawText}
+                onReleased={() => setReleasing(false)}
+                onCancel={() => setReleasing(false)}
+              />
+            </div>
+          ) : null}
+
+          {pendingQuestions.length ? (
+            <section className="mt-6">
+              <h2 className="text-[13px] font-medium text-[var(--color-warning)]">
+                {pendingQuestions.length === 1
+                  ? 'Albatross needs one thing'
+                  : `Albatross needs ${pendingQuestions.length} things`}
+              </h2>
+              {pendingQuestions.map((question) => (
+                <WorkQuestionCard key={question._id} question={question} />
+              ))}
+            </section>
+          ) : null}
 
           {project ? (
             <section className="border-b border-[var(--color-border)] py-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-[var(--color-text-faint)]">
-                    Project / Epic
-                  </p>
+                  <p className="text-[11.5px] text-[var(--color-text-faint)]">Project</p>
                   <h2 className="mt-1.5 font-serif text-[19px] font-semibold">{project.title}</h2>
                   {project.outcome ? (
                     <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">{project.outcome}</p>
@@ -248,9 +270,14 @@ export function WorkDetail({ workId }: { workId: string }) {
 
           {plan?.digitalActions?.length || plan?.physicalActions?.length ? (
             <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                What Albatross created
-              </h2>
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What Albatross created</h2>
+              {/* A plan is Albatross's best current guess, not a commitment the
+                  user signed. Saying so is what makes correcting it feel
+                  ordinary rather than an admission of failure. */}
+              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+                This is Albatross&apos;s best guess at the way through. Tell it if the plan is wrong and it
+                will find another one.
+              </p>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
                 {(plan.digitalActions || []).map((action) => {
                   const done = plan.appliedSteps?.some((step) => step.stepKey === action.key);
@@ -287,9 +314,7 @@ export function WorkDetail({ workId }: { workId: string }) {
             <section className="border-b border-[var(--color-border)] py-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                    Recent changes
-                  </h2>
+                  <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Recent changes</h2>
                   <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
                     Private changes were created automatically. Undo is available while the underlying
                     provider allows it.
@@ -321,24 +346,32 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
+          {detail.contract ? (
+            <section className="border-b border-[var(--color-border)] py-5">
+              <OutcomeContractCard contract={detail.contract} evidence={detail.evidence || []} />
+            </section>
+          ) : null}
+
+          {detail.evidence?.length ? (
+            <section className="border-b border-[var(--color-border)] py-5">
+              <ProofTimeline evidence={detail.evidence} contract={detail.contract} />
+            </section>
+          ) : null}
+
           {plan?.document && plan.artifactSource === 'document-v2' ? (
             <section className="py-5">
-              <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                Brief
-              </h2>
+              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
               <div className="h-[min(72vh,780px)] overflow-hidden rounded-xl border border-[var(--color-border)]">
                 <BriefCanvas value={plan.document} />
               </div>
             </section>
           ) : artifact ? (
             <section className="py-5">
-              <h2 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                Brief
-              </h2>
+              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
               <WorkDetailArtifactFrame
                 artifact={artifact}
                 frameRef={artifactFrameRef}
-                title={`Brief for ${work.title || 'Work'}`}
+                title={`Brief for ${work.title || 'this Albatross'}`}
                 onLoad={postTheme}
               />
             </section>
@@ -382,7 +415,17 @@ export function WorkDetail({ workId }: { workId: string }) {
   );
 }
 
+// The `reason` field carries pipeline notes as often as it carries something a
+// person would want to read ("Migrated from the current plan question."). Show
+// it only when it explains the question rather than the machinery.
+function humanReason(reason: string | undefined): string | null {
+  if (!reason) return null;
+  const internal = /\b(migrat|plan question|pipeline|classifier|backfill)\b/i;
+  return internal.test(reason) ? null : reason;
+}
+
 function WorkQuestionCard({ question }: { question: WorkQuestion }) {
+  const reason = humanReason(question.reason);
   const [answer, setAnswer] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -419,13 +462,8 @@ function WorkQuestionCard({ question }: { question: WorkQuestion }) {
 
   return (
     <section className="my-5 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">
-      <p className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[var(--color-warning)]">
-        Albatross needs one thing
-      </p>
-      <h2 className="mt-1.5 text-[15px] font-medium leading-snug">{question.prompt}</h2>
-      {question.reason ? (
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">{question.reason}</p>
-      ) : null}
+      <h3 className="text-[15px] font-medium leading-snug">{question.prompt}</h3>
+      {reason ? <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">{reason}</p> : null}
       {question.options?.length ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {question.options.map((option) => (

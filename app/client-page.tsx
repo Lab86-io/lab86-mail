@@ -7,18 +7,7 @@ const AppShell = dynamic(() => import('@/components/shell/AppShell').then((mod) 
   loading: () => <main className="app-paper h-dvh bg-[var(--color-bg)]" />,
 });
 
-export function ClientPage({
-  albatrossEnabled,
-  clerkEnabled,
-}: {
-  albatrossEnabled: boolean;
-  clerkEnabled: boolean;
-}) {
-  return (
-    <AppShell
-      albatrossEnabled={albatrossEnabled}
-      clerkEnabled={clerkEnabled}
-      initialView={albatrossEnabled ? 'areas' : undefined}
-    />
-  );
+export function ClientPage({ clerkEnabled }: { clerkEnabled: boolean }) {
+  // Today is where a new session lands. A saved view still wins over it.
+  return <AppShell clerkEnabled={clerkEnabled} initialView="today" />;
 }

@@ -51,9 +51,7 @@ export function SuggestionsTray() {
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" side="right" className="w-80 p-2">
-        <p className="px-1 pb-1.5 text-[11px] uppercase tracking-[0.09em] text-[var(--color-text-faint)]">
-          Found in your mail
-        </p>
+        <p className="px-1 pb-1.5 text-[11px] text-[var(--color-text-faint)]">Found in your mail</p>
         <ul className="space-y-1.5">
           {pending.slice(0, 8).map((suggestion) => (
             <li

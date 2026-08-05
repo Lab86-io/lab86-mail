@@ -36,9 +36,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { api } from '@/convex/_generated/api';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
+import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
+import { isClosed } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import { confirmDailyReportAction } from '@/lib/daily-report-action-review';
+import {
+  artifactFrameHeight,
+  confirmDailyReportAction,
+  DEFAULT_ARTIFACT_FRAME_HEIGHT,
+} from '@/lib/daily-report-action-review';
 import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
@@ -460,6 +466,16 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	try{payload=JSON.parse(el.getAttribute('data-payload')||'{}')||{};}catch(_){payload={};}
 	window.parent.postMessage({source:'lab86-daily-report',action:action,payload:payload},'*');
 	});
+	/* Height bridge. Embedded in Today the artifact flows in the page scroll, so
+	   the host has to be told how tall the document actually is. */
+	function reportHeight(){
+	var h=Math.max(document.documentElement.scrollHeight||0,document.body?document.body.scrollHeight:0);
+	if(h>0)window.parent.postMessage({source:'lab86-daily-report',action:'__height',payload:{height:h}},'*');
+	}
+	window.addEventListener('load',reportHeight);
+	window.addEventListener('resize',reportHeight);
+	if(window.ResizeObserver&&document.body)new ResizeObserver(reportHeight).observe(document.body);
+	setTimeout(reportHeight,300);
 	})();
 	</script>`;
 
@@ -486,15 +502,19 @@ function ReportArtifact({
   dismissedTaskIds,
   dismissedThreadRecords,
   onChanged,
+  autoHeight = false,
 }: {
   html: string;
   albatrossContext?: AlbatrossDailyReportContext | null;
   dismissedTaskIds: string[];
   dismissedThreadRecords: DailyReportThreadDismissalRecord[];
   onChanged?: () => void;
+  /** Grow to the artifact's own height instead of filling a fixed frame. */
+  autoHeight?: boolean;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [artifactReady, setArtifactReady] = useState(false);
+  const [artifactHeight, setArtifactHeight] = useState<number | null>(null);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -574,6 +594,12 @@ function ReportArtifact({
       if (!data || data.source !== 'lab86-daily-report') return;
       // Only trust messages from our own iframe document.
       if (frameRef.current && event.source !== frameRef.current.contentWindow) return;
+      // The height bridge changes nothing but this frame's own size, so it does
+      // not pass through the confirm gate below.
+      if (data.action === '__height') {
+        setArtifactHeight(artifactFrameHeight(data.payload?.height));
+        return;
+      }
       const payload = data.payload || {};
       const ack = (ok: boolean, error?: string) =>
         frameRef.current?.contentWindow?.postMessage(
@@ -811,8 +837,11 @@ function ReportArtifact({
       // artifact sandboxed from the app origin; allow-popups lets external
       // links open in a new tab.
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+      scrolling={autoHeight ? 'no' : undefined}
+      style={autoHeight ? { height: artifactHeight ?? DEFAULT_ARTIFACT_FRAME_HEIGHT } : undefined}
       className={cn(
-        'h-full w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
+        'w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
+        autoHeight ? 'block overflow-hidden' : 'h-full',
         artifactReady ? 'opacity-100' : 'opacity-0',
       )}
     />
@@ -877,7 +906,7 @@ function FullArtifactUnavailable({
           {failures.length ? (
             failures.map((failure) => (
               <div key={`${failure.stage}-${failure.at}`} className="space-y-1">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-accent)]">
+                <div className="text-[10px] font-semibold text-[var(--color-accent)]">
                   {artifactStageLabel(failure.stage)}
                 </div>
                 <p className="text-[12px] leading-5 text-[var(--color-text-muted)]">
@@ -920,7 +949,7 @@ function artifactStageLabel(stage: DailyReportArtifactError['stage']) {
   }
 }
 
-export function DailyReport() {
+export function DailyReport({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -988,6 +1017,10 @@ export function DailyReport() {
   const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
+  // Embedded in Today, the brief sits under a live layer. It has to say when it
+  // was written, and say so louder when it describes an older day.
+  const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, Date.now());
+  const embeddedStale = briefIsStale(report?.generatedAt ?? null, Date.now());
   const structuredArtifactHidden =
     Boolean(report?.html) && artifactSource === 'deterministic' && !showStructuredFallback;
   const waitingForAiArtifact =
@@ -1220,10 +1253,47 @@ export function DailyReport() {
   };
 
   return (
-    <section className="report-paper relative flex h-full flex-col">
+    <section className={cn('report-paper relative', embedded ? 'block' : 'flex h-full flex-col')}>
+      {/* Embedded, the brief is a layer of Today rather than a page. Today has
+          already said what day it is, so the brief states only who wrote it and
+          when, and offers to write a new one in place. */}
+      {embedded ? (
+        <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span aria-hidden className="h-px w-5 shrink-0 bg-[var(--color-border-strong)]" />
+          <h2 className="font-serif text-[15px] font-semibold">The brief</h2>
+          {/* The stamp is not decoration. This layer is generated, and the live
+              layer above it is not, so the page has to say which is which. */}
+          <p
+            className={cn(
+              'text-[12px]',
+              embeddedStale ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
+            )}
+          >
+            {!report
+              ? 'Not written yet today.'
+              : embeddedStale
+                ? `${embeddedFreshness} — it describes an older day.`
+                : `${embeddedFreshness}, from your mail and calendar.`}
+          </p>
+          <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
+          <button
+            type="button"
+            disabled={generate.isPending || generating || enriching}
+            onClick={() => generate.mutate()}
+            className="shrink-0 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-60"
+          >
+            {generate.isPending || generating
+              ? 'Writing…'
+              : report
+                ? 'Write it again'
+                : "Write today's brief"}
+          </button>
+        </div>
+      ) : null}
+
       {/* The agent-authored brief carries its own art masthead, so the app
           header is hidden for it and the controls move to a floating toolbar. */}
-      {!displayArtifact && !displayDocument ? (
+      {!embedded && !displayArtifact && !displayDocument ? (
         <header className="@container border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div className="min-w-0">
@@ -1231,13 +1301,13 @@ export function DailyReport() {
                 The Daily Brief
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <p className="font-serif text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                <p className="font-serif text-[11px] text-[var(--color-text-muted)]">
                   {report ? formatDateline(report) : 'From your mail & calendar'}
                 </p>
                 {report && report.status !== 'partial' ? (
                   <span
                     title="The rich artifact is not present for this edition."
-                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-[var(--color-text-muted)]"
+                    className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
                   >
                     Fallback view
                   </span>
@@ -1323,8 +1393,9 @@ export function DailyReport() {
         </header>
       ) : null}
 
-      {/* Floating toolbar for the artifact view — fades until hovered. */}
-      {displayArtifact || displayDocument ? (
+      {/* Floating toolbar for the artifact view — fades until hovered. Embedded,
+          the same controls read as the section rule above instead. */}
+      {!embedded && (displayArtifact || displayDocument) ? (
         <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
           {displayDocument ? null : artifactSource === 'deterministic' ? (
             <span
@@ -1402,10 +1473,12 @@ export function DailyReport() {
 
       <div
         className={cn(
-          'min-h-0 flex-1',
+          embedded ? 'block' : 'min-h-0 flex-1',
           displayArtifact || displayDocument || showGeneratingState
-            ? 'overflow-hidden'
-            : 'scrollable @container px-5 py-5',
+            ? embedded
+              ? ''
+              : 'overflow-hidden'
+            : cn('@container', embedded ? 'py-1' : 'scrollable px-5 py-5'),
         )}
       >
         {reportQuery.isLoading && !report ? (
@@ -1417,7 +1490,7 @@ export function DailyReport() {
             {showGeneratingState ? (
               <motion.div
                 key="vortex"
-                className="h-full"
+                className={embedded ? undefined : 'h-full'}
                 exit={{ opacity: 0, scale: 1.05 }}
                 transition={{ duration: 0.25, ease: 'easeIn' }}
               >
@@ -1426,7 +1499,7 @@ export function DailyReport() {
             ) : displayDocument && report?.document ? (
               <motion.div
                 key="document-v2"
-                className="h-full"
+                className={embedded ? undefined : 'h-full'}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.28, ease: 'easeOut' }}
@@ -1435,14 +1508,17 @@ export function DailyReport() {
                   value={report.document}
                   composing={report.artifactStatus === 'composing'}
                   onChanged={invalidate}
-                  masthead
-                  footer={<BriefFooter report={report} />}
+                  // Today already carries the dateline masthead. A second one
+                  // on the same scroll would say the date twice.
+                  masthead={!embedded}
+                  embedded={embedded}
+                  footer={embedded ? null : <BriefFooter report={report} />}
                 />
               </motion.div>
             ) : report?.html ? (
               <motion.div
                 key="artifact"
-                className="h-full"
+                className={embedded ? undefined : 'h-full'}
                 initial={{ opacity: 0, scale: 0.92 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ type: 'spring', stiffness: 190, damping: 22, mass: 0.9 }}
@@ -1453,6 +1529,7 @@ export function DailyReport() {
                   dismissedTaskIds={dismissedTaskIds}
                   dismissedThreadRecords={dismissedThreadRecords}
                   onChanged={invalidate}
+                  autoHeight={embedded}
                 />
               </motion.div>
             ) : (
@@ -1460,18 +1537,27 @@ export function DailyReport() {
             )}
           </AnimatePresence>
         ) : !report ? (
-          <Empty className="grid h-full place-items-center px-6 py-12 text-center">
-            <EmptyHeader>
-              <EmptyMedia>
-                <Newspaper className="h-4 w-4 text-[var(--color-text-faint)]" />
-              </EmptyMedia>
-              <EmptyTitle className="font-serif text-[18px] italic">No edition yet</EmptyTitle>
-              <EmptyDescription>
-                Press Generate to print today&apos;s brief. Scheduled morning runs will file here once
-                installed.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          embedded ? (
+            // Embedded, a missing brief thins the page. It never replaces the
+            // live day above it with a full-height empty state.
+            <p className="text-[12.5px] text-[var(--color-text-muted)]">
+              Albatross writes this each morning from your mail and calendar. There is no edition for today
+              yet.
+            </p>
+          ) : (
+            <Empty className="grid h-full place-items-center px-6 py-12 text-center">
+              <EmptyHeader>
+                <EmptyMedia>
+                  <Newspaper className="h-4 w-4 text-[var(--color-text-faint)]" />
+                </EmptyMedia>
+                <EmptyTitle className="font-serif text-[18px] italic">No edition yet</EmptyTitle>
+                <EmptyDescription>
+                  Press Generate to print today&apos;s brief. Scheduled morning runs will file here once
+                  installed.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )
         ) : structuredArtifactUnavailable ? (
           <FullArtifactUnavailable
             artifactErrors={report.artifactErrors}
@@ -1487,7 +1573,7 @@ export function DailyReport() {
                 className="blur-in rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-5 py-5 shadow-[var(--shadow-soft)]"
                 style={{ animationDelay: '60ms' }}
               >
-                <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:uppercase [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
+                <Markdown className="space-y-3 text-[13px] leading-6 text-[var(--color-text-muted)] [&_h1]:font-serif [&_h1]:text-[20px] [&_h1]:font-semibold [&_h1]:italic [&_h1]:leading-tight [&_h1]:text-[var(--color-text)] [&_h2]:mt-4 [&_h2]:font-serif [&_h2]:text-[16px] [&_h2]:font-semibold [&_h2]:leading-tight [&_h2]:text-[var(--color-text)] [&_h3]:mt-3 [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]: [&_h3]:tracking-[0.12em] [&_h3]:text-[var(--color-accent)] [&_li]:ml-4 [&_li]:list-disc [&_p]:m-0 [&_strong]:font-semibold [&_strong]:text-[var(--color-text)]">
                   {stripEmojiPreservingMarkdown(report.narrative)}
                 </Markdown>
               </section>
@@ -1510,9 +1596,7 @@ export function DailyReport() {
                     className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 text-left shadow-[var(--shadow-soft)] enabled:hover:border-[var(--color-border-strong)] enabled:hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                   >
                     <div className="flex items-baseline justify-between">
-                      <div className="font-serif text-[11px] uppercase tracking-[0.16em] text-[var(--color-accent)]">
-                        {label}
-                      </div>
+                      <div className="font-serif text-[11px] text-[var(--color-accent)]">{label}</div>
                       <div className="text-[11px] tabular-nums text-[var(--color-text-faint)]">
                         {items.length || ''}
                       </div>
@@ -1610,13 +1694,19 @@ function DailyBriefLiveState() {
   ) as
     | Array<{
         question: { _id: string; prompt: string };
-        work: null | { _id: string; title?: string; rawText: string };
+        work: null | { _id: string; title?: string; rawText: string; workState?: string; status?: string };
       }>
     | undefined;
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const [checkinOpen, setCheckinOpen] = useState(false);
-  const pending = questions?.filter((row) => row.work) || [];
+  // The same needs-you definition Today, the rail and the list use. This bar
+  // used to count questions on Albatrosses the user had already put down, so it
+  // could claim three things needed you on a day when nothing did.
+  const pending =
+    questions?.filter(
+      (row) => row.work && !isClosed({ workState: row.work.workState, status: row.work.status }),
+    ) || [];
   if (!checkin && !pending.length) return null;
   const today = new Intl.DateTimeFormat('en-CA').format(new Date());
   const carryover = checkin && checkin.localDate !== today;
@@ -1637,16 +1727,15 @@ function DailyBriefLiveState() {
             type="button"
             onClick={() => {
               setSelectedWorkId(String(pending[0].work!._id));
-              setPrimaryView('areas');
+              setPrimaryView('albatrosses');
             }}
             className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
           >
-            {pending.length} Work {pending.length === 1 ? 'question' : 'questions'} need you
+            {pending.length === 1 ? 'One question needs you' : `${pending.length} questions need you`}
           </button>
         ) : null}
-        <span className="ml-auto text-[10.5px] text-[var(--color-text-faint)]">
-          Live · updates without regenerating the brief
-        </span>
+        {/* This used to read "Live", on a page that could be describing a day
+            three weeks old. Today owns the freshness stamp now. */}
       </div>
       <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </>
@@ -1719,9 +1808,7 @@ function TaskCalendarBrief({
     <section className="blur-in grid gap-3 @[700px]:grid-cols-2" style={{ animationDelay: `${delay}ms` }}>
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-            Task Board
-          </h2>
+          <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">Task Board</h2>
           <button
             type="button"
             onClick={onOpenTasks}
@@ -1820,9 +1907,7 @@ function TaskCalendarBrief({
 
       <div className="@container rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)] @[700px]:col-span-2">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-            Calendar
-          </h2>
+          <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">Calendar</h2>
           <button
             type="button"
             onClick={onOpenCalendar}
@@ -2071,9 +2156,7 @@ function ReportSection({
   return (
     <section className="blur-in" style={{ animationDelay: `${delay}ms` }}>
       <div className="mb-1.5 flex items-center gap-3">
-        <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text)]">
-          {label}
-        </h2>
+        <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text)]">{label}</h2>
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{countLabel}</span>
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
@@ -2162,9 +2245,7 @@ function ReportRow({
         </span>
         {item.nextAction ? (
           <div className="mt-2 rounded-lg bg-[var(--color-bg-muted)] px-2.5 py-2">
-            <span className="block text-[9.5px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-              Your move
-            </span>
+            <span className="block text-[9.5px] font-semibold text-[var(--color-text-muted)]">Your move</span>
             <span
               className={cn(
                 'mt-0.5 block text-[12px] font-medium leading-[1.45] text-[var(--color-text)]',
@@ -2215,7 +2296,7 @@ function ReportRow({
                     {pills.map((code) => (
                       <span
                         key={code}
-                        className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.08em]"
+                        className="rounded-sm bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9.5px] font-medium "
                       >
                         {PILL_LABELS[code]}
                       </span>
@@ -2334,7 +2415,7 @@ function BulkTail({
             !open && '-rotate-90',
           )}
         />
-        <h2 className="font-serif text-[13px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+        <h2 className="font-serif text-[13px] font-semibold text-[var(--color-text-muted)]">
           Bulk &amp; automated
         </h2>
         <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
@@ -2356,7 +2437,7 @@ function BulkTail({
                 {item.people[0] ? `${stripEmoji(item.people[0])} · ` : ''}
                 {stripEmoji(item.subject || '(no subject)')}
               </span>
-              <span className="shrink-0 justify-self-end text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-faint)]">
+              <span className="shrink-0 justify-self-end text-[10px] text-[var(--color-text-faint)]">
                 {item.demotionReason || 'Bulk'}
               </span>
             </button>

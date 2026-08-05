@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { __setWebhookIngestDepsForTest } from '../lib/mail/corpus-sync';
-import { enqueueNylasWebhook, webhookQueueDepth } from '../lib/mail/webhook-queue';
+import {
+  __resetWebhookSamplingForTest,
+  enqueueNylasWebhook,
+  webhookQueueDepth,
+} from '../lib/mail/webhook-queue';
 
 // The queue swallows ingest failures on purpose — Nylas must still get its ACK.
 // That makes its logging the only signal an outage exists, which is why the
@@ -32,6 +36,7 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+beforeEach(() => __resetWebhookSamplingForTest());
 afterEach(() => __setWebhookIngestDepsForTest());
 
 describe('webhook queue failure reporting', () => {
@@ -66,33 +71,42 @@ describe('webhook queue failure reporting', () => {
     const errors = spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       let distinct = 0;
+      let fixedReason: string | null = null;
       __setWebhookIngestDepsForTest({
         query: (async () => CONNECTED) as any,
         mutate: (async () => {
+          if (fixedReason) throw new Error(fixedReason);
           distinct += 1;
           throw new Error(`reason for delivery ${distinct}`);
         }) as any,
       });
-      for (let i = 0; i < 501; i += 1) enqueueNylasWebhook(payload());
-      await settle();
+      const send = async (count: number) => {
+        for (let i = 0; i < count; i += 1) enqueueNylasWebhook(payload());
+        await settle();
+      };
+      const linesForFirstReason = () =>
+        errors.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.endsWith('reason for delivery 1'));
 
+      // Fill the table exactly, then show the first reason is still counted.
+      // An implementation that gave up early would report it as new here.
+      await send(500);
       errors.mockClear();
-      __setWebhookIngestDepsForTest({
-        query: (async () => CONNECTED) as any,
-        mutate: (async () => {
-          throw new Error('reason for delivery 1');
-        }) as any,
-      });
-      enqueueNylasWebhook(payload());
-      await settle();
+      fixedReason = 'reason for delivery 1';
+      await send(49);
+      expect(linesForFirstReason()).toHaveLength(1);
+      expect(linesForFirstReason()[0]).toContain('(50x this reason');
 
-      // The first reason reports again, which it could only do if the table
-      // dropped it rather than remembering it forever.
-      const repeated = errors.mock.calls
-        .map((call) => String(call[0]))
-        .filter((line) => line.endsWith('reason for delivery 1'));
-      expect(repeated).toHaveLength(1);
-      expect(repeated[0]).toContain('(1x this reason');
+      // One reason past the limit. The table starts again rather than growing.
+      fixedReason = null;
+      await send(1);
+      errors.mockClear();
+      fixedReason = 'reason for delivery 1';
+      await send(1);
+
+      expect(linesForFirstReason()).toHaveLength(1);
+      expect(linesForFirstReason()[0]).toContain('(1x this reason');
     } finally {
       errors.mockRestore();
     }

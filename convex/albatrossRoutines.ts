@@ -453,6 +453,40 @@ export const listForProject = query({
   },
 });
 
+// The practices a person is keeping. Today shows at most a couple of these,
+// and never as a streak — the point is consistency over time, not a perfect
+// week the user can break.
+export const activePractices = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const rows = await ctx.db
+      .query('albatrossRoutines')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .take(60);
+    const areas = await ctx.db
+      .query('areas')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
+    return (
+      rows
+        .filter((row) => row.status === 'active')
+        // A practice with no next run is not the most urgent thing today; `|| 0`
+        // sorted every unscheduled one to the front of the list.
+        .sort((a, b) => (a.nextRunAt ?? Number.POSITIVE_INFINITY) - (b.nextRunAt ?? Number.POSITIVE_INFINITY))
+        .slice(0, Math.min(Math.max(args.limit ?? 2, 1), 10))
+        .map((row) => ({
+          _id: String(row._id),
+          title: row.title,
+          cadence: row.cadence,
+          nextRunAt: row.nextRunAt ?? null,
+          areaName: row.areaId ? (areaNames.get(String(row.areaId)) ?? null) : null,
+        }))
+    );
+  },
+});
+
 export const areaPulse = query({
   args: { ...callerArgs, areaId: v.id('areas') },
   handler: async (ctx, args) => {

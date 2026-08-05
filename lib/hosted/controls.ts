@@ -23,10 +23,6 @@ export function isPublicSignupDisabled() {
   return envFlag('LAB86_DISABLE_PUBLIC_SIGNUP');
 }
 
-export function isAlbatrossEnabled() {
-  return envFlag('LAB86_ENABLE_ALBATROSS');
-}
-
 export function assertOutboundSendEnabled() {
   if (isOutboundSendDisabled()) {
     throw new Error('Outbound sending is temporarily disabled.');

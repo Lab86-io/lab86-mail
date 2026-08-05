@@ -668,7 +668,7 @@ export function InlineComposer({
             </>
           ) : (
             <div className="grid grid-cols-[60px_1fr] items-center gap-2 px-4 py-1.5 text-[11.5px] text-[var(--color-text-muted)]">
-              <span className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">To</span>
+              <span className="text-[11px] text-[var(--color-text-faint)]">To</span>
               <div className="flex items-center gap-2">
                 <Avatar name={replyToLabel} size={18} />
                 <span className="truncate">{replyToLabel}</span>
@@ -758,7 +758,7 @@ export function InlineComposer({
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-60 p-2">
-              <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-faint)]">
+              <div className="mb-1 px-1 text-[11px] font-medium text-[var(--color-text-faint)]">
                 Schedule send
               </div>
               {schedulePresets().map((preset) => (
@@ -904,7 +904,7 @@ function RecipientField({
   const id = useId();
   return (
     <div className="grid grid-cols-[60px_1fr] items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 last:border-b-0">
-      <label htmlFor={id} className="text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">
+      <label htmlFor={id} className="text-[11px] text-[var(--color-text-faint)]">
         {label}
       </label>
       <input

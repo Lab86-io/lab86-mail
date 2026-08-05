@@ -34,7 +34,7 @@ export function BriefMasthead({ generatedAt, timezone }: { generatedAt: number; 
           aria-hidden
           className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/15 to-black/50"
         />
-        <span className="absolute left-4 top-4 z-10 text-[10px] font-medium uppercase tracking-[0.16em] text-white/85 [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
+        <span className="absolute left-4 top-4 z-10 text-[10px] font-medium text-white/85 [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
           {dateline}
         </span>
         {/* The title carries the editorial accent (accent-2). It derives from

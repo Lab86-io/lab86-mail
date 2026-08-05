@@ -5,7 +5,7 @@ import {
 } from '../lib/albatross/area-artifact-storage';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -108,6 +108,314 @@ export const updateWorkState = mutation({
       updatedAt: ts,
     });
     return { previousState: work.workState || 'active', state: args.state };
+  },
+});
+
+/**
+ * Put an Albatross down on purpose.
+ *
+ * This is an ending, not a failure, and the data says so: it is its own state
+ * with its own reason, and it records whether the user chose it or Albatross
+ * suggested it. A release nobody proposed reads very differently from one the
+ * system nudged.
+ */
+export const releaseWork = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    reason: v.optional(v.string()),
+    proposedBy: v.optional(v.union(v.literal('user'), v.literal('system'))),
+    reviewAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'released',
+      status: 'archived',
+      releaseReason: bounded(args.reason, 400),
+      releaseProposedBy: args.proposedBy ?? 'user',
+      releasedAt: ts,
+      reviewAt: args.reviewAt,
+      updatedAt: ts,
+    });
+    return { releasedAt: ts };
+  },
+});
+
+/** Picking something back up is always allowed, and costs nothing to say. */
+export const reopenWork = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'active',
+      status: 'ready',
+      releaseReason: undefined,
+      releaseProposedBy: undefined,
+      releasedAt: undefined,
+      reviewAt: undefined,
+      updatedAt: ts,
+    });
+    return { reopenedAt: ts };
+  },
+});
+
+/**
+ * A step did not happen. Record what came of that, not merely that it slipped.
+ */
+export const recordLapse = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    stepKey: v.optional(v.string()),
+    stepTitle: v.optional(v.string()),
+    plannedAt: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    reasonKind: v.optional(
+      v.union(
+        v.literal('no_energy'),
+        v.literal('no_time'),
+        v.literal('something_else_came_first'),
+        v.literal('blocked'),
+        v.literal('need_help'),
+        v.literal('step_too_large'),
+        v.literal('matters_less_now'),
+        v.literal('forgot'),
+        v.literal('other'),
+      ),
+    ),
+    reasonSource: v.optional(v.union(v.literal('user'), v.literal('inferred'))),
+    recovery: v.optional(
+      v.union(
+        v.literal('move'),
+        v.literal('shrink'),
+        v.literal('wait'),
+        v.literal('delegate'),
+        v.literal('pause'),
+        v.literal('release'),
+        v.literal('rebuild'),
+      ),
+    ),
+    revisedStep: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const lapseId = await ctx.db.insert('albatrossLapses', {
+      userId,
+      workId: args.workId,
+      stepKey: bounded(args.stepKey, 200),
+      stepTitle: bounded(args.stepTitle, 300),
+      plannedAt: args.plannedAt,
+      reason: bounded(args.reason, 400),
+      reasonKind: args.reasonKind,
+      reasonSource: args.reasonSource ?? 'user',
+      recovery: args.recovery,
+      revisedStep: bounded(args.revisedStep, 300),
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    // The recovery the user picked is a statement about the work's state, so
+    // apply it rather than only writing it down.
+    if (args.recovery === 'pause') {
+      await ctx.db.patch(args.workId, { workState: 'paused', updatedAt: ts });
+    } else if (args.recovery === 'wait') {
+      await ctx.db.patch(args.workId, { workState: 'waiting', updatedAt: ts });
+    } else if (args.recovery === 'release') {
+      await ctx.db.patch(args.workId, {
+        workState: 'released',
+        status: 'archived',
+        releaseReason: bounded(args.reason, 400),
+        releaseProposedBy: 'user',
+        releasedAt: ts,
+        updatedAt: ts,
+      });
+    }
+    return lapseId;
+  },
+});
+
+/** Did the smaller step actually happen? This is what makes the record teach. */
+export const resolveLapse = mutation({
+  args: { ...callerArgs, lapseId: v.id('albatrossLapses'), held: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const lapse = await ctx.db.get(args.lapseId);
+    if (!lapse || lapse.userId !== userId) throw new Error('Lapse not found.');
+    const ts = now();
+    await ctx.db.patch(args.lapseId, { revisionHeld: args.held, resolvedAt: ts, updatedAt: ts });
+  },
+});
+
+/** Write or correct what would settle an outcome. */
+export const saveContract = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    outcome: v.string(),
+    proofs: v.array(
+      v.object({
+        id: v.string(),
+        what: v.string(),
+        satisfiedBy: v.optional(v.string()),
+        satisfiedAt: v.optional(v.number()),
+      }),
+    ),
+    closeWhen: v.union(
+      v.literal('action_succeeded'),
+      v.literal('outcome_likely'),
+      v.literal('outcome_confirmed'),
+      v.literal('never_automatically'),
+    ),
+    contradictions: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      contract: {
+        outcome: args.outcome.slice(0, 600),
+        // The contract lives inside the work document. Capping the array
+        // lengths alone still lets twelve unbounded conditions grow the row
+        // until a later patch of the same work fails, so every string inside
+        // is bounded the way the rest of this file bounds free text.
+        proofs: args.proofs.slice(0, 12).map((proof) => ({
+          ...proof,
+          id: proof.id.slice(0, 120),
+          what: proof.what.slice(0, 300),
+          satisfiedBy: bounded(proof.satisfiedBy, 300),
+        })),
+        closeWhen: args.closeWhen,
+        contradictions: args.contradictions?.slice(0, 12).map((row) => row.slice(0, 300)),
+        updatedAt: ts,
+      },
+      updatedAt: ts,
+    });
+  },
+});
+
+/**
+ * Attach a piece of mail to an outcome as proof of a specific claim.
+ *
+ * The claim is the point. Storing "email 123" produces an attachment list;
+ * storing what it is claimed to prove produces something that can actually
+ * close an outcome.
+ */
+export const attachProof = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    claim: v.string(),
+    title: v.string(),
+    summary: v.optional(v.string()),
+    url: v.optional(v.string()),
+    limits: v.optional(v.string()),
+    sourceKind: v.union(v.literal('mail_thread'), v.literal('calendar_event'), v.literal('manual')),
+    sourceId: v.string(),
+    trust: v.union(v.literal('observed'), v.literal('inferred'), v.literal('confirmed')),
+    proofId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${args.sourceId}`;
+    const existing = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
+      .first();
+    const row = {
+      userId,
+      targetKind: 'work' as const,
+      targetId: String(args.workId),
+      sourceKind: args.sourceKind,
+      sourceId: args.sourceId,
+      title: bounded(args.title, 300) || 'Untitled',
+      summary: bounded(args.summary, 600),
+      claim: bounded(args.claim, 400),
+      limits: bounded(args.limits, 400),
+      url: bounded(args.url, 2000),
+      occurredAt: ts,
+      weight: 1,
+      // The user pointing at something is the strongest signal there is, so it
+      // does not need a model's opinion attached to it.
+      confidence: 0.95,
+      trust: args.trust,
+      dedupeKey,
+      searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
+      updatedAt: ts,
+    };
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert('albatrossEvidence', { ...row, createdAt: ts });
+
+    // Tick off the contract condition this proof settles.
+    if (args.proofId && work.contract) {
+      await ctx.db.patch(args.workId, {
+        contract: {
+          ...work.contract,
+          proofs: work.contract.proofs.map((proof) =>
+            proof.id === args.proofId
+              ? { ...proof, satisfiedBy: bounded(args.title, 300), satisfiedAt: ts }
+              : proof,
+          ),
+          updatedAt: ts,
+        },
+        lastEvidenceAt: ts,
+        updatedAt: ts,
+      });
+    } else {
+      await ctx.db.patch(args.workId, { lastEvidenceAt: ts, updatedAt: ts });
+    }
+  },
+});
+
+/** Open Albatrosses a thread could plausibly be proof for. */
+export const openWorkForProof = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const wanted = Math.min(Math.max(args.limit ?? 8, 1), 20);
+    // Filtering after a fixed window can exhaust it: a user whose newest rows
+    // are all finished would be offered nothing to attach proof to, while older
+    // open Albatrosses sit just past the edge. Collect until there are enough.
+    const rows: Doc<'albatrossIntents'>[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 5 && rows.length < wanted; page += 1) {
+      const batch = await ctx.db
+        .query('albatrossIntents')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .paginate({ numItems: 100, cursor });
+      rows.push(
+        ...batch.page.filter((row) => !['done', 'released', 'archived'].includes(row.workState || 'active')),
+      );
+      if (batch.isDone) break;
+      cursor = batch.continueCursor;
+    }
+    return rows.slice(0, wanted).map((row) => ({
+      _id: String(row._id),
+      title: row.title || row.rawText.slice(0, 90),
+      contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
+    }));
+  },
+});
+
+export const lapsesForWork = query({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    return ctx.db
+      .query('albatrossLapses')
+      .withIndex('by_work', (q) => q.eq('workId', args.workId))
+      .order('desc')
+      .take(Math.min(Math.max(args.limit ?? 20, 1), 100));
   },
 });
 
@@ -542,6 +850,62 @@ export const areaWork = query({
   },
 });
 
+// Every Albatross the user carries, newest movement first. The Albatrosses
+// surface groups these by state; the query stays flat so the grouping rule
+// lives in one place on the client and can change without a schema push.
+export const allWork = query({
+  args: {
+    ...callerArgs,
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(limit);
+    const [areas, pendingQuestions] = await Promise.all([
+      ctx.db
+        .query('areas')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+      ctx.db
+        .query('albatrossWorkQuestions')
+        .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
+        .take(200),
+    ]);
+    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
+    // The question table is the live one. The inline `questions` array on the
+    // row is the older shape; count both so no waiting question is invisible.
+    const questionCounts = new Map<string, number>();
+    for (const question of pendingQuestions) {
+      if (!question.workId) continue;
+      const key = String(question.workId);
+      questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
+    }
+    return rows.map((row) => ({
+      _id: row._id,
+      title: row.title || null,
+      rawText: row.rawText,
+      status: row.status,
+      workState: row.workState || null,
+      agentState: row.agentState || null,
+      primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
+      areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
+      // The same question lives in both shapes during the migration, so adding
+      // the two counts reports every question twice. The table is the live one;
+      // the inline array only answers for rows the table never received.
+      openQuestions:
+        questionCounts.get(String(row._id)) ??
+        (row.questions || []).filter((question) => !question.answeredAt).length,
+      updatedAt: row.updatedAt,
+      createdAt: row.createdAt,
+    }));
+  },
+});
+
 export const workDetail = query({
   args: {
     ...callerArgs,
@@ -550,7 +914,7 @@ export const workDetail = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
-    const [plan, project, questions, areaLinks, applications] = await Promise.all([
+    const [plan, project, questions, areaLinks, applications, evidence] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,
       work.primaryProjectId ? ctx.db.get(work.primaryProjectId) : null,
       ctx.db
@@ -567,9 +931,37 @@ export const workDetail = query({
         .query('albatrossPlanApplications')
         .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', String(args.workId)))
         .collect(),
+      // Proof that the outcome actually happened. The stored confidence stays
+      // here; the client renders the trust ladder in words instead.
+      ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_target', (q) =>
+          q.eq('userId', userId).eq('targetKind', 'work').eq('targetId', String(args.workId)),
+        )
+        .order('desc')
+        .take(40),
     ]);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
-    return { work, plan, project, questions, areaLinks, application };
+    return {
+      work,
+      plan,
+      project,
+      questions,
+      areaLinks,
+      application,
+      contract: work.contract ?? null,
+      evidence: evidence.map((row) => ({
+        _id: String(row._id),
+        title: row.title,
+        summary: row.summary ?? null,
+        claim: row.claim ?? null,
+        limits: row.limits ?? null,
+        url: row.url ?? null,
+        sourceKind: row.sourceKind,
+        occurredAt: row.occurredAt,
+        trust: row.trust,
+      })),
+    };
   },
 });
 

@@ -24,15 +24,13 @@ export default async function SignInPage() {
       <DotGridGlow />
       <div className="relative z-10 flex w-full max-w-4xl flex-col items-center gap-10 md:flex-row md:justify-center md:gap-16">
         <div className="max-w-sm text-center md:text-left">
-          <div className="text-[13px] font-medium uppercase tracking-[0.2em] text-[var(--color-accent)]">
-            Lab86 Mail
-          </div>
+          <div className="text-[13px] font-medium text-[var(--color-accent)]">Albatross</div>
           <h1 className="mt-2 text-[28px] font-semibold leading-tight tracking-tight text-[var(--color-text)]">
-            All your mail, one sharp inbox.
+            Tell it what is weighing on you.
           </h1>
           <p className="mt-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)]">
-            Gmail, Outlook, and iCloud together — instant private search, smart triage, an AI chief-of-staff,
-            and a daily brief that actually reads your mail.
+            Albatross works out what you actually want, finds the context across your mail and calendar,
+            carries the parts it can, and tells you when something is genuinely done.
           </p>
         </div>
         <SignIn
