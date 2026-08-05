@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import Link from 'next/link';
 import {
   Fragment,
   type KeyboardEvent,
@@ -1585,13 +1586,10 @@ function NoMailboxState() {
           receipts, confirmations, and replies you are waiting on.
         </EmptyDescription>
       </EmptyHeader>
-      <Button
-        size="sm"
-        onClick={() => {
-          window.location.href = '/settings';
-        }}
-      >
-        Connect a mailbox
+      {/* A client navigation, so the query cache and the live subscriptions
+          survive the trip to an internal route. */}
+      <Button size="sm" asChild>
+        <Link href="/settings">Connect a mailbox</Link>
       </Button>
     </Empty>
   );

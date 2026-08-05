@@ -1557,10 +1557,16 @@ struct WorkDetail: Hashable, Codable, Sendable {
         var statusLine: String {
             if proofs.isEmpty { return "Nothing named yet that would settle this." }
             let left = outstanding.count
+            if left == 0 { return "Everything this needs has been settled." }
+            // The singular is checked before the nothing-yet sentence, or one
+            // outstanding condition reads as "any of the 1 things this needs".
+            if left == 1 {
+                return proofs.count == 1
+                    ? "Nothing has settled this yet."
+                    : "One thing left to settle this."
+            }
             if left == proofs.count { return "Nothing has settled any of the \(proofs.count) things this needs." }
-            if left == 1 { return "One thing left to settle this." }
-            if left > 1 { return "\(left) things left to settle this." }
-            return "Everything this needs has been settled."
+            return "\(left) things left to settle this."
         }
     }
 
@@ -1598,10 +1604,33 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let contract: Contract?
     let evidence: [Evidence]
 
+    /// Where the outcome stands. This is a state, not a sentence: the views test
+    /// it to decide colour, weight and whether the contract may close, so a copy
+    /// edit must not be able to change behaviour without the compiler noticing.
+    enum ProofStanding: String, Sendable {
+        case none, seen, likely, confirmed
+        case nothingYet, partly, waitingOnYou
+
+        var label: String {
+            switch self {
+            case .none: "No proof yet"
+            case .seen: "Something happened"
+            case .likely: "Looks done"
+            case .confirmed: "Confirmed done"
+            case .nothingYet: "Nothing has settled this yet"
+            case .partly: "Partly settled"
+            case .waitingOnYou: "Settled — waiting on you"
+            }
+        }
+
+        /// The only standing that lets Albatross call an outcome done.
+        var isConfirmed: Bool { self == .confirmed }
+    }
+
     /// What the outcome as a whole stands at. A single confirmed receipt is not
     /// a confirmed outcome while contract conditions remain outstanding — the
     /// same clamp the web applies, so the two clients cannot disagree.
-    var proofStanding: String {
+    var proofStanding: ProofStanding {
         // The strongest thing the proof supports. Rejected proof proves nothing,
         // so it never raises the level — it only stops a claim from standing.
         var level = "none"
@@ -1612,15 +1641,15 @@ struct WorkDetail: Hashable, Codable, Sendable {
         }
         if let contract, !contract.proofs.isEmpty {
             if !contract.outstanding.isEmpty {
-                return level == "none" ? "Nothing has settled this yet" : "Partly settled"
+                return level == "none" ? .nothingYet : .partly
             }
-            if contract.closeWhen == "never_automatically" { return "Settled — waiting on you" }
+            if contract.closeWhen == "never_automatically" { return .waitingOnYou }
         }
         switch level {
-        case "confirmed": return "Confirmed done"
-        case "likely": return "Looks done"
-        case "seen": return "Something happened"
-        default: return "No proof yet"
+        case "confirmed": return .confirmed
+        case "likely": return .likely
+        case "seen": return .seen
+        default: return .none
         }
     }
 

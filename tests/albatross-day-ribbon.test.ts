@@ -59,6 +59,7 @@ describe('blocks are drawn to scale', () => {
         event({ _id: 'long', startAt: at(14), endAt: at(17) }),
       ],
       window,
+      NOON,
     );
     expect(long.height).toBeGreaterThan(short.height);
     expect(short.top).toBeLessThan(long.top);
@@ -66,7 +67,7 @@ describe('blocks are drawn to scale', () => {
 
   test('a fifteen-minute stand-up is still readable', () => {
     const window = ribbonWindow([], NOON);
-    const [block] = ribbonBlocks([event({ _id: 'a', startAt: at(9), endAt: at(9, 15) })], window);
+    const [block] = ribbonBlocks([event({ _id: 'a', startAt: at(9), endAt: at(9, 15) })], window, NOON);
     // Drawn strictly to scale it would be a hairline nobody could read or tap.
     expect(block.height).toBeGreaterThanOrEqual(0.035);
   });
@@ -80,8 +81,38 @@ describe('blocks are drawn to scale', () => {
         event({ _id: 'real' }),
       ],
       window,
+      NOON,
     );
     expect(blocks.map((b) => b.id)).toEqual(['real']);
+  });
+});
+
+describe('a day that runs past midnight', () => {
+  const yesterday = (hour: number) => new Date(2026, 7, 2, hour).getTime();
+  const tomorrow = (hour: number) => new Date(2026, 7, 4, hour).getTime();
+
+  test('an overnight flight lands at the top of the ribbon, not the foot', () => {
+    // Live defect: read as plain hours-of-day, a 22:00→09:00 flight had a start
+    // hour of 22 and an end hour of 9, so it drew as a hairline at ten at night.
+    const window = ribbonWindow([event({ _id: 'flight', startAt: yesterday(22), endAt: at(9) })], NOON);
+    const [block] = ribbonBlocks(
+      [event({ _id: 'flight', startAt: yesterday(22), endAt: at(9) })],
+      window,
+      NOON,
+    );
+    expect(block.top).toBe(0);
+    expect(block.height).toBeGreaterThan(0.1);
+  });
+
+  test('an event running into tomorrow ends at the foot rather than wrapping', () => {
+    const window = ribbonWindow([event({ _id: 'late', startAt: at(21), endAt: tomorrow(2) })], NOON);
+    const [block] = ribbonBlocks([event({ _id: 'late', startAt: at(21), endAt: tomorrow(2) })], window, NOON);
+    expect(block.top + block.height).toBeCloseTo(1, 5);
+  });
+
+  test('the window still opens early enough for an overnight arrival', () => {
+    const window = ribbonWindow([event({ _id: 'flight', startAt: yesterday(22), endAt: at(9) })], NOON);
+    expect(window.startHour).toBe(0);
   });
 });
 
@@ -101,6 +132,7 @@ describe('the drawing stays legible without lying', () => {
           event({ _id: 'review', startAt: at(14), endAt: at(17) }),
         ],
         window,
+        NOON,
       ),
       MIN,
       TWO,
@@ -113,7 +145,7 @@ describe('the drawing stays legible without lying', () => {
     // Live defect: an hour of a fifteen-hour day is 28px. It cleared the
     // one-line minimum, so it kept two lines and cut the second one in half.
     const [block] = stackBlocks(
-      ribbonBlocks([event({ _id: 'review', startAt: at(9, 30), endAt: at(10, 30) })], window),
+      ribbonBlocks([event({ _id: 'review', startAt: at(9, 30), endAt: at(10, 30) })], window, NOON),
       MIN,
       TWO,
     );
@@ -130,6 +162,7 @@ describe('the drawing stays legible without lying', () => {
           event({ _id: 'review', startAt: at(9, 30), endAt: at(10, 30) }),
         ],
         window,
+        NOON,
       ),
       MIN,
       TWO,
@@ -145,6 +178,7 @@ describe('the drawing stays legible without lying', () => {
           event({ _id: 'b', startAt: at(9, 15), endAt: at(9, 25) }),
         ],
         window,
+        NOON,
       ),
       MIN,
       TWO,
@@ -155,7 +189,7 @@ describe('the drawing stays legible without lying', () => {
 
   test('the last block of a long day is never pushed off the bottom', () => {
     const stacked = stackBlocks(
-      ribbonBlocks([event({ _id: 'late', startAt: at(21, 50), endAt: at(22) })], window),
+      ribbonBlocks([event({ _id: 'late', startAt: at(21, 50), endAt: at(22) })], window, NOON),
       MIN,
       TWO,
     );
@@ -163,7 +197,7 @@ describe('the drawing stays legible without lying', () => {
   });
 
   test('a roomy day is left exactly where it belongs', () => {
-    const blocks = ribbonBlocks([event({ _id: 'a', startAt: at(14), endAt: at(17) })], window);
+    const blocks = ribbonBlocks([event({ _id: 'a', startAt: at(14), endAt: at(17) })], window, NOON);
     const stacked = stackBlocks(blocks, MIN, TWO);
     expect(stacked[0].top).toBeCloseTo(blocks[0].top, 10);
     expect(stacked[0].height).toBeCloseTo(blocks[0].height, 10);
@@ -173,7 +207,7 @@ describe('the drawing stays legible without lying', () => {
 describe('open air is the fact an agenda never states', () => {
   test('a real gap after a meeting is found and measured', () => {
     const window = ribbonWindow([], at(8));
-    const blocks = ribbonBlocks([event({ _id: 'a', startAt: at(9), endAt: at(10) })], window);
+    const blocks = ribbonBlocks([event({ _id: 'a', startAt: at(9), endAt: at(10) })], window, NOON);
     const gaps = ribbonGaps(blocks, window, at(8));
     expect(gaps.length).toBeGreaterThan(0);
     expect(gaps.some((gap) => gap.minutes >= 45)).toBe(true);
@@ -187,6 +221,7 @@ describe('open air is the fact an agenda never states', () => {
         event({ _id: 'b', startAt: at(10, 20), endAt: at(11) }),
       ],
       window,
+      NOON,
     );
     const gaps = ribbonGaps(blocks, window, at(8));
     // Twenty minutes between two meetings is a corridor, not an opening.

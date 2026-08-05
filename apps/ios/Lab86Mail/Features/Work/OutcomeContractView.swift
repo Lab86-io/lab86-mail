@@ -94,7 +94,7 @@ struct OutcomeContractView: View {
 /// filled.
 struct ProofTimelineView: View {
     let evidence: [WorkDetail.Evidence]
-    let standing: String
+    let standing: WorkDetail.ProofStanding
 
     private var ordered: [WorkDetail.Evidence] {
         evidence.sorted { ($0.occurredAt ?? .distantPast) > ($1.occurredAt ?? .distantPast) }
@@ -109,16 +109,14 @@ struct ProofTimelineView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            Text(standing)
-                .font(.caption.weight(standing == "Confirmed done" ? .semibold : .regular))
-                .foregroundStyle(standing == "Confirmed done" ? Color.green : Color.secondary)
+            Text(standing.label)
+                .font(.caption.weight(standing.isConfirmed ? .semibold : .regular))
+                .foregroundStyle(standing.isConfirmed ? Color.green : Color.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(
                     Capsule().fill(
-                        standing == "Confirmed done"
-                            ? Color.green.opacity(0.12)
-                            : Color.secondary.opacity(0.1)
+                        standing.isConfirmed ? Color.green.opacity(0.12) : Color.secondary.opacity(0.1)
                     )
                 )
 

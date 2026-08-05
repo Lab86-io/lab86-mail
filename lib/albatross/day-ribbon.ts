@@ -46,6 +46,30 @@ const hourOf = (ms: number) => {
 };
 
 /**
+ * Where an event sits on the day being drawn, in hours from midnight.
+ *
+ * An overnight event is the reason this exists. A flight that left at 22:00
+ * yesterday and lands at 09:00 today is part of today, so it comes back from
+ * the day query — but its start hour is 22 and its end hour is 9. Read as plain
+ * hours-of-day that is a block with negative height, drawn near the foot of the
+ * ribbon at ten at night. Clamping to the drawn day puts it where it belongs:
+ * running from the top of the ribbon down to nine.
+ */
+function eventHours(
+  event: { startAt: number; endAt: number },
+  nowMs: number,
+): { start: number; end: number } {
+  const dayStart = new Date(nowMs);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayStartMs = dayStart.getTime();
+  const hoursFromMidnight = (ms: number) => (ms - dayStartMs) / 3_600_000;
+  return {
+    start: Math.max(0, Math.min(24, hoursFromMidnight(event.startAt))),
+    end: Math.max(0, Math.min(24, hoursFromMidnight(event.endAt))),
+  };
+}
+
+/**
  * How much of the clock the ribbon needs to cover. A 6am flight or a late
  * concert must not be clipped off the end of the day.
  */
@@ -54,8 +78,9 @@ export function ribbonWindow(events: TodayEvent[], nowMs: number): RibbonWindow 
   let start = RIBBON_DEFAULT_START_HOUR;
   let end = RIBBON_DEFAULT_END_HOUR;
   for (const event of timed) {
-    start = Math.min(start, Math.floor(hourOf(event.startAt)));
-    end = Math.max(end, Math.ceil(hourOf(event.endAt)));
+    const hours = eventHours(event, nowMs);
+    start = Math.min(start, Math.floor(hours.start));
+    end = Math.max(end, Math.ceil(hours.end));
   }
   // Keep "now" on the ribbon so the marker is never off the top or bottom.
   const now = hourOf(nowMs);
@@ -77,14 +102,20 @@ export function nowMarker(nowMs: number, window: RibbonWindow): number | null {
   return fraction(now, window);
 }
 
-export function ribbonBlocks(events: TodayEvent[], window: RibbonWindow, locale = 'en-US'): RibbonBlock[] {
+export function ribbonBlocks(
+  events: TodayEvent[],
+  window: RibbonWindow,
+  nowMs: number,
+  locale = 'en-US',
+): RibbonBlock[] {
   const time = (ms: number) =>
     new Date(ms).toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
   return events
     .filter((event) => event.status !== 'cancelled' && !event.allDay)
     .map((event) => {
-      const top = fraction(hourOf(event.startAt), window);
-      const bottom = fraction(hourOf(event.endAt), window);
+      const hours = eventHours(event, nowMs);
+      const top = fraction(hours.start, window);
+      const bottom = fraction(hours.end, window);
       return {
         id: event._id,
         title: event.title,

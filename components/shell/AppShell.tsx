@@ -19,7 +19,7 @@ import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
-import { FirstRunRedirect } from '@/components/hosted/HostedOnboarding';
+import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { Today } from '@/components/report/Today';
@@ -278,7 +278,7 @@ export function AppShell({
         <CommandPalette />
         <ShortcutsSheet />
         <ShortcutsBinding />
-        <FirstRunRedirect />
+        <RecordMailboxesConnected />
       </TooltipProvider>
     );
   }
@@ -341,7 +341,7 @@ export function AppShell({
       <CommandPalette />
       <ShortcutsSheet />
       <ShortcutsBinding />
-      <FirstRunRedirect />
+      <RecordMailboxesConnected />
     </TooltipProvider>
   );
 }

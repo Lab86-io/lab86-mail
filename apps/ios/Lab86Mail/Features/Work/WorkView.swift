@@ -42,6 +42,19 @@ struct WorkView: View {
 
                 if openGroups.isEmpty && closedGroups.isEmpty {
                     emptyState
+                } else if openGroups.isEmpty && !showsClosed {
+                    // Everything left is finished and finished is hidden. Saying
+                    // so beats a page that looks broken.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Nothing open. Everything here is finished.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Button("Show finished") { showsClosed = true }
+                            .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 28)
                 } else {
                     ForEach(openGroups, id: \.state) { group in
                         workGroup(group.state, items: group.items)

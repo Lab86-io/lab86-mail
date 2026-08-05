@@ -60,7 +60,7 @@ struct OutcomeContractTests {
         )
         // One receipt is not the whole outcome. Saying "done" here is the exact
         // lie the contract exists to prevent.
-        #expect(subject.proofStanding == "Partly settled")
+        #expect(subject.proofStanding == .partly)
     }
 
     @Test func nothingSettledYetSaysSoRatherThanStayingSilent() {
@@ -71,7 +71,7 @@ struct OutcomeContractTests {
                 "proofs": .array([proof("p1", "The ETF order fills")]),
             ])
         )
-        #expect(subject.proofStanding == "Nothing has settled this yet")
+        #expect(subject.proofStanding == .nothingYet)
     }
 
     @Test func aContractThatNeverClosesAloneStillWaitsOnTheUser() {
@@ -83,7 +83,7 @@ struct OutcomeContractTests {
             ]),
             evidence: [evidenceRow("e1", trust: "confirmed")]
         )
-        #expect(subject.proofStanding == "Settled — waiting on you")
+        #expect(subject.proofStanding == .waitingOnYou)
     }
 
     @Test func everyConditionMetAndConfirmedReadsAsDone() {
@@ -95,7 +95,7 @@ struct OutcomeContractTests {
             ]),
             evidence: [evidenceRow("e1", trust: "confirmed")]
         )
-        #expect(subject.proofStanding == "Confirmed done")
+        #expect(subject.proofStanding == .confirmed)
     }
 
     @Test func ruledOutProofCountsForNothing() {
@@ -103,19 +103,19 @@ struct OutcomeContractTests {
             contract: nil,
             evidence: [evidenceRow("e1", trust: "rejected", claim: "Looked paid")]
         )
-        #expect(subject.proofStanding == "No proof yet")
+        #expect(subject.proofStanding == .none)
     }
 
     @Test func inferredProofSaysItOnlyLooksDone() {
         // "Looks done" and "Confirmed done" are different promises. Collapsing
         // them is how a system starts lying politely.
         let subject = detail(contract: nil, evidence: [evidenceRow("e1", trust: "inferred")])
-        #expect(subject.proofStanding == "Looks done")
+        #expect(subject.proofStanding == .likely)
     }
 
     @Test func observedProofClaimsNothingMoreThanThatSomethingHappened() {
         let subject = detail(contract: nil, evidence: [evidenceRow("e1", trust: "observed")])
-        #expect(subject.proofStanding == "Something happened")
+        #expect(subject.proofStanding == .seen)
     }
 
     // MARK: What the card says out loud
@@ -131,6 +131,29 @@ struct OutcomeContractTests {
         )
         #expect(contract.statusLine == "One thing left to settle this.")
         #expect(contract.closeWhenLabel == "Only when something confirms it")
+    }
+
+    @Test func aSingleOutstandingConditionReadsAsASentence() {
+        // Live defect: with one proof and none met, the count branch matched
+        // first and printed "any of the 1 things this needs".
+        let contract = WorkDetail.Contract(
+            outcome: "The invoice is paid",
+            proofs: [.init(id: "a", what: "A receipt arrives", satisfiedBy: nil, satisfiedAt: nil)],
+            closeWhen: "outcome_confirmed"
+        )
+        #expect(contract.statusLine == "Nothing has settled this yet.")
+    }
+
+    @Test func standingIsAStateNotASentence() {
+        // The views test this to pick colour and to decide whether a contract
+        // may close. A copy edit must not be able to change behaviour.
+        #expect(WorkDetail.ProofStanding.confirmed.isConfirmed)
+        for standing in [
+            WorkDetail.ProofStanding.none, .seen, .likely, .nothingYet, .partly, .waitingOnYou,
+        ] {
+            #expect(!standing.isConfirmed)
+            #expect(!standing.label.isEmpty)
+        }
     }
 
     @Test func aContractWithNoNamedProofAdmitsIt() {

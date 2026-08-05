@@ -7,6 +7,7 @@ import {
   isSubscriptionServiceDisabled,
   isUserOpenRouterKeyRequired,
 } from '../lib/hosted/controls';
+import { DEFAULT_MAIL_QUERY as DEFAULT_QUERY } from '../lib/mail/search/constants';
 
 // The store is what the surfaces agree through. These pin the doors the
 // Albatross shell opened: one way to raise capture from anywhere, and one
@@ -304,5 +305,58 @@ describe('hosted control flags', () => {
   test('there is no Albatross flag left to turn the product off', async () => {
     const controls = await import('../lib/hosted/controls');
     expect('isAlbatrossEnabled' in controls).toBe(false);
+  });
+});
+
+describe('moving between mailboxes and smart labels', () => {
+  test('choosing a mailbox drops the smart label it was filtered by', () => {
+    // Main → Sent with a label still applied would show Sent narrowed by a
+    // category the user cannot see and did not ask for.
+    const store = useClientStore.getState();
+    store.setSmartCategory('receipts');
+    expect(useClientStore.getState().smartCategory).toBe('receipts');
+
+    store.setQuery('in:sent');
+    const after = useClientStore.getState();
+    expect(after.smartCategory).toBeNull();
+    expect(after.query).toBe('in:sent');
+    expect(after.querySource).toBe('typed');
+    expect(after.primaryView).toBe('mail');
+  });
+
+  test('choosing a smart label returns the mailbox to the inbox', () => {
+    // Sent → a label without this reads the label against Sent only, which is
+    // never what the user meant by pressing it.
+    const store = useClientStore.getState();
+    store.setQuery('in:sent');
+    store.setSmartCategory('receipts');
+
+    const after = useClientStore.getState();
+    expect(after.query).toBe(DEFAULT_QUERY);
+    expect(after.smartCategory).toBe('receipts');
+    expect(after.querySource).toBe('category');
+  });
+
+  test('both transitions clear the half-typed search and its errors', () => {
+    const store = useClientStore.getState();
+    store.setSearchDraft('receipts from ma');
+    store.setQueryError('Could not read that');
+    store.setQuery('in:sent');
+    expect(useClientStore.getState().searchDraft).toBe('');
+    expect(useClientStore.getState().queryError).toBeNull();
+
+    store.setSearchDraft('half typed');
+    store.setSmartCategory('receipts');
+    expect(useClientStore.getState().searchDraft).toBe('');
+    expect(useClientStore.getState().nlSearchIntent).toBeNull();
+  });
+
+  test('clearing the label goes back to the default mailbox, not to nothing', () => {
+    const store = useClientStore.getState();
+    store.setSmartCategory(null);
+    const after = useClientStore.getState();
+    expect(after.query).toBe(DEFAULT_QUERY);
+    expect(after.smartCategory).toBeNull();
+    expect(after.querySource).toBe('typed');
   });
 });

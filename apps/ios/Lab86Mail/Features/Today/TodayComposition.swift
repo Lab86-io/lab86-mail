@@ -27,7 +27,7 @@ enum TodayComposition {
     static func dateline(_ date: Date, calendar: Calendar = .current) -> String {
         var formatter = Date.FormatStyle.dateTime.weekday(.wide).month(.wide).day()
         formatter.calendar = calendar
-        if let timeZone = calendar.timeZone as TimeZone? { formatter.timeZone = timeZone }
+        formatter.timeZone = calendar.timeZone
         return date.formatted(formatter)
     }
 

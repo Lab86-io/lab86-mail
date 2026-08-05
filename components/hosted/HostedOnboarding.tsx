@@ -48,7 +48,7 @@ interface NylasStatus {
 // can capture straight away; connecting a mailbox is an offer inside the app,
 // not a gate in front of it. This component only records that the user has
 // mailboxes, so the setup screen stops offering itself.
-export function FirstRunRedirect() {
+export function RecordMailboxesConnected() {
   const {
     data: nylas,
     isLoading,
@@ -61,8 +61,14 @@ export function FirstRunRedirect() {
   useEffect(() => {
     if (isLoading || isError) return;
     if (!(nylas?.accounts || []).length) return;
-    if (window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1') return;
-    window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+    // Private browsing and storage-blocking extensions both throw here. Failing
+    // to record the flag is not worth taking the app down for.
+    try {
+      if (window.localStorage.getItem(ONBOARDING_DISMISSED_STORAGE_KEY) === '1') return;
+      window.localStorage.setItem(ONBOARDING_DISMISSED_STORAGE_KEY, '1');
+    } catch {
+      // No storage available. The welcome screen simply asks again.
+    }
   }, [isLoading, isError, nylas]);
   return null;
 }

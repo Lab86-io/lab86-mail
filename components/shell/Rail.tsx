@@ -8,6 +8,7 @@ import {
   useQuery_experimental as useConvexQuery,
 } from 'convex/react';
 import { History, Search, Settings } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -445,7 +446,7 @@ export function Rail({
                     className="text-[var(--color-text-muted)]"
                   >
                     <div className="grid size-4 shrink-0 place-items-center" aria-hidden />
-                    <span>Areas didn't load — reload</span>
+                    <span>Areas didn&apos;t load — reload</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ) : null}
@@ -483,14 +484,15 @@ export function Rail({
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="Settings"
-                  onClick={() => {
-                    window.location.href = '/settings';
-                  }}
-                >
-                  <Settings className="size-4 shrink-0" aria-hidden />
-                  <span>Settings</span>
+                {/* A client navigation. Assigning window.location reloads the
+                    document, which throws away the warm query cache and tears
+                    down every live Convex subscription on the way to an
+                    internal route. */}
+                <SidebarMenuButton asChild tooltip="Settings">
+                  <Link href="/settings">
+                    <Settings className="size-4 shrink-0" aria-hidden />
+                    <span>Settings</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

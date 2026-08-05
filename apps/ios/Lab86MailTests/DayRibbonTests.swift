@@ -77,6 +77,7 @@ struct DayRibbonTests {
                 event("long", from: at(14), to: at(17)),
             ],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         #expect(blocks[1].height > blocks[0].height)
@@ -88,6 +89,7 @@ struct DayRibbonTests {
         let blocks = DayRibbon.blocks(
             events: [event("a", from: at(9), to: at(9, 15))],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         // Drawn strictly to scale it would be a hairline nobody could read or tap.
@@ -102,9 +104,43 @@ struct DayRibbonTests {
                 event("real", from: at(10), to: at(11)),
             ],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         #expect(blocks.map(\.id) == ["real"])
+    }
+
+    // MARK: A day that runs past midnight
+
+    private func yesterday(_ hour: Int) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 8, day: 2, hour: hour))!
+    }
+
+    private func tomorrow(_ hour: Int) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 8, day: 4, hour: hour))!
+    }
+
+    @Test func overnightFlightLandsAtTheTopOfTheRibbonNotTheFoot() {
+        // Live defect: read as plain hours-of-day, a 22:00→09:00 flight had a
+        // start hour of 22 and an end hour of 9, so it drew as a hairline at ten
+        // at night.
+        let flight = event("flight", from: yesterday(22), to: at(9))
+        let window = DayRibbon.window(events: [flight], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(events: [flight], window: window, now: at(12), calendar: calendar)
+        #expect(blocks[0].top == 0)
+        #expect(blocks[0].height > 0.1)
+    }
+
+    @Test func eventRunningIntoTomorrowEndsAtTheFootRatherThanWrapping() {
+        let late = event("late", from: at(21), to: tomorrow(2))
+        let window = DayRibbon.window(events: [late], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(events: [late], window: window, now: at(12), calendar: calendar)
+        #expect(abs(blocks[0].top + blocks[0].height - 1) < 0.000_01)
+    }
+
+    @Test func windowStillOpensEarlyEnoughForAnOvernightArrival() {
+        let flight = event("flight", from: yesterday(22), to: at(9))
+        #expect(DayRibbon.window(events: [flight], now: at(12), calendar: calendar).startHour == 0)
     }
 
     // MARK: The drawing stays legible without lying
@@ -122,6 +158,7 @@ struct DayRibbonTests {
                     event("review", from: at(14), to: at(17)),
                 ],
                 window: window,
+                now: at(12),
                 calendar: calendar
             ),
             minHeight: minHeight,
@@ -139,6 +176,7 @@ struct DayRibbonTests {
             DayRibbon.blocks(
                 events: [event("review", from: at(9, 30), to: at(10, 30))],
                 window: window,
+                now: at(12),
                 calendar: calendar
             ),
             minHeight: minHeight,
@@ -156,6 +194,7 @@ struct DayRibbonTests {
                     event("review", from: at(9, 30), to: at(10, 30)),
                 ],
                 window: window,
+                now: at(12),
                 calendar: calendar
             ),
             minHeight: minHeight,
@@ -173,6 +212,7 @@ struct DayRibbonTests {
                     event("b", from: at(9, 15), to: at(9, 25)),
                 ],
                 window: window,
+                now: at(12),
                 calendar: calendar
             ),
             minHeight: minHeight,
@@ -188,6 +228,7 @@ struct DayRibbonTests {
             DayRibbon.blocks(
                 events: [event("late", from: at(21, 50), to: at(22))],
                 window: window,
+                now: at(12),
                 calendar: calendar
             ),
             minHeight: minHeight,
@@ -201,6 +242,7 @@ struct DayRibbonTests {
         let blocks = DayRibbon.blocks(
             events: [event("a", from: at(14), to: at(17))],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         let stacked = DayRibbon.stack(blocks, minHeight: minHeight, twoLineHeight: twoLineHeight)
@@ -216,6 +258,7 @@ struct DayRibbonTests {
         let blocks = DayRibbon.blocks(
             events: [event("a", from: at(9), to: at(10))],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         let gaps = DayRibbon.gaps(blocks: blocks, window: window, now: now, calendar: calendar)
@@ -232,6 +275,7 @@ struct DayRibbonTests {
                 event("b", from: at(10, 20), to: at(11)),
             ],
             window: window,
+            now: at(12),
             calendar: calendar
         )
         let gaps = DayRibbon.gaps(blocks: blocks, window: window, now: now, calendar: calendar)

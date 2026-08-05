@@ -54,14 +54,35 @@ enum DayRibbon {
         return Double(parts.hour ?? 0) + Double(parts.minute ?? 0) / 60
     }
 
+    /// Where an event sits on the day being drawn, in hours from midnight.
+    ///
+    /// An overnight event is the reason this exists. A flight that left at 22:00
+    /// yesterday and lands at 09:00 today is part of today, so it comes back
+    /// from the day query — but its start hour is 22 and its end hour is 9. Read
+    /// as plain hours-of-day that is a block with negative height, drawn near
+    /// the foot of the ribbon at ten at night. Clamping to the drawn day puts it
+    /// where it belongs: from the top of the ribbon down to nine.
+    static func hours(
+        of event: CalendarEventSummary,
+        on day: Date,
+        calendar: Calendar
+    ) -> (start: Double, end: Double) {
+        let dayStart = calendar.startOfDay(for: day)
+        func fromMidnight(_ date: Date) -> Double {
+            min(24, max(0, date.timeIntervalSince(dayStart) / 3600))
+        }
+        return (fromMidnight(event.start), fromMidnight(event.end))
+    }
+
     /// How much of the clock the ribbon must cover. A 6am flight or a late
     /// concert is never clipped off the end of the day.
     static func window(events: [CalendarEventSummary], now: Date, calendar: Calendar = .current) -> Window {
         var start = defaultStartHour
         var end = defaultEndHour
         for event in events where !event.allDay {
-            start = min(start, Int(hour(of: event.start, calendar: calendar).rounded(.down)))
-            end = max(end, Int(hour(of: event.end, calendar: calendar).rounded(.up)))
+            let span = hours(of: event, on: now, calendar: calendar)
+            start = min(start, Int(span.start.rounded(.down)))
+            end = max(end, Int(span.end.rounded(.up)))
         }
         // Keep "now" on the ribbon so the marker is never off either end.
         let current = hour(of: now, calendar: calendar)
@@ -86,6 +107,7 @@ enum DayRibbon {
     static func blocks(
         events: [CalendarEventSummary],
         window: Window,
+        now: Date,
         calendar: Calendar = .current,
         formatter: DateFormatter? = nil
     ) -> [Block] {
@@ -97,8 +119,9 @@ enum DayRibbon {
         return events
             .filter { !$0.allDay }
             .map { event in
-                let top = fraction(hour(of: event.start, calendar: calendar), window)
-                let bottom = fraction(hour(of: event.end, calendar: calendar), window)
+                let span = hours(of: event, on: now, calendar: calendar)
+                let top = fraction(span.start, window)
+                let bottom = fraction(span.end, window)
                 return Block(
                     id: event.id,
                     title: event.title,
@@ -224,7 +247,7 @@ struct DayRibbonView: View {
         // block with room for neither cannot carry a title, so the drawing gives
         // it the room rather than cut the words in half.
         let blocks = DayRibbon.stack(
-            DayRibbon.blocks(events: events, window: window),
+            DayRibbon.blocks(events: events, window: window, now: now),
             minHeight: 26 / Double(height),
             twoLineHeight: 42 / Double(height)
         )

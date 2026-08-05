@@ -143,8 +143,11 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                 type="button"
                 onClick={() => {
                   setSelectedWorkId(row.work ? String(row.work._id) : null);
+                  // The row lands on Albatrosses, so the area selection changes
+                  // nothing here. Clearing it anyway would quietly move where
+                  // Areas opens next time, including to no area at all.
                   const areaId = row.routine?.areaId || row.project?.areaId;
-                  setSelectedAreaId(areaId ? String(areaId) : null);
+                  if (areaId) setSelectedAreaId(String(areaId));
                   setPrimaryView('albatrosses');
                   setOpen(false);
                 }}

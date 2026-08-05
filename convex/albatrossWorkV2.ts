@@ -5,7 +5,7 @@ import {
 } from '../lib/albatross/area-artifact-storage';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -281,9 +281,18 @@ export const saveContract = mutation({
     await ctx.db.patch(args.workId, {
       contract: {
         outcome: args.outcome.slice(0, 600),
-        proofs: args.proofs.slice(0, 12),
+        // The contract lives inside the work document. Capping the array
+        // lengths alone still lets twelve unbounded conditions grow the row
+        // until a later patch of the same work fails, so every string inside
+        // is bounded the way the rest of this file bounds free text.
+        proofs: args.proofs.slice(0, 12).map((proof) => ({
+          ...proof,
+          id: proof.id.slice(0, 120),
+          what: proof.what.slice(0, 300),
+          satisfiedBy: bounded(proof.satisfiedBy, 300),
+        })),
         closeWhen: args.closeWhen,
-        contradictions: args.contradictions?.slice(0, 12),
+        contradictions: args.contradictions?.slice(0, 12).map((row) => row.slice(0, 300)),
         updatedAt: ts,
       },
       updatedAt: ts,
@@ -371,19 +380,29 @@ export const openWorkForProof = query({
   args: { ...callerArgs, limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    const rows = await ctx.db
-      .query('albatrossIntents')
-      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(60);
-    return rows
-      .filter((row) => !['done', 'released', 'archived'].includes(row.workState || 'active'))
-      .slice(0, Math.min(Math.max(args.limit ?? 8, 1), 20))
-      .map((row) => ({
-        _id: String(row._id),
-        title: row.title || row.rawText.slice(0, 90),
-        contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
-      }));
+    const wanted = Math.min(Math.max(args.limit ?? 8, 1), 20);
+    // Filtering after a fixed window can exhaust it: a user whose newest rows
+    // are all finished would be offered nothing to attach proof to, while older
+    // open Albatrosses sit just past the edge. Collect until there are enough.
+    const rows: Doc<'albatrossIntents'>[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 5 && rows.length < wanted; page += 1) {
+      const batch = await ctx.db
+        .query('albatrossIntents')
+        .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+        .order('desc')
+        .paginate({ numItems: 100, cursor });
+      rows.push(
+        ...batch.page.filter((row) => !['done', 'released', 'archived'].includes(row.workState || 'active')),
+      );
+      if (batch.isDone) break;
+      cursor = batch.continueCursor;
+    }
+    return rows.slice(0, wanted).map((row) => ({
+      _id: String(row._id),
+      title: row.title || row.rawText.slice(0, 90),
+      contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
+    }));
   },
 });
 

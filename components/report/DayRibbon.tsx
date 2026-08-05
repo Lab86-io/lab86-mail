@@ -40,8 +40,8 @@ export function DayRibbon({
   const minHeight = 26 / height;
   const twoLineHeight = 42 / height;
   const blocks = useMemo(
-    () => stackBlocks(ribbonBlocks(events, window), minHeight, twoLineHeight),
-    [events, window, minHeight, twoLineHeight],
+    () => stackBlocks(ribbonBlocks(events, window, nowMs), minHeight, twoLineHeight),
+    [events, window, nowMs, minHeight, twoLineHeight],
   );
   const gaps = useMemo(() => ribbonGaps(blocks, window, nowMs), [blocks, window, nowMs]);
   const ticks = useMemo(() => ribbonTicks(window), [window]);

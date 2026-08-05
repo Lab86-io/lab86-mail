@@ -137,20 +137,58 @@ struct TodayView: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
+    /// What actually needs the user: approvals waiting, plus every Albatross the
+    /// Albatrosses page would file under "Needs you". Counting approvals alone
+    /// let the masthead say "Nothing needs you today" while that page showed a
+    /// needs-you group.
+    private var needsYouCount: Int {
+        store.approvals.count + store.allWork.filter(\.needsYou).count
+    }
+
+    /// What Albatross is carrying on its own. The sentence says "Albatross is
+    /// carrying N things", which describes Albatrosses, not board cards.
+    private var carryingCount: Int {
+        store.allWork.filter { !$0.isClosed && !$0.needsYou }.count
+    }
+
     private var dayShape: String {
         TodayComposition.dayShapeLine(
-            needsYouCount: store.approvals.count,
+            needsYouCount: needsYouCount,
             eventCount: store.todaysEvents.count,
             capacity: .normal,
-            carryingCount: store.tasks.filter { !$0.completed }.count
+            carryingCount: carryingCount
         )
+    }
+
+    /// The short list of Albatrosses that cannot move without the user, ordered
+    /// by how much is waiting on them.
+    private var needsYouWork: [WorkListItem] {
+        store.allWork.filter(\.needsYou).sorted { $0.openQuestions > $1.openQuestions }
     }
 
     /// Always current, because it is read rather than written.
     @ViewBuilder private var liveLayer: some View {
-        if !store.approvals.isEmpty {
+        if !store.approvals.isEmpty || !needsYouWork.isEmpty {
             todaySection("Needs you", note: "Albatross cannot move these without you.") {
                 VStack(spacing: 0) {
+                    ForEach(needsYouWork.prefix(3)) { item in
+                        Button {
+                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.displayTitle)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                Text(item.standingLine)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        Divider()
+                    }
                     ForEach(store.approvals.prefix(3)) { approval in
                         Button {
                             environment.navigation.sheet = .activity
@@ -191,9 +229,34 @@ struct TodayView: View {
             }
         }
 
+        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou }
+        if !moving.isEmpty {
+            todaySection("Could move today", note: "Albatross is carrying these.") {
+                VStack(spacing: 0) {
+                    ForEach(moving.prefix(6)) { item in
+                        Button {
+                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.displayTitle)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary)
+                                Text(item.standingLine)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+
         let openTasks = store.tasks.filter { !$0.completed }
         if !openTasks.isEmpty {
-            todaySection("Could move today", note: "None of these is booked.") {
+            todaySection("Tasks", note: "From your boards.") {
                 VStack(spacing: 0) {
                     ForEach(openTasks.prefix(8)) { task in
                         TaskRow(task: task)

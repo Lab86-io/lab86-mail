@@ -47,6 +47,12 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
+  // Selecting work only sets client state; the shell renders the detail on the
+  // Albatrosses view. Without the second call a Today row looks dead.
+  const openAlbatross = (workId: string) => {
+    setSelectedWorkId(workId);
+    setPrimaryView('albatrosses');
+  };
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
   const capacity = useClientStore((s) => s.capacity);
   const setCapacity = useClientStore((s) => s.setCapacity);
@@ -254,8 +260,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                       <button
                         type="button"
                         onClick={() => {
-                          if (approval.intentId) setSelectedWorkId(approval.intentId);
-                          setPrimaryView('albatrosses');
+                          if (approval.intentId) openAlbatross(approval.intentId);
                         }}
                         className="flex w-full items-start gap-3 px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
                       >
@@ -270,7 +275,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                   ))}
                   {attention.work.map((item) => (
                     <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
+                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
                     </li>
                   ))}
                 </ul>
@@ -288,7 +293,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                   {readyItems.map((item) => (
                     <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
+                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
                     </li>
                   ))}
                 </ul>
@@ -366,7 +371,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                   {waiting.map((item) => (
                     <li key={item._id}>
-                      <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
+                      <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
                     </li>
                   ))}
                 </ul>

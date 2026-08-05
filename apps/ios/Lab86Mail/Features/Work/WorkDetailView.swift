@@ -137,7 +137,7 @@ struct WorkDetailView: View {
                     bareSection {
                         OutcomeContractView(
                             contract: contract,
-                            canClose: detail.proofStanding == "Confirmed done"
+                            canClose: detail.proofStanding.isConfirmed
                         )
                     }
                 }

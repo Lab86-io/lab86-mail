@@ -1063,12 +1063,19 @@ final class ProductStore {
             let result = try await tools.invoke("area_list", arguments: ["status": .string("active")])
             areas = (result["areas"]?.arrayValue ?? []).compactMap(AreaSummary.init)
             // The Albatrosses page lists work, not areas. A failure here keeps
-            // the last-good list rather than blanking the page.
-            if let listed = try? await tools.invoke("work_list", arguments: [:]) {
+            // the last-good list rather than blanking the page — but it must not
+            // report an empty list as "you are carrying nothing", so with no
+            // cache to fall back on the failure is recorded.
+            do {
+                let listed = try await tools.invoke("work_list", arguments: [:])
                 allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
+                workDidLoad = true
+                workError = nil
+            } catch {
+                if allWork.isEmpty { throw error }
+                workError = error.localizedDescription
+                workDidLoad = true
             }
-            workDidLoad = true
-            workError = nil
             await persistCache()
         } catch {
             // Keep the last-good cached areas visible and record the failure only
