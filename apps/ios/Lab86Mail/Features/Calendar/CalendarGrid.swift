@@ -166,9 +166,3 @@ enum DayChips {
 
 // Matches the file-scoped helper ProductModels and AssistantChatModel each
 // carry; the declaration is private in both, so it is not visible here.
-private extension String {
-    var nilIfBlank: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
-}
