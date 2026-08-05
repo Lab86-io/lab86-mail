@@ -36,9 +36,12 @@ import { cn } from '@/lib/utils';
  * Today. What deserves attention today, given the life this person actually
  * has today — not a magazine about it.
  *
- * Left column: what needs the user, then what could move, then what is waiting.
- * Right column: the day's fixed shape. The generated brief still exists and is
- * reachable, but it no longer decides what the top of the page is about.
+ * It reads in layers down one scroll. The live layer comes first: what needs
+ * the user and what could move on the left, the day drawn to scale on the
+ * right. The brief's synthesis follows underneath, in the same scroll.
+ *
+ * The live layer is queried on every load, so the top of the page can never be
+ * stale. The brief is generated, and says so.
  */
 export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const { isAuthenticated } = useConvexAuth();
@@ -399,11 +402,9 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           </div>
         </div>
 
-        {brief ? (
-          <div className="mx-auto mt-10 grid max-w-5xl lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-            <div className="min-w-0">{brief}</div>
-          </div>
-        ) : null}
+        {/* The synthesis layer. It gets the full measure, because it is the
+            longer read and not a footnote to the columns above it. */}
+        {brief ? <div className="mx-auto mt-12 max-w-5xl">{brief}</div> : null}
       </div>
       <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </section>

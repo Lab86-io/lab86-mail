@@ -145,3 +145,17 @@ describe('the questions are answerable where they are shown', () => {
     expect(companion).not.toContain('fixed bottom-20 right-6');
   });
 });
+
+describe('no star or sparkle marks', () => {
+  test('the tree carries none, as glyphs or as icons', () => {
+    // The rule is absolute. A ✦ dinkus sat in the brief for months and only
+    // became visible once the brief moved onto Today.
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      const source = read(file);
+      if (/[✦✧✨⭐★☆]/.test(source)) offenders.push(`${file}: star glyph`);
+      if (/\bSparkles?\b|\bWandSparkles\b/.test(source)) offenders.push(`${file}: sparkle icon`);
+    }
+    expect(offenders).toEqual([]);
+  });
+});

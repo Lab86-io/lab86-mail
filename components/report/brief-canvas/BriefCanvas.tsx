@@ -46,12 +46,16 @@ export function BriefCanvas({
   onChanged,
   masthead = false,
   footer,
+  embedded = false,
 }: {
   value: unknown;
   composing?: boolean;
   onChanged?: () => void;
   masthead?: boolean;
   footer?: React.ReactNode;
+  /** Flow inside a parent scroll instead of owning the viewport. Today reads as
+   *  one page, so the brief cannot bring its own scrollbar to it. */
+  embedded?: boolean;
 }) {
   const queryClient = useQueryClient();
   const document = useMemo(() => parseBriefDocument(value), [value]);
@@ -260,7 +264,10 @@ export function BriefCanvas({
 
   return (
     <article
-      className="scrollable @container h-full overflow-y-auto bg-[var(--color-bg)] px-4 py-6 @[680px]:px-7 @[1200px]:px-10"
+      className={cn(
+        '@container px-4 @[680px]:px-7 @[1200px]:px-10',
+        embedded ? 'py-2' : 'scrollable h-full overflow-y-auto bg-[var(--color-bg)] py-6',
+      )}
       data-brief-document-version={document.version}
     >
       {masthead ? <BriefMasthead generatedAt={document.generatedAt} timezone={document.timezone} /> : null}

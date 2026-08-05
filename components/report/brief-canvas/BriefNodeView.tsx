@@ -253,10 +253,12 @@ function BriefLeaf({
       return <BriefPrompt node={node} context={context} />;
     case 'divider':
       if (node.variant === 'space') return <div aria-hidden className="h-3" />;
+      // A dinkus, not a star. The house rules forbid star and sparkle marks
+      // outright, and the brief now sits on Today rather than on its own page.
       if (node.variant === 'flourish')
         return (
-          <div aria-hidden className="text-center font-display text-[var(--color-text-faint)]">
-            ✦
+          <div aria-hidden className="flex justify-center py-1">
+            <span className="h-px w-10 bg-[var(--color-border-strong)]" />
           </div>
         );
       return <hr className="border-[var(--color-border)]" />;

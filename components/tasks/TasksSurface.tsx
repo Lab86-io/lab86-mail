@@ -22,7 +22,6 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  Sparkles,
   SquareKanban,
   Trash2,
   UploadCloud,
@@ -2416,7 +2415,7 @@ function CreateCardDialog({
                 onClick={() => void parseNl()}
                 disabled={parsing || !nlText.trim()}
               >
-                <Sparkles className="size-3.5" /> {parsing ? 'Reading…' : 'Autofill'}
+                {parsing ? 'Reading…' : 'Autofill'}
               </Button>
             </div>
             <p className="px-0.5 text-[11px] text-[var(--color-text-faint)]">

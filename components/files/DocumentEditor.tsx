@@ -15,13 +15,13 @@ import {
   PanelRight,
   Plus,
   RefreshCw,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
+import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -371,7 +371,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
           onClick={() => setAiOpen((current) => !current)}
           aria-pressed={aiOpen}
         >
-          <Sparkles className="size-3.5" />
           <span className="hidden sm:inline">Albatross</span>
         </Button>
       </header>
@@ -589,7 +588,6 @@ export function GoogleDocumentEditor({
           onClick={() => setAiOpen((current) => !current)}
           aria-pressed={aiOpen}
         >
-          <Sparkles className="size-3.5" />
           <span className="hidden sm:inline">Albatross</span>
         </Button>
       </header>
@@ -1100,7 +1098,7 @@ function DocumentAiRail({
   return (
     <aside className="flex min-h-0 flex-col border-t border-[var(--color-border)] bg-[var(--color-bg)] lg:border-l lg:border-t-0">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <Sparkles className="size-3.5 text-[var(--color-accent)]" />
+        <AlbatrossMark className="size-3.5 text-[var(--color-accent)]" />
         <span className="text-[12.5px] font-medium">Albatross editor</span>
         <Button
           className="ml-auto"
@@ -1137,11 +1135,7 @@ function DocumentAiRail({
             onClick={() => suggestMutation.mutate()}
             disabled={!instruction.trim() || suggestMutation.isPending}
           >
-            {suggestMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="size-3.5" />
-            )}
+            {suggestMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
             Propose changes
           </Button>
         </div>
@@ -1234,7 +1228,7 @@ function GoogleDocumentAiRail({
   return (
     <aside className="flex min-h-0 flex-col border-t border-[var(--color-border)] bg-[var(--color-bg)] lg:border-l lg:border-t-0">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <Sparkles className="size-3.5 text-[var(--color-accent)]" />
+        <AlbatrossMark className="size-3.5 text-[var(--color-accent)]" />
         <span className="text-[12.5px] font-medium">Albatross editor</span>
         <Button
           className="ml-auto"
@@ -1270,11 +1264,7 @@ function GoogleDocumentAiRail({
             onClick={() => suggestMutation.mutate()}
             disabled={!instruction.trim() || suggestMutation.isPending}
           >
-            {suggestMutation.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="size-3.5" />
-            )}
+            {suggestMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
             Propose changes
           </Button>
         </div>
