@@ -12,6 +12,7 @@ struct WorkListItem: Identifiable, Hashable, Sendable {
     let areaName: String?
     let openQuestions: Int
     let updatedAt: Date?
+    let planError: String?
 
     /// What the row calls itself. Never an id, never a blank line.
     var displayTitle: String {
@@ -32,6 +33,7 @@ struct WorkListItem: Identifiable, Hashable, Sendable {
         areaName = json["areaName"]?.stringValue?.nilIfBlank
         openQuestions = Int(json["openQuestions"]?.doubleValue ?? 0)
         updatedAt = CalendarDateParser.date(json["updatedAt"])
+        planError = json["planError"]?.stringValue?.nilIfBlank
     }
 }
 
@@ -95,7 +97,10 @@ extension WorkListItem {
         if isClosed { return false }
         if openQuestions > 0 { return true }
         if agentState == "needs_input" { return true }
-        if agentState == "error" { return true }
+        // A failed plan is a decision waiting on the user, the same as an error
+        // state. The web counts it; leaving it out here let a broken Albatross
+        // sit quietly under "In progress" on the phone.
+        if agentState == "error" || planError != nil { return true }
         return status == "needs_answers"
     }
 

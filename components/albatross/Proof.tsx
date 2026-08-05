@@ -164,11 +164,11 @@ export function ProofTimeline({
       <ol className="relative mt-3 pl-5">
         {/* The spine. Everything hangs off it, newest at the top. */}
         <span aria-hidden className="absolute bottom-2 left-[5px] top-2 w-px bg-[var(--color-border)]" />
-        {ordered.map((row) => {
+        {ordered.map((row, index) => {
           const strongest = row.trust === 'confirmed';
           const ruled = row.trust === 'rejected';
           return (
-            <li key={row._id || `${row.sourceKind}-${row.occurredAt}`} className="relative py-2.5">
+            <li key={row._id || `${row.sourceKind}-${row.occurredAt}-${index}`} className="relative py-2.5">
               <span
                 aria-hidden
                 className={cn(

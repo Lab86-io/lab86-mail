@@ -141,32 +141,36 @@ export function GuidedStepPane({
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-[var(--color-border)] px-4 py-3">
           <h2 className="font-serif text-[16px] font-semibold">{active.title}</h2>
-          <div className="mt-2 grid gap-3 @container sm:grid-cols-2">
-            {active.knows.length ? (
-              <div>
-                <p className="text-[11.5px] text-[var(--color-text-faint)]">Albatross already has</p>
-                <ul className="mt-1 space-y-0.5">
-                  {active.knows.map((item) => (
-                    <li key={item} className="text-[12px] text-[var(--color-text-muted)]">
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {active.needsYou.length ? (
-              <div>
-                <p className="text-[11.5px] text-[var(--color-text-faint)]">Only you can do</p>
-                <ul className="mt-1 space-y-0.5">
-                  {active.needsYou.map((item) => (
-                    <li key={item} className="flex items-start gap-1.5 text-[12px]">
-                      <Hand className="mt-[3px] size-3 shrink-0 text-[var(--color-accent)]" aria-hidden />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+          {/* The pane is narrower than the viewport, so the columns follow the
+              pane. `sm:` would split at a width this pane never has. */}
+          <div className="@container mt-2">
+            <div className="grid gap-3 @sm:grid-cols-2">
+              {active.knows.length ? (
+                <div>
+                  <p className="text-[11.5px] text-[var(--color-text-faint)]">Albatross already has</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {active.knows.map((item) => (
+                      <li key={item} className="text-[12px] text-[var(--color-text-muted)]">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {active.needsYou.length ? (
+                <div>
+                  <p className="text-[11.5px] text-[var(--color-text-faint)]">Only you can do</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {active.needsYou.map((item) => (
+                      <li key={item} className="flex items-start gap-1.5 text-[12px]">
+                        <Hand className="mt-[3px] size-3 shrink-0 text-[var(--color-accent)]" aria-hidden />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 

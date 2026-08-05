@@ -469,17 +469,21 @@ export const activePractices = query({
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect();
     const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
-    return rows
-      .filter((row) => row.status === 'active')
-      .sort((a, b) => (a.nextRunAt || 0) - (b.nextRunAt || 0))
-      .slice(0, Math.min(Math.max(args.limit ?? 2, 1), 10))
-      .map((row) => ({
-        _id: String(row._id),
-        title: row.title,
-        cadence: row.cadence,
-        nextRunAt: row.nextRunAt ?? null,
-        areaName: row.areaId ? (areaNames.get(String(row.areaId)) ?? null) : null,
-      }));
+    return (
+      rows
+        .filter((row) => row.status === 'active')
+        // A practice with no next run is not the most urgent thing today; `|| 0`
+        // sorted every unscheduled one to the front of the list.
+        .sort((a, b) => (a.nextRunAt ?? Number.POSITIVE_INFINITY) - (b.nextRunAt ?? Number.POSITIVE_INFINITY))
+        .slice(0, Math.min(Math.max(args.limit ?? 2, 1), 10))
+        .map((row) => ({
+          _id: String(row._id),
+          title: row.title,
+          cadence: row.cadence,
+          nextRunAt: row.nextRunAt ?? null,
+          areaName: row.areaId ? (areaNames.get(String(row.areaId)) ?? null) : null,
+        }))
+    );
   },
 });
 

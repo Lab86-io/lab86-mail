@@ -64,6 +64,26 @@ describe('proofSummary', () => {
     expect(proofSummary([at(1, 'observed', 'calendar_event')])).toBe('Something happened · a calendar event');
   });
 
+  test('names the row that actually carries the claim, not just the newest', () => {
+    // Live defect: the level came from the strongest row and the source from
+    // the newest, so the line read "Confirmed done · a calendar event" while
+    // the calendar event proved nothing and an email did the confirming.
+    const summary = proofSummary([at(1, 'confirmed', 'mail_thread'), at(9, 'observed', 'calendar_event')]);
+    expect(summary).toBe('Confirmed done · an email');
+  });
+
+  test('uses the newest row that carries the level, when several do', () => {
+    const summary = proofSummary([at(1, 'confirmed', 'calendar_event'), at(5, 'confirmed', 'mail_thread')]);
+    expect(summary).toBe('Confirmed done · an email');
+  });
+
+  test('falls back to the newest usable row when the level has no matching kind', () => {
+    // 'reported' is not one of the three trusts the ladder reads, so the level
+    // stays 'seen' from the observed row and the source comes from it too.
+    const summary = proofSummary([at(1, 'observed', 'question_answer')]);
+    expect(summary).toBe('Something happened · your answer');
+  });
+
   test('never quotes a score', () => {
     const summary = proofSummary([at(1, 'inferred'), at(2, 'observed')]);
     expect(summary).not.toMatch(/\d/);

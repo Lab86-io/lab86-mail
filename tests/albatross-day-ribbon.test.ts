@@ -110,6 +110,22 @@ describe('a day that runs past midnight', () => {
     expect(block.top + block.height).toBeCloseTo(1, 5);
   });
 
+  test('the clocks changing does not slide the day by an hour', () => {
+    // Live defect: measured as elapsed milliseconds from midnight, a nine
+    // o'clock meeting on a spring-forward day drew at ten, and a late one could
+    // be pushed off the foot of the ribbon.
+    const springForward = (hour: number) => new Date(2026, 2, 8, hour).getTime();
+    const noonThatDay = springForward(12);
+    const window = ribbonWindow([], noonThatDay);
+    const [block] = ribbonBlocks(
+      [event({ _id: 'a', startAt: springForward(9), endAt: springForward(11) })],
+      window,
+      noonThatDay,
+    );
+    const nineOClock = (9 - window.startHour) / (window.endHour - window.startHour);
+    expect(block.top).toBeCloseTo(nineOClock, 5);
+  });
+
   test('the window still opens early enough for an overnight arrival', () => {
     const window = ribbonWindow([event({ _id: 'flight', startAt: yesterday(22), endAt: at(9) })], NOON);
     expect(window.startHour).toBe(0);

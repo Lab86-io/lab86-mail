@@ -508,7 +508,10 @@ export const dayEvents = query({
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    const rows = await queryEventsInWindow(ctx, userId, args.startAt, args.endAt, args.limit ?? 200);
+    // The limit crosses from a client argument, so it is clamped rather than
+    // trusted: a caller asking for a million rows would read the whole table.
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+    const rows = await queryEventsInWindow(ctx, userId, args.startAt, args.endAt, limit);
     return rows
       .map((row: any) => ({
         _id: String(row._id),

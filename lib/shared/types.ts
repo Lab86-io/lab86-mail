@@ -181,7 +181,12 @@ export function isPrimaryView(view: unknown): view is PrimaryView {
 
 export function migratePrimaryView(view: unknown): PrimaryView | null {
   if (isPrimaryView(view)) return view;
-  if (typeof view === 'string' && view in LEGACY_PRIMARY_VIEWS) return LEGACY_PRIMARY_VIEWS[view];
+  // `in` walks the prototype chain, so `?view=constructor` would resolve to a
+  // function and `?view=__proto__` to an object. The value comes from the query
+  // string, so only the table's own keys count.
+  if (typeof view === 'string' && Object.hasOwn(LEGACY_PRIMARY_VIEWS, view)) {
+    return LEGACY_PRIMARY_VIEWS[view];
+  }
   return null;
 }
 

@@ -366,7 +366,7 @@ export const workHome = defineTool({
 export const workList = defineTool({
   name: 'work_list',
   description:
-    "List every Albatross the user is carrying — each unresolved outcome, with its state, its area, and how many questions are waiting on the user. Read-only. This is what the Albatrosses page shows; use it to answer 'what am I carrying' without walking every area one at a time.",
+    "List the user's Albatrosses in every state — open, waiting, paused, finished, put down and archived — each with its state, its area, and how many questions are waiting on the user. Read-only. This is the whole Albatrosses page; filter by workState yourself when the question is only about what is still open.",
   category: 'memory',
   mutating: false,
   input: z.object({

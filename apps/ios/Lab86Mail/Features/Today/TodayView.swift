@@ -33,9 +33,7 @@ struct TodayView: View {
     }
 
     var body: some View {
-        Group {
-            todayBody
-        }
+        todayBody
         .navigationTitle("")
         .toolbar {
             // The dateline lives in the masthead. It crossfades into the bar

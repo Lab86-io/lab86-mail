@@ -67,11 +67,18 @@ enum DayRibbon {
         on day: Date,
         calendar: Calendar
     ) -> (start: Double, end: Double) {
+        // The clock, not the stopwatch. On the day the clocks go forward a
+        // two-hour meeting at nine is still drawn at nine, because the ribbon is
+        // a picture of a clock face. Counting elapsed time from midnight would
+        // slide every event by an hour on exactly two days a year.
         let dayStart = calendar.startOfDay(for: day)
-        func fromMidnight(_ date: Date) -> Double {
-            min(24, max(0, date.timeIntervalSince(dayStart) / 3600))
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+        func placeInDay(_ date: Date) -> Double {
+            if date <= dayStart { return 0 }
+            if date >= dayEnd { return 24 }
+            return hour(of: date, calendar: calendar)
         }
-        return (fromMidnight(event.start), fromMidnight(event.end))
+        return (placeInDay(event.start), placeInDay(event.end))
     }
 
     /// How much of the clock the ribbon must cover. A 6am flight or a late

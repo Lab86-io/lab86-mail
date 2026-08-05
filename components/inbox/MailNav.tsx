@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useQuery_experimental as useConvexQuery } from 'convex/react';
+import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown, Settings2 } from 'lucide-react';
 import { useState } from 'react';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
@@ -51,9 +51,14 @@ export function MailNav() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const queryClient = useQueryClient();
 
+  // categoryCounts requires an identity and throws without one. Before Convex
+  // has authenticated, asking is an error, not an empty result.
+  const { isAuthenticated } = useConvexAuth();
   const liveCounts = useConvexQuery({
     query: (api as any).liveMail.categoryCounts,
-    args: { accountIds: accountFilter.length ? accountFilter : undefined },
+    args: isAuthenticated
+      ? { accountIds: accountFilter.length ? accountFilter : undefined }
+      : ('skip' as never),
   });
   const counts =
     liveCounts.status === 'success'

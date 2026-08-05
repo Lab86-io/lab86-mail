@@ -1735,9 +1735,22 @@ struct WorkDetail: Hashable, Codable, Sendable {
            let outcome = contractJSON["outcome"]?.stringValue?.nilIfBlank {
             contract = Contract(
                 outcome: outcome,
-                proofs: (contractJSON["proofs"]?.arrayValue ?? []).compactMap { row in
-                    guard let id = row["id"]?.stringValue,
-                          let what = row["what"]?.stringValue?.nilIfBlank else { return nil }
+                // A condition that will not parse is still a condition. Dropping
+                // it would shrink the contract, and a contract with every
+                // remaining condition met reads as "Confirmed done" — the exact
+                // lie the contract exists to prevent. It is kept, named plainly,
+                // and left outstanding.
+                proofs: (contractJSON["proofs"]?.arrayValue ?? []).enumerated().map { index, row in
+                    let id = row["id"]?.stringValue?.nilIfBlank
+                    let what = row["what"]?.stringValue?.nilIfBlank
+                    guard let id, let what else {
+                        return Contract.Proof(
+                            id: id ?? "unreadable_\(index)",
+                            what: what ?? "Something Albatross could not read",
+                            satisfiedBy: nil,
+                            satisfiedAt: nil
+                        )
+                    }
                     return Contract.Proof(
                         id: id,
                         what: what,

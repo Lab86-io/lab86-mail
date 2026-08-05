@@ -500,6 +500,9 @@ describe('work_list', () => {
     });
     expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
     expect(workList.mutating).toBe(false);
+    // The description has to match what comes back. It returns every state, so
+    // it must not promise only what is unresolved.
+    expect(workList.description).toContain('every state');
   });
 
   test('passes a limit through only when one was asked for', async () => {
@@ -507,7 +510,9 @@ describe('work_list', () => {
     expect(queryCalls[0].args.limit).toBe(25);
     queryCalls.length = 0;
     await runTool(workList.handler, {});
-    expect(queryCalls[0].args.limit).toBeUndefined();
+    // Absent, not undefined: the query applies its own default, and sending an
+    // explicit undefined would override it in some transports.
+    expect('limit' in queryCalls[0].args).toBe(false);
   });
 
   test('refuses a limit outside what the query will honour', () => {

@@ -61,12 +61,20 @@ function eventHours(
 ): { start: number; end: number } {
   const dayStart = new Date(nowMs);
   dayStart.setHours(0, 0, 0, 0);
-  const dayStartMs = dayStart.getTime();
-  const hoursFromMidnight = (ms: number) => (ms - dayStartMs) / 3_600_000;
-  return {
-    start: Math.max(0, Math.min(24, hoursFromMidnight(event.startAt))),
-    end: Math.max(0, Math.min(24, hoursFromMidnight(event.endAt))),
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  // The clock, not the stopwatch. On the day the clocks go forward a two-hour
+  // meeting at nine is still drawn at nine, because the ribbon is a picture of
+  // a clock face. Counting elapsed milliseconds from midnight would slide every
+  // event by an hour on exactly two days a year, and push a late one off the
+  // foot of the ribbon.
+  const placeInDay = (ms: number) => {
+    if (ms <= dayStart.getTime()) return 0;
+    if (ms >= dayEnd.getTime()) return 24;
+    return hourOf(ms);
   };
+  return { start: placeInDay(event.startAt), end: placeInDay(event.endAt) };
 }
 
 /**

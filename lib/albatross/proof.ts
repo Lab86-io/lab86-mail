@@ -80,7 +80,18 @@ export function latestProof(evidence: EvidenceLike[]): EvidenceLike | null {
 export function proofSummary(evidence: EvidenceLike[]): string {
   const level = proofLevel(evidence);
   if (level === 'none') return PROOF_LEVEL_LABEL.none;
-  const latest = latestProof(evidence);
-  if (!latest) return PROOF_LEVEL_LABEL.none;
-  return `${PROOF_LEVEL_LABEL[level]} · ${evidenceSourceLabel(latest.sourceKind).toLowerCase()}`;
+  // The claim and the source have to come from the same row, or the line says
+  // "Confirmed done · a calendar event" while the calendar event proved nothing
+  // and a different email did the confirming.
+  const source = strongestProof(evidence, level) ?? latestProof(evidence);
+  if (!source) return PROOF_LEVEL_LABEL.none;
+  return `${PROOF_LEVEL_LABEL[level]} · ${evidenceSourceLabel(source.sourceKind).toLowerCase()}`;
+}
+
+/** The newest row that actually carries the level the summary is claiming. */
+function strongestProof(evidence: EvidenceLike[], level: ProofLevel): EvidenceLike | null {
+  const trust = level === 'confirmed' ? 'confirmed' : level === 'likely' ? 'inferred' : 'observed';
+  const matching = evidence.filter((row) => row.trust === trust);
+  if (!matching.length) return null;
+  return matching.reduce((newest, row) => (row.occurredAt > newest.occurredAt ? row : newest));
 }
