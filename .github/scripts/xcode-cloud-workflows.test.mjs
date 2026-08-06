@@ -28,6 +28,15 @@ test('iOS auth dependency is pinned past the Clerk AuthView startup fix', () => 
   assert.equal(clerk?.state.revision, '38a14dfb7f2e5be689975b0f3d6dfe347c425770');
 });
 
+test('staging no longer runs on a push to staging', () => {
+  // Tier 2 replaced what it was for. It stays runnable by hand, so the machinery
+  // and its scripts keep their coverage, but a push must not start it.
+  const contents = workflow('xcode-cloud-staging.yml');
+
+  assert.doesNotMatch(contents, /^on:\s*\n\s+push:/m);
+  assert.match(contents, /^on:\s*\n\s+workflow_dispatch:/m);
+});
+
 test('staging preserves diagnostics and signed IPA with immutable upload actions', () => {
   const contents = workflow('xcode-cloud-staging.yml');
 

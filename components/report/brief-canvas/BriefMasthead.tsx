@@ -3,12 +3,23 @@
 import { useMemo, useState } from 'react';
 import { getDailyArt } from '@/lib/mail/daily-art';
 import { dailyBriefDatelineAt, dailyBriefEditionTitleAt } from '@/lib/shared/brief-edition';
+import { cn } from '@/lib/utils';
 
 /* The document-v2 masthead: the same daily-art hero the HTML brief carried,
  * rendered natively. Bleeds edge-to-edge against BriefCanvas's padding. Text
  * sits over the artwork, so it stays white-on-scrim in every theme; the title
  * face follows the customizer via font-display. */
-export function BriefMasthead({ generatedAt, timezone }: { generatedAt: number; timezone?: string }) {
+export function BriefMasthead({
+  generatedAt,
+  timezone,
+  bleed = true,
+}: {
+  generatedAt: number;
+  timezone?: string;
+  /** Pull out to the edges of BriefCanvas's own padding. Today places the plate
+   *  at the very top of its scroll, where there is no padding to escape. */
+  bleed?: boolean;
+}) {
   const art = useMemo(() => getDailyArt(generatedAt), [generatedAt]);
   const sources = useMemo(() => [art.imageUrl, ...art.fallbacks], [art]);
   const [sourceIndex, setSourceIndex] = useState(0);
@@ -17,7 +28,7 @@ export function BriefMasthead({ generatedAt, timezone }: { generatedAt: number; 
   const title = dailyBriefEditionTitleAt(generatedAt, timezone);
 
   return (
-    <div className="relative -mx-4 -mt-6 mb-7 @[680px]:-mx-7">
+    <div className={cn('relative mb-7', bleed && '-mx-4 -mt-6 @[680px]:-mx-7')}>
       <div className="relative flex min-h-[220px] items-center justify-center overflow-hidden bg-[var(--color-accent-soft)] px-6 py-14 @[680px]:min-h-[300px]">
         {src ? (
           // Museum-hosted art with ordered fallbacks; plain accent field when

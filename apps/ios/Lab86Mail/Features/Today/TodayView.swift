@@ -21,15 +21,11 @@ struct TodayView: View {
         report.document != nil && report.artifactSource == "document-v2"
     }
 
-    /// How tall Today's own dateline masthead stands: the accent rule, the
-    /// serif date, and the day-shape line under it.
-    static let mastheadHeight: CGFloat = 132
-
     // Whether the masthead's dateline has scrolled far enough off screen that
-    // the navigation bar should carry the date instead. It measures Today's own
-    // masthead now, not the brief's — the brief no longer brings one.
-    static func mastheadScrolledPast(offset: CGFloat, containerWidth _: CGFloat = 0) -> Bool {
-        offset > mastheadHeight - 56
+    // the navigation bar should carry the date instead. The plate is a
+    // fixed-aspect image, so its height follows the container width.
+    static func mastheadScrolledPast(offset: CGFloat, containerWidth: CGFloat) -> Bool {
+        offset > DailyBriefMasthead.height(forWidth: containerWidth) - 56
     }
 
     var body: some View {
@@ -85,7 +81,12 @@ struct TodayView: View {
     private var todayBody: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                todayMasthead
+                // The plate. The day's art, its dateline and its edition title,
+                // carried by the day itself rather than by the brief — so it is
+                // right on a morning when nothing has been written yet, and
+                // there is only ever one of it on the page.
+                DailyBriefMasthead(generatedAt: Date.now, art: store.dailyReport?.art)
+                todayDeck
                 liveLayer
                 briefLayer
                     .padding(.bottom, 32)
@@ -107,32 +108,18 @@ struct TodayView: View {
         }
     }
 
-    /// The editorial dateline: an accent rule, the year set small in mono, the
-    /// date in serif, and one sentence about the shape of the day.
-    private var todayMasthead: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 22, height: 1)
-                Text(Date.now.formatted(.dateTime.year()))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
-            Text(dateline)
-                .font(.system(.largeTitle, design: .serif).weight(.semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-            Text(dayShape)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 4)
-        .padding(.bottom, 18)
-        .overlay(alignment: .bottom) { Divider() }
+    /// The deck under the plate: one sentence about the shape of the day. The
+    /// plate already carries the date, so this never repeats it.
+    private var todayDeck: some View {
+        Text(dayShape)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+            .padding(.bottom, 18)
+            .overlay(alignment: .bottom) { Divider() }
     }
 
     /// What actually needs the user: approvals waiting, plus every Albatross the
