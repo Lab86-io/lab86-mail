@@ -153,6 +153,15 @@ function walkNodes(node: BriefNode, visit: (node: BriefNode) => void) {
 }
 
 /**
+ * A stored document is plain validated JSON, so a JSON round-trip clones it
+ * losslessly. structuredClone is avoided on purpose: these helpers run inside
+ * Convex mutations, and the Convex runtime is not the browser.
+ */
+function cloneDocument(document: unknown): BriefDocumentV2 {
+  return JSON.parse(JSON.stringify(document)) as BriefDocumentV2;
+}
+
+/**
  * The durable question row is created after the document is composed, so the
  * gate is first written with the planner's inline id. This rebinds every
  * reference to the durable id the answer endpoint expects.
@@ -164,7 +173,7 @@ export function bindFrontierQuestionId(
 ): { document: unknown; changed: boolean } {
   if (!document || legacyQuestionId === durableQuestionId) return { document, changed: false };
   let changed = false;
-  const next = structuredClone(document) as BriefDocumentV2;
+  const next = cloneDocument(document);
   if (!Array.isArray(next.regions)) return { document, changed: false };
   for (const region of next.regions) {
     walkNodes(region.tree, (node) => {
@@ -204,7 +213,7 @@ export function bindPlanDocumentSteps(
   }
   if (!cardByStep.size) return { document, bound: 0 };
   let bound = 0;
-  const next = structuredClone(document) as BriefDocumentV2;
+  const next = cloneDocument(document);
   if (!Array.isArray(next.regions)) return { document, bound: 0 };
   for (const region of next.regions) {
     walkNodes(region.tree, (node) => {
