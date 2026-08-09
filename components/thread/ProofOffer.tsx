@@ -74,7 +74,10 @@ export function ProofOffer({ threadId, subject }: { threadId: string; subject: s
     <div
       className={cn(
         'mx-5 mt-3 rounded-lg border border-l-2 border-dashed border-[var(--color-border-strong)]',
-        'border-l-solid border-l-[var(--color-accent)] bg-[var(--color-bg-subtle)] px-3.5 py-2.5',
+        // Tailwind has no per-side border-style utility; without the arbitrary
+        // property the accent leading edge inherits `dashed` and the whole
+        // card reads as a dropzone instead of an offer with a solid spine.
+        '[border-left-style:solid] border-l-[var(--color-accent)] bg-[var(--color-bg-subtle)] px-3.5 py-2.5',
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -88,7 +91,16 @@ export function ProofOffer({ threadId, subject }: { threadId: string; subject: s
           <Button type="button" size="xs" variant="outline" onClick={() => setPicking((value) => !value)}>
             {picking ? 'Never mind' : 'Use as proof'}
           </Button>
-          <Button type="button" size="xs" variant="ghost" onClick={() => setDismissed(true)}>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => setDismissed(true)}
+            // A dismissal must look pressable at rest, not only on hover; the
+            // underline gives it link affordance without competing with the
+            // outlined primary next to it.
+            className="underline decoration-[var(--color-border-strong)] underline-offset-4 hover:decoration-current"
+          >
             Not related
           </Button>
         </div>
