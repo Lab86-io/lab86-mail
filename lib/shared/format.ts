@@ -1,10 +1,10 @@
 export function shortFrom(value: string | null | undefined): string {
-  return (
-    String(value || '')
-      .replace(/<.*?>/g, '')
-      .replaceAll('"', '')
-      .trim() || String(value || '')
-  );
+  const raw = String(value || '');
+  const stripped = raw.replace(/<.*?>/g, '').replaceAll('"', '').trim();
+  if (stripped) return stripped;
+  // An address-only header ("<ada@example.test>") strips to nothing; the bare
+  // address still beats raw angle brackets in the UI.
+  return emailFromHeader(raw) || raw.trim();
 }
 
 // Pulls the bare email out of a header value like `"Tori" <tori@example.com>`,
@@ -26,6 +26,33 @@ export function fromInitials(value: string | null | undefined): string {
   if (!parts.length) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+// Provider snippets (Gmail especially) usually open with the subject
+// verbatim, so "subject — snippet" would say everything twice. Walk the two
+// strings together, tolerant of whitespace and case differences, and return
+// the snippet with any leading subject echo (plus separator punctuation)
+// removed. A snippet that is only the subject dedupes to ''.
+export function dedupeSnippet(
+  subject: string | null | undefined,
+  snippet: string | null | undefined,
+): string {
+  const snip = String(snippet || '').trim();
+  const subj = String(subject || '').trim();
+  if (!snip || !subj) return snip;
+  let i = 0;
+  let j = 0;
+  while (j < subj.length) {
+    if (/\s/.test(subj[j])) {
+      j += 1;
+      continue;
+    }
+    while (i < snip.length && /\s/.test(snip[i])) i += 1;
+    if (i >= snip.length || snip[i].toLowerCase() !== subj[j].toLowerCase()) return snip;
+    i += 1;
+    j += 1;
+  }
+  return snip.slice(i).replace(/^[\s ]*[-–—:·|]*[\s ]*/, '');
 }
 
 export function fromColor(value: string | null | undefined): string {

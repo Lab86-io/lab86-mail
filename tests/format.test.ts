@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   categoricalColor,
   dateToEpoch,
+  dedupeSnippet,
   emailFromHeader,
   formatDate,
   fromColor,
@@ -17,8 +18,37 @@ describe('shortFrom', () => {
     expect(shortFrom('"Ada Lovelace" <ada@example.test>')).toBe('Ada Lovelace');
     expect(shortFrom('noreply@example.test')).toBe('noreply@example.test');
   });
+  test('shows the bare address for an address-only header', () => {
+    expect(shortFrom('<ada@example.test>')).toBe('ada@example.test');
+  });
   test('falls back to raw value when stripping empties it', () => {
     expect(shortFrom('<>""')).toBe('<>""');
+  });
+});
+
+describe('dedupeSnippet', () => {
+  test('removes a leading subject echo and its separator', () => {
+    expect(dedupeSnippet('Build failed for polish', 'Build failed for polish - project polish')).toBe(
+      'project polish',
+    );
+  });
+  test('tolerates case and whitespace differences', () => {
+    expect(dedupeSnippet('Order shipped', 'order  shipped: arrives Friday')).toBe('arrives Friday');
+  });
+  test('returns an empty string when the snippet is only the subject', () => {
+    expect(dedupeSnippet('Uptime alert', 'Uptime alert')).toBe('');
+  });
+  test('keeps a snippet that does not echo the subject', () => {
+    expect(dedupeSnippet('Monthly report', 'Your vehicle is due for service')).toBe(
+      'Your vehicle is due for service',
+    );
+  });
+  test('keeps the snippet when the subject only partially matches', () => {
+    expect(dedupeSnippet('Build failed for polish', 'Build failed')).toBe('Build failed');
+  });
+  test('handles empty inputs', () => {
+    expect(dedupeSnippet('', 'anything')).toBe('anything');
+    expect(dedupeSnippet('subject', '')).toBe('');
   });
 });
 

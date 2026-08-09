@@ -80,7 +80,7 @@ import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
-import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import { categoricalColor, dedupeSnippet, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -1181,6 +1181,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         : '';
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
   const displaySenderLabel = senderLabel || item.account || '';
+  const preview = dedupeSnippet(item.subject, item.snippet);
   const date = (item.date as any) || item.lastDate || 0;
   // Unified-inbox rows carry their mailbox; a 3px colour rail lets the eye scan
   // account membership without reading the same alias text on every row. Colour
@@ -1276,6 +1277,16 @@ export const InboxThreadRow = memo(function InboxThreadRow({
       {/* Two-line row: sender, then subject + preview inline. */}
       <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-90')}>
         <div className="flex items-center gap-1.5">
+          {/* The slot always renders so unread dots form a scannable column
+              instead of trailing each name at a different x. Highlight voice
+              (accent-3): unread is a status pop, not an action. */}
+          <span
+            aria-hidden
+            className={cn(
+              'size-1.5 shrink-0 rounded-full',
+              item.unread ? 'bg-[var(--color-accent-3)]' : 'bg-transparent',
+            )}
+          />
           {item.starred ? (
             <Star
               role="img"
@@ -1299,23 +1310,32 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               {item.messageCount}
             </span>
           ) : null}
-          {item.unread ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
         </div>
-        <span className="truncate text-[12.5px] leading-tight">
+        <span className="truncate pl-3 text-[12.5px] leading-tight">
           <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
             {item.subject || '(no subject)'}
           </span>
-          {item.snippet ? <span className="text-[var(--color-text-muted)]"> — {item.snippet}</span> : null}
+          {preview ? <span className="text-[var(--color-text-muted)]"> — {preview}</span> : null}
         </span>
       </div>
 
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex min-h-[40px] flex-col items-end justify-center gap-1 self-center">
-        <div className="flex h-7 items-center justify-end gap-1.5">
+        <div className="relative flex h-7 items-center justify-end gap-1.5">
+          {/* The action strip floats over the date on reveal instead of
+              reserving an invisible 112px gutter on every row — that reserve
+              is what truncated senders mid-word next to apparent free space.
+              The pseudo layers rebuild the row surface underneath so the
+              buttons never sit on top of text. */}
           <div
             className={cn(
-              'pointer-events-none flex w-[112px] items-center justify-end gap-0.5 opacity-0 transition-opacity duration-75 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100',
+              'pointer-events-none absolute inset-y-0 right-0 z-10 flex items-center justify-end gap-0.5 opacity-0 transition-opacity duration-75 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100',
+              "before:absolute before:-inset-x-1 before:-inset-y-0.5 before:-z-10 before:rounded-md before:bg-[var(--color-bg-elevated)] before:content-['']",
+              "after:absolute after:-inset-x-1 after:-inset-y-0.5 after:-z-10 after:rounded-md after:content-['']",
+              selected || active
+                ? 'after:bg-[var(--color-selected-soft)]'
+                : 'after:bg-[var(--color-hover-soft)]',
               selected && 'pointer-events-auto opacity-100',
             )}
           >
@@ -1381,9 +1401,11 @@ export const InboxThreadRow = memo(function InboxThreadRow({
                   onClick={(e) => e.stopPropagation()}
                   title="Which mailbox"
                   className="rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text)] shadow-[inset_0_1px_0_rgb(255_255_255/0.38)] hover:text-[var(--color-text)]"
+                  // 18%/34% made every account the same beige; the chip only
+                  // earns its border if the account is tellable at a glance.
                   style={{
-                    backgroundColor: `color-mix(in srgb, ${accountColor} 18%, var(--color-bg-elevated))`,
-                    borderColor: `color-mix(in srgb, ${accountColor} 34%, var(--color-border))`,
+                    backgroundColor: `color-mix(in srgb, ${accountColor} 30%, var(--color-bg-elevated))`,
+                    borderColor: `color-mix(in srgb, ${accountColor} 55%, var(--color-border))`,
                   }}
                 >
                   {formatDate(date)}
