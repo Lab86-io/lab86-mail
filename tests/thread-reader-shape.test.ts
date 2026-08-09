@@ -35,8 +35,17 @@ describe('the reader verbs', () => {
   test('the composer replaces the floating bar while open', () => {
     expect(thread).toContain('composeForThisThread ? null');
   });
-  test('the title lives in the scroll and never truncates', () => {
-    expect(thread).not.toContain('truncate font-display text-[17px]');
-    expect(thread).toContain('text-pretty font-display');
+  test('the verbs sit at the trailing edge, not centered', () => {
+    expect(thread).toContain('bottom-4 z-10 flex justify-end');
+  });
+});
+
+describe('the reader header lines up with the inbox header', () => {
+  // Both halves put 32px controls inside px-3 py-2, so the two bottom
+  // borders meet across the seam instead of stepping by a few pixels.
+  test('the reader strip carries the title and MailNav geometry', () => {
+    expect(thread).toContain('border-b border-[var(--color-border)] px-3 py-2');
+    expect(thread).toContain('truncate font-display text-[15px]');
+    expect(read('components/inbox/MailNav.tsx')).toContain('border-b border-[var(--color-border)] px-3 py-2');
   });
 });

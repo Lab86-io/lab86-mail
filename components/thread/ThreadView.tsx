@@ -337,19 +337,21 @@ export function ThreadView() {
       <div className="flex h-full flex-col bg-[var(--color-bg)] sm:py-2 sm:pr-2">
         {/* Same right half of the mail surface as the reader. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)] sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]">
+          {/* Same geometry as the reader strip and MailNav, so every header
+              border across the surface lands on one line. */}
           <header
             className={cn(
-              'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+              'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-2',
               !aiBarOpen && 'pr-12',
             )}
           >
-            <h1 className="font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+            <h1 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]">
               New message
             </h1>
             <button
               type="button"
               onClick={() => closeCompose()}
-              className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+              className="grid size-8 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               title="Close"
             >
               <X className="h-3.5 w-3.5" />
@@ -469,15 +471,22 @@ export function ThreadView() {
             'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
         )}
       >
-        {/* The only fixed chrome: one slim strip. A fixed row must earn its
-            pixels at every scroll position, so the title lives in the scroll
-            below and never fights the controls for width. */}
+        {/* The only fixed chrome: one strip carrying the title and the four
+            view actions. px-3 py-2 around 32px controls is exactly MailNav's
+            geometry, so this bottom border lines up with the inbox half's
+            across the seam. */}
         <div
           className={cn(
-            'flex items-center justify-end gap-1.5 border-b border-[var(--color-border)] px-3 py-1.5',
+            'flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-2',
             !aiBarOpen && !threadFullscreen && 'pr-12',
           )}
         >
+          <h1
+            title={data.subject}
+            className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]"
+          >
+            {data.subject}
+          </h1>
           {/* Trash stays out of the strip that holds Close: a one-slot miss
               must not throw mail away. */}
           <div className={SEGMENT_GROUP}>
@@ -515,11 +524,6 @@ export function ThreadView() {
         </div>
 
         <div className="scrollable flex-1 px-5 pb-24 pt-4">
-          {/* Full width, wrapping, never truncated: the title orients once at
-              open, then scrolls away with the read. */}
-          <h1 className="text-pretty font-display text-[18px] font-semibold leading-snug tracking-[-0.01em]">
-            {data.subject}
-          </h1>
           {/* The thread object has no top-level _id (getThread returns
               providerThreadId as `threadId`); use the canonical thread id from
               the store so chips match the cards' sourceThreadId, not ''. */}
@@ -596,7 +600,7 @@ export function ThreadView() {
             carries tasks to get done. The composer replaces the bar while it
             is open. */}
         {composeForThisThread ? null : (
-          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-end px-5">
             <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)]/95 p-1 shadow-[var(--shadow-pop)] backdrop-blur-sm">
               <button
                 type="button"
