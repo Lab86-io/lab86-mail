@@ -942,6 +942,8 @@ const EMAIL_FRAME_RESET =
   // rules always win. Unstyled emails fall back to dark-on-white.
   'html,body{margin:0;padding:0;background:#ffffff;color:#1f2937;' +
   "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5}" +
+  // overflow-x is only the fallback for engines without CSS zoom; EmailFrame
+  // scales fixed-width mail down to the pane so no inner scrollbar appears.
   'body{padding:6px 2px;overflow-x:auto}' +
   'img{max-width:100%;height:auto}' +
   '</style>';
@@ -958,6 +960,9 @@ function buildEmailSrcDoc(html: string): string {
 function EmailFrame({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const frameObserverRef = useRef<ResizeObserver | null>(null);
+  // The frame width the current zoom was computed for; 0 forces a refit.
+  const fittedWidthRef = useRef(0);
   const [height, setHeight] = useState(160);
   const srcDoc = useMemo(() => buildEmailSrcDoc(html), [html]);
 
@@ -968,11 +973,31 @@ function EmailFrame({ html }: { html: string }) {
     const measure = () => {
       const doc = iframe.contentDocument;
       if (!doc?.body) return;
-      const next = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight, 40);
+      // body.scrollHeight is in the body's own (pre-zoom) coordinates; scale
+      // it so a scaled-down email does not leave dead space below itself.
+      const zoom = Number.parseFloat(doc.body.style.zoom || '1') || 1;
+      const next = Math.max(Math.round(doc.body.scrollHeight * zoom), doc.documentElement.scrollHeight, 40);
       setHeight((prev) => (Math.abs(prev - next) > 1 ? next : prev));
     };
-    const onLoad = () => {
+    // Fixed-width mail (600–900px marketing tables) scales down to the pane
+    // width instead of clipping and growing an inner horizontal scrollbar.
+    const fit = () => {
+      const doc = iframe.contentDocument;
+      const frameWidth = iframe.clientWidth;
+      if (!doc?.body || !frameWidth) return;
+      if (frameWidth !== fittedWidthRef.current) {
+        fittedWidthRef.current = frameWidth;
+        doc.body.style.removeProperty('zoom');
+        const contentWidth = Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth);
+        if (contentWidth > frameWidth + 1) {
+          doc.body.style.zoom = String(frameWidth / contentWidth);
+        }
+      }
       measure();
+    };
+    const onLoad = () => {
+      fittedWidthRef.current = 0;
+      fit();
       const doc = iframe.contentDocument;
       if (!doc) return;
       // Re-measure as images and webfonts settle (they change layout height).
@@ -986,6 +1011,13 @@ function EmailFrame({ html }: { html: string }) {
         });
         ro.observe(doc.body);
         observerRef.current = ro;
+        // Panel resizes change the frame width; refit the zoom to match.
+        const frameRo = new ResizeObserver(() => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(fit);
+        });
+        frameRo.observe(iframe);
+        frameObserverRef.current = frameRo;
       }
     };
     iframe.addEventListener('load', onLoad);
@@ -996,6 +1028,8 @@ function EmailFrame({ html }: { html: string }) {
       cancelAnimationFrame(raf);
       observerRef.current?.disconnect();
       observerRef.current = null;
+      frameObserverRef.current?.disconnect();
+      frameObserverRef.current = null;
     };
   }, []);
 
