@@ -50,6 +50,11 @@ import { InlineComposer } from './InlineComposer';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
+// The floating action bar's quiet buttons; the Albatross declaration beside
+// them carries its own accent-hover treatment.
+const BAR_BUTTON =
+  'flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-control)] hover:text-[var(--color-text)] disabled:pointer-events-none disabled:opacity-50';
+
 const SEGMENT_GROUP =
   'flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg-elevated)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]';
 
@@ -329,34 +334,37 @@ export function ThreadView() {
           ? account
           : '';
     return (
-      <div className="flex h-full flex-col bg-[var(--color-bg)]">
-        <header
-          className={cn(
-            'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
-            !aiBarOpen && 'pr-12',
-          )}
-        >
-          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
-            New message
-          </h1>
-          <button
-            type="button"
-            onClick={() => closeCompose()}
-            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-            title="Close"
+      <div className="flex h-full flex-col bg-[var(--color-bg)] sm:py-2 sm:pr-2">
+        {/* Same right half of the mail surface as the reader. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)] sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]">
+          <header
+            className={cn(
+              'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+              !aiBarOpen && 'pr-12',
+            )}
           >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </header>
-        <div className="scrollable flex-1 px-5 py-6">
-          <InlineComposer
-            mode="new"
-            account={fromAccount}
-            initialPrefill={compose.prefill || undefined}
-            prefillNonce={compose.nonce}
-            onSent={() => closeCompose()}
-            onClose={() => closeCompose()}
-          />
+            <h1 className="font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+              New message
+            </h1>
+            <button
+              type="button"
+              onClick={() => closeCompose()}
+              className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+              title="Close"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </header>
+          <div className="scrollable flex-1 px-5 py-6">
+            <InlineComposer
+              mode="new"
+              account={fromAccount}
+              initialPrefill={compose.prefill || undefined}
+              prefillNonce={compose.nonce}
+              onSent={() => closeCompose()}
+              onClose={() => closeCompose()}
+            />
+          </div>
         </div>
       </div>
     );
@@ -407,10 +415,10 @@ export function ThreadView() {
 
   if (isLoading || !data) {
     return (
-      <div className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3 sm:pl-0">
+      <div className="flex h-full flex-col bg-[var(--color-bg)] sm:py-2 sm:pr-2">
         <div
           className={cn(
-            'min-h-0 flex-1 space-y-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]',
+            'min-h-0 flex-1 space-y-3 overflow-hidden bg-[var(--color-bg-elevated)] p-4 sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
             !aiBarOpen && 'pr-12',
           )}
         >
@@ -444,10 +452,10 @@ export function ThreadView() {
       aria-label={threadFullscreen ? data.subject : undefined}
       className={cn(
         'flex h-full flex-col bg-[var(--color-bg)]',
-        // The reader sits on the same depth rung as the inbox panel: a card on
-        // the paper, with the inbox's gutter (minus the left edge, which the
-        // resize separator already spaces).
-        !threadFullscreen && 'p-2 sm:p-3 sm:pl-0',
+        // One surface, split inside: the reader is the right half of the mail
+        // card, not a second card. Its left edge stays open toward the seam
+        // the resize separator paints; the gutter matches the inbox half.
+        !threadFullscreen && 'sm:py-2 sm:pr-2',
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
@@ -456,145 +464,81 @@ export function ThreadView() {
     >
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col',
+          '@container relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
           !threadFullscreen &&
-            'overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+            'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
         )}
       >
-        <header
+        {/* The only fixed chrome: one slim strip. A fixed row must earn its
+            pixels at every scroll position, so the title lives in the scroll
+            below and never fights the controls for width. */}
+        <div
           className={cn(
-            '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+            'flex items-center justify-end gap-1.5 border-b border-[var(--color-border)] px-3 py-1.5',
             !aiBarOpen && !threadFullscreen && 'pr-12',
           )}
         >
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
-              {data.subject}
-            </h1>
-            {/* The thread object has no top-level _id (getThread returns
+          {/* Trash stays out of the strip that holds Close: a one-slot miss
+              must not throw mail away. */}
+          <div className={SEGMENT_GROUP}>
+            <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
+              <RowIcon icon={ArchiveIcon} size={14} />
+            </IconBtn>
+            <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
+              <RowIcon icon={DeleteIcon} size={14} />
+            </IconBtn>
+          </div>
+          <div className={SEGMENT_GROUP}>
+            <IconBtn
+              title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
+              onClick={() => setThreadFullscreen(!threadFullscreen)}
+            >
+              {threadFullscreen ? (
+                <RowIcon icon={MinimizeIcon} size={14} />
+              ) : (
+                <RowIcon icon={MaximizeIcon} size={14} />
+              )}
+            </IconBtn>
+            <IconBtn
+              title={threadFullscreen ? 'Close popout' : 'Close'}
+              onClick={() => {
+                if (threadFullscreen) {
+                  setThreadFullscreen(false);
+                  return;
+                }
+                setSelectedThread(null);
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </IconBtn>
+          </div>
+        </div>
+
+        <div className="scrollable flex-1 px-5 pb-24 pt-4">
+          {/* Full width, wrapping, never truncated: the title orients once at
+              open, then scrolls away with the read. */}
+          <h1 className="text-pretty font-display text-[18px] font-semibold leading-snug tracking-[-0.01em]">
+            {data.subject}
+          </h1>
+          {/* The thread object has no top-level _id (getThread returns
               providerThreadId as `threadId`); use the canonical thread id from
               the store so chips match the cards' sourceThreadId, not ''. */}
-            <LinkedTaskChips threadId={threadId || ''} />
-            {/* A single message shows its sender and time in the card right
-                below; repeating them here says nothing twice. */}
-            {messages.length > 1 ? (
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
-                <span className="shrink-0">{messages.length} messages</span>
-                <span className="shrink-0">·</span>
-                <span className="truncate">{shortFrom(lastMessage?.from)}</span>
-                <span className="shrink-0">·</span>
-                <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
-              </div>
-            ) : null}
-          </div>
-          {/* The clusters wrap at extreme narrow widths (320px popouts) so no
-              action clips or scrolls away. */}
-          <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              title="Hand this to Albatross"
-              onClick={() =>
-                openCaptureWith(
-                  `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
-                )
-              }
-              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            >
-              {/* The compact form keeps the verb: a bare product name reads as
-                  a label, not an action. */}
-              <span className="hidden @[560px]:inline">Hand to Albatross</span>
-              <span className="@[560px]:hidden">Hand off</span>
-            </Button>
-            {/* Reply cluster — one segmented group like the utility clusters; labels fade out below 640px of reader width. */}
-            <div className={SEGMENT_GROUP}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => startReply('reply')}
-                disabled={!replyAnchor}
-                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-                title="Reply (r)"
-              >
-                <RowIcon icon={CornerUpLeftIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Reply
-                </span>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => startReply('reply_all')}
-                disabled={!replyAnchor}
-                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-                title="Reply all"
-              >
-                <RowIcon icon={ReplyAllIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Reply all
-                </span>
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => startReply('forward')}
-                disabled={!replyAnchor}
-                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-                title="Forward"
-              >
-                <RowIcon icon={CornerUpRightIcon} size={14} />
-                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                  Forward
-                </span>
-              </Button>
+          <LinkedTaskChips threadId={threadId || ''} />
+          {/* A single message shows its sender and time in the header right
+              below; repeating them here says nothing twice. */}
+          {messages.length > 1 ? (
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+              <span className="shrink-0">{messages.length} messages</span>
+              <span className="shrink-0">·</span>
+              <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
             </div>
-            {/* Mail actions and view actions are separate sets: Trash is
-                destructive and must not share a strip with Close, where a
-                one-slot miss throws mail away. */}
-            <div className={SEGMENT_GROUP}>
-              <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
-                <RowIcon icon={ArchiveIcon} size={14} />
-              </IconBtn>
-              <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
-                <RowIcon icon={DeleteIcon} size={14} />
-              </IconBtn>
-            </div>
-            <div className={SEGMENT_GROUP}>
-              <IconBtn
-                title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
-                onClick={() => setThreadFullscreen(!threadFullscreen)}
-              >
-                {threadFullscreen ? (
-                  <RowIcon icon={MinimizeIcon} size={14} />
-                ) : (
-                  <RowIcon icon={MaximizeIcon} size={14} />
-                )}
-              </IconBtn>
-              <IconBtn
-                title={threadFullscreen ? 'Close popout' : 'Close'}
-                onClick={() => {
-                  if (threadFullscreen) {
-                    setThreadFullscreen(false);
-                    return;
-                  }
-                  setSelectedThread(null);
-                }}
-              >
-                <X className="h-3.5 w-3.5" />
-              </IconBtn>
-            </div>
-          </div>
-        </header>
+          ) : null}
 
-        {/* Most proof that a real-life thing happened arrives by email. The offer
-          sits directly under the thread that might be it. */}
-        <ProofOffer threadId={threadId || ''} subject={data.subject} />
-
-        <div className="scrollable flex-1 px-5 py-4">
+          {/* Most proof that a real-life thing happened arrives by email. The
+              offer sits directly under the thread that might be it. */}
+          <ProofOffer threadId={threadId || ''} subject={data.subject} />
           {canSummarizeThread ? (
             <SummaryCard
               data={summary.data?.summary || cachedSummary}
@@ -626,7 +570,7 @@ export function ThreadView() {
           ) : null}
 
           <LayoutGroup>
-            <div className="mt-4 flex flex-col gap-2">
+            <div className="mt-2 flex flex-col">
               {ordered.map((m, i) => {
                 const email = emailFromHeader(m?.from);
                 return (
@@ -646,6 +590,60 @@ export function ThreadView() {
             </div>
           </LayoutGroup>
         </div>
+
+        {/* The thread's verbs float at the bottom, where a finished read
+            lands: the correspondence verbs, then the recognition — this email
+            carries tasks to get done. The composer replaces the bar while it
+            is open. */}
+        {composeForThisThread ? null : (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+            <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)]/95 p-1 shadow-[var(--shadow-pop)] backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => startReply('reply')}
+                disabled={!replyAnchor}
+                title="Reply (r)"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                <span className="hidden @[520px]:inline">Reply</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startReply('reply_all')}
+                disabled={!replyAnchor}
+                title="Reply all"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={ReplyAllIcon} size={14} />
+                <span className="hidden @[520px]:inline">Reply all</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startReply('forward')}
+                disabled={!replyAnchor}
+                title="Forward"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={CornerUpRightIcon} size={14} />
+                <span className="hidden @[520px]:inline">Forward</span>
+              </button>
+              <span className="mx-1 h-4 w-px shrink-0 bg-[var(--color-border)]" aria-hidden />
+              <button
+                type="button"
+                title="This email carries tasks to get done"
+                onClick={() =>
+                  openCaptureWith(
+                    `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
+                  )
+                }
+                className="flex h-8 items-center whitespace-nowrap rounded-full px-3 text-[12.5px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
+              >
+                This is an Albatross
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </motion.div>
   );
@@ -672,6 +670,8 @@ export function ThreadView() {
   return reader;
 }
 
+// Flat interior: the summary is a section with a rule, not a box — the
+// surface already did the depth work.
 function SummaryCard({
   data,
   loading,
@@ -690,7 +690,7 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-float)] p-3.5 shadow-[var(--shadow-soft)]"
+      className="relative mt-4 border-b border-[var(--color-border)]/70 pb-3"
     >
       <header className="mb-1.5 flex items-center justify-between">
         <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
@@ -754,10 +754,10 @@ function MessageCard({
   const sender = contactFromHeader(message.from);
   const recipient = contactFromHeader(message.to || message.account);
   return (
-    // Message cards ride one rung above the reader card (float > card on the
-    // depth ladder) now that the reader itself is elevated off the paper.
-    <article className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-float)] shadow-[var(--shadow-soft)]">
-      <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left">
+    // Flat interior: messages separate with hairlines, not boxes — the
+    // surface already did the depth work.
+    <article className="border-b border-[var(--color-border)]/70 last:border-b-0">
+      <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 py-2.5 text-left">
         <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
           <Avatar name={sender.name} src={photoUrl} size={26} />
         </ContactButton>
@@ -816,7 +816,7 @@ function MessageCard({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -3 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              className="px-4 py-3"
+              className="py-3"
             >
               <MessageBody html={message.htmlBody} text={message.textBody} />
               <Attachments attachments={message.attachments} messageId={message._id} account={account} />

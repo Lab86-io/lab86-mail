@@ -172,6 +172,7 @@ export function Inbox() {
   const queryError = useClientStore((s) => s.queryError);
   const setQueryError = useClientStore((s) => s.setQueryError);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const composeOpen = useClientStore((s) => !!s.compose.mode);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -795,9 +796,20 @@ export function Inbox() {
   const undoLast = useCallback(() => undoLastRule.mutate(), [undoLastRule.mutate]);
   const previewLabels = useCallback((item: ThreadRow) => setLabelPreview(item), []);
 
+  // One surface, split inside: with a reader open, the list is the left half
+  // of the mail card. Its right edge opens toward the seam the resize
+  // separator paints; the reader half closes the rectangle.
+  const readerOpen = !!(composeOpen || selectedThreadId);
   return (
-    <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+    <section
+      className={cn('flex h-full flex-col bg-[var(--color-bg)] p-1.5 sm:p-2', readerOpen && 'sm:pr-0')}
+    >
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+          readerOpen && 'sm:rounded-r-none sm:border-r-0',
+        )}
+      >
         {/* Compose, the categories, and the folders live with the mail now,
             not in the product's navigation rail. */}
         <MailNav />
@@ -1274,7 +1286,37 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
       ) : null}
 
-      <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+      {/* The mailbox affordance lives on the sender mark, which nothing ever
+          covers — unlike the date, which the hover actions overlay. The ring
+          tint keeps the per-account scan signal. */}
+      {showAccount && accountColor ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              onClick={(event) => event.stopPropagation()}
+              title="Which mailbox"
+              className="block rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              style={{
+                boxShadow: `0 0 0 1.5px color-mix(in srgb, ${accountColor} 55%, var(--color-bg-elevated))`,
+              }}
+            >
+              <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto px-3 py-2 text-[12px]">
+            <div className="flex items-center gap-2">
+              <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
+              <span className="font-medium text-[var(--color-text)]">
+                {accountLabel || item.accountAlias || item.account}
+              </span>
+            </div>
+            <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+      )}
 
       {/* Two-line row: sender, then subject + preview inline. */}
       <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-90')}>
@@ -1395,39 +1437,12 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               />
             )}
           </div>
-          {showAccount && accountColor ? (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => e.stopPropagation()}
-                  title="Which mailbox"
-                  className="rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text)] shadow-[inset_0_1px_0_rgb(255_255_255/0.38)] hover:text-[var(--color-text)]"
-                  // 18%/34% made every account the same beige; the chip only
-                  // earns its border if the account is tellable at a glance.
-                  style={{
-                    backgroundColor: `color-mix(in srgb, ${accountColor} 30%, var(--color-bg-elevated))`,
-                    borderColor: `color-mix(in srgb, ${accountColor} 55%, var(--color-border))`,
-                  }}
-                >
-                  {formatDate(date)}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
-                <div className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
-                  <span className="font-medium text-[var(--color-text)]">
-                    {accountLabel || item.accountAlias || item.account}
-                  </span>
-                </div>
-                <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
-              </PopoverContent>
-            </Popover>
-          ) : (
-            <span className="rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
-              {formatDate(date)}
-            </span>
-          )}
+          {/* Plain text on purpose: the hover actions overlay this slot, so
+              the date must carry no interaction of its own. The mailbox
+              popover lives on the avatar. */}
+          <span className="rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
+            {formatDate(date)}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (

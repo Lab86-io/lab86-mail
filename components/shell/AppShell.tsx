@@ -521,8 +521,10 @@ function RailResizeHandle() {
 }
 
 function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizing: boolean) => void }) {
-  // 6px wide hit target with a 1px visible rule down the middle; brightens on
-  // hover/drag so it's clearly grabbable.
+  // The seam of the one mail surface: the list and reader halves open toward
+  // this 6px grab area, which paints itself as card surface with top/bottom
+  // borders that continue the halves' outline, plus a 1px interior rule. The
+  // vertical inset matches the halves' sm:p-2 gutter.
   return (
     <Separator
       onPointerDown={() => {
@@ -538,7 +540,11 @@ function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizi
       className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none"
     >
       <span
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
+        className="pointer-events-none absolute inset-x-0 inset-y-2 border-y border-[var(--color-border)] bg-[var(--color-bg-elevated)]"
+        aria-hidden
+      />
+      <span
+        className="pointer-events-none absolute bottom-2 left-1/2 top-2 w-px -translate-x-1/2 bg-[var(--color-border)]/70 transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden
       />
     </Separator>

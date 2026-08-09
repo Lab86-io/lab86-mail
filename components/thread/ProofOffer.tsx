@@ -62,7 +62,7 @@ export function ProofOffer({ threadId, subject }: { threadId: string; subject: s
 
   if (attached) {
     return (
-      <div className="mx-5 mt-3 rounded-lg border-l-2 border-[var(--color-success)] bg-[var(--color-success-soft)] px-3.5 py-2.5">
+      <div className="mt-4 rounded-lg border-l-2 border-[var(--color-success)] bg-[var(--color-success-soft)] px-3.5 py-2.5">
         <p className="text-[12.5px]">
           Filed as proof for <span className="font-medium">{attached}</span>.
         </p>
@@ -73,7 +73,7 @@ export function ProofOffer({ threadId, subject }: { threadId: string; subject: s
   return (
     <div
       className={cn(
-        'mx-5 mt-3 rounded-lg border border-l-2 border-dashed border-[var(--color-border-strong)]',
+        'mt-4 rounded-lg border border-l-2 border-dashed border-[var(--color-border-strong)]',
         // Tailwind has no per-side border-style utility; without the arbitrary
         // property the accent leading edge inherits `dashed` and the whole
         // card reads as a dropzone instead of an offer with a solid spine.
