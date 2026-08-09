@@ -48,6 +48,11 @@ import {
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 
+// One vocabulary for header icon groups: a segmented control strip. The ring
+// offset matches the reader card the header now sits on.
+const SEGMENT_GROUP =
+  'flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg-elevated)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]';
+
 export function ThreadView() {
   // The inbox runs unified; the open thread carries its own concrete account.
   const threadAccount = useClientStore((s) => s.threadAccount);
@@ -470,15 +475,17 @@ export function ThreadView() {
               providerThreadId as `threadId`); use the canonical thread id from
               the store so chips match the cards' sourceThreadId, not ''. */}
             <LinkedTaskChips threadId={threadId || ''} />
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
-              <span className="shrink-0">
-                {messages.length} message{messages.length === 1 ? '' : 's'}
-              </span>
-              <span className="shrink-0">·</span>
-              <span className="truncate">{shortFrom(lastMessage?.from)}</span>
-              <span className="shrink-0">·</span>
-              <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
-            </div>
+            {/* A single message shows its sender and time in the card right
+                below; repeating them here says nothing twice. */}
+            {messages.length > 1 ? (
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+                <span className="shrink-0">{messages.length} messages</span>
+                <span className="shrink-0">·</span>
+                <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+                <span className="shrink-0">·</span>
+                <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
@@ -493,11 +500,13 @@ export function ThreadView() {
               }
               className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             >
+              {/* The compact form keeps the verb: a bare product name reads as
+                  a label, not an action. */}
               <span className="hidden @[560px]:inline">Hand to Albatross</span>
-              <span className="@[560px]:hidden">Albatross</span>
+              <span className="@[560px]:hidden">Hand off</span>
             </Button>
-            {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
-            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+            {/* Reply cluster — one segmented group like the utility clusters; labels fade out below 640px of reader width. */}
+            <div className={SEGMENT_GROUP}>
               <Button
                 type="button"
                 variant="ghost"
@@ -541,14 +550,18 @@ export function ThreadView() {
                 </span>
               </Button>
             </div>
-            {/* Utility cluster — one segmented group so the icons read as a set. */}
-            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+            {/* Mail actions and view actions are separate sets: Trash is
+                destructive and must not share a strip with Close, where a
+                one-slot miss throws mail away. */}
+            <div className={SEGMENT_GROUP}>
               <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
                 <RowIcon icon={ArchiveIcon} size={14} />
               </IconBtn>
               <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
                 <RowIcon icon={DeleteIcon} size={14} />
               </IconBtn>
+            </div>
+            <div className={SEGMENT_GROUP}>
               <IconBtn
                 title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
                 onClick={() => setThreadFullscreen(!threadFullscreen)}
