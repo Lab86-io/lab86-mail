@@ -762,11 +762,14 @@ function MessageCard({
         <div className="flex min-w-0 flex-col gap-0">
           <div className="flex min-w-0 items-center gap-2">
             <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
-              <span className="block truncate text-[13px] font-semibold text-[var(--color-text)]">
+              {/* font-display matches the sender voice everywhere else: the
+                  list rows and the thread title. */}
+              <span className="block truncate font-display text-[13px] font-semibold text-[var(--color-text)]">
                 {sender.name}
               </span>
             </ContactButton>
-            <span className="shrink-0 text-[11.5px] text-[var(--color-text-faint)]">→</span>
+            {/* "to" is the mail convention; an arrow reads as a forward. */}
+            <span className="shrink-0 text-[11.5px] italic text-[var(--color-text-faint)]">to</span>
             <ContactButton contact={recipient} onShowEmails={onShowContactEmails}>
               <span className="block truncate text-[11.5px] text-[var(--color-text-muted)]">
                 {recipient.name}
@@ -786,7 +789,9 @@ function MessageCard({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          // min-height keeps the collapse toggle a real target; the bare
+          // chevron alone was a sliver.
+          className="flex min-h-7 items-center gap-2 rounded-md px-2 py-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           aria-expanded={open}
           title={open ? 'Hide details' : 'Show details'}
         >
