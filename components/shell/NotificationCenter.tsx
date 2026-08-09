@@ -108,8 +108,10 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
             )}
           >
             <Bell className="size-4" />
+            {/* Highlight voice, not danger: the count is attention, not an
+                error state. */}
             {attentionCount ? (
-              <span className="absolute -right-1 -top-1 min-w-4 rounded-full border-2 border-[var(--color-bg-elevated)] bg-[var(--color-danger)] px-1 text-center text-[9px] font-semibold leading-3 text-white">
+              <span className="absolute -right-1 -top-1 min-w-4 rounded-full border-2 border-[var(--color-bg-elevated)] bg-[var(--color-accent-3)] px-1 text-center text-[9px] font-semibold leading-3 text-white">
                 {Math.min(attentionCount, 99)}
               </span>
             ) : null}

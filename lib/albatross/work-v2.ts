@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { WORK_SHAPES } from '@/lib/albatross/work-shape';
 
 export const workSplitSchema = z.object({
   work: z
@@ -9,6 +10,10 @@ export const workSplitSchema = z.object({
         rawText: z.string().min(1).max(20_000),
         primaryAreaName: z.string().max(120).nullish(),
         relatedAreaNames: z.array(z.string().max(120)).max(6).default([]),
+        // The splitter's first read of what kind of outcome this is. The
+        // planner refines it later with more context; capture must not block
+        // on it, so an unrecognised value simply drops to undefined.
+        shape: z.enum(WORK_SHAPES).optional().catch(undefined),
       }),
     )
     .min(1)
@@ -153,11 +158,20 @@ export function projectPromotionDecision(input: ProjectPromotionInput): {
   return { promote: false };
 }
 
-export function shouldComposeWorkBrief(input: ProjectPromotionInput) {
-  const actions = input.actions || [];
-  if (projectPromotionDecision(input).promote) return true;
-  if (actions.length >= 5) return true;
-  return actions.some((action) => Boolean(action.startIso || action.endIso));
+/**
+ * The plan document is the Work page, so any plan with something to follow
+ * gets one: steps to do, or an open question that gates them. Only a plan
+ * with nothing in it — no actions, no question — goes without.
+ */
+export function shouldComposeWorkBrief(
+  input: ProjectPromotionInput & {
+    physicalActions?: Array<{ title: string }> | null;
+    openQuestions?: number;
+  },
+) {
+  if ((input.openQuestions ?? 0) > 0) return true;
+  if ((input.actions || []).length) return true;
+  return Boolean(input.physicalActions?.length);
 }
 
 export function localDateKey(timezone: string, at = new Date()) {

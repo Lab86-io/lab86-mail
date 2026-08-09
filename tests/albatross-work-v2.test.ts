@@ -59,6 +59,47 @@ describe('Albatross Work capture', () => {
     expect(result.work[1].relatedAreaNames).toEqual(['My apps']);
   });
 
+  test('an invalid timezone falls back to the UTC date', () => {
+    expect(localDateKey('not/a-zone', new Date('2026-07-11T01:00:00Z'))).toBe('2026-07-11');
+  });
+
+  test('a declared project title promotes on its own', () => {
+    const decision = projectPromotionDecision({ declaredProjectTitle: 'Tax season wrap-up' });
+    expect(decision.promote).toBe(true);
+    expect(decision.reason).toContain('durable multi-step outcome');
+  });
+
+  test('a schema-breaking split falls back to the preserved dump', () => {
+    const result = parseWorkSplit('{"work": 5}', 'the original dump');
+    expect(result.work).toHaveLength(1);
+    expect(result.work[0].rawText).toBe('the original dump');
+  });
+
+  test('broken JSON inside braces falls back to the preserved dump', () => {
+    const result = parseWorkSplit('{"work": [}', 'the broken dump');
+    expect(result.work).toHaveLength(1);
+    expect(result.work[0].rawText).toBe('the broken dump');
+  });
+
+  test('a split whose items all lose their text falls back to the original text', () => {
+    const result = parseWorkSplit(JSON.stringify({ work: [{ title: 'x', rawText: '   ' }] }), 'keep me');
+    expect(result.work[0].rawText).toBe('keep me');
+  });
+
+  test('keeps a valid shape and drops an invented one without losing the split', () => {
+    const result = parseWorkSplit(
+      JSON.stringify({
+        work: [
+          { title: 'Renew the passport', rawText: 'Renew it.', shape: 'quick' },
+          { title: 'Get in shape', rawText: 'Run three times a week.', shape: 'sideways' },
+        ],
+      }),
+      'passport and running',
+    );
+    expect(result.work[0].shape).toBe('quick');
+    expect(result.work[1].shape).toBeUndefined();
+  });
+
   test('falls back to one preserved Work item when model output is invalid', () => {
     const raw = '  Keep this exact\nmultiline dump.  ';
     const result = parseWorkSplit('not json', raw);
@@ -94,10 +135,19 @@ describe('Albatross Work projects and briefs', () => {
     ).toBe(true);
   });
 
-  test('small unscheduled errands stay lightweight', () => {
+  test('small unscheduled errands stay out of projects but still get a page', () => {
     const input = { actions: [{ kind: 'task', title: 'Pick up the package' }] };
     expect(projectPromotionDecision(input).promote).toBe(false);
-    expect(shouldComposeWorkBrief(input)).toBe(false);
+    // The plan document is the Work page now: one step is enough to earn it.
+    expect(shouldComposeWorkBrief(input)).toBe(true);
+  });
+
+  test('the page composes for open questions and physical steps; an empty plan skips it', () => {
+    expect(shouldComposeWorkBrief({ actions: [], openQuestions: 1 })).toBe(true);
+    expect(shouldComposeWorkBrief({ actions: [], physicalActions: [{ title: 'Go to the office' }] })).toBe(
+      true,
+    );
+    expect(shouldComposeWorkBrief({ actions: [] })).toBe(false);
   });
 
   test('action identities are stable and source-sensitive', () => {

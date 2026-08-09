@@ -1,24 +1,22 @@
 'use client';
 
 import { useConvexAuth, useQuery } from 'convex/react';
-import { ArrowLeft, CheckCircle2, CircleAlert, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, CircleAlert, LoaderCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
-import { WorkDetailArtifactFrame } from '@/components/albatross/WorkDetailArtifactFrame';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import type { OutcomeContract } from '@/lib/albatross/contract';
-import { injectPlanArtifactRuntime } from '@/lib/albatross/plan-artifact-runtime';
+import { hasFrontierGate } from '@/lib/albatross/plan-frontier';
 import type { EvidenceLike } from '@/lib/albatross/proof';
 import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
-import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
 interface WorkQuestion {
@@ -56,7 +54,7 @@ interface WorkDetailData {
     physicalActions?: Array<{ title: string; detail?: string; url?: string }>;
     appliedSteps?: Array<{ stepKey: string; kind: string }>;
   };
-  project: null | { _id: string; title: string; outcome?: string; status: string; activeSprintId?: string };
+  project: null | { _id: string; title: string; outcome?: string; status: string };
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
   contract: OutcomeContract | null;
@@ -69,6 +67,21 @@ interface WorkDetailData {
   };
 }
 
+/**
+ * POST json and tolerate a non-json error body — a gateway's HTML error page
+ * must surface the caller's fallback message, not a parse failure.
+ */
+async function postJson(url: string, body: Record<string, unknown>, fallback: string) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const parsed = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(parsed?.error || fallback);
+  return parsed;
+}
+
 export function WorkDetail({ workId }: { workId: string }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
@@ -79,37 +92,15 @@ export function WorkDetail({ workId }: { workId: string }) {
     api.albatrossWorkV2.workDetail,
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
   ) as WorkDetailData | null | undefined;
-  const projectTasks = useQuery(
-    api.albatrossWork.projectTasks,
-    isAuthenticated && detail?.project
-      ? { projectId: detail.project._id as Id<'albatrossProjects'> }
-      : 'skip',
-  ) as Array<{ cardId: string; title: string; completedAt?: number }> | undefined;
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
-  const artifactFrameRef = useRef<HTMLIFrameElement>(null);
-  const appFont = useClientStore((state) => state.appFont);
-  const accentHue = useClientStore((state) => state.accentHue);
-  const accentChroma = useClientStore((state) => state.accentChroma);
-  const accent2Hue = useClientStore((state) => state.accent2Hue);
-  const accent2Chroma = useClientStore((state) => state.accent2Chroma);
-  const bgHue = useClientStore((state) => state.bgHue);
-  const surfaceTint = useClientStore((state) => state.surfaceTint);
+  // The stored application keeps its artifacts after an undo; the ledger must
+  // not keep offering Undo for a change that is already gone.
+  const [undoneOperations, setUndoneOperations] = useState<ReadonlySet<string>>(new Set());
 
-  const artifact = useMemo(
-    () => (detail?.plan?.artifactHtml ? injectPlanArtifactRuntime(detail.plan.artifactHtml) : null),
-    [detail?.plan?.artifactHtml],
-  );
-  const postTheme = useCallback(() => {
-    postBriefTheme(artifactFrameRef.current?.contentWindow, appFont);
-  }, [appFont]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolved CSS is read by postBriefTheme; customization slices intentionally retrigger it.
-  useEffect(() => {
-    postTheme();
-  }, [postTheme, accentHue, accentChroma, accent2Hue, accent2Chroma, bgHue, surfaceTint]);
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
   }, [detail?.work.primaryAreaId, setSelectedAreaId]);
@@ -118,17 +109,31 @@ export function WorkDetail({ workId }: { workId: string }) {
     setAdvancing(true);
     setError(null);
     try {
-      const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not continue this Albatross.');
+      await postJson(
+        `/api/albatross/work/${encodeURIComponent(workId)}/advance`,
+        { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        'Could not continue this Albatross.',
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not continue this Albatross.');
     } finally {
       setAdvancing(false);
+    }
+  };
+
+  const setWorkState = async (state: 'done' | 'active') => {
+    setCompleting(true);
+    setError(null);
+    try {
+      await postJson(
+        `/api/albatross/work/${encodeURIComponent(workId)}/state`,
+        { state },
+        'Could not update this Albatross.',
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update this Albatross.');
+    } finally {
+      setCompleting(false);
     }
   };
 
@@ -152,9 +157,16 @@ export function WorkDetail({ workId }: { workId: string }) {
     );
   }
 
-  const { work, plan, project } = detail;
+  const { work, plan } = detail;
   const pendingQuestions = detail.questions.filter((question) => question.status === 'pending');
-  const completedTasks = projectTasks?.filter((task) => task.completedAt).length ?? 0;
+  const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
+  // The document carries its own question gate once the durable id is bound.
+  // The host renders a question only while the page cannot.
+  const hostQuestions = pendingQuestions.filter(
+    (question) => !document || !hasFrontierGate(document, String(question._id)),
+  );
+  const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
+  const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -166,7 +178,7 @@ export function WorkDetail({ workId }: { workId: string }) {
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Albatross</span>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-14 pt-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-24 pt-6">
         <div className="mx-auto max-w-4xl">
           <OutcomeHeader
             outcome={plan?.outcome || work.title || work.rawText}
@@ -185,15 +197,12 @@ export function WorkDetail({ workId }: { workId: string }) {
                     setAiBarOpen(true);
                   }}
                 >
-                  <MessageCircle className="size-3.5" /> Discuss
+                  Discuss
                 </Button>
                 <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
-                  <RefreshCw className={cn('size-3.5', advancing && 'animate-spin')} />
                   {advancing ? 'Working…' : 'Continue'}
                 </Button>
-                {/* Putting something down is a first-class ending, so it sits
-                    beside the action that continues it — not buried in a menu. */}
-                {work.workState !== 'released' && work.workState !== 'done' ? (
+                {open ? (
                   <Button
                     type="button"
                     size="sm"
@@ -218,66 +227,36 @@ export function WorkDetail({ workId }: { workId: string }) {
             </div>
           ) : null}
 
-          {pendingQuestions.length ? (
+          {hostQuestions.length ? (
             <section className="mt-6">
               <h2 className="text-[13px] font-medium text-[var(--color-warning)]">
-                {pendingQuestions.length === 1
+                {hostQuestions.length === 1
                   ? 'Albatross needs one thing'
-                  : `Albatross needs ${pendingQuestions.length} things`}
+                  : `Albatross needs ${hostQuestions.length} things`}
               </h2>
-              {pendingQuestions.map((question) => (
+              {hostQuestions.map((question) => (
                 <WorkQuestionCard key={question._id} question={question} />
               ))}
             </section>
           ) : null}
 
-          {project ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11.5px] text-[var(--color-text-faint)]">Project</p>
-                  <h2 className="mt-1.5 font-serif text-[19px] font-semibold">{project.title}</h2>
-                  {project.outcome ? (
-                    <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">{project.outcome}</p>
-                  ) : null}
-                </div>
-                <span className="text-[11.5px] capitalize text-[var(--color-text-muted)]">
-                  {project.status}
-                </span>
-              </div>
-              {projectTasks ? (
-                <div className="mt-3">
-                  <div className="flex justify-between text-[11px] text-[var(--color-text-faint)]">
-                    <span>
-                      {completedTasks} of {projectTasks.length} tasks complete
-                    </span>
-                    <span>
-                      {projectTasks.length ? Math.round((completedTasks / projectTasks.length) * 100) : 0}%
-                    </span>
-                  </div>
-                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-                    <div
-                      className="h-full rounded-full bg-[var(--color-accent)] transition-[width]"
-                      style={{
-                        width: `${projectTasks.length ? (completedTasks / projectTasks.length) * 100 : 0}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
-          {plan?.digitalActions?.length || plan?.physicalActions?.length ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What Albatross created</h2>
-              {/* A plan is Albatross's best current guess, not a commitment the
-                  user signed. Saying so is what makes correcting it feel
-                  ordinary rather than an admission of failure. */}
-              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+          {document ? (
+            // The page is the plan. The document flows in the page scroll —
+            // no frame, no fixed height, no second scrollbar.
+            <section className="mt-6">
+              <BriefCanvas value={document} embedded />
+              <p className="mt-4 text-[11.5px] text-[var(--color-text-faint)]">
                 This is Albatross&apos;s best guess at the way through. Tell it if the plan is wrong and it
                 will find another one.
               </p>
+            </section>
+          ) : legacyPlan ? (
+            <LegacyPlanNotice workId={workId} onError={setError} />
+          ) : null}
+
+          {!document && plan?.digitalActions?.length ? (
+            <section className="border-b border-[var(--color-border)] py-5">
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">The proposed steps</h2>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
                 {(plan.digitalActions || []).map((action) => {
                   const done = plan.appliedSteps?.some((step) => step.stepKey === action.key);
@@ -286,15 +265,17 @@ export function WorkDetail({ workId }: { workId: string }) {
                       key={action.actionKey || action.key || action.title}
                       className="flex items-center gap-3 py-2.5"
                     >
-                      {done ? (
-                        <CheckCircle2 className="size-4 shrink-0 text-[var(--color-success)]" />
-                      ) : (
-                        <span className="size-4 shrink-0 rounded-full border border-[var(--color-border-strong)]" />
-                      )}
+                      <span
+                        role="img"
+                        aria-label={done ? 'Applied' : 'Not applied'}
+                        className={cn(
+                          'size-4 shrink-0 rounded-full border',
+                          done
+                            ? 'border-[var(--color-success)] bg-[var(--color-success)]/15'
+                            : 'border-[var(--color-border-strong)]',
+                        )}
+                      />
                       <span className="min-w-0 flex-1 text-[13px]">{action.title}</span>
-                      <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
-                        {action.kind.replaceAll('_', ' ')}
-                      </span>
                     </div>
                   );
                 })}
@@ -310,38 +291,57 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
-          {detail.application?.operationIds.length ? (
+          {detail.application?.artifacts.length ? (
             <section className="border-b border-[var(--color-border)] py-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Recent changes</h2>
-                  <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
-                    Private changes were created automatically. Undo is available while the underlying
-                    provider allows it.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={Boolean(undoing)}
-                  onClick={async () => {
-                    const operationId = detail.application!.operationIds.at(-1)!;
-                    setUndoing(operationId);
-                    setError(null);
-                    try {
-                      await callTool('undo_operation', { operationId });
-                    } catch (cause) {
-                      setError(
-                        cause instanceof Error ? cause.message : 'This change can no longer be undone.',
-                      );
-                    } finally {
-                      setUndoing(null);
-                    }
-                  }}
-                >
-                  {undoing ? 'Undoing…' : 'Undo latest'}
-                </Button>
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What changed</h2>
+              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+                Albatross created these in your accounts. Each one can be undone while the provider allows it.
+              </p>
+              <div className="mt-2 divide-y divide-[var(--color-border)]/60">
+                {detail.application.artifacts.map((artifact) => {
+                  const undone = Boolean(artifact.operationId && undoneOperations.has(artifact.operationId));
+                  return (
+                    <div
+                      key={`${artifact.kind}:${artifact.id}`}
+                      className={cn('flex items-center gap-3 py-2', undone && 'opacity-55')}
+                    >
+                      <span className={cn('min-w-0 flex-1 truncate text-[13px]', undone && 'line-through')}>
+                        {artifact.title || artifact.id}
+                      </span>
+                      <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
+                        {undone ? 'undone' : artifact.kind.replaceAll('_', ' ')}
+                      </span>
+                      {artifact.operationId && !undone ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={Boolean(undoing)}
+                          onClick={async () => {
+                            setUndoing(artifact.operationId!);
+                            setError(null);
+                            try {
+                              await callTool('undo_operation', { operationId: artifact.operationId });
+                              setUndoneOperations(
+                                (previous) => new Set([...previous, artifact.operationId!]),
+                              );
+                            } catch (cause) {
+                              setError(
+                                cause instanceof Error
+                                  ? cause.message
+                                  : 'This change can no longer be undone.',
+                              );
+                            } finally {
+                              setUndoing(null);
+                            }
+                          }}
+                        >
+                          {undoing === artifact.operationId ? 'Undoing…' : 'Undo'}
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -358,27 +358,8 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
-          {plan?.document && plan.artifactSource === 'document-v2' ? (
-            <section className="py-5">
-              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
-              <div className="h-[min(72vh,780px)] overflow-hidden rounded-xl border border-[var(--color-border)]">
-                <BriefCanvas value={plan.document} />
-              </div>
-            </section>
-          ) : artifact ? (
-            <section className="py-5">
-              <h2 className="mb-3 text-[13px] font-semibold text-[var(--color-text)]">Brief</h2>
-              <WorkDetailArtifactFrame
-                artifact={artifact}
-                frameRef={artifactFrameRef}
-                title={`Brief for ${work.title || 'this Albatross'}`}
-                onLoad={postTheme}
-              />
-            </section>
-          ) : null}
-
           {plan?.assumptions?.length || plan?.sourceRefs?.length ? (
-            <section className="border-t border-[var(--color-border)] py-5 text-[12px] text-[var(--color-text-muted)]">
+            <section className="border-b border-[var(--color-border)] py-5 text-[12px] text-[var(--color-text-muted)]">
               {plan.assumptions?.length ? (
                 <div>
                   <h2 className="font-medium text-[var(--color-text)]">Assumptions</h2>
@@ -404,6 +385,41 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
+          {open ? (
+            <section className="mt-8 rounded-xl border border-[var(--color-border)] p-4">
+              <h2 className="font-serif text-[17px] font-semibold">Is this albatross complete?</h2>
+              <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+                The check closes it and saves the record: the steps you finished and the time it took.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                className="mt-3"
+                disabled={completing}
+                onClick={() => void setWorkState('done')}
+              >
+                {completing ? 'Saving…' : 'Mark it complete'}
+              </Button>
+            </section>
+          ) : work.workState === 'done' || work.workState === 'released' ? (
+            <section className="mt-8 flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+              <p className="text-[13px]">
+                {work.workState === 'done'
+                  ? 'Finished. This one is off your list.'
+                  : 'You put this down. That is one less thing.'}
+              </p>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={completing}
+                onClick={() => void setWorkState('active')}
+              >
+                {work.workState === 'done' ? 'Reopen' : 'Pick it back up'}
+              </Button>
+            </section>
+          ) : null}
+
           {error || work.planError ? (
             <div className="mt-4 flex gap-2 rounded-lg border border-[var(--color-danger)]/25 bg-[var(--color-danger-soft)] p-3 text-[12px] text-[var(--color-danger)]">
               <CircleAlert className="mt-0.5 size-4 shrink-0" /> {error || work.planError}
@@ -412,6 +428,42 @@ export function WorkDetail({ workId }: { workId: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A plan from before the live page. Its HTML dossier no longer renders; one
+ * regeneration turns it into the native document.
+ */
+function LegacyPlanNotice({ workId, onError }: { workId: string; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
+      <p className="text-[13px]">This plan predates the live page.</p>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mt-3"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await postJson(
+              '/api/albatross/plan',
+              { intentId: workId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+              'Could not rebuild the plan.',
+            );
+          } catch (cause) {
+            onError(cause instanceof Error ? cause.message : 'Could not rebuild the plan.');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Rebuilding…' : 'Rebuild the plan'}
+      </Button>
+    </section>
   );
 }
 
@@ -438,20 +490,15 @@ function WorkQuestionCard({ question }: { question: WorkQuestion }) {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(
+      await postJson(
         `/api/albatross/work/questions/${encodeURIComponent(question._id)}/answer`,
         {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            answer: value,
-            answeredOptionId: selected || undefined,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          }),
+          answer: value,
+          answeredOptionId: selected || undefined,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
+        'Could not save that answer.',
       );
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not save that answer.');
       setAnswer('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save that answer.');

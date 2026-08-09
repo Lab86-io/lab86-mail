@@ -160,6 +160,10 @@ describe('generateIntentPlan orchestration', () => {
       account: 'acct1',
       snippet: 'Payment received',
     },
+    { source: 'mcp', id: 'gh-1', title: 'Tax importer PR', url: 'https://github.com/lab86/tax/pull/1' },
+    { source: 'mcp', id: 'bb-1', title: 'Pipeline run', url: 'https://bitbucket.org/lab86/tax' },
+    { source: 'mcp', id: 'jr-1', title: 'TAX-12', url: 'https://acme.atlassian.net/browse/TAX-12' },
+    { source: 'mcp', id: 'sl-1', title: 'Tax thread', url: 'https://acme.slack.com/archives/C1/p2' },
   ];
 
   const goodGeneration = {
@@ -211,8 +215,22 @@ describe('generateIntentPlan orchestration', () => {
                 endAt: Date.parse('2026-07-15T14:00:00Z'),
               },
             ],
-            tasks: [],
-            projects: [],
+            tasks: [
+              {
+                cardId: 'card-tax-1',
+                title: 'Download the NYS PDF',
+                completedAt: Date.parse('2026-07-01T12:00:00Z'),
+                dueAt: Date.parse('2026-07-10T12:00:00Z'),
+              },
+            ],
+            projects: [
+              {
+                projectId: 'project-tax',
+                title: 'Tax season',
+                status: 'active',
+                outcome: 'Both returns filed.',
+              },
+            ],
           };
         }
         throw new Error(`unexpected query ${fn}`);
@@ -229,11 +247,26 @@ describe('generateIntentPlan orchestration', () => {
           return { text: overrides.planText ?? JSON.stringify(goodGeneration) };
         }
         if (overrides.artifactText instanceof Error) throw overrides.artifactText;
-        return {
-          text:
-            overrides.artifactText ??
-            `<!doctype html><html><body><h1>Plan brief</h1><p>${'brief '.repeat(60)}</p></body></html>`,
-        };
+        // The document composer is tool-driven: emulate a model that places
+        // one region and finalizes, the way the live provider does.
+        if (options.tools?.place_region) {
+          const region = {
+            id: 'steps',
+            summary: 'The steps to file.',
+            tree: {
+              kind: 'checklist',
+              title: 'Steps',
+              items: [{ label: 'Upload NYS tax PDF', stepKey: 'step-1' }],
+            },
+          };
+          // Place the same region twice: the second call exercises the
+          // replace-in-place branch the live composer uses for repairs.
+          await options.tools.place_region.execute({ region });
+          await options.tools.place_region.execute({ region });
+          await options.tools.finalize_brief.execute({ title: 'Tax plan', summary: 'The staged plan.' });
+          return { text: '' };
+        }
+        return { text: overrides.artifactText ?? '' };
       },
     });
     return { calls, intent };
@@ -257,6 +290,13 @@ describe('generateIntentPlan orchestration', () => {
     expect(save!.args.areaId).toBe('area_money');
     expect(save!.args.proposedProjectTitle).toBe('Tax season wrap-up');
     expect(save!.args.mapQuery).toBe('NYS Tax Department, Albany NY');
+    // The native document is the plan page; the HTML is only the static
+    // companion older clients render.
+    expect(save!.args.artifactSource).toBe('document-v2');
+    const regionIds = save!.args.document.regions.map((region: any) => region.id);
+    expect(regionIds.length).toBeGreaterThan(0);
+    // The duplicate place_region call in the harness must replace, not append.
+    expect(new Set(regionIds).size).toBe(regionIds.length);
     expect(save!.args.artifactHtml).toContain('<!doctype html>');
     // Hallucinated 'bogus' ref dropped; real corpus ref kept with account id.
     expect(save!.args.digitalActions[0].sourceRefs).toEqual([
@@ -285,7 +325,7 @@ describe('generateIntentPlan orchestration', () => {
     expect(planSystem).toContain('REQUIRED for multi-step work');
   });
 
-  test('artifact generation gets step keys verbatim plus the interaction contract', async () => {
+  test('document composition gets step keys verbatim plus the frontier contract', async () => {
     const { calls } = wire({});
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
     const artifactGen = calls.generations.find((g: any) => g.feature === 'albatross_plan_artifact');
@@ -295,31 +335,77 @@ describe('generateIntentPlan orchestration', () => {
     const pack = JSON.parse(artifactGen.prompt);
     expect(pack.digitalActions[0].key).toBe('step-1');
     expect(pack.services.map((service: any) => service.id)).toEqual(['mail']);
-    expect(pack.services[0].logoSvg).toContain('footer-logo');
 
-    // The dossier prompt: theme contract intact, deterministic-bridge contract in.
+    // The composer prompt carries the live-page contract: verbatim step keys
+    // on checklist items, and no invented content past the question frontier.
     const system = artifactGen.system as string;
-    expect(system).toContain('--brief-accent');
-    expect(system).toContain("d.source === 'lab86-host'");
-    expect(system).toContain('data-action="toggle_step"');
-    expect(system).toContain('data-step-title');
-    expect(system).toContain('data-plan-done-count');
-    expect(system).toContain('copied VERBATIM');
-    expect(system).toContain('AI SLOP BAN');
-    expect(system).toContain('TIMELINE STANDARD');
-    expect(system).toContain('do NOT write your own postMessage bridge');
-    expect(system).toContain('FOOTER (required on EVERY plan dossier)');
-    expect(system).toContain('.brief-footer{position:relative;margin-top:4.5rem');
-    expect(system).toContain('Build [service list] from data.services in order');
-    expect(system).toContain('Paste service.logoSvg unchanged');
-    expect(system).toContain('Made for you by');
+    expect(system).toContain('stepKey');
+    expect(system).toContain(`copy that action's "key" verbatim`);
+    expect(system).toContain('Never invent a stepKey');
+    expect(system).toContain('Do NOT restate them');
+    expect(system).toContain('the host appends the question gate');
+    expect(system).toContain('Do not invent apply_plan or toggle_step actions');
+  });
+
+  test('an open question no longer suppresses the page: the document ships with the gate', async () => {
+    const planText = JSON.stringify({
+      ...goodGeneration,
+      questions: [
+        {
+          id: 'q9',
+          prompt: 'Which office should file this?',
+          options: [
+            { id: 'q9o1', title: 'Albany office' },
+            { id: 'q9o2', title: 'Rochester office' },
+          ],
+        },
+      ],
+    });
+    const { calls } = wire({ planText, intent: { questions: [] } });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    expect(save!.args.artifactSource).toBe('document-v2');
+    const regions = save!.args.document.regions;
+    expect(regions.at(-1).id).toBe('frontier-gate');
+    const gate = regions.at(-1).tree;
+    const kinds = gate.children.map((child: any) => child.kind);
+    expect(kinds).toEqual(['decision', 'prompt', 'checklist']);
+    // The gate's outline names the steps that wait behind the answer.
+    expect(gate.children[2].items[0].stepKey).toBe('step-1');
+  });
+
+  test('every referenced service reaches the composer pack', async () => {
+    const planText = JSON.stringify({
+      ...goodGeneration,
+      sourceRefIds: ['ref1', 'ref2', 'ref3', 'ref4', 'ref5'],
+    });
+    const { calls } = wire({ planText });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const artifactGen = calls.generations.find((g: any) => g.feature === 'albatross_plan_artifact');
+    const pack = JSON.parse(artifactGen.prompt);
+    const ids = pack.services.map((service: any) => service.id);
+    expect(ids).toContain('mail');
+    expect(ids).toContain('github');
+    expect(ids).toContain('bitbucket');
+    expect(ids).toContain('jira');
+    expect(ids).toContain('slack');
+  });
+
+  test('the planner classifies shape and savePlan receives it', async () => {
+    const planText = JSON.stringify({ ...goodGeneration, shape: 'quick' });
+    const { calls } = wire({ planText });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    expect(save!.args.shape).toBe('quick');
+    const planSystem = calls.generations[0].system as string;
+    expect(planSystem).toContain('Classify the shape of each outcome');
   });
 
   test('Area evidence and corpus evidence receive unique reference ids', async () => {
     const planText = JSON.stringify({
       ...goodGeneration,
-      sourceRefIds: ['ref2'],
-      digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref2'] }],
+      sourceRefIds: ['ref4'],
+      digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref4'] }],
     });
     const { calls } = wire({ intent: { primaryAreaId: 'area_money' }, planText });
 
@@ -327,19 +413,27 @@ describe('generateIntentPlan orchestration', () => {
 
     const prompt = calls.generations[0].prompt as string;
     expect(prompt).toContain('[ref1] (calendar_event)');
-    expect(prompt).toContain('[ref2] (mail_thread)');
+    expect(prompt).toContain('[ref2] (task)');
+    expect(prompt).toContain('Download the NYS PDF — completed — due');
+    expect(prompt).toContain('[ref3] (project)');
+    expect(prompt).toContain('Tax season — active — Both returns filed.');
+    expect(prompt).toContain('[ref4] (mail_thread)');
     const save = calls.mutations.find((mutation) => mutation.fn === 'm:savePlan');
     expect(save!.args.sourceRefs).toEqual([
       expect.objectContaining({ kind: 'mail_thread', id: 'thread-tax' }),
     ]);
   });
 
-  test('artifact composition failure still saves the plan without a brief', async () => {
+  test('document composition failure still saves the plan with the static companion', async () => {
     const { calls } = wire({ artifactText: new Error('provider down') });
     const result = await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
     expect(result.planId).toBe('plan_1');
     const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
-    expect(save!.args.artifactHtml).toBeUndefined();
+    expect(save!.args.document).toBeUndefined();
+    expect(save!.args.artifactSource).toBeUndefined();
+    // The pure legacy companion is built before the composer runs, so a
+    // provider failure never leaves the plan with nothing to show.
+    expect(save!.args.artifactHtml).toContain('<!doctype html>');
   });
 
   test('unparseable generation records planError and returns intent to captured', async () => {

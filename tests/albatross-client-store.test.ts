@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { persistedClientState, useClientStore } from '../lib/client-state';
+import { capturePillHidden, persistedClientState, useClientStore } from '../lib/client-state';
 import {
   isLab86AiDisabled,
   isOutboundSendDisabled,
@@ -24,6 +24,27 @@ describe('the capture door', () => {
     // The launcher owns the overlay; it lowers the flag once it has opened.
     useClientStore.getState().setCaptureOpen(false);
     expect(useClientStore.getState().captureOpen).toBe(false);
+  });
+});
+
+describe('the floating capture pill', () => {
+  test('hides while the expanded desktop rail shows its own button', () => {
+    expect(capturePillHidden(false, true, false)).toBe(true);
+  });
+  test('returns when the rail collapses or goes off-canvas', () => {
+    expect(capturePillHidden(false, false, false)).toBe(false);
+    expect(capturePillHidden(false, true, true)).toBe(false);
+    expect(capturePillHidden(false, false, true)).toBe(false);
+  });
+  test('always yields to the open assistant panel', () => {
+    expect(capturePillHidden(true, false, true)).toBe(true);
+    expect(capturePillHidden(true, false, false)).toBe(true);
+  });
+  test('yields to an open reader, which carries its own capture door', () => {
+    // Same bottom-right corner as the reader's action bar.
+    expect(capturePillHidden(false, false, false, true)).toBe(true);
+    expect(capturePillHidden(false, false, true, true)).toBe(true);
+    expect(capturePillHidden(false, false, false, false)).toBe(false);
   });
 });
 

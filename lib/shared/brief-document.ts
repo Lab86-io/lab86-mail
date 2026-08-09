@@ -255,6 +255,9 @@ const checklistItemSchema = z.object({
   label: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.shortText),
   detail: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
   checked: z.boolean().default(false),
+  // The plan step this item stands for ("step-1"…). After apply, the host
+  // resolves it to the created card and the item becomes a live checkbox.
+  stepKey: z.string().trim().max(40).optional(),
   ref: BriefSourceRefV2Schema.optional(),
   action: BriefActionV2Schema.optional(),
 });
@@ -1467,6 +1470,7 @@ function repairLeaf(
                 ? { detail: clippedString(item.detail, BRIEF_DOCUMENT_LIMITS.shortText) }
                 : {}),
               checked: Boolean(item.checked),
+              ...(clippedString(item.stepKey, 40) ? { stepKey: clippedString(item.stepKey, 40) } : {}),
               ...(sourceRef ? { ref: sourceRef } : {}),
               ...(action ? { action } : {}),
             },

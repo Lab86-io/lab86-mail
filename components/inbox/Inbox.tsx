@@ -80,7 +80,14 @@ import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
-import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import {
+  categoricalColor,
+  dedupeSnippet,
+  emailFromHeader,
+  formatDate,
+  inboxDateGroupLabel,
+  shortFrom,
+} from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -137,22 +144,9 @@ interface QuickFixSuppression {
   category?: string;
 }
 
-// Day bucket for the editorial date headers: Today / Yesterday / weekday for
-// the last week / month (with year once it isn't this year).
-export function inboxDateGroupLabel(ts: number): string {
-  if (!ts) return 'Undated';
-  const date = new Date(ts);
-  const now = new Date();
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayMs = 86_400_000;
-  const today = startOfDay(now);
-  const that = startOfDay(date);
-  if (that >= today) return 'Today';
-  if (that >= today - dayMs) return 'Yesterday';
-  if (that >= today - 6 * dayMs) return date.toLocaleDateString(undefined, { weekday: 'long' });
-  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: 'long' });
-  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-}
+// inboxDateGroupLabel moved to lib/shared/format so it can carry unit tests;
+// re-exported here for the callers that treat the inbox as its home.
+export { inboxDateGroupLabel } from '@/lib/shared/format';
 
 function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
   // Only a category view can optimistically drop a row — in search / all-mail
@@ -178,6 +172,7 @@ export function Inbox() {
   const queryError = useClientStore((s) => s.queryError);
   const setQueryError = useClientStore((s) => s.setQueryError);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const composeOpen = useClientStore((s) => !!s.compose.mode);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -801,9 +796,20 @@ export function Inbox() {
   const undoLast = useCallback(() => undoLastRule.mutate(), [undoLastRule.mutate]);
   const previewLabels = useCallback((item: ThreadRow) => setLabelPreview(item), []);
 
+  // One surface, split inside: with a reader open, the list is the left half
+  // of the mail card. Its right edge opens toward the seam the resize
+  // separator paints; the reader half closes the rectangle.
+  const readerOpen = !!(composeOpen || selectedThreadId);
   return (
-    <section className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+    <section
+      className={cn('flex h-full flex-col bg-[var(--color-bg)] p-1.5 sm:p-2', readerOpen && 'sm:pr-0')}
+    >
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+          readerOpen && 'sm:rounded-r-none sm:border-r-0',
+        )}
+      >
         {/* Compose, the categories, and the folders live with the mail now,
             not in the product's navigation rail. */}
         <MailNav />
@@ -842,7 +848,7 @@ export function Inbox() {
                     clearSearch();
                   }
                 }}
-                placeholder="Search your mail, or ask for it in your own words"
+                placeholder="Search your mail, or ask in your own words"
                 className="text-[13px]"
               />
               {searchInput ? (
@@ -859,12 +865,12 @@ export function Inbox() {
               variant="outline"
               size="icon"
               onClick={refreshInbox}
-              aria-label="Refresh inbox"
+              aria-label="Check for new mail"
               className={cn(
                 'h-9 w-9 shrink-0 rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
                 isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
               )}
-              title="Refresh"
+              title="Check for new mail"
             >
               {isFetching && !isFetchingNextPage ? (
                 <Ring className="size-4" />
@@ -974,110 +980,117 @@ export function Inbox() {
           ) : null}
         </AnimatePresence>
 
-        <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-          {/* No mailbox connected means no mail is coming. Skeleton rows here
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* A soft top edge: rows scrolled under the header read as scrolled
+              away, not as a half-clipped rendering bug. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 h-3 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent"
+          />
+          <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
+            {/* No mailbox connected means no mail is coming. Skeleton rows here
               read as "still loading" forever, which is a lie. */}
-          {!authedAccounts.length ? (
-            <NoMailboxState />
-          ) : showInitialLoading ? (
-            <SkeletonRows />
-          ) : isError ? (
-            <SearchErrorState
-              message={(searchError as Error | null)?.message || 'Mail search failed.'}
-              onRetry={() => refetch()}
-            />
-          ) : items.length === 0 ? (
-            translatedQuery || nlSearchIntent ? (
-              <SearchEmptyState
-                onClear={clearSearch}
-                onEditGenerated={() => {
-                  const editable = translatedQuery || query;
-                  setQuery(editable);
-                  setSearchInput(editable);
-                  setSearchDraft(editable);
-                  setTranslatedSearch(null, editable, 'typed');
-                }}
-                onRetryOriginal={() => {
-                  if (!nlSearchIntent) return;
-                  setSearchInput(nlSearchIntent);
-                  runSearch(nlSearchIntent);
-                }}
-                onUseRaw={() => {
-                  if (nlSearchIntent) {
-                    setQuery(nlSearchIntent);
-                    setSearchInput(nlSearchIntent);
-                  }
-                }}
+            {!authedAccounts.length ? (
+              <NoMailboxState />
+            ) : showInitialLoading ? (
+              <SkeletonRows />
+            ) : isError ? (
+              <SearchErrorState
+                message={(searchError as Error | null)?.message || 'Mail search failed.'}
+                onRetry={() => refetch()}
               />
+            ) : items.length === 0 ? (
+              translatedQuery || nlSearchIntent ? (
+                <SearchEmptyState
+                  onClear={clearSearch}
+                  onEditGenerated={() => {
+                    const editable = translatedQuery || query;
+                    setQuery(editable);
+                    setSearchInput(editable);
+                    setSearchDraft(editable);
+                    setTranslatedSearch(null, editable, 'typed');
+                  }}
+                  onRetryOriginal={() => {
+                    if (!nlSearchIntent) return;
+                    setSearchInput(nlSearchIntent);
+                    runSearch(nlSearchIntent);
+                  }}
+                  onUseRaw={() => {
+                    if (nlSearchIntent) {
+                      setQuery(nlSearchIntent);
+                      setSearchInput(nlSearchIntent);
+                    }
+                  }}
+                />
+              ) : (
+                <EmptyState account={account} />
+              )
             ) : (
-              <EmptyState account={account} />
-            )
-          ) : (
-            <motion.div
-              key={`${account}:${smartCategory || 'search'}`}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {items.map((it, index) => {
-                const senderEmail = emailFromHeader(it.from || it.fromAddress);
-                const key = rowKey(it);
-                const rowAccount = it.account || account;
-                // Provider contact photos pass straight through; company
-                // `/api/logos/...` URLs are ignored here because the row runs
-                // the validated client-side logo chain itself (which starts at
-                // that same proxy but never accepts a placeholder).
-                const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
-                const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
-                // Editorial datelines: a serif group header whenever the day
-                // bucket changes (the list is already date-sorted).
-                const groupLabel = inboxDateGroupLabel(Number(it.lastDate ?? it.date) || 0);
-                const previous = index > 0 ? items[index - 1] : null;
-                const showHeader =
-                  !previous ||
-                  inboxDateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
-                return (
-                  <Fragment key={key}>
-                    {showHeader ? (
-                      <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
-                        <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
-                          {groupLabel}
-                        </span>
-                        <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
-                      </div>
-                    ) : null}
-                    <InboxThreadRow
-                      item={it}
-                      rowId={key}
-                      rowAccount={rowAccount}
-                      senderEmail={senderEmail || ''}
-                      providerPhotoUrl={providerPhotoUrl}
-                      showAccount={account === ALL_ACCOUNTS}
-                      accountLabel={accountAliasById[rowAccount] || ''}
-                      activeCategory={smartCategory}
-                      selected={selectedIds.includes(key)}
-                      active={selectedThreadId === it._id && threadAccount === rowAccount}
-                      selecting={selectedIds.length > 0}
-                      onSelectRange={selectRangeTo}
-                      onToggleSelect={toggleRowSelection}
-                      onPrefetch={prefetchThread}
-                      onApplyLabels={previewLabels}
-                      onArchive={archiveRow}
-                      onTrash={trashRow}
-                      onCorrect={correctRow}
-                      onUndoLast={undoLast}
-                      onOpen={openThread}
-                      customLabels={customLabels}
-                    />
-                  </Fragment>
-                );
-              })}
-              <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-              {/* Lightweight placeholders keep the list alive (and scrollable)
+              <motion.div
+                key={`${account}:${smartCategory || 'search'}`}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {items.map((it, index) => {
+                  const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                  const key = rowKey(it);
+                  const rowAccount = it.account || account;
+                  // Provider contact photos pass straight through; company
+                  // `/api/logos/...` URLs are ignored here because the row runs
+                  // the validated client-side logo chain itself (which starts at
+                  // that same proxy but never accepts a placeholder).
+                  const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
+                  const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
+                  // Editorial datelines: a serif group header whenever the day
+                  // bucket changes (the list is already date-sorted).
+                  const groupLabel = inboxDateGroupLabel(it.lastDate ?? it.date ?? 0);
+                  const previous = index > 0 ? items[index - 1] : null;
+                  const showHeader =
+                    !previous || inboxDateGroupLabel(previous.lastDate ?? previous.date ?? 0) !== groupLabel;
+                  return (
+                    <Fragment key={key}>
+                      {showHeader ? (
+                        <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                          <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                            {groupLabel}
+                          </span>
+                          <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                        </div>
+                      ) : null}
+                      <InboxThreadRow
+                        item={it}
+                        rowId={key}
+                        rowAccount={rowAccount}
+                        senderEmail={senderEmail || ''}
+                        providerPhotoUrl={providerPhotoUrl}
+                        showAccount={account === ALL_ACCOUNTS}
+                        accountLabel={accountAliasById[rowAccount] || ''}
+                        activeCategory={smartCategory}
+                        selected={selectedIds.includes(key)}
+                        active={selectedThreadId === it._id && threadAccount === rowAccount}
+                        selecting={selectedIds.length > 0}
+                        onSelectRange={selectRangeTo}
+                        onToggleSelect={toggleRowSelection}
+                        onPrefetch={prefetchThread}
+                        onApplyLabels={previewLabels}
+                        onArchive={archiveRow}
+                        onTrash={trashRow}
+                        onCorrect={correctRow}
+                        onUndoLast={undoLast}
+                        onOpen={openThread}
+                        customLabels={customLabels}
+                      />
+                    </Fragment>
+                  );
+                })}
+                <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+                {/* Lightweight placeholders keep the list alive (and scrollable)
                   while the next batch is in flight instead of a dead stop. */}
-              {isFetchingNextPage ? <SkeletonRows count={6} /> : null}
-            </motion.div>
-          )}
+                {isFetchingNextPage ? <SkeletonRows count={6} /> : null}
+              </motion.div>
+            )}
+          </div>
         </div>
         <LabelConfirmDialog
           item={labelPreview}
@@ -1181,6 +1194,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         : '';
   const senderLabel = shortFrom(item.from || item.fromAddress || '');
   const displaySenderLabel = senderLabel || item.account || '';
+  const preview = dedupeSnippet(item.subject, item.snippet);
   const date = (item.date as any) || item.lastDate || 0;
   // Unified-inbox rows carry their mailbox; a 3px colour rail lets the eye scan
   // account membership without reading the same alias text on every row. Colour
@@ -1271,11 +1285,54 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
       ) : null}
 
-      <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+      {/* The mailbox affordance lives on the sender mark, which nothing ever
+          covers — unlike the date, which the hover actions overlay. The ring
+          tint keeps the per-account scan signal. */}
+      {showAccount && accountColor ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              onClick={(event) => event.stopPropagation()}
+              // The row ancestor is itself a button and consumes Enter/Space;
+              // key events must not bubble or the popover can never open.
+              onKeyDown={(event) => event.stopPropagation()}
+              title="Which mailbox"
+              className="block rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              style={{
+                boxShadow: `0 0 0 1.5px color-mix(in srgb, ${accountColor} 55%, var(--color-bg-elevated))`,
+              }}
+            >
+              <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto px-3 py-2 text-[12px]">
+            <div className="flex items-center gap-2">
+              <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
+              <span className="font-medium text-[var(--color-text)]">
+                {accountLabel || item.accountAlias || item.account}
+              </span>
+            </div>
+            <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+      )}
 
       {/* Two-line row: sender, then subject + preview inline. */}
       <div className={cn('flex min-w-0 flex-col gap-0.5', dim && 'opacity-90')}>
         <div className="flex items-center gap-1.5">
+          {/* The slot always renders so unread dots form a scannable column
+              instead of trailing each name at a different x. Highlight voice
+              (accent-3): unread is a status pop, not an action. */}
+          <span
+            aria-hidden
+            className={cn(
+              'size-1.5 shrink-0 rounded-full',
+              item.unread ? 'bg-[var(--color-accent-3)]' : 'bg-transparent',
+            )}
+          />
           {item.starred ? (
             <Star
               role="img"
@@ -1299,23 +1356,32 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               {item.messageCount}
             </span>
           ) : null}
-          {item.unread ? <span className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
         </div>
-        <span className="truncate text-[12.5px] leading-tight">
+        <span className="truncate pl-3 text-[12.5px] leading-tight">
           <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
             {item.subject || '(no subject)'}
           </span>
-          {item.snippet ? <span className="text-[var(--color-text-muted)]"> — {item.snippet}</span> : null}
+          {preview ? <span className="text-[var(--color-text-muted)]"> — {preview}</span> : null}
         </span>
       </div>
 
       {/* Compact meta: date, then a single category chip (its reason lives in the
           popover) + an Important dot + the account chip in all-accounts mode. */}
       <div className="flex min-h-[40px] flex-col items-end justify-center gap-1 self-center">
-        <div className="flex h-7 items-center justify-end gap-1.5">
+        <div className="relative flex h-7 items-center justify-end gap-1.5">
+          {/* The action strip floats over the date on reveal instead of
+              reserving an invisible 112px gutter on every row — that reserve
+              is what truncated senders mid-word next to apparent free space.
+              The pseudo layers rebuild the row surface underneath so the
+              buttons never sit on top of text. */}
           <div
             className={cn(
-              'pointer-events-none flex w-[112px] items-center justify-end gap-0.5 opacity-0 transition-opacity duration-75 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100',
+              'pointer-events-none absolute inset-y-0 right-0 z-10 flex items-center justify-end gap-0.5 opacity-0 transition-opacity duration-75 ease-out group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100',
+              "before:absolute before:-inset-x-1 before:-inset-y-0.5 before:-z-10 before:rounded-md before:bg-[var(--color-bg-elevated)] before:content-['']",
+              "after:absolute after:-inset-x-1 after:-inset-y-0.5 after:-z-10 after:rounded-md after:content-['']",
+              selected || active
+                ? 'after:bg-[var(--color-selected-soft)]'
+                : 'after:bg-[var(--color-hover-soft)]',
               selected && 'pointer-events-auto opacity-100',
             )}
           >
@@ -1373,37 +1439,12 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               />
             )}
           </div>
-          {showAccount && accountColor ? (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => e.stopPropagation()}
-                  title="Which mailbox"
-                  className="rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text)] shadow-[inset_0_1px_0_rgb(255_255_255/0.38)] hover:text-[var(--color-text)]"
-                  style={{
-                    backgroundColor: `color-mix(in srgb, ${accountColor} 18%, var(--color-bg-elevated))`,
-                    borderColor: `color-mix(in srgb, ${accountColor} 34%, var(--color-border))`,
-                  }}
-                >
-                  {formatDate(date)}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-auto px-3 py-2 text-[12px]">
-                <div className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-full" style={{ backgroundColor: accountColor }} />
-                  <span className="font-medium text-[var(--color-text)]">
-                    {accountLabel || item.accountAlias || item.account}
-                  </span>
-                </div>
-                <p className="mt-1 text-[var(--color-text-muted)]">Mailbox this thread arrived in</p>
-              </PopoverContent>
-            </Popover>
-          ) : (
-            <span className="rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
-              {formatDate(date)}
-            </span>
-          )}
+          {/* Plain text on purpose: the hover actions overlay this slot, so
+              the date must carry no interaction of its own. The mailbox
+              popover lives on the avatar. */}
+          <span className="rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-text-muted)]">
+            {formatDate(date)}
+          </span>
         </div>
         <div className="flex items-center gap-1">
           {(item.labels || []).includes('IMPORTANT') ? (

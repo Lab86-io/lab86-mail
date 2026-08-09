@@ -478,6 +478,14 @@
     contain-intrinsic-size: 0 500px;
   }
 
+  /* Horizontal strips (category tabs) scroll without drawing a bar. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
   body {
     background: var(--color-bg);
     color: var(--color-text);

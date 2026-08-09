@@ -904,6 +904,13 @@ export default defineSchema({
     // albatrossWork.ts); both stay unset for artifacts without a due date.
     completedEarlyByMs: v.optional(v.number()),
     completedLateByMs: v.optional(v.number()),
+    // Progress-page raw material, written on intent completion: what kind of
+    // outcome it was, how many of its tasks were checked, and how long it
+    // took from capture to done. Stored now, rendered later.
+    shape: v.optional(v.string()),
+    tasksTotal: v.optional(v.number()),
+    tasksCompleted: v.optional(v.number()),
+    msToComplete: v.optional(v.number()),
     sourceRefs: v.optional(v.array(albatrossSourceRef)),
     createdAt: v.number(),
   })

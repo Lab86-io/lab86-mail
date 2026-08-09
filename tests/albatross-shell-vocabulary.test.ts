@@ -76,10 +76,23 @@ describe('the product names itself', () => {
 
   test('the primary action is capture, not compose', () => {
     const rail = read('components/shell/Rail.tsx');
-    const captureIndex = rail.indexOf('Get this off my mind');
-    expect(captureIndex).toBeGreaterThan(-1);
+    // The label lives in CAPTURE_BUTTON_LABEL (IntentCapture); the rail must
+    // use the constant in both JSX slots, not restate the words.
+    expect(rail).toContain("import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture'");
+    expect(rail).toContain('tooltip={CAPTURE_BUTTON_LABEL}');
+    expect(rail).toContain('<span>{CAPTURE_BUTTON_LABEL}</span>');
+    const capture = read('components/albatross/IntentCapture.tsx');
+    expect(capture).toContain("CAPTURE_BUTTON_LABEL = 'Get this off my mind'");
     // Compose moved into the Mail surface; the rail must not offer it.
     expect(rail).not.toContain('openComposeNew');
+  });
+
+  test('one capture door per screen: the pill yields to the expanded rail', () => {
+    const capture = read('components/albatross/IntentCapture.tsx');
+    // Expanded desktop rail shows its own capture button, so the pill hides;
+    // a collapsed rail or the mobile off-canvas drawer brings the pill back.
+    expect(capture).toContain('useSidebar');
+    expect(capture).toContain('capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen)');
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {
@@ -135,8 +148,11 @@ describe('no surface tallies open work', () => {
 
 describe('the questions are answerable where they are shown', () => {
   test('the Albatross page renders every waiting question', () => {
+    // A question renders inside the plan document's gate when the page
+    // carries it, and as a host card when it does not. Never in neither.
     const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('pendingQuestions.map');
+    expect(detail).toContain('hostQuestions.map');
+    expect(detail).toContain('hasFrontierGate');
     expect(detail).not.toContain('const pendingQuestion =');
   });
 

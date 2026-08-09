@@ -110,6 +110,10 @@ export async function recordCompletionEvent(
     areaId?: string;
     intentId?: string;
     projectId?: Id<'albatrossProjects'>;
+    shape?: string;
+    tasksTotal?: number;
+    tasksCompleted?: number;
+    msToComplete?: number;
   },
 ): Promise<void> {
   try {
@@ -123,6 +127,10 @@ export async function recordCompletionEvent(
       completedAt: event.completedAt,
       dueAt: event.dueAt,
       ...completionDelta(event.completedAt, event.dueAt),
+      shape: event.shape,
+      tasksTotal: event.tasksTotal,
+      tasksCompleted: event.tasksCompleted,
+      msToComplete: event.msToComplete,
       createdAt: now(),
     });
   } catch {

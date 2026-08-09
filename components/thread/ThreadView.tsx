@@ -48,7 +48,28 @@ import {
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 
-export function ThreadView() {
+// One vocabulary for header icon groups: a segmented control strip. The ring
+// offset matches the reader card the header now sits on.
+// The floating action bar's quiet buttons; the Albatross declaration beside
+// them carries its own accent-hover treatment.
+const BAR_BUTTON =
+  'flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-control)] hover:text-[var(--color-text)] disabled:pointer-events-none disabled:opacity-50';
+
+const SEGMENT_GROUP =
+  'flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg-elevated)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]';
+
+/**
+ * Where the reader is standing.
+ *
+ * `split` — on Mail, the reader IS the right half of the inbox card: it opens
+ * toward the seam, so the two halves read as one surface.
+ * `sheet` — on every other surface (Today, Areas), there is no inbox card to
+ * halve. The reader arrives as its own complete card floating over the page,
+ * so the host surface keeps its own shape underneath.
+ */
+export type ThreadViewVariant = 'split' | 'sheet';
+
+export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant } = {}) {
   // The inbox runs unified; the open thread carries its own concrete account.
   const threadAccount = useClientStore((s) => s.threadAccount);
   const inboxAccount = useClientStore((s) => s.account);
@@ -62,9 +83,23 @@ export function ThreadView() {
   const closeCompose = useClientStore((s) => s.closeCompose);
   const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const openCaptureWith = useClientStore((s) => s.openCaptureWith);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
+  // A sheet is a whole card over the page; a split half opens toward the seam
+  // and lets the inbox half close the rectangle.
+  const sheet = variant === 'sheet' && !threadFullscreen;
+  const shellOuter = cn(
+    'flex h-full flex-col',
+    !threadFullscreen && !sheet && 'bg-[var(--color-bg)] sm:py-2 sm:pr-2',
+    sheet && 'p-2',
+  );
+  const shellInner = cn(
+    'flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
+    !threadFullscreen &&
+      !sheet &&
+      'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
+    sheet && 'rounded-xl border border-[var(--color-border)] shadow-[var(--shadow-pop)]',
+  );
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
   const markedReadRef = useRef<Set<string>>(new Set());
@@ -324,34 +359,34 @@ export function ThreadView() {
           ? account
           : '';
     return (
-      <div className="flex h-full flex-col bg-[var(--color-bg)]">
-        <header
-          className={cn(
-            'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
-            !aiBarOpen && 'pr-12',
-          )}
-        >
-          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
-            New message
-          </h1>
-          <button
-            type="button"
-            onClick={() => closeCompose()}
-            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-            title="Close"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </header>
-        <div className="scrollable flex-1 px-5 py-6">
-          <InlineComposer
-            mode="new"
-            account={fromAccount}
-            initialPrefill={compose.prefill || undefined}
-            prefillNonce={compose.nonce}
-            onSent={() => closeCompose()}
-            onClose={() => closeCompose()}
-          />
+      <div className={shellOuter}>
+        {/* Same shell as the reader: split half on Mail, sheet elsewhere. */}
+        <div className={shellInner}>
+          {/* Same h-12 as the reader strip and MailNav, so every header border
+              across the surface lands on one line. */}
+          <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] px-3">
+            <h1 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]">
+              New message
+            </h1>
+            <button
+              type="button"
+              onClick={() => closeCompose()}
+              className="grid size-8 shrink-0 place-items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+              title="Close"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </header>
+          <div className="scrollable flex-1 px-5 py-6">
+            <InlineComposer
+              mode="new"
+              account={fromAccount}
+              initialPrefill={compose.prefill || undefined}
+              prefillNonce={compose.nonce}
+              onSent={() => closeCompose()}
+              onClose={() => closeCompose()}
+            />
+          </div>
         </div>
       </div>
     );
@@ -402,10 +437,12 @@ export function ThreadView() {
 
   if (isLoading || !data) {
     return (
-      <div className={cn('space-y-3 p-4', !aiBarOpen && 'pr-12')}>
-        {['summary', 'body', 'footer'].map((key) => (
-          <div key={key} className="h-24 rounded-lg shimmer" />
-        ))}
+      <div className={shellOuter}>
+        <div className={cn(shellInner, 'space-y-3 p-4')}>
+          {['summary', 'body', 'footer'].map((key) => (
+            <div key={key} className="h-24 rounded-lg shimmer" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -431,106 +468,35 @@ export function ThreadView() {
       aria-modal={threadFullscreen ? true : undefined}
       aria-label={threadFullscreen ? data.subject : undefined}
       className={cn(
-        'flex h-full flex-col bg-[var(--color-bg)]',
+        shellOuter,
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
           'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
-      <header
-        className={cn(
-          '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
-          !aiBarOpen && !threadFullscreen && 'pr-12',
-        )}
-      >
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+      <div className={cn('@container relative', shellInner)}>
+        {/* The only fixed chrome: one strip carrying the title and the four
+            view actions. h-12 is MailNav's exact row height, so this bottom
+            border meets the inbox half's across the seam. */}
+        <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-3">
+          <h1
+            title={data.subject}
+            className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]"
+          >
             {data.subject}
           </h1>
-          {/* The thread object has no top-level _id (getThread returns
-              providerThreadId as `threadId`); use the canonical thread id from
-              the store so chips match the cards' sourceThreadId, not ''. */}
-          <LinkedTaskChips threadId={threadId || ''} />
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
-            <span className="shrink-0">
-              {messages.length} message{messages.length === 1 ? '' : 's'}
-            </span>
-            <span className="shrink-0">·</span>
-            <span className="truncate">{shortFrom(lastMessage?.from)}</span>
-            <span className="shrink-0">·</span>
-            <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            title="Hand this to Albatross"
-            onClick={() =>
-              openCaptureWith(
-                `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
-              )
-            }
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          >
-            <span className="hidden @[560px]:inline">Hand to Albatross</span>
-            <span className="@[560px]:hidden">Albatross</span>
-          </Button>
-          {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => startReply('reply')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Reply (r)"
-            >
-              <RowIcon icon={CornerUpLeftIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => startReply('reply_all')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Reply all"
-            >
-              <RowIcon icon={ReplyAllIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply all
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => startReply('forward')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Forward"
-            >
-              <RowIcon icon={CornerUpRightIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Forward
-              </span>
-            </Button>
-          </div>
-          {/* Utility cluster — one segmented group so the icons read as a set. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+          {/* Trash stays out of the strip that holds Close: a one-slot miss
+              must not throw mail away. */}
+          <div className={SEGMENT_GROUP}>
             <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
               <RowIcon icon={ArchiveIcon} size={14} />
             </IconBtn>
             <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
               <RowIcon icon={DeleteIcon} size={14} />
             </IconBtn>
+          </div>
+          <div className={SEGMENT_GROUP}>
             <IconBtn
               title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
               onClick={() => setThreadFullscreen(!threadFullscreen)}
@@ -555,63 +521,132 @@ export function ThreadView() {
             </IconBtn>
           </div>
         </div>
-      </header>
 
-      {/* Most proof that a real-life thing happened arrives by email. The offer
-          sits directly under the thread that might be it. */}
-      <ProofOffer threadId={threadId || ''} subject={data.subject} />
+        <div className="scrollable flex-1 px-5 pb-24 pt-4">
+          {/* The thread object has no top-level _id (getThread returns
+              providerThreadId as `threadId`); use the canonical thread id from
+              the store so chips match the cards' sourceThreadId, not ''. */}
+          <LinkedTaskChips threadId={threadId || ''} />
+          {/* A single message shows its sender and time in the header right
+              below; repeating them here says nothing twice. */}
+          {messages.length > 1 ? (
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+              <span className="shrink-0">{messages.length} messages</span>
+              <span className="shrink-0">·</span>
+              <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
+            </div>
+          ) : null}
 
-      <div className="scrollable flex-1 px-5 py-4">
-        {canSummarizeThread ? (
-          <SummaryCard
-            data={summary.data?.summary || cachedSummary}
-            model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
-            loading={!cachedSummary && summaryEnabled && summary.isLoading}
-            error={summary.error ? (summary.error as Error).message : null}
-            onRetry={() => {
-              setSummaryEnabled(true);
-              summary.refetch();
-            }}
-          />
-        ) : null}
-
-        {composeForThisThread && activeMode && activeAnchorMessageId ? (
-          <div className="mt-4">
-            <InlineComposer
-              key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
-              mode={activeMode}
-              account={activeAccount}
-              threadId={threadId}
-              anchorMessageId={activeAnchorMessageId}
-              replyToLabel={replyLabel}
-              initialPrefill={activePrefill}
-              prefillNonce={activeNonce}
-              onSent={() => closeCompose()}
-              onClose={() => closeCompose()}
+          {/* Most proof that a real-life thing happened arrives by email. The
+              offer sits directly under the thread that might be it. */}
+          <ProofOffer threadId={threadId || ''} subject={data.subject} />
+          {canSummarizeThread ? (
+            <SummaryCard
+              data={summary.data?.summary || cachedSummary}
+              model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
+              loading={!cachedSummary && summaryEnabled && summary.isLoading}
+              error={summary.error ? (summary.error as Error).message : null}
+              onRetry={() => {
+                setSummaryEnabled(true);
+                summary.refetch();
+              }}
             />
-          </div>
-        ) : null}
+          ) : null}
 
-        <LayoutGroup>
-          <div className="mt-4 flex flex-col gap-2">
-            {ordered.map((m, i) => {
-              const email = emailFromHeader(m?.from);
-              return (
-                <MessageCard
-                  key={m._id}
-                  message={m}
-                  defaultOpen={i === 0}
-                  account={account}
-                  photoUrl={email ? (photos[email] ?? null) : null}
-                  onShowContactEmails={(contactEmail) => {
-                    setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
-                    setSelectedThread(null);
-                  }}
-                />
-              );
-            })}
+          {composeForThisThread && activeMode && activeAnchorMessageId ? (
+            <div className="mt-4">
+              <InlineComposer
+                key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
+                mode={activeMode}
+                account={activeAccount}
+                threadId={threadId}
+                anchorMessageId={activeAnchorMessageId}
+                replyToLabel={replyLabel}
+                initialPrefill={activePrefill}
+                prefillNonce={activeNonce}
+                onSent={() => closeCompose()}
+                onClose={() => closeCompose()}
+              />
+            </div>
+          ) : null}
+
+          <LayoutGroup>
+            <div className="mt-2 flex flex-col">
+              {ordered.map((m, i) => {
+                const email = emailFromHeader(m?.from);
+                return (
+                  <MessageCard
+                    key={m._id}
+                    message={m}
+                    defaultOpen={i === 0}
+                    account={account}
+                    photoUrl={email ? (photos[email] ?? null) : null}
+                    onShowContactEmails={(contactEmail) => {
+                      setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
+                      setSelectedThread(null);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </LayoutGroup>
+        </div>
+
+        {/* The thread's verbs float at the bottom, where a finished read
+            lands: the correspondence verbs, then the recognition — this email
+            carries tasks to get done. The composer replaces the bar while it
+            is open. */}
+        {composeForThisThread ? null : (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-end px-5">
+            <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)]/95 p-1 shadow-[var(--shadow-pop)] backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => startReply('reply')}
+                disabled={!replyAnchor}
+                title="Reply (r)"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                <span className="hidden @[520px]:inline">Reply</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startReply('reply_all')}
+                disabled={!replyAnchor}
+                title="Reply all"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={ReplyAllIcon} size={14} />
+                <span className="hidden @[520px]:inline">Reply all</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startReply('forward')}
+                disabled={!replyAnchor}
+                title="Forward"
+                className={BAR_BUTTON}
+              >
+                <RowIcon icon={CornerUpRightIcon} size={14} />
+                <span className="hidden @[520px]:inline">Forward</span>
+              </button>
+              <span className="mx-1 h-4 w-px shrink-0 bg-[var(--color-border)]" aria-hidden />
+              <button
+                type="button"
+                title="This email carries tasks to get done"
+                onClick={() =>
+                  openCaptureWith(
+                    `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
+                  )
+                }
+                className="flex h-8 items-center whitespace-nowrap rounded-full px-3 text-[12.5px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
+              >
+                This is an Albatross
+              </button>
+            </div>
           </div>
-        </LayoutGroup>
+        )}
       </div>
     </motion.div>
   );
@@ -638,6 +673,8 @@ export function ThreadView() {
   return reader;
 }
 
+// Flat interior: the summary is a section with a rule, not a box — the
+// surface already did the depth work.
 function SummaryCard({
   data,
   loading,
@@ -656,7 +693,7 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]"
+      className="relative mt-4 border-b border-[var(--color-border)]/70 pb-3"
     >
       <header className="mb-1.5 flex items-center justify-between">
         <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
@@ -720,19 +757,24 @@ function MessageCard({
   const sender = contactFromHeader(message.from);
   const recipient = contactFromHeader(message.to || message.account);
   return (
-    <article className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
-      <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left">
+    // Flat interior: messages separate with hairlines, not boxes — the
+    // surface already did the depth work.
+    <article className="border-b border-[var(--color-border)]/70 last:border-b-0">
+      <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 py-2.5 text-left">
         <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
           <Avatar name={sender.name} src={photoUrl} size={26} />
         </ContactButton>
         <div className="flex min-w-0 flex-col gap-0">
           <div className="flex min-w-0 items-center gap-2">
             <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
-              <span className="block truncate text-[13px] font-semibold text-[var(--color-text)]">
+              {/* font-display matches the sender voice everywhere else: the
+                  list rows and the thread title. */}
+              <span className="block truncate font-display text-[13px] font-semibold text-[var(--color-text)]">
                 {sender.name}
               </span>
             </ContactButton>
-            <span className="shrink-0 text-[11.5px] text-[var(--color-text-faint)]">→</span>
+            {/* "to" is the mail convention; an arrow reads as a forward. */}
+            <span className="shrink-0 text-[11.5px] italic text-[var(--color-text-faint)]">to</span>
             <ContactButton contact={recipient} onShowEmails={onShowContactEmails}>
               <span className="block truncate text-[11.5px] text-[var(--color-text-muted)]">
                 {recipient.name}
@@ -752,7 +794,9 @@ function MessageCard({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+          // min-height keeps the collapse toggle a real target; the bare
+          // chevron alone was a sliver.
+          className="flex min-h-7 items-center gap-2 rounded-md px-2 py-1 text-[var(--color-text-faint)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           aria-expanded={open}
           title={open ? 'Hide details' : 'Show details'}
         >
@@ -775,7 +819,7 @@ function MessageCard({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -3 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              className="px-4 py-3"
+              className="py-3"
             >
               <MessageBody html={message.htmlBody} text={message.textBody} />
               <Attachments attachments={message.attachments} messageId={message._id} account={account} />
@@ -903,6 +947,8 @@ const EMAIL_FRAME_RESET =
   // rules always win. Unstyled emails fall back to dark-on-white.
   'html,body{margin:0;padding:0;background:#ffffff;color:#1f2937;' +
   "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13.5px;line-height:1.5}" +
+  // overflow-x is only the fallback for engines without CSS zoom; EmailFrame
+  // scales fixed-width mail down to the pane so no inner scrollbar appears.
   'body{padding:6px 2px;overflow-x:auto}' +
   'img{max-width:100%;height:auto}' +
   '</style>';
@@ -919,6 +965,9 @@ function buildEmailSrcDoc(html: string): string {
 function EmailFrame({ html }: { html: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const frameObserverRef = useRef<ResizeObserver | null>(null);
+  // The frame width the current zoom was computed for; 0 forces a refit.
+  const fittedWidthRef = useRef(0);
   const [height, setHeight] = useState(160);
   const srcDoc = useMemo(() => buildEmailSrcDoc(html), [html]);
 
@@ -929,11 +978,31 @@ function EmailFrame({ html }: { html: string }) {
     const measure = () => {
       const doc = iframe.contentDocument;
       if (!doc?.body) return;
-      const next = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight, 40);
+      // body.scrollHeight is in the body's own (pre-zoom) coordinates; scale
+      // it so a scaled-down email does not leave dead space below itself.
+      const zoom = Number.parseFloat(doc.body.style.zoom || '1') || 1;
+      const next = Math.max(Math.round(doc.body.scrollHeight * zoom), doc.documentElement.scrollHeight, 40);
       setHeight((prev) => (Math.abs(prev - next) > 1 ? next : prev));
     };
-    const onLoad = () => {
+    // Fixed-width mail (600–900px marketing tables) scales down to the pane
+    // width instead of clipping and growing an inner horizontal scrollbar.
+    const fit = () => {
+      const doc = iframe.contentDocument;
+      const frameWidth = iframe.clientWidth;
+      if (!doc?.body || !frameWidth) return;
+      if (frameWidth !== fittedWidthRef.current) {
+        fittedWidthRef.current = frameWidth;
+        doc.body.style.removeProperty('zoom');
+        const contentWidth = Math.max(doc.body.scrollWidth, doc.documentElement.scrollWidth);
+        if (contentWidth > frameWidth + 1) {
+          doc.body.style.zoom = String(frameWidth / contentWidth);
+        }
+      }
       measure();
+    };
+    const onLoad = () => {
+      fittedWidthRef.current = 0;
+      fit();
       const doc = iframe.contentDocument;
       if (!doc) return;
       // Re-measure as images and webfonts settle (they change layout height).
@@ -947,6 +1016,13 @@ function EmailFrame({ html }: { html: string }) {
         });
         ro.observe(doc.body);
         observerRef.current = ro;
+        // Panel resizes change the frame width; refit the zoom to match.
+        const frameRo = new ResizeObserver(() => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(fit);
+        });
+        frameRo.observe(iframe);
+        frameObserverRef.current = frameRo;
       }
     };
     iframe.addEventListener('load', onLoad);
@@ -957,6 +1033,8 @@ function EmailFrame({ html }: { html: string }) {
       cancelAnimationFrame(raf);
       observerRef.current?.disconnect();
       observerRef.current = null;
+      frameObserverRef.current?.disconnect();
+      frameObserverRef.current = null;
     };
   }, []);
 

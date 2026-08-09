@@ -3,11 +3,13 @@ import {
   areaArtifactHtmlForWrite,
   assertAreaArtifactDocumentSize,
 } from '../lib/albatross/area-artifact-storage';
+import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
+import { recordCompletionEvent } from './albatrossWork';
 import { now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -22,6 +24,15 @@ const sourceRefValidator = v.object({
   accountId: v.optional(v.string()),
   url: v.optional(v.string()),
 });
+
+const workShapeValidator = v.union(
+  v.literal('quick'),
+  v.literal('project'),
+  v.literal('practice'),
+  v.literal('decision'),
+  v.literal('monitor'),
+  v.literal('recurring'),
+);
 
 async function resolveUserId(
   ctx: QueryCtx | MutationCtx,
@@ -85,6 +96,52 @@ export const beginCapture = mutation({
   },
 });
 
+/**
+ * The completion record for one finished albatross: shape, how many of its
+ * tasks were checked, and capture-to-done time. This is the raw material for
+ * the future progress page; it is stored on every finish, rendered nowhere yet.
+ */
+async function recordWorkCompletion(ctx: MutationCtx, work: Doc<'albatrossIntents'>, ts: number) {
+  let tasksTotal: number | undefined;
+  let tasksCompleted: number | undefined;
+  if (work.primaryProjectId) {
+    // Bounded read: a metrics record is not worth an unbounded scan of a
+    // link-heavy project. 400 links comfortably covers 200 task links.
+    const links = await ctx.db
+      .query('albatrossProjectLinks')
+      .withIndex('by_user_project', (q) =>
+        q.eq('userId', work.userId).eq('projectId', work.primaryProjectId!),
+      )
+      .take(400);
+    const taskLinks = links.filter((link) => link.artifactKind === 'task').slice(0, 200);
+    if (taskLinks.length) {
+      const cards = await Promise.all(
+        taskLinks.map(async (link) => {
+          const cardId = ctx.db.normalizeId('cards', link.artifactId);
+          const card = cardId ? await ctx.db.get(cardId) : null;
+          return card && card.userId === work.userId ? card : null;
+        }),
+      );
+      const present = cards.filter((card) => card !== null);
+      tasksTotal = present.length;
+      tasksCompleted = present.filter((card) => card!.completedAt).length;
+    }
+  }
+  await recordCompletionEvent(ctx, {
+    userId: work.userId,
+    artifactKind: 'intent',
+    artifactId: String(work._id),
+    completedAt: ts,
+    areaId: work.areaId,
+    intentId: String(work._id),
+    projectId: work.primaryProjectId,
+    shape: work.shape,
+    tasksTotal,
+    tasksCompleted,
+    msToComplete: Math.max(0, ts - (work.createdAt ?? work._creationTime)),
+  });
+}
+
 export const updateWorkState = mutation({
   args: {
     ...callerArgs,
@@ -105,8 +162,23 @@ export const updateWorkState = mutation({
             : work.status === 'done' || work.status === 'archived'
               ? 'ready'
               : work.status,
+      // Picking released work back up clears the release, exactly like
+      // reopenWork — a revived albatross must not keep a release reason.
+      ...(args.state === 'active' && work.workState === 'released'
+        ? {
+            releaseReason: undefined,
+            releaseProposedBy: undefined,
+            releasedAt: undefined,
+            reviewAt: undefined,
+            status: 'ready' as const,
+          }
+        : {}),
       updatedAt: ts,
     });
+    // The user's check is the completion. Record it once, on the transition.
+    if (args.state === 'done' && work.workState !== 'done') {
+      await recordWorkCompletion(ctx, work, ts);
+    }
     return { previousState: work.workState || 'active', state: args.state };
   },
 });
@@ -429,6 +501,7 @@ export const finishCapture = mutation({
         rawText: v.string(),
         primaryAreaId: v.optional(v.id('areas')),
         relatedAreaIds: v.optional(v.array(v.id('areas'))),
+        shape: v.optional(workShapeValidator),
       }),
     ),
   },
@@ -458,6 +531,7 @@ export const finishCapture = mutation({
         areaAutoAssigned: undefined,
         captureId: args.captureId,
         primaryAreaId,
+        shape: item.shape,
         workState: 'active',
         agentState: 'researching',
         lastAgentRunAt: ts,
@@ -534,6 +608,26 @@ export const setAgentState = mutation({
   },
 });
 
+/**
+ * The plan document's question gate is composed before the durable question
+ * row exists, so it carries the planner's inline id. Once the row is real,
+ * rewrite the gate to the id the answer endpoint expects.
+ */
+async function bindGateQuestionId(
+  ctx: MutationCtx,
+  workId: Id<'albatrossIntents'>,
+  legacyQuestionId: string | undefined,
+  durableQuestionId: string,
+) {
+  if (!legacyQuestionId || legacyQuestionId === durableQuestionId) return;
+  const work = await ctx.db.get(workId);
+  if (!work?.latestPlanId) return;
+  const plan = await ctx.db.get(work.latestPlanId);
+  if (!plan || plan.userId !== work.userId || !plan.document) return;
+  const { document, changed } = bindFrontierQuestionId(plan.document, legacyQuestionId, durableQuestionId);
+  if (changed) await ctx.db.patch(work.latestPlanId, { document, updatedAt: now() });
+}
+
 export const upsertQuestion = mutation({
   args: {
     ...callerArgs,
@@ -580,6 +674,7 @@ export const upsertQuestion = mutation({
           status: 'needs_answers',
           updatedAt: ts,
         });
+        await bindGateQuestionId(ctx, args.workId, args.legacyQuestionId, String(duplicate._id));
       } else if (duplicate.status === 'answered' && duplicate.answer) {
         await ctx.db.patch(duplicate._id, refreshed);
         const work = await requireWork(ctx, args.workId, userId);
@@ -622,6 +717,7 @@ export const upsertQuestion = mutation({
           status: 'needs_answers',
           updatedAt: ts,
         });
+        await bindGateQuestionId(ctx, args.workId, args.legacyQuestionId, String(duplicate._id));
       }
       return duplicate._id;
     }
@@ -652,6 +748,7 @@ export const upsertQuestion = mutation({
       updatedAt: ts,
     });
     await ctx.db.patch(args.workId, { agentState: 'needs_input', status: 'needs_answers', updatedAt: ts });
+    await bindGateQuestionId(ctx, args.workId, args.legacyQuestionId, String(questionId));
     return questionId;
   },
 });
@@ -706,6 +803,7 @@ export const answerQuestion = mutation({
           questions: legacyQuestions,
           updatedAt: ts,
         });
+        if (work.workState !== 'done') await recordWorkCompletion(ctx, work, ts);
       } else {
         shouldAdvance = true;
         await ctx.db.patch(question.workId, {

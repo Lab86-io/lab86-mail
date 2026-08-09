@@ -162,10 +162,15 @@ export function AppShell({
   const mailish =
     visiblePrimaryView === 'mail' || visiblePrimaryView === 'today' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
+  // Mail is the only surface built as a card the reader can halve. Everywhere
+  // else the reader arrives as a sheet over the page, so Today and Areas keep
+  // their own full-width shape instead of pretending to be an inbox.
+  const readerSplit = readerVisible && visiblePrimaryView === 'mail';
+  const readerSheet = readerVisible && !readerSplit;
   // The assistant is a floating overlay now (AssistantChat), not a docked
   // panel, so it no longer participates in the resizable layout.
-  const permutation = `i${readerVisible ? 't' : ''}`;
-  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : [])];
+  const permutation = `i${readerSplit ? 't' : ''}`;
+  const panelIds = ['inbox', ...(readerSplit ? ['reader'] : [])];
   const layoutStorage = typeof window !== 'undefined' && !isMobile ? window.localStorage : noopLayoutStorage;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
@@ -313,8 +318,8 @@ export function AppShell({
                 </ReflowPanel>
               </Panel>
 
-              {readerVisible ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
-              {readerVisible ? (
+              {readerSplit ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
+              {readerSplit ? (
                 <Panel id="reader" defaultSize="40%" minSize="360px">
                   <ReflowPanel>
                     {/* Slide-in masks the thread's hydration moment. */}
@@ -331,6 +336,24 @@ export function AppShell({
                 </Panel>
               ) : null}
             </Group>
+
+            {/* Off Mail there is no card to halve, so the thread visits as a
+                sheet over the page. The surface underneath keeps its own
+                width and stays usable — this is not a modal. */}
+            <AnimatePresence initial={false}>
+              {readerSheet ? (
+                <motion.div
+                  key="reader-sheet"
+                  initial={{ x: 32, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: 32, opacity: 0 }}
+                  transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
+                >
+                  <ThreadView variant="sheet" />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </TooltipProvider>
           <AssistantChat />
           <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
@@ -521,8 +544,10 @@ function RailResizeHandle() {
 }
 
 function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizing: boolean) => void }) {
-  // 6px wide hit target with a 1px visible rule down the middle; brightens on
-  // hover/drag so it's clearly grabbable.
+  // The seam of the one mail surface: the list and reader halves open toward
+  // this 6px grab area, which paints itself as card surface with top/bottom
+  // borders that continue the halves' outline, plus a 1px interior rule. The
+  // vertical inset matches the halves' sm:p-2 gutter.
   return (
     <Separator
       onPointerDown={() => {
@@ -538,7 +563,11 @@ function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizi
       className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none"
     >
       <span
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
+        className="pointer-events-none absolute inset-x-0 inset-y-2 border-y border-[var(--color-border)] bg-[var(--color-bg-elevated)]"
+        aria-hidden
+      />
+      <span
+        className="pointer-events-none absolute bottom-2 left-1/2 top-2 w-px -translate-x-1/2 bg-[var(--color-border)]/70 transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden
       />
     </Separator>

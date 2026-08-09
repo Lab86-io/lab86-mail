@@ -46,7 +46,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useS
 import { toast } from 'sonner';
 import { groupWork, type WorkListItem } from '@/components/albatross/AlbatrossesSurface';
 import { AlbatrossRow } from '@/components/albatross/primitives';
-import { InboxThreadRow, inboxDateGroupLabel, type ThreadRow } from '@/components/inbox/Inbox';
+import { InboxThreadRow, type ThreadRow } from '@/components/inbox/Inbox';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
 import { ProgressTracker } from '@/components/tool-ui/progress-tracker';
@@ -101,7 +101,13 @@ import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
-import { categoricalColor, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import {
+  categoricalColor,
+  emailFromHeader,
+  formatDate,
+  inboxDateGroupLabel,
+  shortFrom,
+} from '@/lib/shared/format';
 import { postBriefTheme } from '@/lib/theme/brief-theme';
 import { cn } from '@/lib/utils';
 
