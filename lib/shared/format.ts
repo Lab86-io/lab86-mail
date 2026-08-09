@@ -127,8 +127,11 @@ export function formatDate(value: number | string | null | undefined): string {
 // Day bucket for the editorial date headers: Today / Yesterday / weekday for
 // the last week / month (with year once it isn't this year). Weekday labels
 // carry the absolute date so the header and the row pills speak one grammar.
-export function inboxDateGroupLabel(ts: number, now: Date = new Date()): string {
-  if (!ts) return 'Undated';
+export function inboxDateGroupLabel(value: number | string, now: Date = new Date()): string {
+  // Provider rows may carry ISO strings; Number() would turn those into NaN
+  // and file real dates under Undated. new Date() reads both forms.
+  const ts = typeof value === 'string' ? new Date(value).getTime() : value;
+  if (!ts || Number.isNaN(ts)) return 'Undated';
   const date = new Date(ts);
   // Calendar arithmetic, not fixed 24h steps: daylight-saving days are 23 or
   // 25 hours long and would otherwise shift the buckets.

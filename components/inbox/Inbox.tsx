@@ -1044,11 +1044,10 @@ export function Inbox() {
                   const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
                   // Editorial datelines: a serif group header whenever the day
                   // bucket changes (the list is already date-sorted).
-                  const groupLabel = inboxDateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+                  const groupLabel = inboxDateGroupLabel(it.lastDate ?? it.date ?? 0);
                   const previous = index > 0 ? items[index - 1] : null;
                   const showHeader =
-                    !previous ||
-                    inboxDateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
+                    !previous || inboxDateGroupLabel(previous.lastDate ?? previous.date ?? 0) !== groupLabel;
                   return (
                     <Fragment key={key}>
                       {showHeader ? (

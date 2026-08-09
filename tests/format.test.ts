@@ -133,6 +133,11 @@ describe('inboxDateGroupLabel', () => {
   test('returns Undated for a missing timestamp', () => {
     expect(inboxDateGroupLabel(0, ref)).toBe('Undated');
   });
+  test('an ISO string groups the same as its numeric timestamp', () => {
+    expect(inboxDateGroupLabel(ref.toISOString(), ref)).toBe('Today');
+    expect(inboxDateGroupLabel(daysFromRef(-1).toISOString(), ref)).toBe('Yesterday');
+    expect(inboxDateGroupLabel('not a date', ref)).toBe('Undated');
+  });
   test('a future date is never Today', () => {
     expect(inboxDateGroupLabel(daysFromRef(1).getTime(), ref)).not.toBe('Today');
   });

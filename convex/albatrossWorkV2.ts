@@ -105,12 +105,14 @@ async function recordWorkCompletion(ctx: MutationCtx, work: Doc<'albatrossIntent
   let tasksTotal: number | undefined;
   let tasksCompleted: number | undefined;
   if (work.primaryProjectId) {
+    // Bounded read: a metrics record is not worth an unbounded scan of a
+    // link-heavy project. 400 links comfortably covers 200 task links.
     const links = await ctx.db
       .query('albatrossProjectLinks')
       .withIndex('by_user_project', (q) =>
         q.eq('userId', work.userId).eq('projectId', work.primaryProjectId!),
       )
-      .collect();
+      .take(400);
     const taskLinks = links.filter((link) => link.artifactKind === 'task').slice(0, 200);
     if (taskLinks.length) {
       const cards = await Promise.all(

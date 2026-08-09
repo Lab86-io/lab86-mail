@@ -111,6 +111,14 @@ describe('hasFrontierGate', () => {
     expect(hasFrontierGate(null)).toBe(false);
     expect(hasFrontierGate({ regions: 'nope' })).toBe(false);
   });
+
+  test('a gate region without a valid tree ends the walk instead of throwing', () => {
+    const broken = { regions: [{ id: 'frontier-gate', summary: 'x', tree: null }] };
+    expect(hasFrontierGate(broken)).toBe(true);
+    expect(hasFrontierGate(broken, 'q1')).toBe(false);
+    const alsoBroken = { regions: [{ id: 'frontier-gate', summary: 'x', tree: 'not-a-node' }] };
+    expect(hasFrontierGate(alsoBroken, 'q1')).toBe(false);
+  });
 });
 
 describe('bindFrontierQuestionId', () => {

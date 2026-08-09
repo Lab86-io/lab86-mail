@@ -146,9 +146,12 @@ export function hasFrontierGate(document: unknown, questionId?: string): boolean
   return found;
 }
 
-function walkNodes(node: BriefNode, visit: (node: BriefNode) => void) {
-  visit(node);
-  const children = (node as { children?: BriefNode[] }).children;
+function walkNodes(node: unknown, visit: (node: BriefNode) => void) {
+  // Stored documents are validated on write, but these helpers also accept
+  // whatever an older row holds. A malformed node ends the walk, not the page.
+  if (!node || typeof node !== 'object') return;
+  visit(node as BriefNode);
+  const children = (node as { children?: unknown[] }).children;
   if (Array.isArray(children)) for (const child of children) walkNodes(child, visit);
 }
 
