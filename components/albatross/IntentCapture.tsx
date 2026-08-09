@@ -294,9 +294,13 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   }, []);
 
   // Overlay lifecycle: lock body scroll, wire Escape, focus the textarea on
-  // open, reset + return focus to the launcher on close.
+  // open, reset + return focus on close. Capture can open from the rail
+  // button while the pill is hidden, so the element that had focus at open is
+  // recorded and restored — the launcher is only a fallback while visible.
+  const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!overlayOpen) return;
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (event: KeyboardEvent) => {
@@ -313,8 +317,12 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     };
   }, [overlayOpen, send]);
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (overlayOpen) return;
+    if (overlayOpen) {
+      wasOpenRef.current = true;
+      return;
+    }
     recognitionRef.current?.abort();
     recognitionRef.current = null;
     setListening(false);
@@ -322,7 +330,18 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     setSource('text');
     setSavedCount(1);
     setSaveError(null);
-    launcherRef.current?.focus({ preventScroll: true });
+    // Only a real dismissal moves focus; the initial mount restores nothing.
+    if (!wasOpenRef.current) return;
+    wasOpenRef.current = false;
+    const opener = openerRef.current;
+    openerRef.current = null;
+    const launcher = launcherRef.current;
+    if (opener?.isConnected && opener !== document.body) {
+      opener.focus({ preventScroll: true });
+    } else if (launcher && launcher.offsetParent !== null) {
+      // offsetParent is null while the pill wrapper is hidden.
+      launcher.focus({ preventScroll: true });
+    }
   }, [overlayOpen]);
 
   const stopListening = () => {
