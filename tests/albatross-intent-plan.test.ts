@@ -211,8 +211,22 @@ describe('generateIntentPlan orchestration', () => {
                 endAt: Date.parse('2026-07-15T14:00:00Z'),
               },
             ],
-            tasks: [],
-            projects: [],
+            tasks: [
+              {
+                cardId: 'card-tax-1',
+                title: 'Download the NYS PDF',
+                completedAt: Date.parse('2026-07-01T12:00:00Z'),
+                dueAt: Date.parse('2026-07-10T12:00:00Z'),
+              },
+            ],
+            projects: [
+              {
+                projectId: 'project-tax',
+                title: 'Tax season',
+                status: 'active',
+                outcome: 'Both returns filed.',
+              },
+            ],
           };
         }
         throw new Error(`unexpected query ${fn}`);
@@ -364,8 +378,8 @@ describe('generateIntentPlan orchestration', () => {
   test('Area evidence and corpus evidence receive unique reference ids', async () => {
     const planText = JSON.stringify({
       ...goodGeneration,
-      sourceRefIds: ['ref2'],
-      digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref2'] }],
+      sourceRefIds: ['ref4'],
+      digitalActions: [{ kind: 'task', title: 'Upload NYS tax PDF', sourceRefIds: ['ref4'] }],
     });
     const { calls } = wire({ intent: { primaryAreaId: 'area_money' }, planText });
 
@@ -373,7 +387,11 @@ describe('generateIntentPlan orchestration', () => {
 
     const prompt = calls.generations[0].prompt as string;
     expect(prompt).toContain('[ref1] (calendar_event)');
-    expect(prompt).toContain('[ref2] (mail_thread)');
+    expect(prompt).toContain('[ref2] (task)');
+    expect(prompt).toContain('Download the NYS PDF — completed — due');
+    expect(prompt).toContain('[ref3] (project)');
+    expect(prompt).toContain('Tax season — active — Both returns filed.');
+    expect(prompt).toContain('[ref4] (mail_thread)');
     const save = calls.mutations.find((mutation) => mutation.fn === 'm:savePlan');
     expect(save!.args.sourceRefs).toEqual([
       expect.objectContaining({ kind: 'mail_thread', id: 'thread-tax' }),

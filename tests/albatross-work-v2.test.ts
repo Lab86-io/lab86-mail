@@ -59,6 +59,27 @@ describe('Albatross Work capture', () => {
     expect(result.work[1].relatedAreaNames).toEqual(['My apps']);
   });
 
+  test('an invalid timezone falls back to the UTC date', () => {
+    expect(localDateKey('not/a-zone', new Date('2026-07-11T01:00:00Z'))).toBe('2026-07-11');
+  });
+
+  test('a declared project title promotes on its own', () => {
+    const decision = projectPromotionDecision({ declaredProjectTitle: 'Tax season wrap-up' });
+    expect(decision.promote).toBe(true);
+    expect(decision.reason).toContain('durable multi-step outcome');
+  });
+
+  test('a schema-breaking split falls back to the preserved dump', () => {
+    const result = parseWorkSplit('{"work": 5}', 'the original dump');
+    expect(result.work).toHaveLength(1);
+    expect(result.work[0].rawText).toBe('the original dump');
+  });
+
+  test('a split whose items all lose their text falls back to the original text', () => {
+    const result = parseWorkSplit(JSON.stringify({ work: [{ title: 'x', rawText: '   ' }] }), 'keep me');
+    expect(result.work[0].rawText).toBe('keep me');
+  });
+
   test('keeps a valid shape and drops an invented one without losing the split', () => {
     const result = parseWorkSplit(
       JSON.stringify({
