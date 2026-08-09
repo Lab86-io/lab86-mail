@@ -180,6 +180,19 @@ describe('the document binds to live records', () => {
     const plan = await t.run((ctx) => ctx.db.get(planId));
     const gate = (plan?.document as any).regions.at(-1);
     expect(gate.tree.children[0].questionId).toBe(String(questionId));
+
+    // The same ask arriving again refreshes the pending row and keeps the
+    // binding stable instead of minting a second question.
+    const again = await t.mutation(api.albatrossWorkV2.upsertQuestion, {
+      ...caller,
+      workId,
+      legacyQuestionId: 'q1',
+      kind: 'clarification',
+      prompt: 'Which office should handle the renewal?',
+    });
+    expect(String(again)).toBe(String(questionId));
+    const pending = await t.run((ctx) => ctx.db.query('albatrossWorkQuestions').collect());
+    expect(pending.filter((row) => row.status === 'pending')).toHaveLength(1);
   });
 
   test('markPlanApplied binds keyed checklist items to their created cards', async () => {
@@ -205,6 +218,97 @@ describe('the document binds to live records', () => {
 });
 
 describe('completion writes the record', () => {
+  test('a projected albatross records how many of its tasks were checked', async () => {
+    const t = newHarness();
+    const seeded = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const projectId = await ctx.db.insert('albatrossProjects', {
+        userId,
+        title: 'Passport renewal',
+        status: 'active',
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const boardId = await ctx.db.insert('boards', {
+        ownerUserId: userId,
+        title: 'Personal',
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const columnId = await ctx.db.insert('boardColumns', {
+        boardId,
+        name: 'Today',
+        order: 0,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const doneCard = await ctx.db.insert('cards', {
+        boardId,
+        columnId,
+        userId,
+        title: 'Gather the documents',
+        order: 0,
+        completedAt: ts,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const openCard = await ctx.db.insert('cards', {
+        boardId,
+        columnId,
+        userId,
+        title: 'Book the appointment',
+        order: 1,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      for (const cardId of [doneCard, openCard]) {
+        await ctx.db.insert('albatrossProjectLinks', {
+          userId,
+          projectId,
+          artifactKind: 'task',
+          artifactId: String(cardId),
+          role: 'primary',
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+      return { projectId };
+    });
+    const workId = await seedWork(t, { shape: 'quick', primaryProjectId: seeded.projectId });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'done' });
+    const events = await t.run((ctx) => ctx.db.query('completionEvents').collect());
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ tasksTotal: 2, tasksCompleted: 1 });
+  });
+
+  test('release and reopen round-trip without recording a completion', async () => {
+    const t = newHarness();
+    const workId = await seedWork(t);
+    await t.mutation(api.albatrossWorkV2.releaseWork, {
+      ...caller,
+      workId,
+      reason: 'This matters less now.',
+    });
+    let work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.workState).toBe('released');
+    expect(work?.releaseReason).toBe('This matters less now.');
+    await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
+    work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.workState).toBe('active');
+    expect(work?.releaseReason).toBeUndefined();
+    expect(await t.run((ctx) => ctx.db.query('completionEvents').collect())).toEqual([]);
+  });
+
+  test('archiving and reactivating touches no completion record', async () => {
+    const t = newHarness();
+    const workId = await seedWork(t, { status: 'done', workState: 'paused' });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'archived' });
+    expect((await t.run((ctx) => ctx.db.get(workId)))?.status).toBe('archived');
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
+    expect((await t.run((ctx) => ctx.db.get(workId)))?.status).toBe('ready');
+    expect(await t.run((ctx) => ctx.db.query('completionEvents').collect())).toEqual([]);
+  });
+
   test('marking work done records shape, capture-to-done time, and no duplicate', async () => {
     const t = newHarness();
     const capturedAt = Date.now() - 90_000;

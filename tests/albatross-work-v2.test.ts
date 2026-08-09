@@ -75,6 +75,12 @@ describe('Albatross Work capture', () => {
     expect(result.work[0].rawText).toBe('the original dump');
   });
 
+  test('broken JSON inside braces falls back to the preserved dump', () => {
+    const result = parseWorkSplit('{"work": [}', 'the broken dump');
+    expect(result.work).toHaveLength(1);
+    expect(result.work[0].rawText).toBe('the broken dump');
+  });
+
   test('a split whose items all lose their text falls back to the original text', () => {
     const result = parseWorkSplit(JSON.stringify({ work: [{ title: 'x', rawText: '   ' }] }), 'keep me');
     expect(result.work[0].rawText).toBe('keep me');

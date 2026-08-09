@@ -160,6 +160,10 @@ describe('generateIntentPlan orchestration', () => {
       account: 'acct1',
       snippet: 'Payment received',
     },
+    { source: 'mcp', id: 'gh-1', title: 'Tax importer PR', url: 'https://github.com/lab86/tax/pull/1' },
+    { source: 'mcp', id: 'bb-1', title: 'Pipeline run', url: 'https://bitbucket.org/lab86/tax' },
+    { source: 'mcp', id: 'jr-1', title: 'TAX-12', url: 'https://acme.atlassian.net/browse/TAX-12' },
+    { source: 'mcp', id: 'sl-1', title: 'Tax thread', url: 'https://acme.slack.com/archives/C1/p2' },
   ];
 
   const goodGeneration = {
@@ -246,17 +250,19 @@ describe('generateIntentPlan orchestration', () => {
         // The document composer is tool-driven: emulate a model that places
         // one region and finalizes, the way the live provider does.
         if (options.tools?.place_region) {
-          await options.tools.place_region.execute({
-            region: {
-              id: 'steps',
-              summary: 'The steps to file.',
-              tree: {
-                kind: 'checklist',
-                title: 'Steps',
-                items: [{ label: 'Upload NYS tax PDF', stepKey: 'step-1' }],
-              },
+          const region = {
+            id: 'steps',
+            summary: 'The steps to file.',
+            tree: {
+              kind: 'checklist',
+              title: 'Steps',
+              items: [{ label: 'Upload NYS tax PDF', stepKey: 'step-1' }],
             },
-          });
+          };
+          // Place the same region twice: the second call exercises the
+          // replace-in-place branch the live composer uses for repairs.
+          await options.tools.place_region.execute({ region });
+          await options.tools.place_region.execute({ region });
           await options.tools.finalize_brief.execute({ title: 'Tax plan', summary: 'The staged plan.' });
           return { text: '' };
         }
@@ -363,6 +369,23 @@ describe('generateIntentPlan orchestration', () => {
     expect(kinds).toEqual(['decision', 'prompt', 'checklist']);
     // The gate's outline names the steps that wait behind the answer.
     expect(gate.children[2].items[0].stepKey).toBe('step-1');
+  });
+
+  test('every referenced service reaches the composer pack', async () => {
+    const planText = JSON.stringify({
+      ...goodGeneration,
+      sourceRefIds: ['ref1', 'ref2', 'ref3', 'ref4', 'ref5'],
+    });
+    const { calls } = wire({ planText });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const artifactGen = calls.generations.find((g: any) => g.feature === 'albatross_plan_artifact');
+    const pack = JSON.parse(artifactGen.prompt);
+    const ids = pack.services.map((service: any) => service.id);
+    expect(ids).toContain('mail');
+    expect(ids).toContain('github');
+    expect(ids).toContain('bitbucket');
+    expect(ids).toContain('jira');
+    expect(ids).toContain('slack');
   });
 
   test('the planner classifies shape and savePlan receives it', async () => {

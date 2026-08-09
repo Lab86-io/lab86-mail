@@ -67,6 +67,63 @@ describe('captureWork', () => {
     expect(mutations).toEqual([]);
   });
 
+  test('reviewed items skip the splitter and commit exactly what the user approved', async () => {
+    const { deps, mutations, generateCalls } = makeDependencies();
+    const result = await captureWork(
+      {
+        rawText: 'the original dump',
+        source: 'text',
+        areaId: 'area-1',
+        reviewedItems: [
+          { title: '  Fix gutters  ', rawText: '  fix the gutters  ' },
+          { title: '', rawText: 'send the Acme invoice' },
+        ],
+      },
+      user,
+      deps,
+    );
+    expect(result.status).toBe('split');
+    expect(result.workIds).toHaveLength(2);
+    expect(generateCalls).toEqual([]);
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture');
+    expect(finish!.args.items[0]).toMatchObject({
+      title: 'Fix gutters',
+      rawText: 'fix the gutters',
+      primaryAreaId: 'area-1',
+    });
+    // A missing title falls back without inventing content.
+    expect(finish!.args.items[1].title).toBe('Work');
+  });
+
+  test('an empty reviewed item falls back to one verbatim Work item', async () => {
+    const { deps, mutations } = makeDependencies();
+    const result = await captureWork(
+      {
+        rawText: 'keep this dump',
+        source: 'text',
+        reviewedItems: [{ title: 'Empty', rawText: '   ' }],
+      },
+      user,
+      deps,
+    );
+    expect(result.fallback).toBe(true);
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture');
+    expect(finish!.args.items[0].rawText).toBe('keep this dump');
+  });
+
+  test('the splitter carries shape onto the committed items', async () => {
+    const { deps, mutations } = makeDependencies({
+      areas,
+      facts,
+      text: JSON.stringify({
+        work: [{ title: 'Renew the passport', rawText: 'renew it', shape: 'quick' }],
+      }),
+    });
+    await captureWork({ rawText: 'renew my passport', source: 'text' }, user, deps);
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture');
+    expect(finish!.args.items[0].shape).toBe('quick');
+  });
+
   test('splits a dump into Work and resolves model area names against active Areas', async () => {
     const { deps, mutations, generateCalls } = makeDependencies({
       areas,
