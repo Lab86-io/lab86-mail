@@ -17,6 +17,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
+import { unreadBadgeLabel } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // These used to be sixteen rows in the navigation rail. Mail folders are not
@@ -90,7 +91,7 @@ export function MailNav() {
           ...customLabels.map((l: any) => ({ id: `custom:${l._id}`, label: l.name })),
         ].map((category) => {
           const active = smartCategory === category.id && !activeFolder;
-          const unread = counts?.[category.id]?.unread;
+          const badge = unreadBadgeLabel(counts?.[category.id]?.unread);
           return (
             <button
               key={category.id}
@@ -104,11 +105,9 @@ export function MailNav() {
               )}
             >
               {category.label}
-              {/* A saturated counter says nothing; only a real number earns
-                  the pixels. */}
-              {unread && unread < 100 ? (
+              {badge ? (
                 <span className="ml-1.5 tabular-nums text-[11px] text-[var(--color-text-faint)]">
-                  {unread}
+                  {badge}
                 </span>
               ) : null}
             </button>

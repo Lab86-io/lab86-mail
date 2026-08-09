@@ -52,7 +52,18 @@ export function dedupeSnippet(
     i += 1;
     j += 1;
   }
+  // The match must end on a word boundary: "Orderly dispatched" does not echo
+  // the subject "Order".
+  if (i < snip.length && /[\p{L}\p{N}]/u.test(snip[i])) return snip;
   return snip.slice(i).replace(/^[\s ]*[-–—:·|]*[\s ]*/, '');
+}
+
+// The category-tab badge only earns pixels while it is a real number; a
+// saturated counter ("99+") says nothing. Null means "render no badge".
+export function unreadBadgeLabel(unread: number | null | undefined): string | null {
+  if (!unread || unread <= 0) return null;
+  if (unread >= 100) return null;
+  return String(Math.floor(unread));
 }
 
 export function fromColor(value: string | null | undefined): string {
@@ -120,13 +131,18 @@ export function inboxDateGroupLabel(ts: number): string {
   if (!ts) return 'Undated';
   const date = new Date(ts);
   const now = new Date();
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayMs = 86_400_000;
-  const today = startOfDay(now);
-  const that = startOfDay(date);
-  if (that >= today) return 'Today';
-  if (that >= today - dayMs) return 'Yesterday';
-  if (that >= today - 6 * dayMs) {
+  // Calendar arithmetic, not fixed 24h steps: daylight-saving days are 23 or
+  // 25 hours long and would otherwise shift the buckets.
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayStart = (base: Date, offsetDays: number) => {
+    const day = startOfDay(base);
+    day.setDate(day.getDate() + offsetDays);
+    return day.getTime();
+  };
+  const that = startOfDay(date).getTime();
+  if (that >= dayStart(now, 0) && that < dayStart(now, 1)) return 'Today';
+  if (that >= dayStart(now, -1) && that < dayStart(now, 0)) return 'Yesterday';
+  if (that >= dayStart(now, -6) && that < dayStart(now, 1)) {
     const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
     const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     return `${weekday} · ${day}`;

@@ -487,7 +487,9 @@ export function ThreadView() {
               </div>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          {/* The clusters wrap at extreme narrow widths (320px popouts) so no
+              action clips or scrolls away. */}
+          <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
             <Button
               type="button"
               variant="ghost"

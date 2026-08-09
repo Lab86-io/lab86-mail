@@ -12,6 +12,7 @@ import {
   shortFrom,
   stripEmoji,
   TABLEAU10,
+  unreadBadgeLabel,
 } from '../lib/shared/format';
 
 describe('shortFrom', () => {
@@ -46,6 +47,9 @@ describe('dedupeSnippet', () => {
   });
   test('keeps the snippet when the subject only partially matches', () => {
     expect(dedupeSnippet('Build failed for polish', 'Build failed')).toBe('Build failed');
+  });
+  test('requires a word boundary after the subject match', () => {
+    expect(dedupeSnippet('Order', 'Orderly dispatched')).toBe('Orderly dispatched');
   });
   test('handles empty inputs', () => {
     expect(dedupeSnippet('', 'anything')).toBe('anything');
@@ -117,6 +121,37 @@ describe('inboxDateGroupLabel', () => {
   });
   test('returns Undated for a missing timestamp', () => {
     expect(inboxDateGroupLabel(0)).toBe('Undated');
+  });
+  test('a future date is never Today', () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    expect(inboxDateGroupLabel(tomorrow.getTime())).not.toBe('Today');
+  });
+  test('older dates fall to month labels, with the year once it differs', () => {
+    const now = new Date();
+    const monthsBack = new Date(now.getFullYear(), now.getMonth() - 2, 15);
+    const expectedRecent =
+      monthsBack.getFullYear() === now.getFullYear()
+        ? monthsBack.toLocaleDateString(undefined, { month: 'long' })
+        : monthsBack.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    expect(inboxDateGroupLabel(monthsBack.getTime())).toBe(expectedRecent);
+    const lastYear = new Date(now.getFullYear() - 1, 5, 15);
+    expect(inboxDateGroupLabel(lastYear.getTime())).toBe(
+      lastYear.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+    );
+  });
+});
+
+describe('unreadBadgeLabel', () => {
+  test('renders real numbers only', () => {
+    expect(unreadBadgeLabel(1)).toBe('1');
+    expect(unreadBadgeLabel(99)).toBe('99');
+  });
+  test('drops zero, missing, and saturated counts', () => {
+    expect(unreadBadgeLabel(0)).toBeNull();
+    expect(unreadBadgeLabel(undefined)).toBeNull();
+    expect(unreadBadgeLabel(100)).toBeNull();
+    expect(unreadBadgeLabel(2500)).toBeNull();
   });
 });
 

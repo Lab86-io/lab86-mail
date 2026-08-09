@@ -77,12 +77,22 @@ describe('the product names itself', () => {
   test('the primary action is capture, not compose', () => {
     const rail = read('components/shell/Rail.tsx');
     // The label lives in CAPTURE_BUTTON_LABEL (IntentCapture); the rail must
-    // use the constant, not restate the words.
-    expect(rail).toContain('CAPTURE_BUTTON_LABEL');
+    // use the constant in both JSX slots, not restate the words.
+    expect(rail).toContain("import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture'");
+    expect(rail).toContain('tooltip={CAPTURE_BUTTON_LABEL}');
+    expect(rail).toContain('<span>{CAPTURE_BUTTON_LABEL}</span>');
     const capture = read('components/albatross/IntentCapture.tsx');
     expect(capture).toContain("CAPTURE_BUTTON_LABEL = 'Get this off my mind'");
     // Compose moved into the Mail surface; the rail must not offer it.
     expect(rail).not.toContain('openComposeNew');
+  });
+
+  test('one capture door per screen: the pill yields to the expanded rail', () => {
+    const capture = read('components/albatross/IntentCapture.tsx');
+    // Expanded desktop rail shows its own capture button, so the pill hides;
+    // a collapsed rail or the mobile off-canvas drawer brings the pill back.
+    expect(capture).toContain('useSidebar');
+    expect(capture).toContain('railOpen && !isMobile');
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {
