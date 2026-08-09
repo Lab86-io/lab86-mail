@@ -113,6 +113,28 @@ export function formatDate(value: number | string | null | undefined): string {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: '2-digit' }).format(date);
 }
 
+// Day bucket for the editorial date headers: Today / Yesterday / weekday for
+// the last week / month (with year once it isn't this year). Weekday labels
+// carry the absolute date so the header and the row pills speak one grammar.
+export function inboxDateGroupLabel(ts: number): string {
+  if (!ts) return 'Undated';
+  const date = new Date(ts);
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayMs = 86_400_000;
+  const today = startOfDay(now);
+  const that = startOfDay(date);
+  if (that >= today) return 'Today';
+  if (that >= today - dayMs) return 'Yesterday';
+  if (that >= today - 6 * dayMs) {
+    const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
+    const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${weekday} · ${day}`;
+  }
+  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: 'long' });
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
 export function gmailUrlFor(account: string, threadIdOrMessageId: string): string {
   const u = encodeURIComponent(account);
   const id = encodeURIComponent(threadIdOrMessageId);

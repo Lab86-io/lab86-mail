@@ -8,6 +8,7 @@ import {
   fromColor,
   fromInitials,
   gmailUrlFor,
+  inboxDateGroupLabel,
   shortFrom,
   stripEmoji,
   TABLEAU10,
@@ -98,6 +99,24 @@ describe('formatDate', () => {
   });
   test('formats a known historical date with year', () => {
     expect(formatDate('2020-01-15T12:00:00.000Z')).toContain('Jan 15');
+  });
+});
+
+describe('inboxDateGroupLabel', () => {
+  const dayMs = 86_400_000;
+  test('labels today and yesterday in words', () => {
+    expect(inboxDateGroupLabel(Date.now())).toBe('Today');
+    expect(inboxDateGroupLabel(Date.now() - dayMs)).toBe('Yesterday');
+  });
+  test('weekday labels carry the absolute date', () => {
+    const ts = Date.now() - 3 * dayMs;
+    const date = new Date(ts);
+    const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
+    const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    expect(inboxDateGroupLabel(ts)).toBe(`${weekday} · ${day}`);
+  });
+  test('returns Undated for a missing timestamp', () => {
+    expect(inboxDateGroupLabel(0)).toBe('Undated');
   });
 });
 

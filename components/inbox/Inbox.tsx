@@ -80,7 +80,14 @@ import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
-import { categoricalColor, dedupeSnippet, emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
+import {
+  categoricalColor,
+  dedupeSnippet,
+  emailFromHeader,
+  formatDate,
+  inboxDateGroupLabel,
+  shortFrom,
+} from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -137,22 +144,9 @@ interface QuickFixSuppression {
   category?: string;
 }
 
-// Day bucket for the editorial date headers: Today / Yesterday / weekday for
-// the last week / month (with year once it isn't this year).
-export function inboxDateGroupLabel(ts: number): string {
-  if (!ts) return 'Undated';
-  const date = new Date(ts);
-  const now = new Date();
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayMs = 86_400_000;
-  const today = startOfDay(now);
-  const that = startOfDay(date);
-  if (that >= today) return 'Today';
-  if (that >= today - dayMs) return 'Yesterday';
-  if (that >= today - 6 * dayMs) return date.toLocaleDateString(undefined, { weekday: 'long' });
-  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: 'long' });
-  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-}
+// inboxDateGroupLabel moved to lib/shared/format so it can carry unit tests;
+// re-exported here for the callers that treat the inbox as its home.
+export { inboxDateGroupLabel } from '@/lib/shared/format';
 
 function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) {
   // Only a category view can optimistically drop a row — in search / all-mail
@@ -974,110 +968,118 @@ export function Inbox() {
           ) : null}
         </AnimatePresence>
 
-        <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
-          {/* No mailbox connected means no mail is coming. Skeleton rows here
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {/* A soft top edge: rows scrolled under the header read as scrolled
+              away, not as a half-clipped rendering bug. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 h-3 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent"
+          />
+          <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
+            {/* No mailbox connected means no mail is coming. Skeleton rows here
               read as "still loading" forever, which is a lie. */}
-          {!authedAccounts.length ? (
-            <NoMailboxState />
-          ) : showInitialLoading ? (
-            <SkeletonRows />
-          ) : isError ? (
-            <SearchErrorState
-              message={(searchError as Error | null)?.message || 'Mail search failed.'}
-              onRetry={() => refetch()}
-            />
-          ) : items.length === 0 ? (
-            translatedQuery || nlSearchIntent ? (
-              <SearchEmptyState
-                onClear={clearSearch}
-                onEditGenerated={() => {
-                  const editable = translatedQuery || query;
-                  setQuery(editable);
-                  setSearchInput(editable);
-                  setSearchDraft(editable);
-                  setTranslatedSearch(null, editable, 'typed');
-                }}
-                onRetryOriginal={() => {
-                  if (!nlSearchIntent) return;
-                  setSearchInput(nlSearchIntent);
-                  runSearch(nlSearchIntent);
-                }}
-                onUseRaw={() => {
-                  if (nlSearchIntent) {
-                    setQuery(nlSearchIntent);
-                    setSearchInput(nlSearchIntent);
-                  }
-                }}
+            {!authedAccounts.length ? (
+              <NoMailboxState />
+            ) : showInitialLoading ? (
+              <SkeletonRows />
+            ) : isError ? (
+              <SearchErrorState
+                message={(searchError as Error | null)?.message || 'Mail search failed.'}
+                onRetry={() => refetch()}
               />
+            ) : items.length === 0 ? (
+              translatedQuery || nlSearchIntent ? (
+                <SearchEmptyState
+                  onClear={clearSearch}
+                  onEditGenerated={() => {
+                    const editable = translatedQuery || query;
+                    setQuery(editable);
+                    setSearchInput(editable);
+                    setSearchDraft(editable);
+                    setTranslatedSearch(null, editable, 'typed');
+                  }}
+                  onRetryOriginal={() => {
+                    if (!nlSearchIntent) return;
+                    setSearchInput(nlSearchIntent);
+                    runSearch(nlSearchIntent);
+                  }}
+                  onUseRaw={() => {
+                    if (nlSearchIntent) {
+                      setQuery(nlSearchIntent);
+                      setSearchInput(nlSearchIntent);
+                    }
+                  }}
+                />
+              ) : (
+                <EmptyState account={account} />
+              )
             ) : (
-              <EmptyState account={account} />
-            )
-          ) : (
-            <motion.div
-              key={`${account}:${smartCategory || 'search'}`}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {items.map((it, index) => {
-                const senderEmail = emailFromHeader(it.from || it.fromAddress);
-                const key = rowKey(it);
-                const rowAccount = it.account || account;
-                // Provider contact photos pass straight through; company
-                // `/api/logos/...` URLs are ignored here because the row runs
-                // the validated client-side logo chain itself (which starts at
-                // that same proxy but never accepts a placeholder).
-                const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
-                const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
-                // Editorial datelines: a serif group header whenever the day
-                // bucket changes (the list is already date-sorted).
-                const groupLabel = inboxDateGroupLabel(Number(it.lastDate ?? it.date) || 0);
-                const previous = index > 0 ? items[index - 1] : null;
-                const showHeader =
-                  !previous ||
-                  inboxDateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
-                return (
-                  <Fragment key={key}>
-                    {showHeader ? (
-                      <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
-                        <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
-                          {groupLabel}
-                        </span>
-                        <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
-                      </div>
-                    ) : null}
-                    <InboxThreadRow
-                      item={it}
-                      rowId={key}
-                      rowAccount={rowAccount}
-                      senderEmail={senderEmail || ''}
-                      providerPhotoUrl={providerPhotoUrl}
-                      showAccount={account === ALL_ACCOUNTS}
-                      accountLabel={accountAliasById[rowAccount] || ''}
-                      activeCategory={smartCategory}
-                      selected={selectedIds.includes(key)}
-                      active={selectedThreadId === it._id && threadAccount === rowAccount}
-                      selecting={selectedIds.length > 0}
-                      onSelectRange={selectRangeTo}
-                      onToggleSelect={toggleRowSelection}
-                      onPrefetch={prefetchThread}
-                      onApplyLabels={previewLabels}
-                      onArchive={archiveRow}
-                      onTrash={trashRow}
-                      onCorrect={correctRow}
-                      onUndoLast={undoLast}
-                      onOpen={openThread}
-                      customLabels={customLabels}
-                    />
-                  </Fragment>
-                );
-              })}
-              <div ref={loadMoreRef} className="min-h-1" aria-hidden />
-              {/* Lightweight placeholders keep the list alive (and scrollable)
+              <motion.div
+                key={`${account}:${smartCategory || 'search'}`}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+              >
+                {items.map((it, index) => {
+                  const senderEmail = emailFromHeader(it.from || it.fromAddress);
+                  const key = rowKey(it);
+                  const rowAccount = it.account || account;
+                  // Provider contact photos pass straight through; company
+                  // `/api/logos/...` URLs are ignored here because the row runs
+                  // the validated client-side logo chain itself (which starts at
+                  // that same proxy but never accepts a placeholder).
+                  const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
+                  const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
+                  // Editorial datelines: a serif group header whenever the day
+                  // bucket changes (the list is already date-sorted).
+                  const groupLabel = inboxDateGroupLabel(Number(it.lastDate ?? it.date) || 0);
+                  const previous = index > 0 ? items[index - 1] : null;
+                  const showHeader =
+                    !previous ||
+                    inboxDateGroupLabel(Number(previous.lastDate ?? previous.date) || 0) !== groupLabel;
+                  return (
+                    <Fragment key={key}>
+                      {showHeader ? (
+                        <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
+                          <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+                            {groupLabel}
+                          </span>
+                          <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
+                        </div>
+                      ) : null}
+                      <InboxThreadRow
+                        item={it}
+                        rowId={key}
+                        rowAccount={rowAccount}
+                        senderEmail={senderEmail || ''}
+                        providerPhotoUrl={providerPhotoUrl}
+                        showAccount={account === ALL_ACCOUNTS}
+                        accountLabel={accountAliasById[rowAccount] || ''}
+                        activeCategory={smartCategory}
+                        selected={selectedIds.includes(key)}
+                        active={selectedThreadId === it._id && threadAccount === rowAccount}
+                        selecting={selectedIds.length > 0}
+                        onSelectRange={selectRangeTo}
+                        onToggleSelect={toggleRowSelection}
+                        onPrefetch={prefetchThread}
+                        onApplyLabels={previewLabels}
+                        onArchive={archiveRow}
+                        onTrash={trashRow}
+                        onCorrect={correctRow}
+                        onUndoLast={undoLast}
+                        onOpen={openThread}
+                        customLabels={customLabels}
+                      />
+                    </Fragment>
+                  );
+                })}
+                <div ref={loadMoreRef} className="min-h-1" aria-hidden />
+                {/* Lightweight placeholders keep the list alive (and scrollable)
                   while the next batch is in flight instead of a dead stop. */}
-              {isFetchingNextPage ? <SkeletonRows count={6} /> : null}
-            </motion.div>
-          )}
+                {isFetchingNextPage ? <SkeletonRows count={6} /> : null}
+              </motion.div>
+            )}
+          </div>
         </div>
         <LabelConfirmDialog
           item={labelPreview}
