@@ -59,6 +59,20 @@ describe('Albatross Work capture', () => {
     expect(result.work[1].relatedAreaNames).toEqual(['My apps']);
   });
 
+  test('keeps a valid shape and drops an invented one without losing the split', () => {
+    const result = parseWorkSplit(
+      JSON.stringify({
+        work: [
+          { title: 'Renew the passport', rawText: 'Renew it.', shape: 'quick' },
+          { title: 'Get in shape', rawText: 'Run three times a week.', shape: 'sideways' },
+        ],
+      }),
+      'passport and running',
+    );
+    expect(result.work[0].shape).toBe('quick');
+    expect(result.work[1].shape).toBeUndefined();
+  });
+
   test('falls back to one preserved Work item when model output is invalid', () => {
     const raw = '  Keep this exact\nmultiline dump.  ';
     const result = parseWorkSplit('not json', raw);
@@ -94,10 +108,19 @@ describe('Albatross Work projects and briefs', () => {
     ).toBe(true);
   });
 
-  test('small unscheduled errands stay lightweight', () => {
+  test('small unscheduled errands stay out of projects but still get a page', () => {
     const input = { actions: [{ kind: 'task', title: 'Pick up the package' }] };
     expect(projectPromotionDecision(input).promote).toBe(false);
-    expect(shouldComposeWorkBrief(input)).toBe(false);
+    // The plan document is the Work page now: one step is enough to earn it.
+    expect(shouldComposeWorkBrief(input)).toBe(true);
+  });
+
+  test('the page composes for open questions and physical steps; an empty plan skips it', () => {
+    expect(shouldComposeWorkBrief({ actions: [], openQuestions: 1 })).toBe(true);
+    expect(shouldComposeWorkBrief({ actions: [], physicalActions: [{ title: 'Go to the office' }] })).toBe(
+      true,
+    );
+    expect(shouldComposeWorkBrief({ actions: [] })).toBe(false);
   });
 
   test('action identities are stable and source-sensitive', () => {

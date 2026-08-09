@@ -1,4 +1,5 @@
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { WORK_SHAPE_GUIDE } from '@/lib/albatross/work-shape';
 import { captureFallbackItem, parseWorkSplit } from '@/lib/albatross/work-v2';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -105,8 +106,10 @@ Rules:
 - relatedAreaNames may contain other supplied Areas that materially participate. Never invent an Area.
 - Do not encode professions, companies, errands, or example-specific behavior in the split.
 
+${WORK_SHAPE_GUIDE}
+
 Return one JSON object only:
-{"work":[{"title":string,"rawText":string,"primaryAreaName":string|null,"relatedAreaNames":string[]}]}`,
+{"work":[{"title":string,"rawText":string,"primaryAreaName":string|null,"relatedAreaNames":string[],"shape":"quick"|"project"|"practice"|"decision"|"monitor"|"recurring"}]}`,
       prompt: `Active Areas:\n${JSON.stringify(areaContext, null, 2)}\n\nBrain dump:\n${rawText}`,
     });
     const split = parseWorkSplit(text, rawText);
@@ -126,6 +129,7 @@ Return one JSON object only:
         rawText: item.rawText,
         primaryAreaId: primary?._id,
         relatedAreaIds: [...new Set(related.map((area) => area._id))],
+        shape: item.shape,
       };
     });
     const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {

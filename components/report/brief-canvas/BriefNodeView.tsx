@@ -458,7 +458,12 @@ function BriefLeaf({
           <div className="divide-y divide-[var(--color-border)]">
             {node.items.map((item) => {
               const refKey = item.ref ? briefRefKey(item.ref) : '';
-              const checked = context.completedRefs.get(refKey) ?? item.checked;
+              // Precedence: the user's optimistic click, then the live record
+              // this item is bound to, then the state at composition time.
+              const checked =
+                context.completedRefs.get(refKey) ??
+                (refKey ? context.entities.get(refKey)?.completed : undefined) ??
+                item.checked;
               return (
                 <div
                   key={`${refKey || item.label}:${item.action?.action ?? ''}:${item.detail ?? ''}`}

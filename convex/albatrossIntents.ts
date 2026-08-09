@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -413,6 +414,16 @@ export const savePlan = mutation({
     summary: v.optional(v.string()),
     title: v.optional(v.string()),
     kind: v.optional(v.string()),
+    shape: v.optional(
+      v.union(
+        v.literal('quick'),
+        v.literal('project'),
+        v.literal('practice'),
+        v.literal('decision'),
+        v.literal('monitor'),
+        v.literal('recurring'),
+      ),
+    ),
     areaId: v.optional(v.string()),
     priority: v.optional(v.number()),
     questions: v.optional(v.array(questionValidator)),
@@ -481,6 +492,9 @@ export const savePlan = mutation({
       status: planStatus,
       title: bounded(args.title, 180) ?? intent.title,
       kind: args.kind !== undefined ? bounded(args.kind, 40) : intent.kind,
+      // The planner saw research the capture splitter never had, so its
+      // shape verdict overwrites the capture guess when it offers one.
+      shape: args.shape ?? intent.shape,
       areaId:
         args.areaId !== undefined ? await normalizeIntentAreaId(ctx, userId, args.areaId) : intent.areaId,
       priority:
@@ -599,9 +613,15 @@ export const markPlanApplied = mutation({
     const userId = await resolveUserId(ctx, args);
     const plan = await requirePlan(ctx, args.planId, userId);
     const ts = now();
+    // Apply turned plan steps into real cards. Bind the document's keyed
+    // checklist items to them so every checkbox is the live task record.
+    const boundDocument = args.appliedSteps?.length
+      ? bindPlanDocumentSteps(plan.document, args.appliedSteps)
+      : { document: plan.document, bound: 0 };
     await ctx.db.patch(args.planId, {
       status: 'applied',
       appliedApplicationId: bounded(args.applicationId, 180),
+      ...(boundDocument.bound ? { document: boundDocument.document } : {}),
       ...(args.appliedSteps
         ? {
             appliedSteps: args.appliedSteps.slice(0, 60).map((step) => ({

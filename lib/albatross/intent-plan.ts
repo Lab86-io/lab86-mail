@@ -1,9 +1,7 @@
 import { stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
-import { briefDocumentV2Enabled } from '@/lib/brief/feature';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { extractHtml } from '@/lib/mail/agent-report';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
 import {
@@ -16,6 +14,8 @@ import { withDeadline } from '@/lib/shared/deadline';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { invokeTool } from '@/lib/tools/registry';
 import { browserbaseSearch } from '@/lib/tools/web';
+import { appendFrontierGate } from './plan-frontier';
+import { WORK_SHAPE_GUIDE, WORK_SHAPES } from './work-shape';
 import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
 // Dependency seam mirroring lib/tools/albatross.ts: tests swap the network
@@ -129,6 +129,9 @@ const physicalActionSchema = z.object({
 export const planGenerationSchema = z.object({
   title: z.string().min(1).max(180),
   kind: z.enum(INTENT_KINDS).catch('unknown'),
+  // The planner's read of the outcome's shape. It sees research the capture
+  // splitter never had, so its verdict overwrites the capture guess.
+  shape: z.enum(WORK_SHAPES).optional().catch(undefined),
   priority: z.coerce.number().int().min(1).max(3).optional(),
   areaName: z.string().max(120).nullish(),
   projectTitle: z.string().max(180).nullish(),
@@ -310,10 +313,13 @@ Non-negotiables:
 - Projects are epics that contain multiple tasks. When the plan is genuinely multi-step — 3 or more task actions, or work stretching beyond a week — declare "projectTitle" (a short name for the whole effort); every digitalAction then belongs to that project. A single errand or one-off task keeps "projectTitle": null.
 - If answers to earlier questions are provided, honor them exactly.
 
+${WORK_SHAPE_GUIDE}
+
 Respond with ONE JSON object, no prose, matching:
 {
   "title": string,                    // short imperative title for the intent
   "kind": "task"|"project"|"idea"|"obligation"|"errand"|"habit"|"relationship"|"unknown",
+  "shape": "quick"|"project"|"practice"|"decision"|"monitor"|"recurring",
   "priority": 1|2|3,                  // 1=high
   "areaName": string|null,            // exact name of one provided area, or null
   "projectTitle": string|null,        // REQUIRED for multi-step work: 3+ tasks or anything beyond a week gets an epic name; single errands stay null
@@ -336,72 +342,6 @@ Places — do this on EVERY plan:
 Question options:
 - When a "## Nearby places" evidence section is provided AND the intent involves visiting or choosing a real-world business, ask ONE question offering 2-4 options built STRICTLY from that evidence (copy titles/addresses/websites/hours from it; one-line "detail" saying why this one). Never invent places, addresses, or hours.
 - When the user's earlier answer already chose an option, do NOT re-ask: fold the chosen place into the plan — name it in the relevant task, and add a physicalAction with its address (detail) and website (url).`;
-
-const ARTIFACT_SYSTEM = `You are a world-class editorial designer and front-end engineer, composing the FULL plan dossier for one personal intent. This document IS the plan view — it fills the entire pane, like a finely-typeset one-page dossier. Same craft bar as the Daily Brief: real typographic hierarchy, generous but purposeful whitespace, editorial rhythm, and a visual grammar invented for THIS plan.
-
-MASTHEAD (signature element — typographic, no stock imagery):
-- The plan title large in the display face; the outcome sentence beneath it as a standfirst; the summary as a short deck in a constrained measure.
-- Give it editorial structure — thin rules, a small margin label naming the kind of work, a dateline — never a hero/subtitle/CTA formula.
-
-DESIGN — invent a visual grammar for THIS plan:
-- Use spatial relationships, sequencing, comparison, annotation, and rhythm. At least one component should be memorable by form ("the errand ladder", "the paper trail", "the day band"), not just by content.
-- REQUIRED VISUAL MODULES: when the data supports it, include at least TWO custom visual modules beyond the masthead; one must be temporal whenever any action carries a startIso or the steps have a real order in time.
-- TIMELINE STANDARD: schedule content renders as a designed timeline — time bands, connectors, day groupings, or a dated rail — never loose repeated cards.
-- ADAPTIVE DENSITY: a two-action plan reads short and calm; a ten-action plan earns columns and modules. Never pad.
-
-TASK CARDS (interactive contract — follow exactly):
-- Every digitalAction with kind "task" renders as a designed task card:
-  - The card's root element carries data-step="<key>", where <key> is that action's "key" from the data, copied VERBATIM. Never invent, renumber, or reuse keys.
-  - The task title element inside the card carries data-step-title.
-  - One "Done" control: a clickable element with data-action="toggle_step" and data-payload='{"stepKey":"<key>"}' (valid JSON, same verbatim key). Label it "Done" — sentence case, text only, no icon.
-  - Design the Done control into the dossier — a stamp, a margin control, an inline chip — never a row of default rectangles.
-  - The host strikes completed cards off (it toggles a .plan-step-done class and line-throughs [data-step-title]); make sure the card still reads well struck.
-- If you render a completed-steps count, put the number inside an element with data-plan-done-count; the host keeps it live.
-- data-action="toggle_step" is the ONLY allowed action. The host injects the click/strike-off runtime — do NOT write your own postMessage bridge for actions.
-
-CALENDAR EVENTS: every digitalAction with kind "calendar_event" renders as a designed event block — date, time band (start to end), title, duration — placed inside the temporal module when one exists. No Done control on events.
-EMAIL DRAFTS: kind "email_draft" renders as a correspondence entry — recipient, subject, opening line — clearly marked as a draft. No Done control.
-
-Structure (adapt to the data, don't force empty sections):
-- Real-world steps with their working detail, alongside the digital work above.
-- Places, INLINE where they matter: every place gets a compact card in context — name, address, hours, phone, website link, and an "Open in Maps" link built as https://www.google.com/maps/search/?api=1&query=<url-encoded mapsQuery>. Place cards sit next to the step that uses them, not in an appendix.
-- The PRIMARY place also gets an embedded live map right in its card: <iframe src="https://www.google.com/maps?q=<url-encoded mapsQuery>&output=embed" style="width:100%;height:260px;border:0;border-radius:8px" loading="lazy"></iframe>. This is the ONE permitted external embed.
-- Working detail: document checklists, what to bring, phone scripts, fees, deadlines — the stuff that makes the errand executable without another search.
-- Quieter footer: assumptions and sources as footnote links with a word on what each supports, then the required Lab86 source footer below.
-
-FOOTER (required on EVERY plan dossier):
-- End the document with exactly one quiet source footer using the same grammar as the Daily Brief/manual fallback. Do not improvise another signature, app chrome, toolbar, or "With love" line.
-- Include this CSS class contract in the <style> block, preserving the same visual structure even if you minify whitespace:
-  .brief-footer{position:relative;margin-top:4.5rem;padding:3.6rem 1rem 4rem;overflow:hidden;text-align:center;color:var(--brief-muted)}
-  .brief-footer::before{content:"";position:absolute;top:0;left:50%;width:min(920px,100%);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,var(--brief-hairline),transparent)}
-  .brief-footer::after{content:"";position:absolute;right:0;bottom:0;left:0;height:48%;opacity:.35;background-image:radial-gradient(var(--brief-hairline) .65px,transparent .65px);background-size:10px 10px;mask-image:linear-gradient(to bottom,transparent,black);pointer-events:none}
-  .brief-footer-line{position:relative;z-index:1;max-width:100%;margin:0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--brief-font-display);font-size:clamp(.72rem,1.18vw,1rem);font-weight:650;line-height:1.25;letter-spacing:var(--brief-display-tracking)}
-  .brief-footer-line .soft{color:var(--brief-muted)}
-  .footer-brand,.footer-service{display:inline-flex;align-items:center;gap:.16em;color:var(--brief-ink);white-space:nowrap}
-  .footer-logo{width:.88em;height:.88em;flex:none;vertical-align:-.12em}
-  .footer-sep{color:var(--brief-muted)}
-- HTML grammar exactly: <footer class="brief-footer"><div class="brief-footer-line"><span class="soft">Made for you by</span> <span class="footer-brand">Lab86</span> <span class="soft">using your</span> [service list]<span class="footer-sep">.</span></div></footer>
-- Build [service list] from data.services in order. Each entry is { id, label, logoSvg }. Paste service.logoSvg unchanged inside <span class="footer-service">, followed by <span>service.label</span>. These logoSvg values are already current source logos; do NOT redraw, substitute emoji, recolor, fetch, or replace them.
-- If data.services is empty, render a single text service "Plan context". Never invent source logos.
-
-AI SLOP BAN — before final output, ensure none of these appear or dominate:
-- Generic hero/subtitle/CTA formula; purple/blue gradient SaaS palette; decorative glow blobs; equal bordered cards for everything; fake stats or counter tiles; generic section names; stock icon or emoji decoration; glassmorphism as hierarchy; full-width paragraph blocks; timelines without time/connectors; rows of identical rectangular buttons; components that would still make sense if the real plan content were swapped out.
-
-THEME — the same contract as the Daily Brief, honoring the user's app theme (host injects live):
-- Define on :root with fallbacks and use everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#c2683c), --brief-accent-soft (color-mix(in oklab, var(--brief-accent) 14%, transparent)), --brief-font-display ('Fraunces', Georgia, serif), --brief-font-body ('Geist', system-ui, sans-serif), --brief-display-tracking (0em).
-- Headings/masthead use var(--brief-font-display); ALL body copy/UI uses var(--brief-font-body). Apply var(--brief-display-tracking) to display/header text.
-- ONE Google Fonts link covering every option so live font swaps resolve instantly:
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
-- Live restyle listener in one small inline <script>: window.addEventListener('message', (e) => { const d = e.data; if (d && d.source === 'lab86-host' && d.type === 'theme' && d.theme) { for (const k in d.theme) document.documentElement.style.setProperty(k, d.theme[k]); } });
-- Design for both light and dark from the start: usable :root fallbacks for light, plus @media (prefers-color-scheme: dark) that remaps only --brief-* tokens; the host may override both. Every layer — page background, elevated surfaces, subtle fills, hairlines, accent fills, muted text — derives from --brief-* tokens with color-mix/opacity.
-
-Rules:
-- One complete HTML document, all CSS in one <style>. The ONLY permitted external resources: the Google Fonts link above and the Google Maps iframe above. The ONLY script you write is the theme listener above (the host injects its own interaction runtime). Outbound links are encouraged and MUST be absolute (https://…) — never bare domains or relative paths.
-- The document fills the ENTIRE pane edge-to-edge (no page margin hacks; use internal padding) and is designed for a wide pane (~800-1200px): use the width — two-column sections where it helps (work beside its place card, shopping list in columns).
-- Voice: plain and factual. Never first person. No exclamation marks. No sparkle/emoji glyphs.
-- Headings: sentence case, never ALL-CAPS letter-spaced labels.
-- Render ONLY the data provided — no invented content, no lorem, no placeholders.
-- Total under 700 lines. Output ONLY the HTML document.`;
 
 function packLine(ref: PlanContextRef, detail: string) {
   return `- [${ref.refId}] (${ref.kind}) ${detail}`;
@@ -721,9 +661,13 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     let artifactHtml: string | undefined;
     let document: BriefDocumentV2 | undefined;
     let artifactSource: string | undefined;
-    const composeBrief =
-      questions.every((question) => question.answer) &&
-      shouldComposeWorkBrief({ declaredProjectTitle: generation.projectTitle, actions: digitalActions });
+    const openQuestions = questions.filter((question) => !question.answer);
+    const composeBrief = shouldComposeWorkBrief({
+      declaredProjectTitle: generation.projectTitle,
+      actions: digitalActions,
+      physicalActions: generation.physicalActions,
+      openQuestions: openQuestions.length,
+    });
     try {
       if (!composeBrief) throw new Error('brief-not-required');
       const artifactContext = {
@@ -751,28 +695,39 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         assumptions: generation.assumptions,
         sources: sourceRefs,
         services: briefServicesFromIds(planArtifactServiceIds(sourceRefs)),
-        openQuestions: questions.filter((question) => !question.answer).map((q) => q.prompt),
+        openQuestions: openQuestions.map((question) => question.prompt),
       };
-      if (briefDocumentV2Enabled()) {
-        document = await composePlanDocumentV2(artifactContext, input);
-        artifactSource = 'document-v2';
-        artifactHtml = buildPlanDocumentLegacyHtml(artifactContext);
-      } else {
-        const artifact = await withDeadline(
-          deps.generateTextForCurrentUser({
-            feature: 'albatross_plan_artifact',
-            speed: 'primary',
-            userId: input.userId,
-            userEmail: input.userEmail,
-            userName: input.userName,
-            system: ARTIFACT_SYSTEM,
-            prompt: JSON.stringify(artifactContext, null, 2),
-          }),
-          180_000,
-          'Artifact composition',
-        );
-        const extracted = extractHtml(artifact.text);
-        artifactHtml = extracted ? normalizeArtifactLinks(extracted) : undefined;
+      // The plan page is always the native document. The sandboxed HTML
+      // artifact path is gone for Work; the legacy HTML stays only as the
+      // static companion older native clients render. It is built first so a
+      // composer failure still leaves the plan with a readable companion.
+      artifactHtml = buildPlanDocumentLegacyHtml(artifactContext);
+      document = await composePlanDocumentV2(artifactContext, input);
+      artifactSource = 'document-v2';
+      // An open question no longer suppresses the page. The document grows to
+      // the frontier, and the host-built gate carries the question with the
+      // outline of what waits behind the answer.
+      const gateQuestion = openQuestions[0];
+      if (document && gateQuestion) {
+        document = appendFrontierGate(document, {
+          workId: String(input.intentId),
+          question: {
+            id: gateQuestion.id,
+            prompt: gateQuestion.prompt,
+            options: gateQuestion.options?.map((option: any) => ({
+              id: option.id,
+              title: option.title,
+              detail: option.detail,
+              address: option.address,
+              hoursText: option.hoursText,
+              website: option.website,
+            })),
+          },
+          steps: [
+            ...digitalActions.map((action) => ({ key: action.key, title: action.title })),
+            ...generation.physicalActions.map((action) => ({ title: action.title })),
+          ],
+        });
       }
     } catch (err) {
       // The plan is still fully usable without its brief; don't fail the loop.
@@ -788,6 +743,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       summary: generation.summary,
       title: generation.title,
       kind: generation.kind,
+      shape: generation.shape,
       areaId,
       priority: generation.priority,
       questions,
@@ -820,13 +776,15 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
 const PLAN_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
 
-You are composing a Work plan dossier.
+You are composing the live page for one piece of Work — the page the user follows, step by step, until the thing is done.
 - Make the desired outcome and the next useful move unmistakable.
-- Group proposed digital and physical actions by sequence or decision, not by source JSON keys.
-- Use checklist for grounded steps. A checklist action may use create_task, create_event, draft_reply, or create_document only when its payload is complete; these remain review-gated. A create_document payload needs kind, title, and instructions.
+- Order the steps as a walkable path. For each step say exactly what to do, where to do it (an absolute link when the context grounds one), and what proves the step is done.
+- Use checklist for the steps. When a checklist item mirrors a digitalAction from the context, copy that action's "key" verbatim into the item's "stepKey". Never invent a stepKey. After the plan is applied, the host binds each keyed item to a live task.
+- A checklist action may use create_task, create_event, draft_reply, or create_document only when its payload is complete; these remain review-gated. A create_document payload needs kind, title, and instructions.
 - Assumptions are not facts. Label them quietly and keep source provenance visible.
+- "openQuestions" in the context are waiting for the user. Do NOT restate them, do NOT answer them, and do NOT compose content that depends on their answers. Compose only what is true today; the host appends the question gate after your last region.
 - The host supplies Apply plan / Done controls outside this document. Do not invent apply_plan or toggle_step actions.
-- Omit empty ideas. The dossier should read clearly before the plan is applied and after provider state changes.`;
+- Omit empty ideas. The page should read clearly before the plan is applied and after provider state changes.`;
 
 export async function composePlanDocumentV2(
   context: Record<string, any>,

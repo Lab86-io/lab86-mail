@@ -85,7 +85,17 @@ export function OutcomeHeader({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 max-w-2xl">
           <p className="text-[11.5px] text-[var(--color-text-faint)]">Outcome</p>
-          <h1 className="mt-2 font-serif text-[clamp(25px,4vw,38px)] font-semibold leading-[1.08] tracking-tight">
+          {/* Display type is for headlines. A long outcome is machine prose —
+              acceptance criteria, not a title — so it drops out of hero scale
+              instead of filling the viewport with five lines of 38px serif. */}
+          <h1
+            className={cn(
+              'mt-2 font-serif font-semibold tracking-tight',
+              outcome.length > 96
+                ? 'text-[clamp(17px,2vw,21px)] leading-[1.35]'
+                : 'text-[clamp(24px,3.4vw,34px)] leading-[1.12]',
+            )}
+          >
             {outcome}
           </h1>
           {summary ? (

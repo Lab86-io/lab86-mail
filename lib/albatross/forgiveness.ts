@@ -114,7 +114,9 @@ export function recoveryAcknowledgement(recovery: Recovery): string {
   }
 }
 
-export type WorkShape = 'quick' | 'project' | 'practice' | 'decision' | 'monitor' | 'recurring';
+export type { WorkShape } from '@/lib/albatross/work-shape';
+
+import type { WorkShape } from '@/lib/albatross/work-shape';
 
 /**
  * How long a shape can sit still before it is worth asking about.
