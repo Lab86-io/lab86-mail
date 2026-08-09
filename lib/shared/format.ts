@@ -127,10 +127,9 @@ export function formatDate(value: number | string | null | undefined): string {
 // Day bucket for the editorial date headers: Today / Yesterday / weekday for
 // the last week / month (with year once it isn't this year). Weekday labels
 // carry the absolute date so the header and the row pills speak one grammar.
-export function inboxDateGroupLabel(ts: number): string {
+export function inboxDateGroupLabel(ts: number, now: Date = new Date()): string {
   if (!ts) return 'Undated';
   const date = new Date(ts);
-  const now = new Date();
   // Calendar arithmetic, not fixed 24h steps: daylight-saving days are 23 or
   // 25 hours long and would otherwise shift the buckets.
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());

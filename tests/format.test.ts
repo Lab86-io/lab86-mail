@@ -107,36 +107,37 @@ describe('formatDate', () => {
 });
 
 describe('inboxDateGroupLabel', () => {
-  const dayMs = 86_400_000;
+  // One frozen local reference time; every case derives from it with setDate,
+  // so no assertion races the wall clock across midnight.
+  const ref = new Date(2026, 6, 15, 12, 0, 0); // Wed Jul 15 2026, local noon
+  const daysFromRef = (offset: number) => {
+    const d = new Date(ref);
+    d.setDate(d.getDate() + offset);
+    return d;
+  };
   test('labels today and yesterday in words', () => {
-    expect(inboxDateGroupLabel(Date.now())).toBe('Today');
-    expect(inboxDateGroupLabel(Date.now() - dayMs)).toBe('Yesterday');
+    expect(inboxDateGroupLabel(ref.getTime(), ref)).toBe('Today');
+    expect(inboxDateGroupLabel(daysFromRef(-1).getTime(), ref)).toBe('Yesterday');
   });
   test('weekday labels carry the absolute date', () => {
-    const ts = Date.now() - 3 * dayMs;
-    const date = new Date(ts);
+    const date = daysFromRef(-3);
     const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
     const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    expect(inboxDateGroupLabel(ts)).toBe(`${weekday} · ${day}`);
+    expect(inboxDateGroupLabel(date.getTime(), ref)).toBe(`${weekday} · ${day}`);
   });
   test('returns Undated for a missing timestamp', () => {
-    expect(inboxDateGroupLabel(0)).toBe('Undated');
+    expect(inboxDateGroupLabel(0, ref)).toBe('Undated');
   });
   test('a future date is never Today', () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    expect(inboxDateGroupLabel(tomorrow.getTime())).not.toBe('Today');
+    expect(inboxDateGroupLabel(daysFromRef(1).getTime(), ref)).not.toBe('Today');
   });
   test('older dates fall to month labels, with the year once it differs', () => {
-    const now = new Date();
-    const monthsBack = new Date(now.getFullYear(), now.getMonth() - 2, 15);
-    const expectedRecent =
-      monthsBack.getFullYear() === now.getFullYear()
-        ? monthsBack.toLocaleDateString(undefined, { month: 'long' })
-        : monthsBack.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    expect(inboxDateGroupLabel(monthsBack.getTime())).toBe(expectedRecent);
-    const lastYear = new Date(now.getFullYear() - 1, 5, 15);
-    expect(inboxDateGroupLabel(lastYear.getTime())).toBe(
+    const may = new Date(2026, 4, 15, 12);
+    expect(inboxDateGroupLabel(may.getTime(), ref)).toBe(
+      may.toLocaleDateString(undefined, { month: 'long' }),
+    );
+    const lastYear = new Date(2025, 5, 15, 12);
+    expect(inboxDateGroupLabel(lastYear.getTime(), ref)).toBe(
       lastYear.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
     );
   });

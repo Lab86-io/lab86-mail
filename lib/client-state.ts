@@ -206,6 +206,16 @@ const initialCompose: ComposeState = {
 const PERSIST_KEY = 'lab86-mail-ui';
 const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
 
+/**
+ * One capture door per screen. The expanded desktop rail already shows the
+ * capture button, so the floating pill hides; a collapsed rail or the mobile
+ * off-canvas drawer brings the pill back. The assistant panel owns the
+ * bottom-right slot while it is open.
+ */
+export function capturePillHidden(aiBarOpen: boolean, railOpen: boolean, isMobile: boolean): boolean {
+  return aiBarOpen || (railOpen && !isMobile);
+}
+
 export function migratePersistedClientState(persisted: any) {
   if (!persisted) return persisted;
   persisted.account = '';

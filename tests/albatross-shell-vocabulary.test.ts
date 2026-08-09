@@ -92,7 +92,7 @@ describe('the product names itself', () => {
     // Expanded desktop rail shows its own capture button, so the pill hides;
     // a collapsed rail or the mobile off-canvas drawer brings the pill back.
     expect(capture).toContain('useSidebar');
-    expect(capture).toContain('railOpen && !isMobile');
+    expect(capture).toContain('capturePillHidden(aiBarOpen, railOpen, isMobile)');
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {

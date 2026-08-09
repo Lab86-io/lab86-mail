@@ -16,7 +16,7 @@ import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatros
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { useSidebar } from '@/components/ui/sidebar';
-import { useClientStore } from '@/lib/client-state';
+import { capturePillHidden, useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
@@ -431,7 +431,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
       <div
         className={cn(
           'pointer-events-none fixed bottom-6 right-6 z-50',
-          (aiBarOpen || (railOpen && !isMobile)) && 'hidden',
+          capturePillHidden(aiBarOpen, railOpen, isMobile) && 'hidden',
         )}
       >
         <button
