@@ -74,13 +74,21 @@ export function MailNav() {
   const activeFolder = MAILBOXES.find((mailbox) => mailbox.query === query);
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2">
-      <Button size="sm" onClick={() => openComposeNew()} className="mr-1">
+    <div className="flex items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2">
+      <Button size="sm" onClick={() => openComposeNew()}>
         Compose
       </Button>
+      {/* The primary action is not a tab; a hairline keeps it out of the
+          navigation set. */}
+      <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-[var(--color-border)]" />
 
-      {[...SMART_CATEGORIES, ...customLabels.map((l: any) => ({ id: `custom:${l._id}`, label: l.name }))].map(
-        (category) => {
+      {/* Custom labels can grow without bound; the strip scrolls instead of
+          wrapping Folders onto a lonely second row. */}
+      <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+        {[
+          ...SMART_CATEGORIES,
+          ...customLabels.map((l: any) => ({ id: `custom:${l._id}`, label: l.name })),
+        ].map((category) => {
           const active = smartCategory === category.id && !activeFolder;
           const unread = counts?.[category.id]?.unread;
           return (
@@ -89,29 +97,31 @@ export function MailNav() {
               type="button"
               onClick={() => setSmartCategory(category.id)}
               className={cn(
-                'rounded-full px-3 py-1 text-[12.5px] transition-colors',
+                'shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-[12.5px] transition-colors',
                 active
                   ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                   : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
               )}
             >
               {category.label}
-              {unread ? (
+              {/* A saturated counter says nothing; only a real number earns
+                  the pixels. */}
+              {unread && unread < 100 ? (
                 <span className="ml-1.5 tabular-nums text-[11px] text-[var(--color-text-faint)]">
-                  {unread >= 100 ? '99+' : unread}
+                  {unread}
                 </span>
               ) : null}
             </button>
           );
-        },
-      )}
+        })}
+      </div>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             className={cn(
-              'ml-auto flex items-center gap-1 rounded-full px-3 py-1 text-[12.5px] transition-colors',
+              'flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-[12.5px] transition-colors',
               activeFolder
                 ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
