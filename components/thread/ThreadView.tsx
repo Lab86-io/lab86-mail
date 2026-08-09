@@ -402,10 +402,17 @@ export function ThreadView() {
 
   if (isLoading || !data) {
     return (
-      <div className={cn('space-y-3 p-4', !aiBarOpen && 'pr-12')}>
-        {['summary', 'body', 'footer'].map((key) => (
-          <div key={key} className="h-24 rounded-lg shimmer" />
-        ))}
+      <div className="flex h-full flex-col bg-[var(--color-bg)] p-2 sm:p-3 sm:pl-0">
+        <div
+          className={cn(
+            'min-h-0 flex-1 space-y-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)]',
+            !aiBarOpen && 'pr-12',
+          )}
+        >
+          {['summary', 'body', 'footer'].map((key) => (
+            <div key={key} className="h-24 rounded-lg shimmer" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -432,186 +439,198 @@ export function ThreadView() {
       aria-label={threadFullscreen ? data.subject : undefined}
       className={cn(
         'flex h-full flex-col bg-[var(--color-bg)]',
+        // The reader sits on the same depth rung as the inbox panel: a card on
+        // the paper, with the inbox's gutter (minus the left edge, which the
+        // resize separator already spaces).
+        !threadFullscreen && 'p-2 sm:p-3 sm:pl-0',
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
           'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
-      <header
+      <div
         className={cn(
-          '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
-          !aiBarOpen && !threadFullscreen && 'pr-12',
+          'flex min-h-0 flex-1 flex-col',
+          !threadFullscreen &&
+            'overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
         )}
       >
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
-            {data.subject}
-          </h1>
-          {/* The thread object has no top-level _id (getThread returns
+        <header
+          className={cn(
+            '@container flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3',
+            !aiBarOpen && !threadFullscreen && 'pr-12',
+          )}
+        >
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate font-display text-[17px] font-semibold leading-tight tracking-[-0.01em]">
+              {data.subject}
+            </h1>
+            {/* The thread object has no top-level _id (getThread returns
               providerThreadId as `threadId`); use the canonical thread id from
               the store so chips match the cards' sourceThreadId, not ''. */}
-          <LinkedTaskChips threadId={threadId || ''} />
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
-            <span className="shrink-0">
-              {messages.length} message{messages.length === 1 ? '' : 's'}
-            </span>
-            <span className="shrink-0">·</span>
-            <span className="truncate">{shortFrom(lastMessage?.from)}</span>
-            <span className="shrink-0">·</span>
-            <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
+            <LinkedTaskChips threadId={threadId || ''} />
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-[var(--color-text-muted)]">
+              <span className="shrink-0">
+                {messages.length} message{messages.length === 1 ? '' : 's'}
+              </span>
+              <span className="shrink-0">·</span>
+              <span className="truncate">{shortFrom(lastMessage?.from)}</span>
+              <span className="shrink-0">·</span>
+              <span className="shrink-0">{formatDate(lastMessage?.date)}</span>
+            </div>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            title="Hand this to Albatross"
-            onClick={() =>
-              openCaptureWith(
-                `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
-              )
-            }
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-          >
-            <span className="hidden @[560px]:inline">Hand to Albatross</span>
-            <span className="@[560px]:hidden">Albatross</span>
-          </Button>
-          {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+          <div className="flex shrink-0 items-center gap-1.5">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => startReply('reply')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Reply (r)"
+              title="Hand this to Albatross"
+              onClick={() =>
+                openCaptureWith(
+                  `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
+                )
+              }
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             >
-              <RowIcon icon={CornerUpLeftIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply
-              </span>
+              <span className="hidden @[560px]:inline">Hand to Albatross</span>
+              <span className="@[560px]:hidden">Albatross</span>
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => startReply('reply_all')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Reply all"
-            >
-              <RowIcon icon={ReplyAllIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Reply all
-              </span>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => startReply('forward')}
-              disabled={!replyAnchor}
-              className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
-              title="Forward"
-            >
-              <RowIcon icon={CornerUpRightIcon} size={14} />
-              <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
-                Forward
-              </span>
-            </Button>
+            {/* Reply cluster — one segmented group like the utility cluster; labels fade out below 640px of reader width. */}
+            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => startReply('reply')}
+                disabled={!replyAnchor}
+                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                title="Reply (r)"
+              >
+                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Reply
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => startReply('reply_all')}
+                disabled={!replyAnchor}
+                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                title="Reply all"
+              >
+                <RowIcon icon={ReplyAllIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Reply all
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => startReply('forward')}
+                disabled={!replyAnchor}
+                className="gap-1 text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                title="Forward"
+              >
+                <RowIcon icon={CornerUpRightIcon} size={14} />
+                <span className="inline-block max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] @[640px]:max-w-20 @[640px]:opacity-100">
+                  Forward
+                </span>
+              </Button>
+            </div>
+            {/* Utility cluster — one segmented group so the icons read as a set. */}
+            <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
+              <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
+                <RowIcon icon={ArchiveIcon} size={14} />
+              </IconBtn>
+              <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
+                <RowIcon icon={DeleteIcon} size={14} />
+              </IconBtn>
+              <IconBtn
+                title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
+                onClick={() => setThreadFullscreen(!threadFullscreen)}
+              >
+                {threadFullscreen ? (
+                  <RowIcon icon={MinimizeIcon} size={14} />
+                ) : (
+                  <RowIcon icon={MaximizeIcon} size={14} />
+                )}
+              </IconBtn>
+              <IconBtn
+                title={threadFullscreen ? 'Close popout' : 'Close'}
+                onClick={() => {
+                  if (threadFullscreen) {
+                    setThreadFullscreen(false);
+                    return;
+                  }
+                  setSelectedThread(null);
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </IconBtn>
+            </div>
           </div>
-          {/* Utility cluster — one segmented group so the icons read as a set. */}
-          <div className="flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]">
-            <IconBtn title="Archive (e)" onClick={() => archive.mutate()}>
-              <RowIcon icon={ArchiveIcon} size={14} />
-            </IconBtn>
-            <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
-              <RowIcon icon={DeleteIcon} size={14} />
-            </IconBtn>
-            <IconBtn
-              title={threadFullscreen ? 'Exit full screen' : 'Full screen'}
-              onClick={() => setThreadFullscreen(!threadFullscreen)}
-            >
-              {threadFullscreen ? (
-                <RowIcon icon={MinimizeIcon} size={14} />
-              ) : (
-                <RowIcon icon={MaximizeIcon} size={14} />
-              )}
-            </IconBtn>
-            <IconBtn
-              title={threadFullscreen ? 'Close popout' : 'Close'}
-              onClick={() => {
-                if (threadFullscreen) {
-                  setThreadFullscreen(false);
-                  return;
-                }
-                setSelectedThread(null);
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </IconBtn>
-          </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Most proof that a real-life thing happened arrives by email. The offer
+        {/* Most proof that a real-life thing happened arrives by email. The offer
           sits directly under the thread that might be it. */}
-      <ProofOffer threadId={threadId || ''} subject={data.subject} />
+        <ProofOffer threadId={threadId || ''} subject={data.subject} />
 
-      <div className="scrollable flex-1 px-5 py-4">
-        {canSummarizeThread ? (
-          <SummaryCard
-            data={summary.data?.summary || cachedSummary}
-            model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
-            loading={!cachedSummary && summaryEnabled && summary.isLoading}
-            error={summary.error ? (summary.error as Error).message : null}
-            onRetry={() => {
-              setSummaryEnabled(true);
-              summary.refetch();
-            }}
-          />
-        ) : null}
-
-        {composeForThisThread && activeMode && activeAnchorMessageId ? (
-          <div className="mt-4">
-            <InlineComposer
-              key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
-              mode={activeMode}
-              account={activeAccount}
-              threadId={threadId}
-              anchorMessageId={activeAnchorMessageId}
-              replyToLabel={replyLabel}
-              initialPrefill={activePrefill}
-              prefillNonce={activeNonce}
-              onSent={() => closeCompose()}
-              onClose={() => closeCompose()}
+        <div className="scrollable flex-1 px-5 py-4">
+          {canSummarizeThread ? (
+            <SummaryCard
+              data={summary.data?.summary || cachedSummary}
+              model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
+              loading={!cachedSummary && summaryEnabled && summary.isLoading}
+              error={summary.error ? (summary.error as Error).message : null}
+              onRetry={() => {
+                setSummaryEnabled(true);
+                summary.refetch();
+              }}
             />
-          </div>
-        ) : null}
+          ) : null}
 
-        <LayoutGroup>
-          <div className="mt-4 flex flex-col gap-2">
-            {ordered.map((m, i) => {
-              const email = emailFromHeader(m?.from);
-              return (
-                <MessageCard
-                  key={m._id}
-                  message={m}
-                  defaultOpen={i === 0}
-                  account={account}
-                  photoUrl={email ? (photos[email] ?? null) : null}
-                  onShowContactEmails={(contactEmail) => {
-                    setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
-                    setSelectedThread(null);
-                  }}
-                />
-              );
-            })}
-          </div>
-        </LayoutGroup>
+          {composeForThisThread && activeMode && activeAnchorMessageId ? (
+            <div className="mt-4">
+              <InlineComposer
+                key={`${activeMode}-${activeAnchorMessageId}-${activeNonce}`}
+                mode={activeMode}
+                account={activeAccount}
+                threadId={threadId}
+                anchorMessageId={activeAnchorMessageId}
+                replyToLabel={replyLabel}
+                initialPrefill={activePrefill}
+                prefillNonce={activeNonce}
+                onSent={() => closeCompose()}
+                onClose={() => closeCompose()}
+              />
+            </div>
+          ) : null}
+
+          <LayoutGroup>
+            <div className="mt-4 flex flex-col gap-2">
+              {ordered.map((m, i) => {
+                const email = emailFromHeader(m?.from);
+                return (
+                  <MessageCard
+                    key={m._id}
+                    message={m}
+                    defaultOpen={i === 0}
+                    account={account}
+                    photoUrl={email ? (photos[email] ?? null) : null}
+                    onShowContactEmails={(contactEmail) => {
+                      setQuery(`(from:${contactEmail} OR to:${contactEmail}) -in:trash -in:spam`);
+                      setSelectedThread(null);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </LayoutGroup>
+        </div>
       </div>
     </motion.div>
   );
@@ -656,7 +675,7 @@ function SummaryCard({
       layout
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3.5 shadow-[var(--shadow-soft)]"
+      className="relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-float)] p-3.5 shadow-[var(--shadow-soft)]"
     >
       <header className="mb-1.5 flex items-center justify-between">
         <span className="font-display text-[11.5px] italic text-[var(--color-text-muted)]">Summary</span>
@@ -720,7 +739,9 @@ function MessageCard({
   const sender = contactFromHeader(message.from);
   const recipient = contactFromHeader(message.to || message.account);
   return (
-    <article className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
+    // Message cards ride one rung above the reader card (float > card on the
+    // depth ladder) now that the reader itself is elevated off the paper.
+    <article className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-float)] shadow-[var(--shadow-soft)]">
       <div className="grid w-full grid-cols-[30px_1fr_auto] items-center gap-3 px-3 py-2 text-left">
         <ContactButton contact={sender} avatarSrc={photoUrl} onShowEmails={onShowContactEmails}>
           <Avatar name={sender.name} src={photoUrl} size={26} />
