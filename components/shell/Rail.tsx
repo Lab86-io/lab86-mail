@@ -10,6 +10,7 @@ import {
 import { History, Search, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
@@ -285,7 +286,7 @@ export function Rail({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip="Get this off my mind"
+              tooltip={CAPTURE_BUTTON_LABEL}
               onClick={() => {
                 setCaptureOpen(true);
                 closeMobileSidebar();
@@ -302,7 +303,7 @@ export function Rail({
                 ]}
               />
               <PlusIcon size={16} />
-              <span>Get this off my mind</span>
+              <span>{CAPTURE_BUTTON_LABEL}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

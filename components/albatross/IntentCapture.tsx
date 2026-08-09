@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
+import { useSidebar } from '@/components/ui/sidebar';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -238,6 +239,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // The floating assistant panel (Cmd+K) shares the bottom-right slot; the
   // launcher yields while it is open, exactly like Ask Assistant used to.
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
+  // With the rail expanded, its capture button is the door; the pill only
+  // floats when that button is collapsed to an icon or off-canvas (mobile).
+  const { open: railOpen, isMobile } = useSidebar();
   const captureOpen = useClientStore((s) => s.captureOpen);
   const captureSeed = useClientStore((s) => s.captureSeed);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
@@ -419,14 +423,17 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
 
   return (
     <>
-      {/* Bottom-right, where Ask Assistant used to live (that pill hides when
-          Albatross is on; the assistant stays on Cmd+K). Ghost until hovered:
-          transparent pill that fills with the accent on hover/focus. The orb
-          is a still gradient pearl — its rotation is paused by request. */}
       {/* Bottom-right, and the only floating control in the app. One name,
-          one door. Ghost until hovered: a transparent pill that fills with the
-          accent. No glyph before the text. */}
-      <div className={cn('pointer-events-none fixed bottom-6 right-6 z-50', aiBarOpen && 'hidden')}>
+          one door: while the expanded rail already shows the capture button,
+          the pill stays away instead of doubling the entry on screen. Ghost
+          until hovered: a transparent pill that fills with the accent. No
+          glyph before the text. */}
+      <div
+        className={cn(
+          'pointer-events-none fixed bottom-6 right-6 z-50',
+          (aiBarOpen || (railOpen && !isMobile)) && 'hidden',
+        )}
+      >
         <button
           ref={launcherRef}
           type="button"

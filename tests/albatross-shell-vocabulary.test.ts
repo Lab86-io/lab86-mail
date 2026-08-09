@@ -76,8 +76,11 @@ describe('the product names itself', () => {
 
   test('the primary action is capture, not compose', () => {
     const rail = read('components/shell/Rail.tsx');
-    const captureIndex = rail.indexOf('Get this off my mind');
-    expect(captureIndex).toBeGreaterThan(-1);
+    // The label lives in CAPTURE_BUTTON_LABEL (IntentCapture); the rail must
+    // use the constant, not restate the words.
+    expect(rail).toContain('CAPTURE_BUTTON_LABEL');
+    const capture = read('components/albatross/IntentCapture.tsx');
+    expect(capture).toContain("CAPTURE_BUTTON_LABEL = 'Get this off my mind'");
     // Compose moved into the Mail surface; the rail must not offer it.
     expect(rail).not.toContain('openComposeNew');
   });
