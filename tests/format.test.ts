@@ -91,6 +91,8 @@ describe('dateToEpoch', () => {
     expect(dateToEpoch(1_700_000_000)).toBe(1_700_000_000_000);
     expect(dateToEpoch(1_700_000_000_000)).toBe(1_700_000_000_000);
     expect(dateToEpoch('2026-06-10T12:00:00.000Z')).toBe(Date.parse('2026-06-10T12:00:00.000Z'));
+    expect(dateToEpoch('1700000000')).toBe(1_700_000_000_000);
+    expect(dateToEpoch('1700000000000')).toBe(1_700_000_000_000);
     expect(dateToEpoch(null)).toBe(0);
     expect(dateToEpoch('garbage')).toBe(0);
   });
@@ -103,6 +105,9 @@ describe('formatDate', () => {
   });
   test('formats a known historical date with year', () => {
     expect(formatDate('2020-01-15T12:00:00.000Z')).toContain('Jan 15');
+  });
+  test('returns empty for an unparseable string', () => {
+    expect(formatDate('garbage')).toBe('');
   });
 });
 
