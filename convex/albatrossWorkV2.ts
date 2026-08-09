@@ -160,6 +160,17 @@ export const updateWorkState = mutation({
             : work.status === 'done' || work.status === 'archived'
               ? 'ready'
               : work.status,
+      // Picking released work back up clears the release, exactly like
+      // reopenWork — a revived albatross must not keep a release reason.
+      ...(args.state === 'active' && work.workState === 'released'
+        ? {
+            releaseReason: undefined,
+            releaseProposedBy: undefined,
+            releasedAt: undefined,
+            reviewAt: undefined,
+            status: 'ready' as const,
+          }
+        : {}),
       updatedAt: ts,
     });
     // The user's check is the completion. Record it once, on the transition.

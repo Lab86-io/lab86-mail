@@ -567,6 +567,76 @@ describe('BriefCanvas SBAR handoff rows', () => {
   });
 });
 
+describe('checklist completion precedence', () => {
+  const cardRef: BriefSourceRefV2 = { kind: 'card', id: 'card-1' };
+  const checklistNode = {
+    kind: 'checklist',
+    title: 'Steps',
+    items: [
+      {
+        label: 'Gather documents',
+        checked: false,
+        ref: cardRef,
+        action: { action: 'toggle_task', label: 'Mark done', payload: { cardId: 'card-1' }, style: 'quiet' },
+      },
+    ],
+  } as unknown as BriefNode;
+
+  function renderChecklist(options: {
+    itemChecked?: boolean;
+    entityCompleted?: boolean;
+    optimistic?: boolean;
+  }) {
+    const node =
+      options.itemChecked === undefined
+        ? checklistNode
+        : ({
+            ...(checklistNode as any),
+            items: [{ ...(checklistNode as any).items[0], checked: options.itemChecked }],
+          } as unknown as BriefNode);
+    const entities = new Map();
+    if (options.entityCompleted !== undefined) {
+      entities.set(briefRefKey(cardRef), {
+        kind: 'card',
+        id: 'card-1',
+        title: 'Gather documents',
+        completed: options.entityCompleted,
+      });
+    }
+    const completedRefs = new Map<string, boolean>();
+    if (options.optimistic !== undefined) completedRefs.set(briefRefKey(cardRef), options.optimistic);
+    const context: BriefNodeContext = {
+      entities: entities as BriefNodeContext['entities'],
+      hiddenRefs: new Set(),
+      completedRefs,
+      onAction: () => {},
+      onCanvasAction: () => {},
+    };
+    return renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="Steps" />);
+  }
+
+  test('the optimistic click wins over the live record', () => {
+    const html = renderChecklist({ entityCompleted: true, optimistic: false });
+    expect(html).toContain('Complete Gather documents');
+    expect(html).not.toContain('Reopen Gather documents');
+  });
+
+  test('the live record wins over the state at composition time', () => {
+    const html = renderChecklist({ itemChecked: true, entityCompleted: false });
+    expect(html).toContain('Complete Gather documents');
+  });
+
+  test('a live completed record checks an item composed unchecked', () => {
+    const html = renderChecklist({ entityCompleted: true });
+    expect(html).toContain('Reopen Gather documents');
+  });
+
+  test('the composed state stands when nothing live exists', () => {
+    expect(renderChecklist({ itemChecked: true })).toContain('Reopen Gather documents');
+    expect(renderChecklist({})).toContain('Complete Gather documents');
+  });
+});
+
 function handoffRows(): BriefNode {
   return {
     kind: 'entity_list',

@@ -22,7 +22,9 @@ describe('one mail surface', () => {
     expect(thread).not.toContain('surface-float');
   });
   test('the date carries no interaction, so hover actions may cover it', () => {
-    expect(inbox).toContain('the date must carry no interaction');
+    // The date renders as a plain span; a button here would swallow the
+    // hover action strip that overlays this slot.
+    expect(inbox).toMatch(/<span[^>]*tabular-nums[^>]*>\s*\{formatDate\(date\)\}/);
     expect(inbox).toContain('Mailbox this thread arrived in');
   });
 });

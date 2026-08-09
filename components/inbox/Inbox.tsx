@@ -1295,6 +1295,9 @@ export const InboxThreadRow = memo(function InboxThreadRow({
             <button
               type="button"
               onClick={(event) => event.stopPropagation()}
+              // The row ancestor is itself a button and consumes Enter/Space;
+              // key events must not bubble or the popover can never open.
+              onKeyDown={(event) => event.stopPropagation()}
               title="Which mailbox"
               className="block rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               style={{

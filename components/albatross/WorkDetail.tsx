@@ -67,6 +67,21 @@ interface WorkDetailData {
   };
 }
 
+/**
+ * POST json and tolerate a non-json error body — a gateway's HTML error page
+ * must surface the caller's fallback message, not a parse failure.
+ */
+async function postJson(url: string, body: Record<string, unknown>, fallback: string) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const parsed = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(parsed?.error || fallback);
+  return parsed;
+}
+
 export function WorkDetail({ workId }: { workId: string }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
@@ -82,6 +97,9 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  // The stored application keeps its artifacts after an undo; the ledger must
+  // not keep offering Undo for a change that is already gone.
+  const [undoneOperations, setUndoneOperations] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
@@ -91,13 +109,11 @@ export function WorkDetail({ workId }: { workId: string }) {
     setAdvancing(true);
     setError(null);
     try {
-      const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not continue this Albatross.');
+      await postJson(
+        `/api/albatross/work/${encodeURIComponent(workId)}/advance`,
+        { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        'Could not continue this Albatross.',
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not continue this Albatross.');
     } finally {
@@ -109,13 +125,11 @@ export function WorkDetail({ workId }: { workId: string }) {
     setCompleting(true);
     setError(null);
     try {
-      const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/state`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ state }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not update this Albatross.');
+      await postJson(
+        `/api/albatross/work/${encodeURIComponent(workId)}/state`,
+        { state },
+        'Could not update this Albatross.',
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not update this Albatross.');
     } finally {
@@ -252,6 +266,8 @@ export function WorkDetail({ workId }: { workId: string }) {
                       className="flex items-center gap-3 py-2.5"
                     >
                       <span
+                        role="img"
+                        aria-label={done ? 'Applied' : 'Not applied'}
                         className={cn(
                           'size-4 shrink-0 rounded-full border',
                           done
@@ -282,39 +298,50 @@ export function WorkDetail({ workId }: { workId: string }) {
                 Albatross created these in your accounts. Each one can be undone while the provider allows it.
               </p>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
-                {detail.application.artifacts.map((artifact) => (
-                  <div key={`${artifact.kind}:${artifact.id}`} className="flex items-center gap-3 py-2">
-                    <span className="min-w-0 flex-1 truncate text-[13px]">
-                      {artifact.title || artifact.id}
-                    </span>
-                    <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
-                      {artifact.kind.replaceAll('_', ' ')}
-                    </span>
-                    {artifact.operationId ? (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="ghost"
-                        disabled={Boolean(undoing)}
-                        onClick={async () => {
-                          setUndoing(artifact.operationId!);
-                          setError(null);
-                          try {
-                            await callTool('undo_operation', { operationId: artifact.operationId });
-                          } catch (cause) {
-                            setError(
-                              cause instanceof Error ? cause.message : 'This change can no longer be undone.',
-                            );
-                          } finally {
-                            setUndoing(null);
-                          }
-                        }}
-                      >
-                        {undoing === artifact.operationId ? 'Undoing…' : 'Undo'}
-                      </Button>
-                    ) : null}
-                  </div>
-                ))}
+                {detail.application.artifacts.map((artifact) => {
+                  const undone = Boolean(artifact.operationId && undoneOperations.has(artifact.operationId));
+                  return (
+                    <div
+                      key={`${artifact.kind}:${artifact.id}`}
+                      className={cn('flex items-center gap-3 py-2', undone && 'opacity-55')}
+                    >
+                      <span className={cn('min-w-0 flex-1 truncate text-[13px]', undone && 'line-through')}>
+                        {artifact.title || artifact.id}
+                      </span>
+                      <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
+                        {undone ? 'undone' : artifact.kind.replaceAll('_', ' ')}
+                      </span>
+                      {artifact.operationId && !undone ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={Boolean(undoing)}
+                          onClick={async () => {
+                            setUndoing(artifact.operationId!);
+                            setError(null);
+                            try {
+                              await callTool('undo_operation', { operationId: artifact.operationId });
+                              setUndoneOperations(
+                                (previous) => new Set([...previous, artifact.operationId!]),
+                              );
+                            } catch (cause) {
+                              setError(
+                                cause instanceof Error
+                                  ? cause.message
+                                  : 'This change can no longer be undone.',
+                              );
+                            } finally {
+                              setUndoing(null);
+                            }
+                          }}
+                        >
+                          {undoing === artifact.operationId ? 'Undoing…' : 'Undo'}
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -374,9 +401,13 @@ export function WorkDetail({ workId }: { workId: string }) {
                 {completing ? 'Saving…' : 'Mark it complete'}
               </Button>
             </section>
-          ) : work.workState === 'done' ? (
+          ) : work.workState === 'done' || work.workState === 'released' ? (
             <section className="mt-8 flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4">
-              <p className="text-[13px]">Finished. This one is off your list.</p>
+              <p className="text-[13px]">
+                {work.workState === 'done'
+                  ? 'Finished. This one is off your list.'
+                  : 'You put this down. That is one less thing.'}
+              </p>
               <Button
                 type="button"
                 size="xs"
@@ -384,7 +415,7 @@ export function WorkDetail({ workId }: { workId: string }) {
                 disabled={completing}
                 onClick={() => void setWorkState('active')}
               >
-                Reopen
+                {work.workState === 'done' ? 'Reopen' : 'Pick it back up'}
               </Button>
             </section>
           ) : null}
@@ -418,16 +449,11 @@ function LegacyPlanNotice({ workId, onError }: { workId: string; onError: (messa
         onClick={async () => {
           setBusy(true);
           try {
-            const response = await fetch('/api/albatross/plan', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                intentId: workId,
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-              }),
-            });
-            const body = await response.json();
-            if (!response.ok) throw new Error(body.error || 'Could not rebuild the plan.');
+            await postJson(
+              '/api/albatross/plan',
+              { intentId: workId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+              'Could not rebuild the plan.',
+            );
           } catch (cause) {
             onError(cause instanceof Error ? cause.message : 'Could not rebuild the plan.');
           } finally {
@@ -464,20 +490,15 @@ function WorkQuestionCard({ question }: { question: WorkQuestion }) {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(
+      await postJson(
         `/api/albatross/work/questions/${encodeURIComponent(question._id)}/answer`,
         {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            answer: value,
-            answeredOptionId: selected || undefined,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          }),
+          answer: value,
+          answeredOptionId: selected || undefined,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
+        'Could not save that answer.',
       );
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not save that answer.');
       setAnswer('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save that answer.');

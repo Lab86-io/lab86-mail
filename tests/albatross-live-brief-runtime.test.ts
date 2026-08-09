@@ -299,6 +299,24 @@ describe('completion writes the record', () => {
     expect(await t.run((ctx) => ctx.db.query('completionEvents').collect())).toEqual([]);
   });
 
+  test('setting released work active through updateWorkState clears the release', async () => {
+    const t = newHarness();
+    const workId = await seedWork(t);
+    await t.mutation(api.albatrossWorkV2.releaseWork, {
+      ...caller,
+      workId,
+      reason: 'Later.',
+      reviewAt: Date.now() + 86_400_000,
+    });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
+    const work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.workState).toBe('active');
+    expect(work?.status).toBe('ready');
+    expect(work?.releaseReason).toBeUndefined();
+    expect(work?.releasedAt).toBeUndefined();
+    expect(work?.reviewAt).toBeUndefined();
+  });
+
   test('archiving and reactivating touches no completion record', async () => {
     const t = newHarness();
     const workId = await seedWork(t, { status: 'done', workState: 'paused' });

@@ -112,7 +112,7 @@ describe('captureWork', () => {
   });
 
   test('the splitter carries shape onto the committed items', async () => {
-    const { deps, mutations } = makeDependencies({
+    const { deps, mutations, generateCalls } = makeDependencies({
       areas,
       facts,
       text: JSON.stringify({
@@ -122,6 +122,10 @@ describe('captureWork', () => {
     await captureWork({ rawText: 'renew my passport', source: 'text' }, user, deps);
     const finish = mutations.find((mutation) => mutation.name === 'finishCapture');
     expect(finish!.args.items[0].shape).toBe('quick');
+    // The prompt contract: the splitter is taught the shape taxonomy and the
+    // schema names the field, so a lost import cannot fail silently.
+    expect(generateCalls[0].system).toContain('Classify the shape of each outcome');
+    expect(generateCalls[0].system).toContain('"shape":"quick"|"project"|"practice"');
   });
 
   test('splits a dump into Work and resolves model area names against active Areas', async () => {

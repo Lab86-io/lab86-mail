@@ -293,7 +293,10 @@ describe('generateIntentPlan orchestration', () => {
     // The native document is the plan page; the HTML is only the static
     // companion older clients render.
     expect(save!.args.artifactSource).toBe('document-v2');
-    expect(save!.args.document.regions.length).toBeGreaterThan(0);
+    const regionIds = save!.args.document.regions.map((region: any) => region.id);
+    expect(regionIds.length).toBeGreaterThan(0);
+    // The duplicate place_region call in the harness must replace, not append.
+    expect(new Set(regionIds).size).toBe(regionIds.length);
     expect(save!.args.artifactHtml).toContain('<!doctype html>');
     // Hallucinated 'bogus' ref dropped; real corpus ref kept with account id.
     expect(save!.args.digitalActions[0].sourceRefs).toEqual([
