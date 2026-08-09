@@ -242,6 +242,9 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
   // With the rail expanded, its capture button is the door; the pill only
   // floats when that button is collapsed to an icon or off-canvas (mobile).
   const { open: railOpen, isMobile } = useSidebar();
+  // An open thread shows "This is an Albatross" in its own action bar, in the
+  // same corner this pill occupies.
+  const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
   const captureOpen = useClientStore((s) => s.captureOpen);
   const captureSeed = useClientStore((s) => s.captureSeed);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
@@ -450,7 +453,7 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
       <div
         className={cn(
           'pointer-events-none fixed bottom-6 right-6 z-50',
-          capturePillHidden(aiBarOpen, railOpen, isMobile) && 'hidden',
+          capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen) && 'hidden',
         )}
       >
         <button

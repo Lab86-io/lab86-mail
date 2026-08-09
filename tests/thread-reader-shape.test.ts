@@ -41,11 +41,36 @@ describe('the reader verbs', () => {
 });
 
 describe('the reader header lines up with the inbox header', () => {
-  // Both halves put 32px controls inside px-3 py-2, so the two bottom
-  // borders meet across the seam instead of stepping by a few pixels.
-  test('the reader strip carries the title and MailNav geometry', () => {
-    expect(thread).toContain('border-b border-[var(--color-border)] px-3 py-2');
+  // An explicit row height on both sides, not padding around whatever each
+  // row happens to hold: bordered segment groups are 2px taller than a bare
+  // button, which is what made the two rules step apart.
+  test('both headers are h-12 rows', () => {
+    expect(thread).toContain('flex h-12 shrink-0 items-center gap-3 border-b');
+    expect(read('components/inbox/MailNav.tsx')).toContain(
+      'flex h-12 shrink-0 items-center gap-1.5 border-b',
+    );
+  });
+  test('the title rides in the strip', () => {
     expect(thread).toContain('truncate font-display text-[15px]');
-    expect(read('components/inbox/MailNav.tsx')).toContain('border-b border-[var(--color-border)] px-3 py-2');
+  });
+  test('no stale reserve pushes the view actions off the right edge', () => {
+    expect(thread).not.toContain('pr-12');
+  });
+});
+
+describe('the reader stands in one of two places', () => {
+  // Mail is a card the reader can halve. Today and Areas are not, so the
+  // thread visits them as a sheet over the page.
+  test('the variant drives the shell, not the surface', () => {
+    expect(thread).toContain("variant === 'sheet'");
+    expect(thread).toContain('shadow-[var(--shadow-pop)]');
+  });
+  test('only Mail splits; every other surface gets the sheet', () => {
+    expect(shell).toContain("readerSplit = readerVisible && visiblePrimaryView === 'mail'");
+    expect(shell).toContain('readerSheet = readerVisible && !readerSplit');
+    expect(shell).toContain('<ThreadView variant="sheet" />');
+    // The split panel and separator must follow readerSplit, not readerVisible,
+    // or a sheet surface would still tear its layout in half.
+    expect(shell).not.toContain('{readerVisible ? <ResizeSeparator');
   });
 });

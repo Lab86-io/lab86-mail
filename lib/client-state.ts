@@ -212,8 +212,15 @@ const DEFAULT_QUERY = DEFAULT_MAIL_QUERY;
  * off-canvas drawer brings the pill back. The assistant panel owns the
  * bottom-right slot while it is open.
  */
-export function capturePillHidden(aiBarOpen: boolean, railOpen: boolean, isMobile: boolean): boolean {
-  return aiBarOpen || (railOpen && !isMobile);
+export function capturePillHidden(
+  aiBarOpen: boolean,
+  railOpen: boolean,
+  isMobile: boolean,
+  readerOpen = false,
+): boolean {
+  // An open reader carries its own capture door ("This is an Albatross") in
+  // its action bar, which sits in the same bottom-right corner.
+  return aiBarOpen || readerOpen || (railOpen && !isMobile);
 }
 
 export function migratePersistedClientState(persisted: any) {

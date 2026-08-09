@@ -40,6 +40,12 @@ describe('the floating capture pill', () => {
     expect(capturePillHidden(true, false, true)).toBe(true);
     expect(capturePillHidden(true, false, false)).toBe(true);
   });
+  test('yields to an open reader, which carries its own capture door', () => {
+    // Same bottom-right corner as the reader's action bar.
+    expect(capturePillHidden(false, false, false, true)).toBe(true);
+    expect(capturePillHidden(false, false, true, true)).toBe(true);
+    expect(capturePillHidden(false, false, false, false)).toBe(false);
+  });
 });
 
 describe('the optional board', () => {

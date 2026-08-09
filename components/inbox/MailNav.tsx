@@ -75,7 +75,10 @@ export function MailNav() {
   const activeFolder = MAILBOXES.find((mailbox) => mailbox.query === query);
 
   return (
-    <div className="flex items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2">
+    // An explicit row height, not padding around the tallest child: the
+    // reader's header uses the same one, so the two bottom borders meet
+    // across the seam no matter what either row holds.
+    <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] px-3">
       <Button size="sm" onClick={() => openComposeNew()}>
         Compose
       </Button>

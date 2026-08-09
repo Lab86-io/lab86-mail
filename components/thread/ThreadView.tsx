@@ -58,7 +58,18 @@ const BAR_BUTTON =
 const SEGMENT_GROUP =
   'flex items-center overflow-hidden rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:ring-2 focus-within:ring-[var(--color-accent)] focus-within:ring-offset-2 focus-within:ring-offset-[var(--color-bg-elevated)] [&>button]:rounded-none [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none [&>button+button]:border-l [&>button+button]:border-[var(--color-control-border)]';
 
-export function ThreadView() {
+/**
+ * Where the reader is standing.
+ *
+ * `split` — on Mail, the reader IS the right half of the inbox card: it opens
+ * toward the seam, so the two halves read as one surface.
+ * `sheet` — on every other surface (Today, Areas), there is no inbox card to
+ * halve. The reader arrives as its own complete card floating over the page,
+ * so the host surface keeps its own shape underneath.
+ */
+export type ThreadViewVariant = 'split' | 'sheet';
+
+export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant } = {}) {
   // The inbox runs unified; the open thread carries its own concrete account.
   const threadAccount = useClientStore((s) => s.threadAccount);
   const inboxAccount = useClientStore((s) => s.account);
@@ -72,9 +83,23 @@ export function ThreadView() {
   const closeCompose = useClientStore((s) => s.closeCompose);
   const pendingReplyBody = useClientStore((s) => s.pendingReplyBody);
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const openCaptureWith = useClientStore((s) => s.openCaptureWith);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
+  // A sheet is a whole card over the page; a split half opens toward the seam
+  // and lets the inbox half close the rectangle.
+  const sheet = variant === 'sheet' && !threadFullscreen;
+  const shellOuter = cn(
+    'flex h-full flex-col',
+    !threadFullscreen && !sheet && 'bg-[var(--color-bg)] sm:py-2 sm:pr-2',
+    sheet && 'p-2',
+  );
+  const shellInner = cn(
+    'flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
+    !threadFullscreen &&
+      !sheet &&
+      'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
+    sheet && 'rounded-xl border border-[var(--color-border)] shadow-[var(--shadow-pop)]',
+  );
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
   const markedReadRef = useRef<Set<string>>(new Set());
@@ -334,17 +359,12 @@ export function ThreadView() {
           ? account
           : '';
     return (
-      <div className="flex h-full flex-col bg-[var(--color-bg)] sm:py-2 sm:pr-2">
-        {/* Same right half of the mail surface as the reader. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)] sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]">
-          {/* Same geometry as the reader strip and MailNav, so every header
-              border across the surface lands on one line. */}
-          <header
-            className={cn(
-              'flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-3 py-2',
-              !aiBarOpen && 'pr-12',
-            )}
-          >
+      <div className={shellOuter}>
+        {/* Same shell as the reader: split half on Mail, sheet elsewhere. */}
+        <div className={shellInner}>
+          {/* Same h-12 as the reader strip and MailNav, so every header border
+              across the surface lands on one line. */}
+          <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] px-3">
             <h1 className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]">
               New message
             </h1>
@@ -417,13 +437,8 @@ export function ThreadView() {
 
   if (isLoading || !data) {
     return (
-      <div className="flex h-full flex-col bg-[var(--color-bg)] sm:py-2 sm:pr-2">
-        <div
-          className={cn(
-            'min-h-0 flex-1 space-y-3 overflow-hidden bg-[var(--color-bg-elevated)] p-4 sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
-            !aiBarOpen && 'pr-12',
-          )}
-        >
+      <div className={shellOuter}>
+        <div className={cn(shellInner, 'space-y-3 p-4')}>
           {['summary', 'body', 'footer'].map((key) => (
             <div key={key} className="h-24 rounded-lg shimmer" />
           ))}
@@ -453,34 +468,18 @@ export function ThreadView() {
       aria-modal={threadFullscreen ? true : undefined}
       aria-label={threadFullscreen ? data.subject : undefined}
       className={cn(
-        'flex h-full flex-col bg-[var(--color-bg)]',
-        // One surface, split inside: the reader is the right half of the mail
-        // card, not a second card. Its left edge stays open toward the seam
-        // the resize separator paints; the gutter matches the inbox half.
-        !threadFullscreen && 'sm:py-2 sm:pr-2',
+        shellOuter,
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
           'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
-      <div
-        className={cn(
-          '@container relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
-          !threadFullscreen &&
-            'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
-        )}
-      >
+      <div className={cn('@container relative', shellInner)}>
         {/* The only fixed chrome: one strip carrying the title and the four
-            view actions. px-3 py-2 around 32px controls is exactly MailNav's
-            geometry, so this bottom border lines up with the inbox half's
-            across the seam. */}
-        <div
-          className={cn(
-            'flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-2',
-            !aiBarOpen && !threadFullscreen && 'pr-12',
-          )}
-        >
+            view actions. h-12 is MailNav's exact row height, so this bottom
+            border meets the inbox half's across the seam. */}
+        <div className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-3">
           <h1
             title={data.subject}
             className="min-w-0 flex-1 truncate font-display text-[15px] font-semibold leading-tight tracking-[-0.01em]"

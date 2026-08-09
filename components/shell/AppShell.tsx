@@ -162,10 +162,15 @@ export function AppShell({
   const mailish =
     visiblePrimaryView === 'mail' || visiblePrimaryView === 'today' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
+  // Mail is the only surface built as a card the reader can halve. Everywhere
+  // else the reader arrives as a sheet over the page, so Today and Areas keep
+  // their own full-width shape instead of pretending to be an inbox.
+  const readerSplit = readerVisible && visiblePrimaryView === 'mail';
+  const readerSheet = readerVisible && !readerSplit;
   // The assistant is a floating overlay now (AssistantChat), not a docked
   // panel, so it no longer participates in the resizable layout.
-  const permutation = `i${readerVisible ? 't' : ''}`;
-  const panelIds = ['inbox', ...(readerVisible ? ['reader'] : [])];
+  const permutation = `i${readerSplit ? 't' : ''}`;
+  const panelIds = ['inbox', ...(readerSplit ? ['reader'] : [])];
   const layoutStorage = typeof window !== 'undefined' && !isMobile ? window.localStorage : noopLayoutStorage;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `lab86-mail-shell-v2:${permutation}`,
@@ -313,8 +318,8 @@ export function AppShell({
                 </ReflowPanel>
               </Panel>
 
-              {readerVisible ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
-              {readerVisible ? (
+              {readerSplit ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
+              {readerSplit ? (
                 <Panel id="reader" defaultSize="40%" minSize="360px">
                   <ReflowPanel>
                     {/* Slide-in masks the thread's hydration moment. */}
@@ -331,6 +336,24 @@ export function AppShell({
                 </Panel>
               ) : null}
             </Group>
+
+            {/* Off Mail there is no card to halve, so the thread visits as a
+                sheet over the page. The surface underneath keeps its own
+                width and stays usable — this is not a modal. */}
+            <AnimatePresence initial={false}>
+              {readerSheet ? (
+                <motion.div
+                  key="reader-sheet"
+                  initial={{ x: 32, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: 32, opacity: 0 }}
+                  transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
+                >
+                  <ThreadView variant="sheet" />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </TooltipProvider>
           <AssistantChat />
           <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
