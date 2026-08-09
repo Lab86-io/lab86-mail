@@ -842,7 +842,7 @@ export function Inbox() {
                     clearSearch();
                   }
                 }}
-                placeholder="Search your mail, or ask for it in your own words"
+                placeholder="Search your mail, or ask in your own words"
                 className="text-[13px]"
               />
               {searchInput ? (
@@ -859,12 +859,12 @@ export function Inbox() {
               variant="outline"
               size="icon"
               onClick={refreshInbox}
-              aria-label="Refresh inbox"
+              aria-label="Check for new mail"
               className={cn(
                 'h-9 w-9 shrink-0 rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
                 isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
               )}
-              title="Refresh"
+              title="Check for new mail"
             >
               {isFetching && !isFetchingNextPage ? (
                 <Ring className="size-4" />
