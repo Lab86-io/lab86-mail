@@ -110,14 +110,24 @@ const questionSchema = z.object({
   options: z.array(questionOptionSchema).max(5).optional(),
 });
 
+// Models write null for a field they cannot ground; Convex validators accept
+// absent, not null. Every nullable place field collapses to undefined here so
+// a null can never reach savePlan.
+const groundedField = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .nullish()
+    .transform((value) => value ?? undefined);
+
 const placeSchema = z.object({
   name: z.string().min(1).max(160),
-  detail: z.string().max(300).optional(),
-  address: z.string().max(300).nullish(),
-  hoursText: z.string().max(300).nullish(),
-  phone: z.string().max(40).nullish(),
-  website: z.string().max(500).nullish(),
-  mapsQuery: z.string().max(200).nullish(),
+  detail: groundedField(300),
+  address: groundedField(300),
+  hoursText: groundedField(300),
+  phone: groundedField(40),
+  website: groundedField(500),
+  mapsQuery: groundedField(200),
 });
 
 const physicalActionSchema = z.object({
