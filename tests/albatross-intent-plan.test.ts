@@ -391,6 +391,32 @@ describe('generateIntentPlan orchestration', () => {
     expect(ids).toContain('slack');
   });
 
+  test('null place fields collapse to undefined so savePlan validation cannot reject them', async () => {
+    const planText = JSON.stringify({
+      ...goodGeneration,
+      places: [
+        {
+          name: 'DMV Rochester',
+          detail: null,
+          address: '200 State St',
+          hoursText: null,
+          phone: null,
+          website: null,
+          mapsQuery: null,
+        },
+      ],
+    });
+    const { calls } = wire({ planText });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
+    const place = save!.args.places[0];
+    expect(place.name).toBe('DMV Rochester');
+    expect(place.address).toBe('200 State St');
+    for (const key of ['detail', 'hoursText', 'phone', 'website', 'mapsQuery']) {
+      expect(place[key]).toBeUndefined();
+    }
+  });
+
   test('the planner classifies shape and savePlan receives it', async () => {
     const planText = JSON.stringify({ ...goodGeneration, shape: 'quick' });
     const { calls } = wire({ planText });
