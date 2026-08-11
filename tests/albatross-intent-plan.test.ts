@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  attachResearchRefs,
   mergePlanQuestions,
   type PlanContextRef,
   parsePlanGeneration,
@@ -127,6 +128,78 @@ describe('resolveSourceRefs', () => {
   test('handles undefined and empty inputs', () => {
     expect(resolveSourceRefs(undefined, pack)).toHaveLength(0);
     expect(resolveSourceRefs([], [])).toHaveLength(0);
+  });
+});
+
+describe('planner research provenance', () => {
+  test('turns every supported research result into bounded, reusable plan refs', () => {
+    const refs: PlanContextRef[] = [];
+    expect(attachResearchRefs('mcp_search', null, refs, {})).toBeNull();
+
+    const fetched = attachResearchRefs('browserbase_fetch', { content: 'x'.repeat(30_000) }, refs, {
+      url: 'https://travel.state.gov/passports',
+    });
+    expect(fetched.content).toHaveLength(24_000);
+    expect(fetched.refId).toBe('ref1');
+
+    const cases = [
+      ['calendar_search_events', { events: [{ providerEventId: 'provider-1', title: 'Appointment' }] }],
+      ['calendar_search_events', { events: [{ eventId: 'event-2', name: 'Focus hold' }] }],
+      [
+        'corpus_search',
+        {
+          items: [
+            { source: 'mcp', externalId: 'meeting-1', summary: 'Granola meeting notes' },
+            { source: 'mail', threadId: 'thread-1', subject: 'Receipt', account: 'mail-1' },
+          ],
+        },
+      ],
+      [
+        'github_search',
+        {
+          items: [
+            { id: 'gh-1', kind: 'pull_request', title: 'PR' },
+            { id: 'gh-2', kind: 'commit', title: 'Commit' },
+            { id: 'gh-3', kind: 'project', title: 'Project' },
+            { id: 'gh-4', kind: 'project_item', title: 'Project item' },
+            { id: 'gh-5', kind: 'issue', title: 'Issue' },
+          ],
+        },
+      ],
+      ['mcp_list_items', { items: [{ id: 'mcp-1', title: 'Meeting' }] }],
+      ['cloud_file_search', { files: [{ webUrl: 'https://drive.test/file', name: 'Application.pdf' }] }],
+      ['browserbase_search', { results: [{ url: 'https://usa.gov/passport', title: 'Passport help' }] }],
+    ] as const;
+
+    for (const [toolName, result] of cases) {
+      const attached = attachResearchRefs(toolName, result, refs, {});
+      const rows = attached.items || attached.files || attached.events || attached.results;
+      expect(rows.every((row: any) => row.refId)).toBe(true);
+    }
+
+    const duplicate = attachResearchRefs(
+      'mcp_search',
+      { items: [{ id: 'mcp-1', title: 'Same meeting, fresher label' }] },
+      refs,
+      {},
+    );
+    expect(duplicate.items[0].refId).toBe(refs.find((ref) => ref.id === 'mcp-1')?.refId);
+    expect(attachResearchRefs('mcp_connection_status', { connections: [] }, refs, {})).toEqual({
+      connections: [],
+    });
+    expect(new Set(refs.map((ref) => ref.kind))).toEqual(
+      new Set([
+        'manual',
+        'calendar_event',
+        'mcp_item',
+        'mail_thread',
+        'github_pull_request',
+        'github_commit',
+        'github_project',
+        'github_project_item',
+        'github_issue',
+      ]),
+    );
   });
 });
 

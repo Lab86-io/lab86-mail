@@ -790,6 +790,102 @@ describe('Albatross tools', () => {
     expect(toolInvocations.some((call) => call.tool === 'calendar_create_event')).toBe(true);
   });
 
+  test('reads compact Work context and refuses a missing Work', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_context',
+        title: 'Renew passport',
+        rawText: 'Get the passport renewed',
+        workState: 'active',
+        primaryAreaId: 'area_personal',
+      },
+      plan: {
+        _id: 'plan_context',
+        outcome: 'Passport renewed',
+        summary: 'The photo package is purchased.',
+        status: 'ready',
+        digitalActions: [{ key: 'form', actionKey: 'form', kind: 'task', title: 'Complete DS-82' }],
+        physicalActions: [{ title: 'Mail the application' }],
+      },
+      questions: [
+        { _id: 'question_open', status: 'pending', prompt: 'Standard or expedited?' },
+        { _id: 'question_done', status: 'answered', prompt: 'Do you have photos?' },
+      ],
+      evidence: [
+        {
+          _id: 'evidence_receipt',
+          claim: 'Photos were purchased',
+          title: 'Photo receipt',
+          summary: 'Paid receipt',
+          limits: 'Does not prove the photos were delivered.',
+          sourceKind: 'mail_thread',
+          trust: 'observed',
+          url: 'https://mail.test/thread',
+        },
+      ],
+    };
+
+    const result = await runTool(albatross.albatrossGetWorkContext.handler, {
+      workId: 'work_context',
+    });
+    expect(result.context).toMatchObject({
+      work: { id: 'work_context', state: 'active', areaId: 'area_personal' },
+      plan: { id: 'plan_context', outcome: 'Passport renewed' },
+      questions: [{ id: 'question_open', prompt: 'Standard or expedited?' }],
+      evidence: [{ id: 'evidence_receipt', sourceKind: 'mail_thread' }],
+    });
+
+    workDetailFixture = null;
+    await expect(
+      runTool(albatross.albatrossGetWorkContext.handler, { workId: 'work_missing' }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  test('a replan that needs one answer returns to idle without creating premature actions', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_passport_question',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+        questions: [
+          {
+            id: 'speed',
+            prompt: 'Standard or expedited processing?',
+            options: [{ id: 'standard', title: 'Standard', detail: 'Lower fee' }],
+          },
+        ],
+      },
+      plan: {
+        _id: 'plan_old',
+        outcome: 'Passport renewed',
+        digitalActions: [{ actionKey: 'form', kind: 'task', title: 'Complete DS-82' }],
+      },
+      questions: [],
+      evidence: [],
+    };
+
+    const result = await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_passport_question',
+      reason: 'The processing speed changes the remaining plan.',
+    });
+
+    expect(result).toMatchObject({ needsInput: true, actionsApplied: 0, calendarEventsCreated: 0 });
+    expect(mutationCalls).toContainEqual({
+      fn: apiMock.albatrossWorkV2.upsertQuestion,
+      args: expect.objectContaining({
+        workId: 'work_passport_question',
+        legacyQuestionId: 'speed',
+        prompt: 'Standard or expedited processing?',
+      }),
+    });
+    expect(
+      mutationCalls.some(
+        (call) => call.fn === apiMock.albatrossWorkV2.setAgentState && call.args.agentState === 'idle',
+      ),
+    ).toBe(true);
+    expect(toolInvocations.some((call) => call.tool === 'albatross_apply_intent_plan')).toBe(false);
+  });
+
   test('tools require an authenticated user', async () => {
     await expect(
       runTool(albatross.albatrossListProjects.handler, { limit: 1 }, { userId: undefined }),

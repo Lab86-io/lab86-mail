@@ -496,7 +496,7 @@ function researchLabel(row: any) {
   return String(row?.subject || row?.title || row?.name || row?.summary || 'Research result').slice(0, 180);
 }
 
-function attachResearchRefs(toolName: string, result: any, refs: PlanContextRef[], input: any) {
+export function attachResearchRefs(toolName: string, result: any, refs: PlanContextRef[], input: any) {
   if (!result || typeof result !== 'object') return result;
   if (toolName === 'browserbase_fetch') {
     const refId = `ref${refs.length + 1}`;
