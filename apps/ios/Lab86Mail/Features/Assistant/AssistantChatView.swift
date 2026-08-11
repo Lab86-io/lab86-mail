@@ -151,15 +151,6 @@ struct AssistantChatView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if model.scope.kind != .global {
-                Label(
-                    "\(model.scope.kind == .work ? "Work" : "Area"): \(model.scope.label ?? "Current context")",
-                    systemImage: "scope"
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
-
             VStack(alignment: .leading, spacing: 0) {
                 Text("Suggested")
                     .font(.caption)
@@ -194,6 +185,21 @@ struct AssistantChatView: View {
 
     private var composer: some View {
         VStack(spacing: 4) {
+            if model.scope.kind != .global {
+                HStack {
+                    Text("\(model.scope.kind == .work ? "Work" : "Area"): \(model.scope.label ?? "Current context")")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(environment.theme.accentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(environment.theme.accentColor.opacity(0.12), in: Capsule())
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .accessibilityLabel("Attached \(model.scope.kind == .work ? "Work" : "Area") context: \(model.scope.label ?? "Current context")")
+            }
             if !pendingFiles.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

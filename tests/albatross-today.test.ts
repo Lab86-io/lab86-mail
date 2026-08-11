@@ -26,6 +26,9 @@ const work = (over: Partial<TodayWork>): TodayWork => ({
   openQuestions: over.openQuestions ?? 0,
   updatedAt: over.updatedAt ?? 1,
   areaName: over.areaName ?? null,
+  nextStep: over.nextStep ?? null,
+  scheduledStartAt: over.scheduledStartAt ?? null,
+  scheduledEndAt: over.scheduledEndAt ?? null,
 });
 
 const event = (over: Partial<TodayEvent>): TodayEvent => ({
@@ -130,6 +133,17 @@ describe('readyToMove', () => {
   test('holds nothing back when everything already fits', () => {
     const few = [work({ _id: 'a' }), work({ _id: 'b' })];
     expect(readyToMove(few, 'normal').heldBack).toBe(0);
+  });
+
+  test('does not offer Work today when Albatross already put its next step on the calendar', () => {
+    const now = Date.parse('2026-08-11T13:00:00Z');
+    const { items, heldBack } = readyToMove(
+      [work({ _id: 'booked', scheduledEndAt: now + 60 * 60_000 }), work({ _id: 'open' })],
+      'normal',
+      now,
+    );
+    expect(items.map((row) => row._id)).toEqual(['open']);
+    expect(heldBack).toBe(0);
   });
 });
 

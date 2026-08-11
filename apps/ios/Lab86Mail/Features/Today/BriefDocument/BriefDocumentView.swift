@@ -23,7 +23,7 @@ struct BriefDocumentView: View {
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 22) {
             statusLine
-            ForEach(document.regions, id: \.id) { region in
+            ForEach(visibleRegions, id: \.id) { region in
                 BriefNodeView(
                     node: region.tree,
                     regionSummary: region.summary,
@@ -97,6 +97,13 @@ struct BriefDocumentView: View {
             set: { if !$0 { actionError = nil } }
         )
     }
+
+    // Legacy Work plans put a question form in the rendered document. Work
+    // questions now travel through the attached Assistant conversation, so an
+    // older cached plan must not bring that second interaction surface back.
+    private var visibleRegions: [BriefRegion] {
+        document.regions.filter { $0.id != "frontier-gate" }
+    }
 }
 
 // The document's transient body status, decided in one pure place so the
@@ -146,7 +153,7 @@ extension BriefDocumentView {
             add(node.previewRef)
             node.children?.forEach(visit)
         }
-        document.regions.forEach { visit($0.tree) }
+        visibleRegions.forEach { visit($0.tree) }
         return Array(refs.values)
     }
 

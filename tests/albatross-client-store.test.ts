@@ -137,9 +137,10 @@ describe('the rest of the shell state', () => {
 
   test('the assistant carries the scope it was opened from', () => {
     const s = useClientStore.getState();
-    s.setChatScope({ kind: 'work', workId: 'work_5' });
+    s.setChatScope({ kind: 'work', workId: 'work_5', label: 'Renew passport' });
     expect(useClientStore.getState().chatScopeKind).toBe('work');
     expect(useClientStore.getState().chatScopeWorkId).toBe('work_5');
+    expect(useClientStore.getState().chatScopeLabel).toBe('Renew passport');
 
     useClientStore.getState().setChatScope({ kind: 'area', areaId: 'area_2' });
     expect(useClientStore.getState().chatScopeKind).toBe('area');
@@ -147,6 +148,7 @@ describe('the rest of the shell state', () => {
 
     useClientStore.getState().setChatScope({ kind: 'global' });
     expect(useClientStore.getState().chatScopeKind).toBe('global');
+    expect(useClientStore.getState().chatScopeLabel).toBeNull();
   });
 
   test('search state records what the user typed and what it became', () => {

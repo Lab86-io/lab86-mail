@@ -120,6 +120,8 @@ export const TOOL_UI_RENDERED_TOOLS: ReadonlySet<string> = new Set([
   'document_apply_instruction',
   'document_publish_google',
   'google_file_import',
+  'albatross_record_progress',
+  'albatross_replan_work',
   'show_weather',
   'show_chart',
   'show_stats',
@@ -179,6 +181,55 @@ export function ToolUiDisplayPart({
   onOpenThread?: (target: { account: string; threadId: string }) => void;
 }) {
   const internalOpenPath = resolveInternalOpenPath(output?.openPath);
+  if (toolName === 'albatross_record_progress' && output?.ok) {
+    return (
+      <div className="w-full max-w-[460px] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 shadow-[var(--shadow-soft)]">
+        <p className="text-[11px] text-[var(--color-success)]">Progress saved</p>
+        <p className="mt-1 text-[13px] font-medium leading-snug text-[var(--color-text)]">
+          {String(output.claim || output.summary || 'Updated this Albatross.')}
+        </p>
+        <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+          {Number(output.evidenceRecorded || 0)} evidence{' '}
+          {Number(output.evidenceRecorded || 0) === 1 ? 'entry' : 'entries'} attached
+        </p>
+      </div>
+    );
+  }
+  if (toolName === 'albatross_replan_work' && output?.ok) {
+    return (
+      <div className="w-full max-w-[460px] rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)]/35 p-3 shadow-[var(--shadow-soft)]">
+        <p className="text-[11px] text-[var(--color-accent)]">Plan updated</p>
+        <p className="mt-1 text-[13px] font-semibold leading-snug text-[var(--color-text)]">
+          {String(output.title || 'Albatross Work')}
+        </p>
+        {output.currentStep ? (
+          <div className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
+            <p className="text-[10.5px] text-[var(--color-text-faint)]">Next step</p>
+            <p className="mt-0.5 text-[12.5px] font-medium leading-snug text-[var(--color-text)]">
+              {String(output.currentStep)}
+            </p>
+          </div>
+        ) : null}
+        {Array.isArray(output.removedSteps) && output.removedSteps.length ? (
+          <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+            Removed {output.removedSteps.length} completed or obsolete{' '}
+            {output.removedSteps.length === 1 ? 'step' : 'steps'}.
+          </p>
+        ) : null}
+        {Number(output.actionsApplied || 0) || Number(output.calendarEventsCreated || 0) ? (
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            {Number(output.actionsApplied || 0)
+              ? `Created ${Number(output.actionsApplied)} ${Number(output.actionsApplied) === 1 ? 'action' : 'actions'}`
+              : ''}
+            {Number(output.actionsApplied || 0) && Number(output.calendarEventsCreated || 0) ? ' · ' : ''}
+            {Number(output.calendarEventsCreated || 0)
+              ? `${Number(output.calendarEventsCreated)} ${Number(output.calendarEventsCreated) === 1 ? 'calendar hold' : 'calendar holds'}`
+              : ''}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
   if (
     output?.ok &&
     [

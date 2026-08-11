@@ -17,6 +17,7 @@ import {
   dayShapeLine,
   dayWindow,
   fixedSchedule,
+  hasUpcomingBooking,
   importantMailToday,
   needsYouToday,
   openWork,
@@ -74,10 +75,12 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const rows = work || [];
   const attention = needsYouToday(rows, approvals || []);
   const schedule = fixedSchedule(events || []);
-  const ready = readyToMove(rows, capacity);
+  const ready = readyToMove(rows, capacity, nowMs);
   const [showAllReady, setShowAllReady] = useState(false);
   const [dayChangedOpen, setDayChangedOpen] = useState(false);
-  const readyItems = showAllReady ? openWork(rows) : ready.items;
+  const readyItems = showAllReady
+    ? openWork(rows).filter((row) => !hasUpcomingBooking(row, nowMs))
+    : ready.items;
   const waiting = waitingOnSomebody(rows);
   const loading = work === undefined;
 

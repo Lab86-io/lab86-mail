@@ -38,6 +38,16 @@ const apiMock = {
     setConsent: 'albatrossRoutines.setConsent',
     runNow: 'albatrossRoutines.runNow',
   },
+  albatrossWorkV2: {
+    workDetail: 'albatrossWorkV2.workDetail',
+    attachProof: 'albatrossWorkV2.attachProof',
+    answerQuestion: 'albatrossWorkV2.answerQuestion',
+    setAgentState: 'albatrossWorkV2.setAgentState',
+    upsertQuestion: 'albatrossWorkV2.upsertQuestion',
+  },
+  albatrossIntents: {
+    markPlanApplied: 'albatrossIntents.markPlanApplied',
+  },
   operations: {
     record: 'operations.record',
   },
@@ -51,6 +61,7 @@ const toolInvocations: Array<{ tool: string; args: any }> = [];
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
+let workDetailFixture: any = null;
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
@@ -91,6 +102,8 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.listProjects) return [{ projectId: 'project_live', status: args.status }];
   if (fn === apiMock.albatrossWork.getProjectPane) return { project: { projectId: args.projectId } };
   if (fn === apiMock.albatrossWork.listSprints) return [{ sprintId: 'sprint_live', status: args.status }];
+  if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
+  if (fn === apiMock.albatrossWork.listPlanApplications) return [];
   return null;
 }
 
@@ -99,10 +112,13 @@ async function recordOperationMock(input: any) {
   return `operation_${operationCalls.length}`;
 }
 
-async function invokeToolMock(tool: any, args: any) {
+async function invokeToolMock(tool: any, args: any, ctx?: any) {
   sequence += 1;
   approvalOrder.push(`tool:${tool.name}`);
   toolInvocations.push({ tool: tool.name, args });
+  if (tool.name === 'albatross_apply_intent_plan') {
+    return tool.handler(args, ctx);
+  }
   if (tool.name === 'tasks_create_card') {
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
@@ -158,6 +174,7 @@ beforeEach(() => {
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
+  workDetailFixture = null;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -167,6 +184,28 @@ beforeEach(() => {
     newOperationBatchId: () => 'batch_mocked',
     undoOperation: undoOperationMock as any,
     invokeTool: invokeToolMock as any,
+    generateIntentPlan: (async () => {
+      workDetailFixture = {
+        ...workDetailFixture,
+        plan: {
+          _id: 'plan_revised',
+          outcome: 'Passport renewed',
+          digitalActions: [
+            { actionKey: 'form', kind: 'task', title: 'Complete DS-82' },
+            { actionKey: 'mail', kind: 'task', title: 'Mail the application' },
+            {
+              actionKey: 'form-hold',
+              kind: 'calendar_event',
+              title: 'Complete DS-82 form',
+              account: 'acct_primary',
+              startIso: '2026-08-12T17:00:00.000Z',
+              endIso: '2026-08-12T17:45:00.000Z',
+            },
+          ],
+        },
+      };
+      return { planId: 'plan_revised', title: 'Renew passport', outcome: 'Passport renewed' };
+    }) as any,
   });
 });
 
@@ -669,6 +708,86 @@ describe('Albatross tools', () => {
     });
 
     expect(result.unresolved).toEqual([{ kind: 'project', id: 'project_1', title: 'Project' }]);
+  });
+
+  test('records user-confirmed progress with source evidence, then versions the same Work plan', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_passport',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+        primaryProjectId: 'project_passport',
+      },
+      plan: {
+        _id: 'plan_old',
+        outcome: 'Passport renewed',
+        digitalActions: [
+          { actionKey: 'photos', kind: 'task', title: 'Buy passport photos' },
+          { actionKey: 'form', kind: 'task', title: 'Complete DS-82' },
+        ],
+      },
+      questions: [{ _id: 'question_1', status: 'pending', prompt: 'Did you buy photos?' }],
+      evidence: [],
+    };
+
+    const recorded = await runTool(albatross.albatrossRecordProgress.handler, {
+      workId: 'work_passport',
+      claim: 'I already bought the passport photo package.',
+      questionAnswers: [{ questionId: 'question_1', answer: 'Yes, it is purchased.' }],
+      evidence: [
+        {
+          sourceKind: 'mail_thread',
+          sourceId: 'receipt_thread',
+          title: 'Passport photo receipt',
+          summary: 'Purchase confirmation from the photo service.',
+          trust: 'observed',
+        },
+      ],
+    });
+
+    expect(recorded).toMatchObject({
+      ok: true,
+      workId: 'work_passport',
+      evidenceRecorded: 2,
+      questionsAnswered: 1,
+    });
+    const proofWrites = mutationCalls.filter((call) => call.fn === apiMock.albatrossWorkV2.attachProof);
+    expect(proofWrites).toHaveLength(2);
+    expect(proofWrites[0].args).toMatchObject({ sourceKind: 'chat', trust: 'confirmed' });
+    expect(proofWrites[1].args).toMatchObject({
+      sourceKind: 'mail_thread',
+      sourceId: 'receipt_thread',
+      trust: 'observed',
+    });
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWorkV2.answerQuestion)).toBe(true);
+
+    const revised = await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_passport',
+      reason: 'Photos are already purchased.',
+    });
+    expect(revised).toMatchObject({
+      ok: true,
+      workId: 'work_passport',
+      planId: 'plan_revised',
+      currentStep: 'Complete DS-82',
+      removedSteps: ['Buy passport photos'],
+      addedSteps: ['Mail the application', 'Complete DS-82 form'],
+      actionsApplied: 3,
+      calendarEventsCreated: 1,
+      needsInput: false,
+    });
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossIntents.markPlanApplied)).toBe(true);
+    expect(
+      mutationCalls.some(
+        (call) => call.fn === apiMock.albatrossWorkV2.setAgentState && call.args.agentState === 'idle',
+      ),
+    ).toBe(true);
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.createProject)).toBe(false);
+    expect(toolInvocations.find((call) => call.tool === 'albatross_apply_intent_plan')?.args).toMatchObject({
+      existingProjectId: 'project_passport',
+      projectMode: 'task_only',
+    });
+    expect(toolInvocations.some((call) => call.tool === 'calendar_create_event')).toBe(true);
   });
 
   test('tools require an authenticated user', async () => {

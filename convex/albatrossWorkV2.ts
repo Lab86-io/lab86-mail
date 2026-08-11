@@ -388,8 +388,25 @@ export const attachProof = mutation({
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
     limits: v.optional(v.string()),
-    sourceKind: v.union(v.literal('mail_thread'), v.literal('calendar_event'), v.literal('manual')),
+    sourceKind: v.union(
+      v.literal('mail_thread'),
+      v.literal('calendar_event'),
+      v.literal('task'),
+      v.literal('chat'),
+      v.literal('question_answer'),
+      v.literal('area_fact'),
+      v.literal('github_issue'),
+      v.literal('github_pull_request'),
+      v.literal('github_project'),
+      v.literal('github_project_item'),
+      v.literal('github_commit'),
+      v.literal('mcp_item'),
+      v.literal('manual'),
+    ),
     sourceId: v.string(),
+    connectionId: v.optional(v.string()),
+    accountId: v.optional(v.string()),
+    occurredAt: v.optional(v.number()),
     trust: v.union(v.literal('observed'), v.literal('inferred'), v.literal('confirmed')),
     proofId: v.optional(v.string()),
   },
@@ -408,12 +425,14 @@ export const attachProof = mutation({
       targetId: String(args.workId),
       sourceKind: args.sourceKind,
       sourceId: args.sourceId,
+      connectionId: bounded(args.connectionId, 180),
+      accountId: bounded(args.accountId, 320),
       title: bounded(args.title, 300) || 'Untitled',
       summary: bounded(args.summary, 600),
       claim: bounded(args.claim, 400),
       limits: bounded(args.limits, 400),
       url: bounded(args.url, 2000),
-      occurredAt: ts,
+      occurredAt: args.occurredAt ?? ts,
       weight: 1,
       // The user pointing at something is the strongest signal there is, so it
       // does not need a model's opinion attached to it.
@@ -423,8 +442,13 @@ export const attachProof = mutation({
       searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
       updatedAt: ts,
     };
-    if (existing) await ctx.db.patch(existing._id, row);
-    else await ctx.db.insert('albatrossEvidence', { ...row, createdAt: ts });
+    let evidenceId: Id<'albatrossEvidence'>;
+    if (existing) {
+      await ctx.db.patch(existing._id, row);
+      evidenceId = existing._id;
+    } else {
+      evidenceId = await ctx.db.insert('albatrossEvidence', { ...row, createdAt: ts });
+    }
 
     // Tick off the contract condition this proof settles.
     if (args.proofId && work.contract) {
@@ -444,6 +468,7 @@ export const attachProof = mutation({
     } else {
       await ctx.db.patch(args.workId, { lastEvidenceAt: ts, updatedAt: ts });
     }
+    return evidenceId;
   },
 });
 
@@ -964,7 +989,7 @@ export const allWork = query({
       .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
       .order('desc')
       .take(limit);
-    const [areas, pendingQuestions] = await Promise.all([
+    const [areas, pendingQuestions, plans] = await Promise.all([
       ctx.db
         .query('areas')
         .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -973,8 +998,14 @@ export const allWork = query({
         .query('albatrossWorkQuestions')
         .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
         .take(200),
+      Promise.all(rows.map((row) => (row.latestPlanId ? ctx.db.get(row.latestPlanId) : null))),
     ]);
     const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
+    const planByWork = new Map(
+      plans
+        .filter((plan): plan is NonNullable<typeof plan> => plan !== null && plan.userId === userId)
+        .map((plan) => [String(plan.intentId), plan] as const),
+    );
     // The question table is the live one. The inline `questions` array on the
     // row is the older shape; count both so no waiting question is invisible.
     const questionCounts = new Map<string, number>();
@@ -983,24 +1014,48 @@ export const allWork = query({
       const key = String(question.workId);
       questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
     }
-    return rows.map((row) => ({
-      _id: row._id,
-      title: row.title || null,
-      rawText: row.rawText,
-      status: row.status,
-      workState: row.workState || null,
-      agentState: row.agentState || null,
-      primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
-      areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
-      // The same question lives in both shapes during the migration, so adding
-      // the two counts reports every question twice. The table is the live one;
-      // the inline array only answers for rows the table never received.
-      openQuestions:
-        questionCounts.get(String(row._id)) ??
-        (row.questions || []).filter((question) => !question.answeredAt).length,
-      updatedAt: row.updatedAt,
-      createdAt: row.createdAt,
-    }));
+    return rows.map((row) => {
+      const plan = planByWork.get(String(row._id));
+      const digitalActions = (plan?.digitalActions || []) as Array<{
+        kind?: string;
+        title?: string;
+        startIso?: string;
+        endIso?: string;
+      }>;
+      const nextAction =
+        digitalActions.find((action) => action.kind !== 'calendar_event' && action.title) ||
+        digitalActions.find((action) => action.title) ||
+        plan?.physicalActions?.find((action) => action.title);
+      const scheduledAction =
+        plan?.status === 'applied'
+          ? digitalActions.find(
+              (action) => action.kind === 'calendar_event' && action.startIso && action.endIso,
+            )
+          : undefined;
+      const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
+      const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
+      return {
+        _id: row._id,
+        title: row.title || null,
+        rawText: row.rawText,
+        status: row.status,
+        workState: row.workState || null,
+        agentState: row.agentState || null,
+        primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
+        areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
+        // The same question lives in both shapes during the migration, so adding
+        // the two counts reports every question twice. The table is the live one;
+        // the inline array only answers for rows the table never received.
+        openQuestions:
+          questionCounts.get(String(row._id)) ??
+          (row.questions || []).filter((question) => !question.answeredAt).length,
+        updatedAt: row.updatedAt,
+        createdAt: row.createdAt,
+        nextStep: nextAction?.title || null,
+        scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
+        scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
+      };
+    });
   },
 });
 

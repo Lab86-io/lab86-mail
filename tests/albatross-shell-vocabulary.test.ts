@@ -146,14 +146,13 @@ describe('no surface tallies open work', () => {
   });
 });
 
-describe('the questions are answerable where they are shown', () => {
-  test('the Albatross page renders every waiting question', () => {
-    // A question renders inside the plan document's gate when the page
-    // carries it, and as a host card when it does not. Never in neither.
+describe('the questions use the main attached conversation', () => {
+  test('the Albatross page routes waiting questions to chat', () => {
     const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('hostQuestions.map');
-    expect(detail).toContain('hasFrontierGate');
-    expect(detail).not.toContain('const pendingQuestion =');
+    expect(detail).toContain('Answer in chat');
+    expect(detail).toContain('setChatScope({');
+    expect(detail).not.toContain('WorkQuestionCard');
+    expect(detail).not.toContain('hasFrontierGate');
   });
 
   test('the truncated floating copy of the question is gone', () => {

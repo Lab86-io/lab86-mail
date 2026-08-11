@@ -107,6 +107,26 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
           : route.startsWith('/mail/thread')
             ? 'LAB86_MAIL'
             : 'LAB86_COMMITMENT';
+  const notificationThread =
+    accountId && threadId
+      ? `mail.${accountId}.${threadId}`
+      : category === 'LAB86_CHECKIN'
+        ? 'albatross.checkin'
+        : category === 'LAB86_BRIEF'
+          ? 'albatross.brief'
+          : category === 'LAB86_COMMITMENT'
+            ? 'albatross.commitments'
+            : `albatross.${envelope.id}`;
+  const relevanceScore =
+    category === 'LAB86_URGENT'
+      ? 1
+      : category === 'LAB86_CHECKIN'
+        ? 0.9
+        : category === 'LAB86_BRIEF'
+          ? 0.8
+          : category === 'LAB86_COMMITMENT'
+            ? 0.6
+            : 0.25;
   return {
     aps: {
       alert: {
@@ -115,9 +135,10 @@ export function buildAPNsPayload(envelope: NotificationEnvelope): APNsPayload {
       },
       sound: 'default',
       category,
-      'thread-id': accountId && threadId ? `mail.${accountId}.${threadId}` : `albatross.${envelope.id}`,
+      'thread-id': notificationThread,
       'content-available': 1,
-      ...(urgent ? ({ 'interruption-level': 'time-sensitive', 'relevance-score': 1 } as const) : {}),
+      'relevance-score': relevanceScore,
+      ...(urgent ? ({ 'interruption-level': 'time-sensitive' } as const) : {}),
     },
     notificationId: envelope.id,
     route,

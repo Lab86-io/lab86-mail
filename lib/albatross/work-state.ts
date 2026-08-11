@@ -20,6 +20,7 @@ export interface WorkStateInput {
   status?: string | null;
   openQuestions?: number;
   planError?: string | null;
+  nextStep?: string | null;
 }
 
 /**

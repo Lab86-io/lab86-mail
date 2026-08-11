@@ -214,7 +214,7 @@ struct TodayView: View {
             }
         }
 
-        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou }
+        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou && !$0.hasUpcomingBooking }
         if !moving.isEmpty {
             todaySection("Could move today", note: "Albatross is carrying these.") {
                 VStack(spacing: 0) {
