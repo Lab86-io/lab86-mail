@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   attachResearchRefs,
+  escapePlanHtml,
   mergePlanQuestions,
   type PlanContextRef,
   parsePlanGeneration,
@@ -31,6 +32,10 @@ const validPlan = {
 };
 
 describe('parsePlanGeneration', () => {
+  test('escapes every HTML-significant character in the static fallback', () => {
+    expect(escapePlanHtml(`&<>"'`)).toBe('&amp;&lt;&gt;&quot;&#39;');
+  });
+
   test('parses a clean JSON object', () => {
     const plan = parsePlanGeneration(JSON.stringify(validPlan));
     expect(plan.title).toBe('Finish passport application');

@@ -1006,7 +1006,7 @@ main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}li{margin:.
 </style></head><body><main><p>Work plan</p><h1>${title}</h1><p>${summary}</p><ol>${steps}</ol></main></body></html>`;
 }
 
-function escapePlanHtml(value: string) {
+export function escapePlanHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => {
     if (character === '&') return '&amp;';
     if (character === '<') return '&lt;';
