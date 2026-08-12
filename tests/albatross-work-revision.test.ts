@@ -51,6 +51,17 @@ describe('Albatross Work plan revisions', () => {
     expect(revision.keptSteps).toEqual(['Complete DS-82']);
   });
 
+  test('does not collapse different stable action keys with identical copy', () => {
+    const revision = summarizeWorkPlanRevision(
+      { digitalActions: [{ actionKey: 'old-form', kind: 'task', title: 'Complete DS-82' }] },
+      { digitalActions: [{ actionKey: 'replacement-form', kind: 'task', title: 'Complete DS-82' }] },
+    );
+    expect(revision.changed).toBe(true);
+    expect(revision.keptSteps).toEqual([]);
+    expect(revision.removedSteps).toEqual(['Complete DS-82']);
+    expect(revision.addedSteps).toEqual(['Complete DS-82']);
+  });
+
   test('keeps the actionable task as current when its calendar hold comes first', () => {
     const result = summarizeWorkPlanRevision(null, {
       digitalActions: [

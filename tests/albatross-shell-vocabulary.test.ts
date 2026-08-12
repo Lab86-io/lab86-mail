@@ -157,8 +157,19 @@ describe('the questions use the main attached conversation', () => {
 
   test('attached Work cannot be detached while its request is active', () => {
     const chat = read('components/shell/AIBar.tsx');
-    expect(chat.match(/disabled=\{busy\}/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(chat).toContain('disabled:cursor-not-allowed');
+    expect(chat).toMatch(/title=\{`Detach \$\{chatScopeKind\}`\}[\s\S]*?disabled=\{busy\}/);
+    expect(chat).toMatch(/aria-label=\{`Detach \$\{chatScopeKind\}`\}[\s\S]*?disabled:cursor-not-allowed/);
+    expect(chat).toMatch(
+      /title=\{[\s\S]*?'Return to global conversation'[\s\S]*?disabled=\{busy \|\| chatScopeKind === 'global'\}/,
+    );
+  });
+
+  test('active requests cannot replace the conversation from history controls', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat).toMatch(/const loadSession = useCallback\([\s\S]*?if \(busy\) return false;/);
+    expect(chat).toMatch(/const startNewChat = useCallback\(\(\) => \{\s*if \(busy\) return;/);
+    expect(chat).toMatch(/onClick=\{startNewChat\}\s*disabled=\{busy\}\s*title="New chat"/);
+    expect(chat).toMatch(/onSelect=\{\(\) => void loadSession\(session\._id\)\}\s*disabled=\{busy\}/);
   });
 
   test('the truncated floating copy of the question is gone', () => {

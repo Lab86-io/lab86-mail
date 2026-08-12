@@ -246,6 +246,9 @@ export function AssistantChat() {
     void regenerate();
   }, [status, messages, regenerate]);
 
+  const streaming = status === 'streaming' || status === 'submitted';
+  const busy = streaming || uploadingFiles;
+
   // --- Persistent sessions: restore the last chat, autosave as you go ---
   const lastChatId = useClientStore((s) => s.lastChatId);
   const lastChatAt = useClientStore((s) => s.lastChatAt);
@@ -264,6 +267,7 @@ export function AssistantChat() {
 
   const loadSession = useCallback(
     async (id: string) => {
+      if (busy) return false;
       try {
         const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
         const data = await res.json();
@@ -278,7 +282,7 @@ export function AssistantChat() {
       }
       return false;
     },
-    [setLastChatId, setMessages],
+    [busy, setLastChatId, setMessages],
   );
 
   // First open: pick up where the user left off — but only if that
@@ -323,10 +327,11 @@ export function AssistantChat() {
   }, [chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
 
   const startNewChat = useCallback(() => {
+    if (busy) return;
     sessionIdRef.current = null;
     setLastChatId(null);
     setMessages([]);
-  }, [setLastChatId, setMessages]);
+  }, [busy, setLastChatId, setMessages]);
 
   const { data: sessionsData } = useQuery({
     queryKey: ['chat-sessions', scopeKey],
@@ -455,9 +460,6 @@ export function AssistantChat() {
       }
     }
   }, [messages, qc]);
-
-  const streaming = status === 'streaming' || status === 'submitted';
-  const busy = streaming || uploadingFiles;
 
   // Message count from the previous commit — messages at or above this index
   // mounted in this commit (a restored batch gets staggered entrances, a
@@ -617,6 +619,7 @@ export function AssistantChat() {
                   variant="ghost"
                   size="icon-sm"
                   onClick={startNewChat}
+                  disabled={busy}
                   title="New chat"
                   className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                 >
@@ -628,6 +631,7 @@ export function AssistantChat() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      disabled={busy}
                       title="Chat history"
                       className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                     >
@@ -644,6 +648,7 @@ export function AssistantChat() {
                         <DropdownMenuItem
                           key={session._id}
                           onSelect={() => void loadSession(session._id)}
+                          disabled={busy}
                           className="flex flex-col items-start gap-0.5"
                         >
                           <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
@@ -657,7 +662,7 @@ export function AssistantChat() {
                       ))
                     )}
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={startNewChat}>
+                    <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
                       <Plus className="size-3.5" />
                       Start a new chat
                     </DropdownMenuItem>

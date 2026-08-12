@@ -47,7 +47,7 @@ function actions(plan: RevisionPlan | null | undefined) {
 }
 
 function sameAction(left: ReturnType<typeof actions>[number], right: ReturnType<typeof actions>[number]) {
-  if (left.actionKey && right.actionKey && left.actionKey === right.actionKey) return true;
+  if (left.actionKey && right.actionKey) return left.actionKey === right.actionKey;
   if (left.fallbackId && right.fallbackId && left.fallbackId === right.fallbackId) return true;
   return !left.fallbackId && !right.fallbackId && Boolean(left.key && left.key === right.key);
 }

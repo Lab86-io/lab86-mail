@@ -121,6 +121,8 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(updated).toBe(first);
     expect(otherAccount).not.toBe(first);
     expect(otherConnection).not.toBe(first);
-    expect((await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId })).evidence).toHaveLength(3);
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.evidence).toHaveLength(3);
+    expect(detail.evidence.find((evidence) => evidence._id === first)?.title).toBe('Updated receipt');
   });
 });
