@@ -21,7 +21,7 @@ How should a person correct an Albatross whose plan is behind reality without tu
 
 - [Claude Projects](https://support.claude.com/en/articles/9519177-how-can-i-create-and-manage-projects): project knowledge provides reusable context to chats, while chats stay the interaction surface.
 - [CodeBolt context and @mentions](https://docs.codebolt.ai/docs/using-codebolt/chat/context-and-at-mentions): explicit attached context gives the model a bounded working set and makes that selection visible to the user.
-- [ChatGPT Projects](https://help.openai.com/en/articles/10169521): searched as a comparable project-context model; the help page was unavailable to the Browserbase fetch during research, so no implementation claim relies on its contents.
+- [ChatGPT Projects](https://help.openai.com/en/articles/10169521-projects-in-chatgpt): searched as a comparable project-context model; the help page was unavailable to the Browserbase fetch during research, so no implementation claim relies on its contents.
 
 ## Frozen interaction decisions
 

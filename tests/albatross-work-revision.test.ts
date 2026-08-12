@@ -38,6 +38,19 @@ describe('Albatross Work plan revisions', () => {
     expect(revision.keptSteps).toEqual(['Complete DS-82']);
   });
 
+  test('keeps a legacy keyed step when a stable action key is added later', () => {
+    const revision = summarizeWorkPlanRevision(
+      { digitalActions: [{ key: 'step-1', kind: 'task', title: 'Complete DS-82' }] },
+      {
+        digitalActions: [
+          { key: 'step-7', actionKey: 'task:complete-ds-82', kind: 'task', title: 'Complete DS-82' },
+        ],
+      },
+    );
+    expect(revision.changed).toBe(false);
+    expect(revision.keptSteps).toEqual(['Complete DS-82']);
+  });
+
   test('keeps the actionable task as current when its calendar hold comes first', () => {
     const result = summarizeWorkPlanRevision(null, {
       digitalActions: [

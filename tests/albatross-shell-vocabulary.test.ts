@@ -150,9 +150,15 @@ describe('the questions use the main attached conversation', () => {
   test('the Albatross page routes waiting questions to chat', () => {
     const detail = read('components/albatross/WorkDetail.tsx');
     expect(detail).toContain('Answer in chat');
-    expect(detail).toContain('setChatScope({');
+    expect(detail).toMatch(/setChatScope\(\{\s*kind: 'work',\s*workId,/);
     expect(detail).not.toContain('WorkQuestionCard');
     expect(detail).not.toContain('hasFrontierGate');
+  });
+
+  test('attached Work cannot be detached while its request is active', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat.match(/disabled=\{busy\}/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(chat).toContain('disabled:cursor-not-allowed');
   });
 
   test('the truncated floating copy of the question is gone', () => {

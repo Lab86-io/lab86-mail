@@ -604,7 +604,8 @@ export function AssistantChat() {
                   onClick={() => {
                     if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
                   }}
-                  className="truncate font-medium text-[var(--color-text)] hover:underline"
+                  disabled={busy || chatScopeKind === 'global'}
+                  className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
                 >
                   {chatScopeKind === 'global'
                     ? 'Albatross'
@@ -780,9 +781,10 @@ export function AssistantChat() {
                       <button
                         type="button"
                         onClick={() => setChatScope({ kind: 'global' })}
+                        disabled={busy}
                         aria-label={`Detach ${chatScopeKind}`}
                         title={`Detach ${chatScopeKind}`}
-                        className="shrink-0 hover:text-[var(--color-danger)]"
+                        className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <X className="size-2.5" />
                       </button>

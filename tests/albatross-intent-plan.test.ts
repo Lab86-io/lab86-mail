@@ -146,6 +146,11 @@ describe('planner research provenance', () => {
     });
     expect(fetched.content).toHaveLength(24_000);
     expect(fetched.refId).toBe('ref1');
+    const fetchedAgain = attachResearchRefs('browserbase_fetch', { content: 'updated' }, refs, {
+      url: 'https://travel.state.gov/passports',
+    });
+    expect(fetchedAgain.refId).toBe('ref1');
+    expect(refs.filter((ref) => ref.id === 'https://travel.state.gov/passports')).toHaveLength(1);
 
     const cases = [
       ['calendar_search_events', { events: [{ providerEventId: 'provider-1', title: 'Appointment' }] }],
@@ -591,10 +596,23 @@ describe('generateIntentPlan orchestration', () => {
       workDetail: {
         evidence: [
           {
+            claim: 'An older note.',
+            sourceKind: 'chat',
+            trust: 'confirmed',
+            occurredAt: 100,
+          },
+          {
             claim: 'The NYS PDF is already downloaded.',
             sourceKind: 'chat',
             trust: 'confirmed',
             limits: 'No receipt needed for this step.',
+            occurredAt: 300,
+          },
+          {
+            claim: 'A middle note.',
+            sourceKind: 'chat',
+            trust: 'confirmed',
+            occurredAt: 200,
           },
         ],
       },
@@ -605,6 +623,8 @@ describe('generateIntentPlan orchestration', () => {
     expect(prompt).toContain('Download the NYS PDF');
     expect(prompt).toContain('already downloaded');
     expect(prompt).toContain('chat, confirmed');
+    expect(prompt.indexOf('already downloaded')).toBeLessThan(prompt.indexOf('A middle note'));
+    expect(prompt.indexOf('A middle note')).toBeLessThan(prompt.indexOf('An older note'));
   });
 });
 

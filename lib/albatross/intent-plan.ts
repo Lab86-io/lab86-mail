@@ -499,8 +499,10 @@ function researchLabel(row: any) {
 export function attachResearchRefs(toolName: string, result: any, refs: PlanContextRef[], input: any) {
   if (!result || typeof result !== 'object') return result;
   if (toolName === 'browserbase_fetch') {
-    const refId = `ref${refs.length + 1}`;
-    refs.push({ refId, kind: 'manual', id: String(input?.url || refId), label: input?.url, url: input?.url });
+    const id = String(input?.url || `ref${refs.length + 1}`);
+    const existing = refs.find((ref) => ref.kind === 'manual' && ref.id === id);
+    const refId = existing?.refId || `ref${refs.length + 1}`;
+    if (!existing) refs.push({ refId, kind: 'manual', id, label: input?.url, url: input?.url });
     return { ...result, content: String(result.content || '').slice(0, 24_000), refId };
   }
   const arrayKey = ['items', 'files', 'events', 'results'].find((key) => Array.isArray(result[key]));
@@ -565,7 +567,9 @@ function plannerResearchTools(input: { userId: string; userTimezone?: string; re
 
 function currentWorkBlock(workbench: any, detail: any) {
   const plan = workbench?.plan;
-  const evidence = (detail?.evidence || []).slice(0, 30);
+  const evidence = [...(detail?.evidence || [])]
+    .sort((left: any, right: any) => Number(right.occurredAt || 0) - Number(left.occurredAt || 0))
+    .slice(0, 30);
   if (!plan && !evidence.length) return '';
   const lines = ['## Current Work state (for plan revision)'];
   if (plan) {

@@ -119,8 +119,12 @@ extension WorkListItem {
     var isUnresolved: Bool { isClosed && openQuestions > 0 }
 
     var hasUpcomingBooking: Bool {
+        hasUpcomingBooking(at: .now)
+    }
+
+    func hasUpcomingBooking(at date: Date) -> Bool {
         guard let scheduledEndAt else { return false }
-        return scheduledEndAt > .now
+        return scheduledEndAt > date
     }
 
     var state: WorkState {

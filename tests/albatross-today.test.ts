@@ -145,6 +145,13 @@ describe('readyToMove', () => {
     expect(items.map((row) => row._id)).toEqual(['open']);
     expect(heldBack).toBe(0);
   });
+
+  test('offers Work again after its calendar hold ends', () => {
+    const end = Date.parse('2026-08-11T14:00:00Z');
+    const rows = [work({ _id: 'booked', scheduledEndAt: end })];
+    expect(readyToMove(rows, 'normal', end - 1).items).toEqual([]);
+    expect(readyToMove(rows, 'normal', end).items.map((row) => row._id)).toEqual(['booked']);
+  });
 });
 
 describe('waitingOnSomebody', () => {

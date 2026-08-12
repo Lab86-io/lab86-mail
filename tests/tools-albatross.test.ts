@@ -67,6 +67,34 @@ let sequence = 0;
 async function convexMutationMock(fn: string, args: any) {
   mutationCalls.push({ fn, args });
   sequence += 1;
+  if (fn === apiMock.albatrossWorkV2.attachProof && workDetailFixture) {
+    workDetailFixture = {
+      ...workDetailFixture,
+      evidence: [
+        ...(workDetailFixture.evidence || []),
+        {
+          _id: `evidence_${sequence}`,
+          claim: args.claim,
+          title: args.title,
+          summary: args.summary,
+          limits: args.limits,
+          sourceKind: args.sourceKind,
+          trust: args.trust,
+          url: args.url,
+        },
+      ],
+    };
+  }
+  if (fn === apiMock.albatrossWorkV2.answerQuestion && workDetailFixture) {
+    workDetailFixture = {
+      ...workDetailFixture,
+      questions: (workDetailFixture.questions || []).map((question: any) =>
+        String(question._id) === String(args.questionId)
+          ? { ...question, status: 'answered', answer: args.answer }
+          : question,
+      ),
+    };
+  }
   if (fn === apiMock.albatrossWork.createProject) return `project_${sequence}`;
   if (fn === apiMock.albatrossWork.createSprint) return `sprint_${sequence}`;
   if (fn === apiMock.albatrossWork.enqueueApproval) return `approval_${sequence}`;
@@ -185,6 +213,14 @@ beforeEach(() => {
     undoOperation: undoOperationMock as any,
     invokeTool: invokeToolMock as any,
     generateIntentPlan: (async () => {
+      if (workDetailFixture?.work?._id === 'work_passport') {
+        if (!(workDetailFixture.evidence || []).some((row: any) => row.sourceKind === 'chat')) {
+          throw new Error('Planner did not receive recorded progress.');
+        }
+        if (!(workDetailFixture.questions || []).some((row: any) => row.status === 'answered')) {
+          throw new Error('Planner did not receive the persisted question answer.');
+        }
+      }
       workDetailFixture = {
         ...workDetailFixture,
         plan: {
@@ -847,20 +883,21 @@ describe('Albatross tools', () => {
         _id: 'work_passport_question',
         title: 'Renew passport',
         rawText: 'Renew my passport',
-        questions: [
-          {
-            id: 'speed',
-            prompt: 'Standard or expedited processing?',
-            options: [{ id: 'standard', title: 'Standard', detail: 'Lower fee' }],
-          },
-        ],
       },
       plan: {
         _id: 'plan_old',
         outcome: 'Passport renewed',
         digitalActions: [{ actionKey: 'form', kind: 'task', title: 'Complete DS-82' }],
       },
-      questions: [],
+      questions: [
+        {
+          _id: 'question_speed',
+          legacyQuestionId: 'speed',
+          status: 'pending',
+          prompt: 'Standard or expedited processing?',
+          options: [{ id: 'standard', label: 'Standard', description: 'Lower fee' }],
+        },
+      ],
       evidence: [],
     };
 
@@ -876,6 +913,7 @@ describe('Albatross tools', () => {
         workId: 'work_passport_question',
         legacyQuestionId: 'speed',
         prompt: 'Standard or expedited processing?',
+        options: [{ id: 'standard', label: 'Standard', description: 'Lower fee' }],
       }),
     });
     expect(

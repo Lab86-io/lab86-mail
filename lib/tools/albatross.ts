@@ -527,19 +527,21 @@ export const albatrossReplanWork = defineTool({
 
       let actionsApplied = 0;
       let calendarEventsCreated = 0;
-      const firstOpen = (after.work.questions || []).find((question: any) => !question.answer);
+      const firstOpen =
+        (after.questions || []).find((question: any) => question.status === 'pending') ||
+        (after.work.questions || []).find((question: any) => !question.answer);
       if (firstOpen) {
         await deps.convexMutation(workV2Api().upsertQuestion, {
           userId,
           workId: args.workId,
-          legacyQuestionId: firstOpen.id,
+          legacyQuestionId: firstOpen.legacyQuestionId || firstOpen.id,
           kind: 'clarification',
           prompt: firstOpen.prompt,
           reason: 'This answer changes the next step or what Albatross will create.',
           options: (firstOpen.options || []).map((option: any) => ({
             id: option.id,
-            label: option.title,
-            description: option.detail,
+            label: option.label || option.title,
+            description: option.description || option.detail,
           })),
           sourceRefs: after.plan.sourceRefs || [],
         });
@@ -618,6 +620,9 @@ export const albatrossReplanWork = defineTool({
         userId,
         workId: args.workId,
       });
+      if (!after?.work || !after?.plan) {
+        throw new Error('The revised Albatross plan could not be reloaded.');
+      }
       const revision = summarizeWorkPlanRevision(before.plan, after.plan);
       const title = String(after.work.title || after.plan.outcome || before.work.rawText || 'Albatross Work');
       const needsInput = Boolean(firstOpen);

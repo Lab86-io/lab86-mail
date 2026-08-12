@@ -414,7 +414,11 @@ export const attachProof = mutation({
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
-    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${args.sourceId}`;
+    const sourceScope = [bounded(args.accountId, 320), bounded(args.connectionId, 180)]
+      .filter(Boolean)
+      .map((value) => encodeURIComponent(value as string))
+      .join(':');
+    const dedupeKey = `proof:${String(args.workId)}:${args.sourceKind}:${sourceScope ? `${sourceScope}:` : ''}${args.sourceId}`;
     const existing = await ctx.db
       .query('albatrossEvidence')
       .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))

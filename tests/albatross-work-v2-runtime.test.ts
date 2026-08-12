@@ -96,4 +96,31 @@ describe('Albatross Work v2 Area Brief reads', () => {
       /Invalid Convex internal secret/,
     );
   });
+
+  test('provider evidence dedupes within an account and connection, not across them', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    const attach = (accountId: string, connectionId: string, title: string) =>
+      t.mutation(api.albatrossWorkV2.attachProof, {
+        ...caller,
+        workId,
+        claim: 'The application was purchased.',
+        title,
+        sourceKind: 'mail_thread' as const,
+        sourceId: 'provider-thread-1',
+        accountId,
+        connectionId,
+        trust: 'observed' as const,
+      });
+
+    const first = await attach('account-a', 'connection-a', 'First receipt');
+    const updated = await attach('account-a', 'connection-a', 'Updated receipt');
+    const otherAccount = await attach('account-b', 'connection-a', 'Other account receipt');
+    const otherConnection = await attach('account-a', 'connection-b', 'Other connection receipt');
+
+    expect(updated).toBe(first);
+    expect(otherAccount).not.toBe(first);
+    expect(otherConnection).not.toBe(first);
+    expect((await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId })).evidence).toHaveLength(3);
+  });
 });
