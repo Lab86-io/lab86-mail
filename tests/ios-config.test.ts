@@ -201,10 +201,7 @@ describe('native iOS authentication configuration', () => {
     ];
 
     for (const file of mailIntentFiles) {
-      const source = readFileSync(
-        path.join(process.cwd(), 'apps/ios/Lab86Mail/App', file),
-        'utf8',
-      );
+      const source = readFileSync(path.join(process.cwd(), 'apps/ios/Lab86Mail/App', file), 'utf8');
       expect(source.startsWith('#if compiler(>=6.4)\n')).toBe(true);
       expect(source.trimEnd().endsWith('#endif')).toBe(true);
     }
