@@ -277,10 +277,7 @@ export function AssistantChat() {
       try {
         const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
         const data = await res.json();
-        if (
-          generation !== sessionLoadGenerationRef.current ||
-          loadScopeKey !== activeScopeKeyRef.current
-        ) {
+        if (generation !== sessionLoadGenerationRef.current || loadScopeKey !== activeScopeKeyRef.current) {
           return false;
         }
         if (data?.ok && Array.isArray(data.session?.messages)) {
