@@ -372,13 +372,15 @@ export const workList = defineTool({
   input: z.object({
     limit: z.number().int().min(1).max(500).optional().describe('Default: 200'),
   }),
-  output: z.object({ work: z.array(z.any()) }),
+  output: z.object({ work: z.array(z.any()), execution: z.any() }),
   async handler(args, ctx) {
-    const work = await deps.convexQuery<any[]>(workApi().allWork, {
-      userId: requireUserId(ctx.userId),
-      ...(args.limit ? { limit: args.limit } : {}),
-    });
-    return { work };
+    const userId = requireUserId(ctx.userId);
+    const queryArgs = { userId, ...(args.limit ? { limit: args.limit } : {}) };
+    const [work, execution] = await Promise.all([
+      deps.convexQuery<any[]>(workApi().allWork, queryArgs),
+      deps.convexQuery<any>(workApi().executionSnapshot, queryArgs),
+    ]);
+    return { work, execution };
   },
 });
 

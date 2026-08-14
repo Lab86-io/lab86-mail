@@ -3,6 +3,7 @@ import {
   attachResearchRefs,
   escapePlanHtml,
   mergePlanQuestions,
+  outcomeContractForPlan,
   type PlanContextRef,
   parsePlanGeneration,
   resolveSourceRefs,
@@ -110,6 +111,32 @@ describe('parsePlanGeneration', () => {
 
   test('throws when required fields are missing after repair', () => {
     expect(() => parsePlanGeneration(JSON.stringify({ title: 'x' }))).toThrow(/failed validation/);
+  });
+
+  test('normal planning always produces an outcome contract', () => {
+    const plan = parsePlanGeneration(JSON.stringify(validPlan));
+    expect(outcomeContractForPlan(plan)).toMatchObject({
+      outcome: validPlan.outcome,
+      closeWhen: 'outcome_confirmed',
+      proofs: [{ what: 'Something confirms it happened' }],
+    });
+  });
+
+  test('keeps the planner named proof requirements when supplied', () => {
+    const plan = parsePlanGeneration(
+      JSON.stringify({
+        ...validPlan,
+        contract: {
+          proofs: [{ id: 'confirmation', what: 'The passport agency issued a confirmation number' }],
+          closeWhen: 'outcome_confirmed',
+          contradictions: ['The application was rejected'],
+        },
+      }),
+    );
+    expect(outcomeContractForPlan(plan)).toMatchObject({
+      proofs: [{ id: 'confirmation', what: 'The passport agency issued a confirmation number' }],
+      contradictions: ['The application was rejected'],
+    });
   });
 });
 

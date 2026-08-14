@@ -1,27 +1,13 @@
 'use client';
 
-import { ExternalLink, Hand, PanelLeftClose } from 'lucide-react';
-import { useState } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-
-export type GuideMode = 'guide' | 'with_me' | 'handle_it';
-
-export const GUIDE_MODE_LABEL: Record<GuideMode, string> = {
-  guide: 'Guide me',
-  with_me: 'Do it with me',
-  handle_it: 'Handle it',
-};
-
-export const GUIDE_MODE_NOTE: Record<GuideMode, string> = {
-  guide: 'Albatross points at what to do. It fills nothing in and submits nothing.',
-  with_me: 'Albatross fills what it knows. You approve anything that matters.',
-  handle_it: 'Albatross completes low-risk, reversible steps on its own.',
-};
 
 export interface GuidedStep {
   id: string;
   title: string;
+  detail?: string | null;
   url?: string | null;
   knows: string[];
   needsYou: string[];
@@ -44,13 +30,20 @@ export function GuidedStepPane({
   activeId,
   onSelect,
   onExit,
+  onComplete,
+  onDiscuss,
+  completing,
+  error,
 }: {
   steps: GuidedStep[];
   activeId?: string;
   onSelect?: (id: string) => void;
   onExit?: () => void;
+  onComplete?: (id: string) => void;
+  onDiscuss?: () => void;
+  completing?: boolean;
+  error?: string | null;
 }) {
-  const [mode, setMode] = useState<GuideMode>('with_me');
   const active = steps.find((step) => step.id === (activeId || steps[0]?.id)) || steps[0];
   if (!active) return null;
 
@@ -62,7 +55,7 @@ export function GuidedStepPane({
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
           {onExit ? (
             <Button type="button" size="xs" variant="ghost" onClick={onExit}>
-              <PanelLeftClose className="size-3.5" /> Back
+              Back
             </Button>
           ) : null}
           <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Guided work</span>
@@ -112,27 +105,8 @@ export function GuidedStepPane({
         </ol>
 
         <div className="border-t border-[var(--color-border)] p-3">
-          <p className="text-[11.5px] text-[var(--color-text-faint)]">How much should Albatross do?</p>
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {(['guide', 'with_me', 'handle_it'] as GuideMode[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={mode === option}
-                onClick={() => setMode(option)}
-                className={cn(
-                  'rounded-full px-2.5 py-1 text-[11.5px] transition-colors',
-                  mode === option
-                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]',
-                )}
-              >
-                {GUIDE_MODE_LABEL[option]}
-              </button>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-            {GUIDE_MODE_NOTE[mode]}
+          <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
+            Albatross keeps the instructions and progress here. You stay in control of every external site.
           </p>
         </div>
       </aside>
@@ -141,6 +115,11 @@ export function GuidedStepPane({
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-[var(--color-border)] px-4 py-3">
           <h2 className="font-serif text-[16px] font-semibold">{active.title}</h2>
+          {active.detail ? (
+            <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+              {active.detail}
+            </p>
+          ) : null}
           {/* The pane is narrower than the viewport, so the columns follow the
               pane. `sm:` would split at a width this pane never has. */}
           <div className="@container mt-2">
@@ -162,8 +141,7 @@ export function GuidedStepPane({
                   <p className="text-[11.5px] text-[var(--color-text-faint)]">Only you can do</p>
                   <ul className="mt-1 space-y-0.5">
                     {active.needsYou.map((item) => (
-                      <li key={item} className="flex items-start gap-1.5 text-[12px]">
-                        <Hand className="mt-[3px] size-3 shrink-0 text-[var(--color-accent)]" aria-hidden />
+                      <li key={item} className="text-[12px]">
                         {item}
                       </li>
                     ))}
@@ -172,6 +150,21 @@ export function GuidedStepPane({
               ) : null}
             </div>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)]/70 pt-3">
+            {!active.done && onComplete ? (
+              <Button type="button" size="sm" disabled={completing} onClick={() => onComplete(active.id)}>
+                {completing ? 'Saving…' : 'Mark this step done'}
+              </Button>
+            ) : (
+              <span className="text-[12px] text-[var(--color-text-muted)]">This step is complete.</span>
+            )}
+            {onDiscuss ? (
+              <Button type="button" size="sm" variant="outline" onClick={onDiscuss}>
+                Discuss this
+              </Button>
+            ) : null}
+          </div>
+          {error ? <p className="mt-2 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
         </div>
 
         <div className="min-h-0 flex-1 bg-[var(--color-bg-subtle)] p-3">
@@ -194,10 +187,10 @@ export function GuidedStepPane({
                   empty box the user cannot explain. */}
               <div className="grid flex-1 place-items-center px-6 text-center">
                 <div className="max-w-sm">
-                  <p className="text-[13px] font-medium">Albatross opens this in its own browser.</p>
+                  <p className="text-[13px] font-medium">Open the site in another tab.</p>
                   <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                    Most sites refuse to be embedded, so the guided session runs beside this panel rather than
-                    inside it. You can take over at any point.
+                    Most sites refuse to be embedded. Keep this guide beside the page, then return to record
+                    the step when it is done.
                   </p>
                 </div>
               </div>

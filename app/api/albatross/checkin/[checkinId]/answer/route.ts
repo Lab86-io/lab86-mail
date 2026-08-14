@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
-import { checkinCallerArgs } from '@/lib/albatross/checkin';
+import { checkinCallerArgs, tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
+import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -97,6 +98,34 @@ Mark an item completed only when the user's words explicitly say it was done, fi
         ...result,
         status: tomorrow.status,
       };
+      const tomorrowWorkId = await convexMutation<string>((api as any).albatrossIntents.createIntent, {
+        ...caller,
+        externalId: `checkin:${checkinId}:tomorrow`,
+        rawText: tomorrowIntentText,
+        source: 'text',
+        title: tomorrowIntentText.slice(0, 180),
+      });
+      const existing = await convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+        userId: user.userId,
+        workId: tomorrowWorkId,
+      });
+      const planStatus = tomorrowWorkPlanStatus(existing);
+      if (planStatus === 'advance') {
+        const planned = await advanceWork({
+          userId: user.userId,
+          userEmail: user.email,
+          userName: user.name,
+          workId: tomorrowWorkId,
+          timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+        });
+        result = { ...result, tomorrowWorkId, tomorrowPlanStatus: planned.status };
+      } else {
+        result = {
+          ...result,
+          tomorrowWorkId,
+          tomorrowPlanStatus: planStatus,
+        };
+      }
     }
     return Response.json({ ok: true, ...result });
   } catch (error) {

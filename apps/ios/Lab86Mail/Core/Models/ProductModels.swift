@@ -1486,6 +1486,42 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let detail: String?
     }
 
+    struct ExecutionStep: Identifiable, Hashable, Codable, Sendable {
+        let id: String
+        let kind: String
+        let title: String
+        let detail: String?
+        let url: String?
+        let done: Bool
+        let cardID: String?
+
+        init?(json: JSONValue) {
+            guard let id = json["key"]?.stringValue,
+                  let title = json["title"]?.stringValue?.nilIfBlank else { return nil }
+            self.id = id
+            kind = json["kind"]?.stringValue ?? "task"
+            self.title = title
+            detail = json["detail"]?.stringValue?.nilIfBlank
+            url = json["url"]?.stringValue?.nilIfBlank
+            done = json["done"]?.boolValue ?? false
+            cardID = json["cardId"]?.stringValue?.nilIfBlank
+        }
+    }
+
+    struct Execution: Hashable, Codable, Sendable {
+        let currentStep: ExecutionStep?
+        let guideSteps: [ExecutionStep]
+        let remainingSteps: Int
+        let totalSteps: Int
+
+        init(json: JSONValue?) {
+            currentStep = json?["currentStep"].flatMap(ExecutionStep.init)
+            guideSteps = (json?["guideSteps"]?.arrayValue ?? []).compactMap(ExecutionStep.init)
+            remainingSteps = max(0, Int(json?["remainingSteps"]?.doubleValue ?? 0))
+            totalSteps = max(0, Int(json?["totalSteps"]?.doubleValue ?? 0))
+        }
+    }
+
     struct Plan: Identifiable, Hashable, Codable, Sendable {
         let id: String
         let status: String
@@ -1601,6 +1637,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let project: Project?
     let questions: [Question]
     let application: Application?
+    let execution: Execution
     let contract: Contract?
     let evidence: [Evidence]
 
@@ -1669,6 +1706,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             planError: workJSON?["planError"]?.stringValue?.nilIfBlank,
             updatedAt: CalendarDateParser.date(workJSON?["updatedAt"])
         )
+        execution = Execution(json: json["execution"])
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {
@@ -1681,7 +1719,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             }
             let digital = (planJSON["digitalActions"]?.arrayValue ?? []).compactMap { row -> Action? in
                 guard let title = row["title"]?.stringValue?.nilIfBlank else { return nil }
-                let key = row["actionKey"]?.stringValue ?? row["key"]?.stringValue ?? title
+                let key = row["key"]?.stringValue ?? row["actionKey"]?.stringValue ?? title
                 return Action(id: key, kind: row["kind"]?.stringValue ?? "action", title: title, detail: nil)
             }
             let physical = (planJSON["physicalActions"]?.arrayValue ?? []).compactMap { row -> Action? in
@@ -1929,4 +1967,3 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
         tomorrowIntentText = json["tomorrowIntentText"]?.stringValue?.nilIfBlank
     }
 }
-

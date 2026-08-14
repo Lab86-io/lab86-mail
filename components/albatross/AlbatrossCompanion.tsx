@@ -22,10 +22,23 @@ interface PendingQuestionRow {
   routine: null | { _id: string; title: string; areaId?: string };
 }
 
+interface CompanionWorkRow {
+  _id: string;
+  title?: string | null;
+  rawText: string;
+  status: string;
+  agentState?: string | null;
+  nextStep?: string | null;
+  updatedAt: number;
+}
+
 export function AlbatrossCompanion() {
   const { isAuthenticated } = useConvexAuth();
   const rows = useQuery(api.albatrossWorkV2.livePendingQuestions, isAuthenticated ? { limit: 10 } : 'skip') as
     | PendingQuestionRow[]
+    | undefined;
+  const work = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? { limit: 20 } : 'skip') as
+    | CompanionWorkRow[]
     | undefined;
   const setPrimaryView = useClientStore((state) => state.setPrimaryView);
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
@@ -37,6 +50,14 @@ export function AlbatrossCompanion() {
   const [error, setError] = useState<string | null>(null);
   const pipWindow = useSyncExternalStore(subscribePipWindow, getPipWindow, () => null);
   const row = rows?.[0] || null;
+  const companionWork =
+    work?.find((item) => ['researching', 'applying'].includes(item.agentState || '')) ||
+    work?.find(
+      (item) =>
+        ['captured', 'planning', 'ready', 'applied'].includes(item.status) &&
+        Date.now() - item.updatedAt < 5 * 60_000,
+    ) ||
+    null;
   const questionId = row?.question._id;
 
   useEffect(() => {
@@ -47,14 +68,51 @@ export function AlbatrossCompanion() {
     setBusy(false);
   }, [questionId]);
 
-  if (!row) return null;
+  if (!row && !companionWork) return null;
+
+  const openContext = (workId?: string | null, areaId?: string | null) => {
+    setSelectedWorkId(workId || null);
+    setSelectedAreaId(areaId || null);
+    setPrimaryView('albatrosses');
+    closePipWindow();
+  };
+
+  if (!row && companionWork) {
+    if (!pipWindow) return null;
+    const planning = ['researching', 'applying'].includes(companionWork.agentState || '');
+    return createPortal(
+      <div className="flex min-h-screen flex-col justify-between bg-[var(--color-bg-elevated)] p-4 font-sans text-[var(--color-text)]">
+        <div>
+          <p className="text-[11px] text-[var(--color-text-faint)]">
+            {planning ? 'Albatross is building the way through' : 'The next move is ready'}
+          </p>
+          <p className="mt-1 text-[13px] font-medium leading-snug">
+            {companionWork.nextStep || companionWork.title || companionWork.rawText}
+          </p>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <Button size="sm" onClick={() => openContext(companionWork._id)}>
+            {planning ? 'Watch in Albatross' : 'Open guided work'}
+          </Button>
+          <button
+            type="button"
+            className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+            onClick={closePipWindow}
+          >
+            Close
+          </button>
+        </div>
+      </div>,
+      pipWindow.document.body,
+    );
+  }
 
   const _openContext = () => {
-    setSelectedWorkId(row.work ? String(row.work._id) : null);
-    const areaId = row.routine?.areaId || row.project?.areaId;
-    setSelectedAreaId(areaId ? String(areaId) : null);
-    setPrimaryView('albatrosses');
+    const areaId = row!.routine?.areaId || row!.project?.areaId;
+    openContext(row!.work ? String(row!.work._id) : null, areaId ? String(areaId) : null);
   };
+
+  if (!row) return null;
 
   const submit = async () => {
     const option = row.question.options?.find((item) => item.id === selected);

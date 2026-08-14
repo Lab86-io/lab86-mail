@@ -1054,6 +1054,9 @@ export default defineSchema({
     // Auto-retry counter for the plan-reconcile cron: generations killed by a
     // deploy/restart leave the intent stuck in 'planning' with no planError.
     planAttempts: v.optional(v.number()),
+    // Scheduling conductor lease. An unscheduled plan is retried at most once
+    // per window, while passed blocks wait for an explicit recovery choice.
+    lastConductorAt: v.optional(v.number()),
     latestPlanId: v.optional(v.id('albatrossIntentPlans')),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -1066,6 +1069,7 @@ export default defineSchema({
     .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
+    .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_capture', ['captureId']),
 
@@ -1105,6 +1109,7 @@ export default defineSchema({
     reasonSource: v.union(v.literal('user'), v.literal('inferred')),
     recovery: v.optional(
       v.union(
+        v.literal('done'),
         v.literal('move'),
         v.literal('shrink'),
         v.literal('wait'),
@@ -1194,6 +1199,18 @@ export default defineSchema({
           cardId: v.optional(v.string()),
           eventId: v.optional(v.string()),
           draftId: v.optional(v.string()),
+        }),
+      ),
+    ),
+    // A plan artifact being created is not the same as its step being done.
+    // These user/evidence completions advance the authoritative current move;
+    // card-backed steps are also read live so completing a board card works.
+    completedSteps: v.optional(
+      v.array(
+        v.object({
+          stepKey: v.string(),
+          completedAt: v.number(),
+          source: v.union(v.literal('user'), v.literal('task'), v.literal('evidence')),
         }),
       ),
     ),

@@ -11,7 +11,6 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { isClosed } from '@/lib/albatross/work-state';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
-import { SuggestionsTray } from './SuggestionsTray';
 
 interface NotificationRow {
   _id: string;
@@ -30,6 +29,13 @@ interface CenterData {
   notifications: NotificationRow[];
 }
 
+interface CurrentMove {
+  workId: string;
+  workTitle: string;
+  stepTitle: string;
+  phase: 'active' | 'upcoming' | 'unscheduled';
+}
+
 export function NotificationCenter({ className }: { className?: string } = {}) {
   const { isAuthenticated } = useConvexAuth();
   const center = useQuery(api.albatrossNotifications.liveCenter, isAuthenticated ? { limit: 50 } : 'skip') as
@@ -38,6 +44,9 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
   const checkin = useQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
     | DailyCheckinData
     | null
+    | undefined;
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? {} : 'skip') as
+    | { currentMove: CurrentMove | null }
     | undefined;
   const questions = useQuery(
     api.albatrossWorkV2.livePendingQuestions,
@@ -81,7 +90,12 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
     setOpen(false);
   };
 
-  const rows = center?.notifications || [];
+  // Mail already has a first-class home. Keeping routine and urgent messages
+  // out of this panel lets the bell represent execution: the current move,
+  // questions, approvals, check-ins, and actual Work updates.
+  const rows = (center?.notifications || []).filter(
+    (row) => row.type !== 'mail_message' && row.type !== 'urgent_mail',
+  );
   // Live questions first: an Albatross the user put down must not outrank one
   // that is actually waiting on them.
   const orderedQuestions = [...(questions || [])].sort((a, b) => {
@@ -94,7 +108,8 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
   const liveQuestionCount = orderedQuestions.filter(
     (row) => !(row.work && isClosed({ workState: row.work.workState, status: row.work.status })),
   ).length;
-  const attentionCount = (center?.unread || 0) + liveQuestionCount + (approvals?.length || 0);
+  const unreadCount = rows.filter((row) => row.status === 'queued' || row.status === 'delivered').length;
+  const attentionCount = unreadCount + liveQuestionCount + (approvals?.length || 0);
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -139,6 +154,25 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
             ) : null}
           </div>
           <div className="max-h-[55vh] overflow-y-auto">
+            {execution?.currentMove ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedWorkId(execution.currentMove!.workId);
+                  setPrimaryView('albatrosses');
+                  setOpen(false);
+                }}
+                className="w-full border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 px-3.5 py-3 text-left hover:bg-[var(--color-accent-soft)]/65"
+              >
+                <span className="block text-[10.5px] text-[var(--color-text-faint)]">Do this next</span>
+                <span className="mt-0.5 block text-[12.5px] font-medium">
+                  {execution.currentMove.stepTitle}
+                </span>
+                <span className="mt-0.5 block text-[11.5px] text-[var(--color-text-muted)]">
+                  {execution.currentMove.workTitle}
+                </span>
+              </button>
+            ) : null}
             {orderedQuestions.map((row) => (
               <button
                 key={row.question._id}
@@ -262,9 +296,6 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
                 Nothing needs your attention.
               </p>
             ) : null}
-          </div>
-          <div className="border-t border-[var(--color-border)] p-2">
-            <SuggestionsTray />
           </div>
         </PopoverContent>
       </Popover>

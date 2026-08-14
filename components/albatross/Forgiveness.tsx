@@ -38,7 +38,6 @@ export function LapsePrompt({
   plannedAt?: number;
   onDone?: () => void;
 }) {
-  const recordLapse = useMutation(api.albatrossWorkV2.recordLapse);
   const [reason, setReason] = useState<LapseReason | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Recovery | null>(null);
@@ -49,15 +48,20 @@ export function LapsePrompt({
     setBusy(true);
     setError(null);
     try {
-      await recordLapse({
-        workId: workId as Id<'albatrossIntents'>,
-        stepTitle: stepTitle || undefined,
-        plannedAt,
-        reasonKind: reason || 'other',
-        reasonSource: 'user',
-        recovery,
-        revisedStep: recovery === 'shrink' ? shrinkSuggestion(stepTitle) : undefined,
+      const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/recover`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          recovery,
+          stepKey: undefined,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          stepTitle: stepTitle || undefined,
+          plannedAt,
+          reasonKind: reason || 'other',
+        }),
       });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Could not save that.');
       setDone(recovery);
       onDone?.();
     } catch (cause) {

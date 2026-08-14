@@ -28,6 +28,10 @@ crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick
 // stale 'planning' intents through the app, then fails them gracefully.
 crons.interval('plan reconcile', { minutes: 5 }, internal.albatrossIntents.planReconcileTick, {});
 
+// Keep concrete Work scheduled. Existing or passed blocks are authoritative;
+// only never-scheduled plans enter this loop, with a six-hour retry lease.
+crons.interval('Work scheduling conductor', { minutes: 15 }, internal.albatrossIntents.conductorTick, {});
+
 // Local-time Albatross check-ins and their multi-channel delivery outbox.
 // Each target is deduped by user + local date, so a 15-minute cadence remains
 // safe across deploys, retries, and daylight-saving transitions.

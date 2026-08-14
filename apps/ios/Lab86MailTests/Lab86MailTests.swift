@@ -859,10 +859,11 @@ struct Lab86MailTests {
 
     @Test @MainActor
     func typedRoutesRespectTheVisibleHierarchyAndPreserveAreaContext() {
-        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .files, .work])
-        #expect(!PrimaryTab.sourceList.contains(.mail))
-        #expect(PrimaryTab.today.title == "Brief")
-        #expect(PrimaryTab.work.title == "Areas")
+        #expect(PrimaryTab.sourceList == [.today, .mail, .work, .calendar, .files])
+        #expect(PrimaryTab.sourceList.contains(.mail))
+        #expect(!PrimaryTab.sourceList.contains(.tasks))
+        #expect(PrimaryTab.today.title == "Today")
+        #expect(PrimaryTab.work.title == "Albatrosses")
         #expect(PrimaryTab.files.title == "Files")
 
         let navigation = NavigationModel()
@@ -914,7 +915,8 @@ struct Lab86MailTests {
             {"work":{"_id":"w1","title":"Prepare launch review","rawText":"Get launch ready","status":"ready","workState":"active","agentState":"idle","updatedAt":1752600000000},
              "plan":{"_id":"p1","status":"ready","outcome":"A review ready to send","summary":"Evidence assembled.","artifactHtml":"<main><h1>Review</h1></main>","artifactTitle":"Launch brief","assumptions":["Dates are current"],"sourceRefs":[{"kind":"mailThread","id":"t1","label":"Launch thread"}],"digitalActions":[{"key":"draft","kind":"mail_draft","title":"Draft response"}],"physicalActions":[],"appliedSteps":[{"stepKey":"draft","kind":"mail_draft"}]},
              "project":{"_id":"project-1","title":"Launch","status":"active"},
-             "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]}}
+             "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]},
+             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1}}
             """#.utf8)
         )
         let detail = try #require(WorkDetail(json: value))
@@ -926,6 +928,9 @@ struct Lab86MailTests {
         #expect(detail.plan?.appliedStepKeys.contains("draft") == true)
         #expect(detail.project?.title == "Launch")
         #expect(detail.application?.operationIDs == ["operation-1"])
+        #expect(detail.execution.currentStep?.id == "draft")
+        #expect(detail.execution.currentStep?.url == "https://example.test/review")
+        #expect(detail.execution.remainingSteps == 1)
     }
 
     @Test @MainActor
@@ -1180,8 +1185,25 @@ struct Lab86MailTests {
                 .object(["_id": .string("area-2"), "name": .string("Home"), "kind": .string("area")]),
             ]),
         ])
+        let work = JSONValue.object([
+            "work": .array([
+                .object([
+                    "_id": .string("work-1"), "title": .string("Renew passport"),
+                    "rawText": .string("Renew passport"), "status": .string("applied"),
+                    "openQuestions": .number(0),
+                ]),
+            ]),
+            "execution": .object([
+                "currentMove": .object([
+                    "workId": .string("work-1"), "workTitle": .string("Renew passport"),
+                    "stepTitle": .string("Book the appointment"), "phase": .string("unscheduled"),
+                    "remainingSteps": .number(2), "totalSteps": .number(3),
+                ]),
+                "missedMoves": .array([]), "needsYou": .array([]),
+            ]),
+        ])
         let store = ProductStore(
-            tools: ScriptedTools(responses: ["area_list": areas]),
+            tools: ScriptedTools(responses: ["area_list": areas, "work_list": work]),
             backend: BackendClient(baseURL: nil)
         )
         store.workError = "stale failure"
@@ -1191,6 +1213,8 @@ struct Lab86MailTests {
         #expect(store.areas.map(\.id) == ["area-1", "area-2"])
         #expect(store.workDidLoad)
         #expect(store.workError == nil)
+        #expect(store.allWork.map(\.id) == ["work-1"])
+        #expect(store.workExecution.currentMove?.stepTitle == "Book the appointment")
         #expect(!store.isLoadingWork)
         #expect(store.errorMessage == nil)
     }

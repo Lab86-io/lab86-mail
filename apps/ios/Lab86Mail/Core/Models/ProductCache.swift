@@ -18,6 +18,9 @@ struct ProductSnapshot: Codable, Sendable {
     var areaDetails: [String: AreaDetail]? = nil
     // Optional preserves snapshots created before Work plan briefs were cached.
     var workDetails: [String: WorkDetail]? = nil
+    // Optional keeps snapshots from before the authoritative Today projection readable.
+    var allWork: [WorkListItem]? = nil
+    var workExecution: WorkExecutionSnapshot? = nil
     var savedAt: Date
 }
 

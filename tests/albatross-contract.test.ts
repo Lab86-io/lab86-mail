@@ -214,7 +214,7 @@ describe('the surfaces carry it', () => {
   test('guided work names what only the user can do', () => {
     const guided = readFileSync('components/albatross/GuidedStep.tsx', 'utf8');
     expect(guided).toContain('Only you can do');
-    expect(guided).toContain('Guide me');
-    expect(guided).toContain('Handle it');
+    expect(guided).toContain('Mark this step done');
+    expect(guided).toContain('You stay in control of every external site');
   });
 });

@@ -9,6 +9,7 @@ export interface DailyCheckinData {
   _id: string;
   localDate: string;
   status: string;
+  tomorrowIntentText?: string | null;
   candidateItems: Array<{
     kind: 'work' | 'project' | 'task' | 'event' | 'artifact';
     id: string;
@@ -27,6 +28,7 @@ export function DailyCheckin({
   onOpenChange: (open: boolean) => void;
 }) {
   const [text, setText] = useState('');
+  const [tomorrowText, setTomorrowText] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function DailyCheckin({
   };
 
   const submit = async () => {
-    if (!checkin || busy || (!text.trim() && !selected.size)) return;
+    if (!checkin || busy || (!text.trim() && !tomorrowText.trim() && !selected.size)) return;
     setBusy(true);
     setError(null);
     try {
@@ -51,11 +53,17 @@ export function DailyCheckin({
       const response = await fetch(`/api/albatross/checkin/${encodeURIComponent(checkin._id)}/answer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ responseText: text.trim(), completed }),
+        body: JSON.stringify({
+          responseText: text.trim(),
+          tomorrowIntentText: tomorrowText.trim(),
+          completed,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Could not save the check-in.');
       setText('');
+      setTomorrowText('');
       setSelected(new Set());
       onOpenChange(false);
     } catch (cause) {
@@ -84,6 +92,22 @@ export function DailyCheckin({
               placeholder="I shipped…, made progress on…, and didn’t get to…"
               className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
             />
+            <div>
+              <label htmlFor="tomorrow-intent" className="text-[12.5px] font-medium">
+                What should tomorrow protect?
+              </label>
+              <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                Albatross will turn this into Work and put its first move on the calendar.
+              </p>
+              <textarea
+                id="tomorrow-intent"
+                value={tomorrowText}
+                onChange={(event) => setTomorrowText(event.target.value)}
+                rows={3}
+                placeholder="Submit the passport renewal before lunch…"
+                className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+              />
+            </div>
             {checkin.candidateItems.length ? (
               <div>
                 <p className="mb-2 text-[11px] font-medium text-[var(--color-text-faint)]">
@@ -126,7 +150,10 @@ export function DailyCheckin({
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Later
               </Button>
-              <Button disabled={busy || (!text.trim() && !selected.size)} onClick={() => void submit()}>
+              <Button
+                disabled={busy || (!text.trim() && !tomorrowText.trim() && !selected.size)}
+                onClick={() => void submit()}
+              >
                 {busy ? 'Saving…' : 'Save check-in'}
               </Button>
             </div>

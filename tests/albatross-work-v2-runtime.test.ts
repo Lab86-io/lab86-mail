@@ -125,4 +125,77 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(detail.evidence).toHaveLength(3);
     expect(detail.evidence.find((evidence) => evidence._id === first)?.title).toBe('Updated receipt');
   });
+
+  test('confirmed mail proof satisfies the named contract and closes Work once', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    await t.run((ctx) =>
+      ctx.db.patch(workId, {
+        contract: {
+          outcome: 'The passport application is accepted.',
+          proofs: [{ id: 'confirmation', what: 'The passport application confirmation arrived' }],
+          closeWhen: 'outcome_confirmed',
+          updatedAt: Date.now(),
+        },
+      }),
+    );
+
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...caller,
+      workId,
+      claim: 'The passport application confirmation arrived.',
+      title: 'Passport application confirmation',
+      sourceKind: 'mail_thread',
+      sourceId: 'passport-confirmation-thread',
+      accountId: 'personal-mail',
+      trust: 'confirmed',
+      proofId: 'confirmation',
+    });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.work).toMatchObject({ workState: 'done', status: 'done' });
+    expect(detail.contract?.proofs[0]).toMatchObject({
+      id: 'confirmation',
+      satisfiedBy: 'Passport application confirmation',
+    });
+    expect(detail.contract?.proofs[0]?.satisfiedAt).toBeNumber();
+    const completions = await t.run((ctx) =>
+      ctx.db
+        .query('completionEvents')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+    );
+    expect(completions.filter((row) => row.artifactId === String(workId))).toHaveLength(1);
+  });
+
+  test('finishing a plan step records progress without impersonating outcome proof', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    await t.run((ctx) =>
+      ctx.db.patch(workId, {
+        contract: {
+          outcome: 'The passport application is accepted.',
+          proofs: [{ id: 'confirmation', what: 'The passport application confirmation arrived' }],
+          closeWhen: 'outcome_confirmed',
+          updatedAt: Date.now(),
+        },
+      }),
+    );
+
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...caller,
+      workId,
+      claim: 'Every planned form-filling step is complete.',
+      title: 'Completed the application steps',
+      sourceKind: 'task',
+      sourceId: 'application-task',
+      trust: 'confirmed',
+      settleContract: false,
+    });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.work.workState).not.toBe('done');
+    expect(detail.contract?.proofs[0]?.satisfiedAt).toBeUndefined();
+    expect(detail.evidence).toHaveLength(1);
+  });
 });

@@ -3,7 +3,10 @@ import {
   areaArtifactHtmlForWrite,
   assertAreaArtifactDocumentSize,
 } from '../lib/albatross/area-artifact-storage';
+import { mayCloseAutomatically } from '../lib/albatross/contract';
+import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
+import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -146,7 +149,14 @@ export const updateWorkState = mutation({
   args: {
     ...callerArgs,
     workId: v.id('albatrossIntents'),
-    state: v.union(v.literal('active'), v.literal('paused'), v.literal('done'), v.literal('archived')),
+    state: v.union(
+      v.literal('active'),
+      v.literal('paused'),
+      v.literal('waiting'),
+      v.literal('blocked'),
+      v.literal('done'),
+      v.literal('archived'),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -263,6 +273,7 @@ export const recordLapse = mutation({
     reasonSource: v.optional(v.union(v.literal('user'), v.literal('inferred'))),
     recovery: v.optional(
       v.union(
+        v.literal('done'),
         v.literal('move'),
         v.literal('shrink'),
         v.literal('wait'),
@@ -321,6 +332,57 @@ export const resolveLapse = mutation({
     if (!lapse || lapse.userId !== userId) throw new Error('Lapse not found.');
     const ts = now();
     await ctx.db.patch(args.lapseId, { revisionHeld: args.held, resolvedAt: ts, updatedAt: ts });
+  },
+});
+
+/** Mark the plan step itself complete; creating its artifact never counts as finishing it. */
+export const completeStep = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    stepKey: v.string(),
+    source: v.optional(v.union(v.literal('user'), v.literal('task'), v.literal('evidence'))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    if (!work.latestPlanId) throw new Error('This Albatross does not have a plan yet.');
+    const plan = await ctx.db.get(work.latestPlanId);
+    if (!plan || plan.userId !== userId) throw new Error('Plan not found.');
+    const digitalKeys = ((plan.digitalActions || []) as PlanStepAction[])
+      .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
+      .map((action, index) => action.key || `step-${index + 1}`);
+    const physicalKeys = (plan.physicalActions || []).map((_, index) => `physical-${index + 1}`);
+    const stepKeys = [...digitalKeys, ...physicalKeys];
+    if (!stepKeys.includes(args.stepKey)) throw new Error('Plan step not found.');
+    const ts = now();
+    const completedSteps = plan.completedSteps || [];
+    if (!completedSteps.some((step) => step.stepKey === args.stepKey)) {
+      await ctx.db.patch(plan._id, {
+        completedSteps: [
+          ...completedSteps,
+          { stepKey: args.stepKey.slice(0, 80), completedAt: ts, source: args.source ?? 'user' },
+        ].slice(-60),
+        updatedAt: ts,
+      });
+    }
+    const completedKeys = new Set([...completedSteps.map((step) => step.stepKey), args.stepKey]);
+    const cardSteps = plan.appliedSteps?.filter((step) => step.cardId) || [];
+    const cards = await Promise.all(
+      cardSteps.map(async (step) => {
+        const cardId = ctx.db.normalizeId('cards', step.cardId!);
+        return { stepKey: step.stepKey, card: cardId ? await ctx.db.get(cardId) : null };
+      }),
+    );
+    cards.forEach(({ stepKey, card }) => {
+      if (card?.completedAt) completedKeys.add(stepKey);
+    });
+    const applied = plan.appliedSteps?.find((step) => step.stepKey === args.stepKey);
+    return {
+      stepKey: args.stepKey,
+      cardId: applied?.cardId || null,
+      allStepsComplete: stepKeys.length > 0 && stepKeys.every((key) => completedKeys.has(key)),
+    };
   },
 });
 
@@ -409,6 +471,7 @@ export const attachProof = mutation({
     occurredAt: v.optional(v.number()),
     trust: v.union(v.literal('observed'), v.literal('inferred'), v.literal('confirmed')),
     proofId: v.optional(v.string()),
+    settleContract: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -454,23 +517,53 @@ export const attachProof = mutation({
       evidenceId = await ctx.db.insert('albatrossEvidence', { ...row, createdAt: ts });
     }
 
-    // Tick off the contract condition this proof settles.
-    if (args.proofId && work.contract) {
+    // Tick off the named condition this proof settles. Plan-step completion is
+    // useful evidence, but it must not stand in for an external receipt or
+    // reply merely because one contract condition remains.
+    const proofId =
+      work.contract && args.settleContract !== false
+        ? args.proofId ||
+          matchingProofId(
+            work.contract.proofs,
+            [args.claim, args.title, args.summary].filter(Boolean).join(' '),
+          )
+        : null;
+    let updatedContract = work.contract;
+    if (proofId && work.contract) {
+      updatedContract = {
+        ...work.contract,
+        proofs: work.contract.proofs.map((proof) =>
+          proof.id === proofId ? { ...proof, satisfiedBy: bounded(args.title, 300), satisfiedAt: ts } : proof,
+        ),
+        updatedAt: ts,
+      };
       await ctx.db.patch(args.workId, {
-        contract: {
-          ...work.contract,
-          proofs: work.contract.proofs.map((proof) =>
-            proof.id === args.proofId
-              ? { ...proof, satisfiedBy: bounded(args.title, 300), satisfiedAt: ts }
-              : proof,
-          ),
-          updatedAt: ts,
-        },
+        contract: updatedContract,
         lastEvidenceAt: ts,
         updatedAt: ts,
       });
     } else {
       await ctx.db.patch(args.workId, { lastEvidenceAt: ts, updatedAt: ts });
+    }
+    const evidence = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_target', (q) =>
+        q.eq('userId', userId).eq('targetKind', 'work').eq('targetId', String(args.workId)),
+      )
+      .order('desc')
+      .take(100);
+    if (
+      work.workState !== 'done' &&
+      mayCloseAutomatically(updatedContract, evidence) &&
+      !evidence.some((item) => item.trust === 'rejected')
+    ) {
+      await ctx.db.patch(args.workId, {
+        workState: 'done',
+        status: 'done',
+        agentState: 'idle',
+        updatedAt: ts,
+      });
+      await recordWorkCompletion(ctx, work, ts);
     }
     return evidenceId;
   },
@@ -977,6 +1070,165 @@ export const areaWork = query({
   },
 });
 
+type PlanStepAction = {
+  key?: string;
+  kind?: string;
+  title?: string;
+  description?: string;
+  detail?: string;
+  url?: string;
+  startIso?: string;
+  endIso?: string;
+  sourceRefs?: Array<{ url?: string }>;
+};
+
+type ProjectedPlanStep = {
+  key: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  done: boolean;
+  cardId: string | null;
+};
+
+function projectedPlanSteps(
+  plan: Doc<'albatrossIntentPlans'> | null | undefined,
+  completedCardIds: Set<string>,
+): ProjectedPlanStep[] {
+  if (!plan) return [];
+  const appliedByKey = new Map((plan.appliedSteps || []).map((step) => [step.stepKey, step] as const));
+  const completedKeys = new Set(
+    (
+      (
+        plan as Doc<'albatrossIntentPlans'> & {
+          completedSteps?: Array<{ stepKey: string; completedAt: number }>;
+        }
+      ).completedSteps || []
+    ).map((step) => step.stepKey),
+  );
+  const digital = ((plan.digitalActions || []) as PlanStepAction[])
+    .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
+    .map((action, index) => {
+      const key = action.key || `step-${index + 1}`;
+      const applied = appliedByKey.get(key);
+      return {
+        key,
+        kind: action.kind || 'task',
+        title: action.title!.trim(),
+        detail: bounded(action.description || action.detail, 1_200) || null,
+        url: bounded(action.url || action.sourceRefs?.find((ref) => ref.url)?.url, 2_000) || null,
+        done: completedKeys.has(key) || Boolean(applied?.cardId && completedCardIds.has(applied.cardId)),
+        cardId: applied?.cardId || null,
+      };
+    });
+  const physical = ((plan.physicalActions || []) as PlanStepAction[])
+    .filter((action) => action.title?.trim())
+    .map((action, index) => {
+      const key = `physical-${index + 1}`;
+      return {
+        key,
+        kind: 'physical',
+        title: action.title!.trim(),
+        detail: bounded(action.detail, 1_200) || null,
+        url: bounded(action.url, 2_000) || null,
+        done: completedKeys.has(key),
+        cardId: null,
+      };
+    });
+  return [...digital, ...physical];
+}
+
+async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
+  const rows = await ctx.db
+    .query('albatrossIntents')
+    .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+    .order('desc')
+    .take(limit);
+  const [areas, pendingQuestions, plans] = await Promise.all([
+    ctx.db
+      .query('areas')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('albatrossWorkQuestions')
+      .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
+      .take(200),
+    Promise.all(rows.map((row) => (row.latestPlanId ? ctx.db.get(row.latestPlanId) : null))),
+  ]);
+  const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
+  const planByWork = new Map(
+    plans
+      .filter((plan): plan is NonNullable<typeof plan> => plan !== null && plan.userId === userId)
+      .map((plan) => [String(plan.intentId), plan] as const),
+  );
+  const cardIds = [
+    ...new Set(
+      plans.flatMap((plan) =>
+        plan?.userId === userId
+          ? (plan.appliedSteps || []).flatMap((step) => (step.cardId ? [step.cardId] : []))
+          : [],
+      ),
+    ),
+  ].slice(0, 1_500);
+  const cards = await Promise.all(
+    cardIds.map(async (rawId) => {
+      const cardId = ctx.db.normalizeId('cards', rawId);
+      return cardId ? ctx.db.get(cardId) : null;
+    }),
+  );
+  const completedCardIds = new Set(
+    cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
+  );
+  const questionCounts = new Map<string, number>();
+  for (const question of pendingQuestions) {
+    if (!question.workId) continue;
+    const key = String(question.workId);
+    questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
+  }
+
+  return rows.map((row) => {
+    const plan = planByWork.get(String(row._id));
+    const digitalActions = (plan?.digitalActions || []) as PlanStepAction[];
+    const steps = projectedPlanSteps(plan, completedCardIds);
+    const nextStep = steps.find((step) => !step.done);
+    const scheduledAction =
+      plan?.status === 'applied'
+        ? digitalActions.find(
+            (action) => action.kind === 'calendar_event' && action.startIso && action.endIso,
+          )
+        : undefined;
+    const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
+    const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
+    return {
+      _id: String(row._id),
+      title: row.title || null,
+      rawText: row.rawText,
+      status: row.status,
+      workState: row.workState || null,
+      agentState: row.agentState || null,
+      planError: row.planError || null,
+      priority: row.priority || null,
+      primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
+      areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
+      openQuestions:
+        questionCounts.get(String(row._id)) ??
+        (row.questions || []).filter((question) => !question.answeredAt).length,
+      updatedAt: row.updatedAt,
+      createdAt: row.createdAt,
+      nextStep: nextStep?.title || null,
+      nextStepKey: nextStep?.key || null,
+      nextStepDetail: nextStep?.detail || null,
+      nextStepUrl: nextStep?.url || null,
+      remainingSteps: steps.filter((step) => !step.done).length,
+      totalSteps: steps.length,
+      guideSteps: steps,
+      scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
+      scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
+    };
+  });
+}
+
 // Every Albatross the user carries, newest movement first. The Albatrosses
 // surface groups these by state; the query stays flat so the grouping rule
 // lives in one place on the client and can change without a schema push.
@@ -988,78 +1240,18 @@ export const allWork = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
-    const rows = await ctx.db
-      .query('albatrossIntents')
-      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
-      .order('desc')
-      .take(limit);
-    const [areas, pendingQuestions, plans] = await Promise.all([
-      ctx.db
-        .query('areas')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
-      ctx.db
-        .query('albatrossWorkQuestions')
-        .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
-        .take(200),
-      Promise.all(rows.map((row) => (row.latestPlanId ? ctx.db.get(row.latestPlanId) : null))),
-    ]);
-    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
-    const planByWork = new Map(
-      plans
-        .filter((plan): plan is NonNullable<typeof plan> => plan !== null && plan.userId === userId)
-        .map((plan) => [String(plan.intentId), plan] as const),
-    );
-    // The question table is the live one. The inline `questions` array on the
-    // row is the older shape; count both so no waiting question is invisible.
-    const questionCounts = new Map<string, number>();
-    for (const question of pendingQuestions) {
-      if (!question.workId) continue;
-      const key = String(question.workId);
-      questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
-    }
-    return rows.map((row) => {
-      const plan = planByWork.get(String(row._id));
-      const digitalActions = (plan?.digitalActions || []) as Array<{
-        kind?: string;
-        title?: string;
-        startIso?: string;
-        endIso?: string;
-      }>;
-      const nextAction =
-        digitalActions.find((action) => action.kind !== 'calendar_event' && action.title) ||
-        digitalActions.find((action) => action.title) ||
-        plan?.physicalActions?.find((action) => action.title);
-      const scheduledAction =
-        plan?.status === 'applied'
-          ? digitalActions.find(
-              (action) => action.kind === 'calendar_event' && action.startIso && action.endIso,
-            )
-          : undefined;
-      const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
-      const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
-      return {
-        _id: row._id,
-        title: row.title || null,
-        rawText: row.rawText,
-        status: row.status,
-        workState: row.workState || null,
-        agentState: row.agentState || null,
-        primaryAreaId: row.primaryAreaId ? String(row.primaryAreaId) : null,
-        areaName: row.primaryAreaId ? areaNames.get(String(row.primaryAreaId)) || null : null,
-        // The same question lives in both shapes during the migration, so adding
-        // the two counts reports every question twice. The table is the live one;
-        // the inline array only answers for rows the table never received.
-        openQuestions:
-          questionCounts.get(String(row._id)) ??
-          (row.questions || []).filter((question) => !question.answeredAt).length,
-        updatedAt: row.updatedAt,
-        createdAt: row.createdAt,
-        nextStep: nextAction?.title || null,
-        scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
-        scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
-      };
-    });
+    return projectedWorkRows(ctx, userId, limit);
+  },
+});
+
+/** The one server-owned answer to "what now?", plus separate recovery and attention lanes. */
+export const executionSnapshot = query({
+  args: { ...callerArgs, limit: v.optional(v.number()), nowMs: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 500);
+    const rows = await projectedWorkRows(ctx, userId, limit);
+    return selectExecutionSnapshot(rows satisfies ExecutionWorkRow[], args.nowMs ?? now());
   },
 });
 
@@ -1071,7 +1263,7 @@ export const workDetail = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
-    const [plan, project, questions, areaLinks, applications, evidence] = await Promise.all([
+    const [plan, project, questions, areaLinks, applications, evidence, lapses] = await Promise.all([
       work.latestPlanId ? ctx.db.get(work.latestPlanId) : null,
       work.primaryProjectId ? ctx.db.get(work.primaryProjectId) : null,
       ctx.db
@@ -1097,7 +1289,23 @@ export const workDetail = query({
         )
         .order('desc')
         .take(40),
+      ctx.db
+        .query('albatrossLapses')
+        .withIndex('by_work', (q) => q.eq('workId', args.workId))
+        .order('desc')
+        .take(20),
     ]);
+    const cardIds = (plan?.appliedSteps || []).flatMap((step) => (step.cardId ? [step.cardId] : []));
+    const cards = await Promise.all(
+      cardIds.map(async (rawId) => {
+        const cardId = ctx.db.normalizeId('cards', rawId);
+        return cardId ? ctx.db.get(cardId) : null;
+      }),
+    );
+    const completedCardIds = new Set(
+      cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
+    );
+    const guideSteps = projectedPlanSteps(plan, completedCardIds);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
     return {
       work,
@@ -1106,6 +1314,13 @@ export const workDetail = query({
       questions,
       areaLinks,
       application,
+      execution: {
+        currentStep: guideSteps.find((step) => !step.done) || null,
+        guideSteps,
+        remainingSteps: guideSteps.filter((step) => !step.done).length,
+        totalSteps: guideSteps.length,
+      },
+      lapses,
       contract: work.contract ?? null,
       evidence: evidence.map((row) => ({
         _id: String(row._id),
