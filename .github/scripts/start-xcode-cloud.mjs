@@ -282,6 +282,31 @@ export function hasExplicitBuildTarget(workflowID, branchRefID) {
   return Boolean(workflowID && branchRefID);
 }
 
+export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, appStoreConnect) {
+  if (!expectedVersion) return;
+  if (!workflowID) {
+    throw new Error('Cannot validate Xcode Cloud version without a workflow ID.');
+  }
+  const response = await appStoreConnect(
+    `/v1/ciWorkflows/${encodeURIComponent(workflowID)}/xcodeVersion?fields[ciXcodeVersions]=version`,
+  );
+  const actualVersion = response.data?.attributes?.version;
+  if (actualVersion !== expectedVersion) {
+    throw new Error(
+      `Xcode Cloud workflow uses Xcode ${actualVersion ?? 'unknown'}, expected ${expectedVersion}.`,
+    );
+  }
+}
+
+export function assertImmutableExpectedSource(gitReference, expectedCommitSHA) {
+  if (!expectedCommitSHA) return;
+  assertExpectedCommitSHA(expectedCommitSHA);
+  const canonicalName = gitReference?.attributes?.canonicalName;
+  if (!canonicalName?.startsWith('refs/tags/')) {
+    throw new Error('An expected Xcode Cloud commit SHA must be built from a pre-verified immutable tag.');
+  }
+}
+
 function appStoreConnectPath(url) {
   const parsed = new URL(url, 'https://api.appstoreconnect.apple.com');
   if (parsed.origin !== 'https://api.appstoreconnect.apple.com') {
@@ -333,8 +358,15 @@ export async function main() {
 
   let workflowID = process.env.XCODE_CLOUD_WORKFLOW_ID;
   let branchRefID = process.env.XCODE_CLOUD_BRANCH_REF_ID;
+  let sourceReference;
+  const hasExplicitTarget = hasExplicitBuildTarget(workflowID, branchRefID);
 
-  if (!hasExplicitBuildTarget(workflowID, branchRefID)) {
+  if (hasExplicitTarget) {
+    const reference = await appStoreConnect(
+      `/v1/scmGitReferences/${encodeURIComponent(branchRefID)}?fields[scmGitReferences]=canonicalName,name`,
+    );
+    sourceReference = reference.data;
+  } else {
     for (const name of ['APP_STORE_APP_ID', 'XCODE_CLOUD_WORKFLOW_NAME']) {
       if (!process.env[name]) {
         throw new Error(
@@ -389,13 +421,13 @@ export async function main() {
       `/v1/scmRepositories/${repository.data.id}/gitReferences?limit=200`,
       appStoreConnect,
     );
-    const gitReference = selectGitReference(references, gitRefName);
-    branchRefID = gitReference.id;
+    sourceReference = selectGitReference(references, gitRefName);
+    branchRefID = sourceReference.id;
     const selectedRefName =
-      gitReference.attributes?.name ?? gitRefName.replace(/^refs\/(?:heads|tags)\//, '');
+      sourceReference.attributes?.name ?? gitRefName.replace(/^refs\/(?:heads|tags)\//, '');
 
-    const isBranch = gitReference.attributes?.canonicalName?.startsWith('refs/heads/');
-    const isTag = gitReference.attributes?.canonicalName?.startsWith('refs/tags/');
+    const isBranch = sourceReference.attributes?.canonicalName?.startsWith('refs/heads/');
+    const isTag = sourceReference.attributes?.canonicalName?.startsWith('refs/tags/');
     const missingManualBranchCondition =
       isBranch &&
       !manualBranchConditionAllows(workflow.attributes?.manualBranchStartCondition, selectedRefName);
@@ -426,6 +458,13 @@ export async function main() {
       );
     }
   }
+
+  await validateWorkflowXcodeVersion(
+    workflowID,
+    process.env.XCODE_CLOUD_EXPECTED_XCODE_VERSION,
+    appStoreConnect,
+  );
+  assertImmutableExpectedSource(sourceReference, process.env.XCODE_CLOUD_EXPECTED_COMMIT_SHA);
 
   const response = await startBuildRunWithConditionPropagation(() =>
     appStoreConnect('/v1/ciBuildRuns', {

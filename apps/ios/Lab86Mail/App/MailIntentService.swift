@@ -1,4 +1,3 @@
-#if compiler(>=6.4)
 import AppIntents
 import Foundation
 
@@ -387,4 +386,3 @@ actor MailIntentService {
         return account
     }
 }
-#endif
