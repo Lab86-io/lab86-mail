@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { AppStoreConnectRequestError } from '../.github/scripts/app-store-connect.mjs';
 import {
-  assertImmutableExpectedSource,
   assertExpectedBuildSource,
+  assertImmutableExpectedSource,
   collectAppStoreConnectPages,
   createBuildRunPayload,
   createManualBranchConditionUpdatePayload,
