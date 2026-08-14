@@ -14,6 +14,7 @@ import {
   manualBranchConditionAllows,
   manualTagConditionAllows,
   resolveBuildRunSource,
+  resolveGitReferenceWithPropagation,
   selectBranchRefID,
   selectWorkflowID,
   startBuildRunWithConditionPropagation,
@@ -1018,6 +1019,55 @@ describe('Xcode Cloud build discovery', () => {
       '/v1/ciProducts/product/workflows?limit=200&cursor=next',
     ]);
     expect(results.map(({ id }) => id)).toEqual(['first', 'second']);
+  });
+
+  test('waits for a newly pinned immutable tag to reach Xcode Cloud', async () => {
+    let reads = 0;
+    const delays: number[] = [];
+    const reference = await resolveGitReferenceWithPropagation(
+      'repository',
+      'refs/tags/ios-staging-abc',
+      async () => {
+        reads += 1;
+        return {
+          data:
+            reads === 3
+              ? [
+                  {
+                    id: 'tag-ref',
+                    attributes: {
+                      name: 'ios-staging-abc',
+                      canonicalName: 'refs/tags/ios-staging-abc',
+                    },
+                  },
+                ]
+              : [],
+          links: { next: null },
+        };
+      },
+      {
+        attempts: 3,
+        delayMilliseconds: 25,
+        sleep: async (milliseconds) => {
+          delays.push(milliseconds);
+        },
+      },
+    );
+
+    expect(reference.id).toBe('tag-ref');
+    expect(reads).toBe(3);
+    expect(delays).toEqual([25, 25]);
+    await expect(
+      resolveGitReferenceWithPropagation(
+        'repository',
+        'refs/tags/missing',
+        async () => ({
+          data: [],
+          links: { next: null },
+        }),
+        { attempts: 0 },
+      ),
+    ).rejects.toThrow('attempts must be a positive integer');
   });
 
   test('rejects pagination cycles and unexpected origins', async () => {

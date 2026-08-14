@@ -333,6 +333,35 @@ export async function collectAppStoreConnectPages(initialPath, appStoreConnect) 
   return data;
 }
 
+export async function resolveGitReferenceWithPropagation(
+  repositoryID,
+  refName,
+  appStoreConnect,
+  {
+    attempts = 12,
+    delayMilliseconds = 5_000,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  } = {},
+) {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('Xcode Cloud git reference attempts must be a positive integer.');
+  }
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const references = await collectAppStoreConnectPages(
+      `/v1/scmRepositories/${repositoryID}/gitReferences?limit=200`,
+      appStoreConnect,
+    );
+    try {
+      return selectGitReference(references, refName);
+    } catch (error) {
+      const isMissing = error instanceof Error && error.message.includes('was not found');
+      if (!isMissing || attempt === attempts) throw error;
+      await sleep(delayMilliseconds);
+    }
+  }
+}
+
 export async function main() {
   const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY'];
   for (const name of requiredEnvironment) {
@@ -417,11 +446,11 @@ export async function main() {
     }
 
     const repository = await appStoreConnect(`/v1/ciWorkflows/${workflowID}/repository`);
-    const references = await collectAppStoreConnectPages(
-      `/v1/scmRepositories/${repository.data.id}/gitReferences?limit=200`,
+    sourceReference = await resolveGitReferenceWithPropagation(
+      repository.data.id,
+      gitRefName,
       appStoreConnect,
     );
-    sourceReference = selectGitReference(references, gitRefName);
     branchRefID = sourceReference.id;
     const selectedRefName =
       sourceReference.attributes?.name ?? gitRefName.replace(/^refs\/(?:heads|tags)\//, '');
