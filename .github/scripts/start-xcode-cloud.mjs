@@ -359,8 +359,14 @@ export async function main() {
   let workflowID = process.env.XCODE_CLOUD_WORKFLOW_ID;
   let branchRefID = process.env.XCODE_CLOUD_BRANCH_REF_ID;
   let sourceReference;
+  const hasExplicitTarget = hasExplicitBuildTarget(workflowID, branchRefID);
 
-  if (!hasExplicitBuildTarget(workflowID, branchRefID)) {
+  if (hasExplicitTarget) {
+    const reference = await appStoreConnect(
+      `/v1/scmGitReferences/${encodeURIComponent(branchRefID)}?fields[scmGitReferences]=canonicalName,name`,
+    );
+    sourceReference = reference.data;
+  } else {
     for (const name of ['APP_STORE_APP_ID', 'XCODE_CLOUD_WORKFLOW_NAME']) {
       if (!process.env[name]) {
         throw new Error(

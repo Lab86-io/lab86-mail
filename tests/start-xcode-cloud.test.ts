@@ -139,6 +139,74 @@ describe('Xcode Cloud build discovery', () => {
     });
   });
 
+  test('resolves and verifies an explicit immutable tag before starting a build', async () => {
+    const environmentNames = [
+      'ASC_ISSUER_ID',
+      'ASC_KEY_ID',
+      'ASC_PRIVATE_KEY',
+      'XCODE_CLOUD_WORKFLOW_ID',
+      'XCODE_CLOUD_BRANCH_REF_ID',
+      'XCODE_CLOUD_EXPECTED_COMMIT_SHA',
+      'XCODE_CLOUD_EXPECTED_XCODE_VERSION',
+      'GITHUB_OUTPUT',
+    ];
+    const previousEnvironment = new Map(environmentNames.map((name) => [name, process.env[name]] as const));
+    const previousFetch = globalThis.fetch;
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const expectedCommit = 'a'.repeat(40);
+    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
+
+    Object.assign(process.env, {
+      ASC_ISSUER_ID: 'issuer',
+      ASC_KEY_ID: 'key',
+      ASC_PRIVATE_KEY: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      XCODE_CLOUD_WORKFLOW_ID: 'production-workflow',
+      XCODE_CLOUD_BRANCH_REF_ID: 'release-tag',
+      XCODE_CLOUD_EXPECTED_COMMIT_SHA: expectedCommit,
+    });
+    delete process.env.XCODE_CLOUD_EXPECTED_XCODE_VERSION;
+    delete process.env.GITHUB_OUTPUT;
+
+    globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      requests.push({ path: `${url.pathname}${url.search}`, method, body });
+      if (url.pathname === '/v1/scmGitReferences/release-tag') {
+        return Response.json({
+          data: {
+            id: 'release-tag',
+            attributes: { name: 'v0.10.0', canonicalName: 'refs/tags/v0.10.0' },
+          },
+        });
+      }
+      if (url.pathname === '/v1/ciBuildRuns' && method === 'POST') {
+        return Response.json({
+          data: {
+            id: 'build-run',
+            attributes: { number: 90, sourceCommit: { commitSha: expectedCommit } },
+          },
+        });
+      }
+      return new Response('not found', { status: 404 });
+    };
+
+    try {
+      await main();
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+
+    expect(requests[0]?.path).toBe(
+      '/v1/scmGitReferences/release-tag?fields[scmGitReferences]=canonicalName,name',
+    );
+    expect(requests[1]?.body).toEqual(createBuildRunPayload('production-workflow', 'release-tag'));
+  });
+
   test('rejects a workflow whose selected Xcode version is not iOS 27', async () => {
     const requests: string[] = [];
     await expect(

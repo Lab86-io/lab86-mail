@@ -90,7 +90,7 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
   assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.release\.outputs\.git_ref \}\}/);
-  assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ steps\.verify\.outputs\.build_sha \}\}/);
+  assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ steps\.release\.outputs\.sha \}\}/);
   assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
   assert.match(
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
