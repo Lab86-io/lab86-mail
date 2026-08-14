@@ -288,9 +288,12 @@ export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, 
     throw new Error('Cannot validate Xcode Cloud version without a workflow ID.');
   }
   const response = await appStoreConnect(
-    `/v1/ciWorkflows/${encodeURIComponent(workflowID)}/xcodeVersion?fields[ciXcodeVersions]=version`,
+    `/v1/ciWorkflows/${encodeURIComponent(workflowID)}?include=xcodeVersion&fields[ciXcodeVersions]=version`,
   );
-  const actualVersion = response.data?.attributes?.version;
+  const xcodeVersionID = response.data?.relationships?.xcodeVersion?.data?.id;
+  const actualVersion = response.included?.find(
+    ({ type, id }) => type === 'ciXcodeVersions' && id === xcodeVersionID,
+  )?.attributes?.version;
   if (actualVersion !== expectedVersion) {
     throw new Error(
       `Xcode Cloud workflow uses Xcode ${actualVersion ?? 'unknown'}, expected ${expectedVersion}.`,
