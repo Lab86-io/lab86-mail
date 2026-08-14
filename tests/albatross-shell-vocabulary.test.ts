@@ -180,7 +180,9 @@ describe('the questions use the main attached conversation', () => {
     expect(chat).toMatch(
       /if \(priorScopeRef\.current === scopeKey\) return;[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/,
     );
-    expect(chat).toMatch(/const startNewChat = useCallback\([\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
+    expect(chat).toMatch(
+      /const startNewChat = useCallback\([\s\S]*?sessionLoadGenerationRef\.current \+= 1;/,
+    );
     expect(chat).toMatch(/const send = async[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
   });
 
