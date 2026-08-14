@@ -41,10 +41,17 @@ test('staging preserves diagnostics and signed IPA with immutable upload actions
   const contents = workflow('xcode-cloud-staging.yml');
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
+  assert.match(contents, /name: Compile app and test bundles/);
+  assert.match(contents, /name: Generate production-configured project/);
+  assert.match(contents, /CI_BRANCH: staging/);
+  assert.match(contents, /LAB86_BUILD_CHANNEL: production/);
+  assert.match(contents, /CODE_SIGNING_ALLOWED=NO\s+build-for-testing/);
+  assert.match(contents, /needs: compile-native\s+if: \$\{\{ inputs\.distribute == true \}\}/);
   assert.match(contents, new RegExp(immutableCheckout));
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
   assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
   assert.match(contents, /BUILD_NUMBER: \$\{\{ steps\.start\.outputs\.build_number \}\}/);
+  assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(contents, /IPA_PATH="\$ipa_path" node \.github\/scripts\/upload-ios-export\.mjs/);
   assert.match(contents, /XCODE_CLOUD_DIAGNOSTICS_DIR: \$\{\{ runner\.temp \}\}\/xcode-cloud-diagnostics/);
   assert.match(contents, /name: Preserve failed Xcode Cloud diagnostics\s+if: failure\(\)/);
