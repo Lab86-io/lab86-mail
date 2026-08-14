@@ -51,6 +51,7 @@ export function nextMoveLine(work: WorkStateInput & { openQuestions?: number }):
   if (work.workState === 'released') return 'You put this down';
   if (work.workState === 'archived') return 'Archived';
   if (work.workState === 'done') return 'Finished';
+  if (work.nextStep?.trim()) return `Next: ${work.nextStep.trim()}`;
   return 'Albatross is carrying this';
 }
 

@@ -97,7 +97,8 @@ describe('APNs payload shaping', () => {
     const payload = buildAPNsPayload(envelope({ deepLink: 'https://evil.example/phish' }));
     expect(payload.route).toBe('/activity');
     expect(payload.aps.category).toBe('LAB86_COMMITMENT');
-    expect(payload.aps['thread-id']).toBe('albatross.notice-1');
+    expect(payload.aps['thread-id']).toBe('albatross.commitments');
+    expect(payload.aps['relevance-score']).toBe(0.6);
   });
 
   test('a check-in link without an id still lands on the check-in surface', () => {
@@ -113,7 +114,28 @@ describe('APNs payload shaping', () => {
     );
     expect(payload.aps.category).toBe('LAB86_MAIL');
     expect(payload.aps['thread-id']).toBe('mail.acct-1.thr-1');
+    expect(payload.aps['relevance-score']).toBe(0.25);
     expect(payload).toMatchObject({ accountId: 'acct-1', threadId: 'thr-1', messageId: 'msg-1' });
+  });
+
+  test('keeps check-ins and briefs together and above ordinary mail in summaries', () => {
+    const checkin = buildAPNsPayload(
+      envelope({ type: 'daily_checkin', deepLink: '/?checkin=checkin_9&prompt=reflection' }),
+    );
+    const brief = buildAPNsPayload(envelope({ type: 'brief_ready', deepLink: '/brief?id=report_9' }));
+
+    expect(checkin.aps).toMatchObject({
+      category: 'LAB86_CHECKIN',
+      'thread-id': 'albatross.checkin',
+      'relevance-score': 0.9,
+    });
+    expect(brief.aps).toMatchObject({
+      category: 'LAB86_BRIEF',
+      'thread-id': 'albatross.brief',
+      'relevance-score': 0.8,
+    });
+    expect(checkin.aps['interruption-level']).toBeUndefined();
+    expect(brief.aps['interruption-level']).toBeUndefined();
   });
 
   test('bounds alert copy so oversized titles cannot break delivery', () => {

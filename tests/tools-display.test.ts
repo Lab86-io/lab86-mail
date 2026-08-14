@@ -559,6 +559,76 @@ describe('display tool registration', () => {
   });
 });
 
+describe('Albatross Work tool results', () => {
+  function renderedText(toolName: string, output: Record<string, unknown>) {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(createElement(ToolUiDisplayPart, { toolName, output }));
+    });
+    const text = (node: any): string => {
+      if (typeof node === 'string' || typeof node === 'number') return String(node);
+      if (Array.isArray(node)) return node.map(text).join('');
+      return node?.children ? text(node.children) : '';
+    };
+    return text(renderer.toJSON());
+  }
+
+  test('progress results use singular and plural evidence labels', () => {
+    expect(
+      renderedText('albatross_record_progress', {
+        ok: true,
+        claim: 'Passport photos purchased.',
+        evidenceRecorded: 1,
+      }),
+    ).toContain('1 evidence entry attached');
+    expect(
+      renderedText('albatross_record_progress', {
+        ok: true,
+        claim: 'Passport photos purchased.',
+        evidenceRecorded: 3,
+      }),
+    ).toContain('3 evidence entries attached');
+  });
+
+  test('replan results show only populated changes with correct counts', () => {
+    const complete = renderedText('albatross_replan_work', {
+      ok: true,
+      title: 'Renew passport',
+      currentStep: 'Complete DS-82',
+      removedSteps: ['Buy photos'],
+      actionsApplied: 1,
+      calendarEventsCreated: 2,
+    });
+    expect(complete).toContain('Next step');
+    expect(complete).toContain('Complete DS-82');
+    expect(complete).toContain('Removed 1 completed or obsolete step.');
+    expect(complete).toContain('Created 1 action');
+    expect(complete).toContain('2 calendar holds');
+
+    const quiet = renderedText('albatross_replan_work', {
+      ok: true,
+      title: 'Renew passport',
+      removedSteps: [],
+      actionsApplied: 0,
+      calendarEventsCreated: 0,
+    });
+    expect(quiet).not.toContain('Next step');
+    expect(quiet).not.toContain('Removed ');
+    expect(quiet).not.toContain('Created ');
+
+    const plural = renderedText('albatross_replan_work', {
+      ok: true,
+      title: 'Renew passport',
+      removedSteps: ['One', 'Two'],
+      actionsApplied: 2,
+      calendarEventsCreated: 1,
+    });
+    expect(plural).toContain('Removed 2 completed or obsolete steps.');
+    expect(plural).toContain('Created 2 actions');
+    expect(plural).toContain('1 calendar hold');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // show_weather (fetch injected — no network)
 // ---------------------------------------------------------------------------

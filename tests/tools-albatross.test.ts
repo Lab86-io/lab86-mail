@@ -38,6 +38,16 @@ const apiMock = {
     setConsent: 'albatrossRoutines.setConsent',
     runNow: 'albatrossRoutines.runNow',
   },
+  albatrossWorkV2: {
+    workDetail: 'albatrossWorkV2.workDetail',
+    attachProof: 'albatrossWorkV2.attachProof',
+    answerQuestion: 'albatrossWorkV2.answerQuestion',
+    setAgentState: 'albatrossWorkV2.setAgentState',
+    upsertQuestion: 'albatrossWorkV2.upsertQuestion',
+  },
+  albatrossIntents: {
+    markPlanApplied: 'albatrossIntents.markPlanApplied',
+  },
   operations: {
     record: 'operations.record',
   },
@@ -51,11 +61,40 @@ const toolInvocations: Array<{ tool: string; args: any }> = [];
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
+let workDetailFixture: any = null;
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
   mutationCalls.push({ fn, args });
   sequence += 1;
+  if (fn === apiMock.albatrossWorkV2.attachProof && workDetailFixture) {
+    workDetailFixture = {
+      ...workDetailFixture,
+      evidence: [
+        ...(workDetailFixture.evidence || []),
+        {
+          _id: `evidence_${sequence}`,
+          claim: args.claim,
+          title: args.title,
+          summary: args.summary,
+          limits: args.limits,
+          sourceKind: args.sourceKind,
+          trust: args.trust,
+          url: args.url,
+        },
+      ],
+    };
+  }
+  if (fn === apiMock.albatrossWorkV2.answerQuestion && workDetailFixture) {
+    workDetailFixture = {
+      ...workDetailFixture,
+      questions: (workDetailFixture.questions || []).map((question: any) =>
+        String(question._id) === String(args.questionId)
+          ? { ...question, status: 'answered', answer: args.answer }
+          : question,
+      ),
+    };
+  }
   if (fn === apiMock.albatrossWork.createProject) return `project_${sequence}`;
   if (fn === apiMock.albatrossWork.createSprint) return `sprint_${sequence}`;
   if (fn === apiMock.albatrossWork.enqueueApproval) return `approval_${sequence}`;
@@ -91,6 +130,8 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.listProjects) return [{ projectId: 'project_live', status: args.status }];
   if (fn === apiMock.albatrossWork.getProjectPane) return { project: { projectId: args.projectId } };
   if (fn === apiMock.albatrossWork.listSprints) return [{ sprintId: 'sprint_live', status: args.status }];
+  if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
+  if (fn === apiMock.albatrossWork.listPlanApplications) return [];
   return null;
 }
 
@@ -99,10 +140,13 @@ async function recordOperationMock(input: any) {
   return `operation_${operationCalls.length}`;
 }
 
-async function invokeToolMock(tool: any, args: any) {
+async function invokeToolMock(tool: any, args: any, ctx?: any) {
   sequence += 1;
   approvalOrder.push(`tool:${tool.name}`);
   toolInvocations.push({ tool: tool.name, args });
+  if (tool.name === 'albatross_apply_intent_plan') {
+    return tool.handler(args, ctx);
+  }
   if (tool.name === 'tasks_create_card') {
     return { ok: true, cardId: `card_${sequence}`, operationId: `operation_card_${sequence}` };
   }
@@ -158,6 +202,7 @@ beforeEach(() => {
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
+  workDetailFixture = null;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -167,6 +212,36 @@ beforeEach(() => {
     newOperationBatchId: () => 'batch_mocked',
     undoOperation: undoOperationMock as any,
     invokeTool: invokeToolMock as any,
+    generateIntentPlan: (async () => {
+      if (workDetailFixture?.work?._id === 'work_passport') {
+        if (!(workDetailFixture.evidence || []).some((row: any) => row.sourceKind === 'chat')) {
+          throw new Error('Planner did not receive recorded progress.');
+        }
+        if (!(workDetailFixture.questions || []).some((row: any) => row.status === 'answered')) {
+          throw new Error('Planner did not receive the persisted question answer.');
+        }
+      }
+      workDetailFixture = {
+        ...workDetailFixture,
+        plan: {
+          _id: 'plan_revised',
+          outcome: 'Passport renewed',
+          digitalActions: [
+            { actionKey: 'form', kind: 'task', title: 'Complete DS-82' },
+            { actionKey: 'mail', kind: 'task', title: 'Mail the application' },
+            {
+              actionKey: 'form-hold',
+              kind: 'calendar_event',
+              title: 'Complete DS-82 form',
+              account: 'acct_primary',
+              startIso: '2026-08-12T17:00:00.000Z',
+              endIso: '2026-08-12T17:45:00.000Z',
+            },
+          ],
+        },
+      };
+      return { planId: 'plan_revised', title: 'Renew passport', outcome: 'Passport renewed' };
+    }) as any,
   });
 });
 
@@ -669,6 +744,184 @@ describe('Albatross tools', () => {
     });
 
     expect(result.unresolved).toEqual([{ kind: 'project', id: 'project_1', title: 'Project' }]);
+  });
+
+  test('records user-confirmed progress with source evidence, then versions the same Work plan', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_passport',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+        primaryProjectId: 'project_passport',
+      },
+      plan: {
+        _id: 'plan_old',
+        outcome: 'Passport renewed',
+        digitalActions: [
+          { actionKey: 'photos', kind: 'task', title: 'Buy passport photos' },
+          { actionKey: 'form', kind: 'task', title: 'Complete DS-82' },
+        ],
+      },
+      questions: [{ _id: 'question_1', status: 'pending', prompt: 'Did you buy photos?' }],
+      evidence: [],
+    };
+
+    const recorded = await runTool(albatross.albatrossRecordProgress.handler, {
+      workId: 'work_passport',
+      claim: 'I already bought the passport photo package.',
+      questionAnswers: [{ questionId: 'question_1', answer: 'Yes, it is purchased.' }],
+      evidence: [
+        {
+          sourceKind: 'mail_thread',
+          sourceId: 'receipt_thread',
+          title: 'Passport photo receipt',
+          summary: 'Purchase confirmation from the photo service.',
+          trust: 'observed',
+        },
+      ],
+    });
+
+    expect(recorded).toMatchObject({
+      ok: true,
+      workId: 'work_passport',
+      evidenceRecorded: 2,
+      questionsAnswered: 1,
+    });
+    const proofWrites = mutationCalls.filter((call) => call.fn === apiMock.albatrossWorkV2.attachProof);
+    expect(proofWrites).toHaveLength(2);
+    expect(proofWrites[0].args).toMatchObject({ sourceKind: 'chat', trust: 'confirmed' });
+    expect(proofWrites[1].args).toMatchObject({
+      sourceKind: 'mail_thread',
+      sourceId: 'receipt_thread',
+      trust: 'observed',
+    });
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWorkV2.answerQuestion)).toBe(true);
+
+    const revised = await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_passport',
+      reason: 'Photos are already purchased.',
+    });
+    expect(revised).toMatchObject({
+      ok: true,
+      workId: 'work_passport',
+      planId: 'plan_revised',
+      currentStep: 'Complete DS-82',
+      removedSteps: ['Buy passport photos'],
+      addedSteps: ['Mail the application', 'Complete DS-82 form'],
+      actionsApplied: 3,
+      calendarEventsCreated: 1,
+      needsInput: false,
+    });
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossIntents.markPlanApplied)).toBe(true);
+    expect(
+      mutationCalls.some(
+        (call) => call.fn === apiMock.albatrossWorkV2.setAgentState && call.args.agentState === 'idle',
+      ),
+    ).toBe(true);
+    expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWork.createProject)).toBe(false);
+    expect(toolInvocations.find((call) => call.tool === 'albatross_apply_intent_plan')?.args).toMatchObject({
+      existingProjectId: 'project_passport',
+      projectMode: 'task_only',
+    });
+    expect(toolInvocations.some((call) => call.tool === 'calendar_create_event')).toBe(true);
+  });
+
+  test('reads compact Work context and refuses a missing Work', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_context',
+        title: 'Renew passport',
+        rawText: 'Get the passport renewed',
+        workState: 'active',
+        primaryAreaId: 'area_personal',
+      },
+      plan: {
+        _id: 'plan_context',
+        outcome: 'Passport renewed',
+        summary: 'The photo package is purchased.',
+        status: 'ready',
+        digitalActions: [{ key: 'form', actionKey: 'form', kind: 'task', title: 'Complete DS-82' }],
+        physicalActions: [{ title: 'Mail the application' }],
+      },
+      questions: [
+        { _id: 'question_open', status: 'pending', prompt: 'Standard or expedited?' },
+        { _id: 'question_done', status: 'answered', prompt: 'Do you have photos?' },
+      ],
+      evidence: [
+        {
+          _id: 'evidence_receipt',
+          claim: 'Photos were purchased',
+          title: 'Photo receipt',
+          summary: 'Paid receipt',
+          limits: 'Does not prove the photos were delivered.',
+          sourceKind: 'mail_thread',
+          trust: 'observed',
+          url: 'https://mail.test/thread',
+        },
+      ],
+    };
+
+    const result = await runTool(albatross.albatrossGetWorkContext.handler, {
+      workId: 'work_context',
+    });
+    expect(result.context).toMatchObject({
+      work: { id: 'work_context', state: 'active', areaId: 'area_personal' },
+      plan: { id: 'plan_context', outcome: 'Passport renewed' },
+      questions: [{ id: 'question_open', prompt: 'Standard or expedited?' }],
+      evidence: [{ id: 'evidence_receipt', sourceKind: 'mail_thread' }],
+    });
+
+    workDetailFixture = null;
+    await expect(
+      runTool(albatross.albatrossGetWorkContext.handler, { workId: 'work_missing' }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  test('a replan that needs one answer returns to idle without creating premature actions', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_passport_question',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+      },
+      plan: {
+        _id: 'plan_old',
+        outcome: 'Passport renewed',
+        digitalActions: [{ actionKey: 'form', kind: 'task', title: 'Complete DS-82' }],
+      },
+      questions: [
+        {
+          _id: 'question_speed',
+          legacyQuestionId: 'speed',
+          status: 'pending',
+          prompt: 'Standard or expedited processing?',
+          options: [{ id: 'standard', label: 'Standard', description: 'Lower fee' }],
+        },
+      ],
+      evidence: [],
+    };
+
+    const result = await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_passport_question',
+      reason: 'The processing speed changes the remaining plan.',
+    });
+
+    expect(result).toMatchObject({ needsInput: true, actionsApplied: 0, calendarEventsCreated: 0 });
+    expect(mutationCalls).toContainEqual({
+      fn: apiMock.albatrossWorkV2.upsertQuestion,
+      args: expect.objectContaining({
+        workId: 'work_passport_question',
+        legacyQuestionId: 'speed',
+        prompt: 'Standard or expedited processing?',
+        options: [{ id: 'standard', label: 'Standard', description: 'Lower fee' }],
+      }),
+    });
+    expect(
+      mutationCalls.some(
+        (call) => call.fn === apiMock.albatrossWorkV2.setAgentState && call.args.agentState === 'idle',
+      ),
+    ).toBe(true);
+    expect(toolInvocations.some((call) => call.tool === 'albatross_apply_intent_plan')).toBe(false);
   });
 
   test('tools require an authenticated user', async () => {

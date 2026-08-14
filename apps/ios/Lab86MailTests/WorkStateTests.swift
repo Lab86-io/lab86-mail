@@ -15,7 +15,8 @@ struct WorkStateTests {
         agentState: String? = nil,
         areaID: String? = "area_1",
         areaName: String? = "Money",
-        openQuestions: Int = 0
+        openQuestions: Int = 0,
+        scheduledEndAt: Date? = nil
     ) -> WorkListItem {
         var row: [String: JSONValue] = [
             "_id": .string(id),
@@ -28,6 +29,7 @@ struct WorkStateTests {
         if let agentState { row["agentState"] = .string(agentState) }
         if let areaID { row["primaryAreaId"] = .string(areaID) }
         if let areaName { row["areaName"] = .string(areaName) }
+        if let scheduledEndAt { row["scheduledEndAt"] = .number(scheduledEndAt.timeIntervalSince1970 * 1_000) }
         return WorkListItem(json: .object(row))!
     }
 
@@ -70,6 +72,13 @@ struct WorkStateTests {
         #expect(item(workState: "waiting").state == .waiting)
         #expect(item(workState: "blocked").state == .waiting)
         #expect(item().state == .inProgress)
+    }
+
+    @Test func aCalendarHoldStopsBlockingWorkWhenItEnds() {
+        let end = Date(timeIntervalSince1970: 2_000)
+        let work = item(scheduledEndAt: end)
+        #expect(work.hasUpcomingBooking(at: end.addingTimeInterval(-1)))
+        #expect(!work.hasUpcomingBooking(at: end))
     }
 
     // MARK: What the row says out loud

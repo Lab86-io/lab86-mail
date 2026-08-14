@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   newOperationBatchId,
@@ -5,11 +6,15 @@ import {
   registerUndoExecutor,
   undoOperation,
 } from '@/lib/ai/operations';
+import { generateIntentPlan } from '@/lib/albatross/intent-plan';
 import {
   type AlbatrossApplicationStep,
+  appliedStepsFromApplyResult,
   buildAlbatrossApplicationPlan,
   unresolvedArtifactsAfterUndo,
 } from '@/lib/albatross/work-model';
+import { summarizeWorkPlanRevision } from '@/lib/albatross/work-revision';
+import { unappliedActions } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
@@ -25,6 +30,7 @@ const defaultDeps = {
   newOperationBatchId,
   undoOperation,
   invokeTool,
+  generateIntentPlan,
   tools: {
     tasksCreateCard,
     calendarCreateEvent,
@@ -54,6 +60,10 @@ function albatrossApi() {
 
 function routinesApi() {
   return (deps.api as any).albatrossRoutines;
+}
+
+function workV2Api() {
+  return (deps.api as any).albatrossWorkV2;
 }
 
 function requireUserId(userId: string | null | undefined): string {
@@ -138,6 +148,83 @@ const planSchema = z
     sourceRefs: z.array(sourceRefSchema).optional(),
   })
   .passthrough();
+
+const workEvidenceKindSchema = z.enum([
+  'mail_thread',
+  'calendar_event',
+  'task',
+  'chat',
+  'question_answer',
+  'area_fact',
+  'github_issue',
+  'github_pull_request',
+  'github_project',
+  'github_project_item',
+  'github_commit',
+  'mcp_item',
+  'manual',
+]);
+
+const progressEvidenceSchema = z.object({
+  sourceKind: workEvidenceKindSchema.exclude(['chat', 'question_answer']),
+  sourceId: z.string().min(1).max(500),
+  title: z.string().min(1).max(300),
+  summary: z.string().max(1_200).optional(),
+  claim: z.string().min(1).max(600).optional(),
+  limits: z.string().max(600).optional(),
+  url: z.string().max(2_000).optional(),
+  connectionId: z.string().max(180).optional(),
+  accountId: z.string().max(320).optional(),
+  occurredAt: z.number().optional(),
+  trust: z.enum(['observed', 'inferred']).default('observed'),
+});
+
+function progressSourceId(workId: string, claim: string, operationBatchId?: string) {
+  const claimHash = createHash('sha256').update(`${workId}\u001f${claim.trim()}`).digest('hex').slice(0, 24);
+  return operationBatchId ? `turn:${operationBatchId}:${claimHash}` : `claim:${claimHash}`;
+}
+
+function compactWorkDetail(detail: any) {
+  if (!detail?.work) return null;
+  return {
+    work: {
+      id: String(detail.work._id),
+      title: detail.work.title || detail.work.rawText,
+      rawText: detail.work.rawText,
+      state: detail.work.workState || detail.work.status,
+      areaId: detail.work.primaryAreaId ? String(detail.work.primaryAreaId) : undefined,
+    },
+    plan: detail.plan
+      ? {
+          id: String(detail.plan._id),
+          outcome: detail.plan.outcome,
+          summary: detail.plan.summary,
+          status: detail.plan.status,
+          digitalActions: (detail.plan.digitalActions || []).slice(0, 24).map((action: any) => ({
+            key: action.key,
+            actionKey: action.actionKey,
+            kind: action.kind,
+            title: action.title,
+          })),
+          physicalActions: (detail.plan.physicalActions || []).slice(0, 24),
+        }
+      : null,
+    questions: (detail.questions || [])
+      .filter((question: any) => question.status === 'pending')
+      .slice(0, 8)
+      .map((question: any) => ({ id: String(question._id), prompt: question.prompt })),
+    evidence: (detail.evidence || []).slice(0, 24).map((item: any) => ({
+      id: String(item._id),
+      claim: item.claim,
+      title: item.title,
+      summary: item.summary,
+      limits: item.limits,
+      sourceKind: item.sourceKind,
+      trust: item.trust,
+      url: item.url,
+    })),
+  };
+}
 
 function batchContext(ctx: ToolContext, operationBatchId: string): ToolContext {
   return { ...ctx, operationBatchId };
@@ -276,6 +363,309 @@ async function resolveAreaBoardId(userId: string, areaId: string | undefined): P
   }
 }
 
+export const albatrossGetWorkContext = defineTool({
+  name: 'albatross_get_work_context',
+  description:
+    'Read one Albatross Work item with its latest versioned plan, open questions, and durable evidence. Use before discussing progress when Work was not already attached by the chat client.',
+  category: 'tasks',
+  mutating: false,
+  input: z.object({ workId: z.string().min(1) }),
+  output: z.object({ ok: z.boolean(), context: z.any() }),
+  async handler(args, ctx) {
+    const detail = await deps.convexQuery<any>(workV2Api().workDetail, {
+      userId: requireUserId(ctx.userId),
+      workId: args.workId,
+    });
+    const context = compactWorkDetail(detail);
+    if (!context) throw new Error('Albatross Work not found.');
+    return { ok: true, context };
+  },
+});
+
+export const albatrossRecordProgress = defineTool({
+  name: 'albatross_record_progress',
+  description:
+    "Persist the user's authoritative progress statement on an existing Albatross Work item, optionally attach corroborating evidence found in mail/calendar/tasks/Granola/GitHub/files/web, and answer any pending Work question the statement resolves. Call this before replanning.",
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    workId: z.string().min(1),
+    claim: z.string().min(1).max(2_000),
+    detail: z.string().max(2_000).optional(),
+    limits: z.string().max(600).optional(),
+    questionAnswers: z
+      .array(
+        z.object({
+          questionId: z.string().min(1),
+          answer: z.string().min(1).max(2_000),
+          answeredOptionId: z.string().max(80).optional(),
+        }),
+      )
+      .max(8)
+      .optional(),
+    evidence: z.array(progressEvidenceSchema).max(20).optional(),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    workId: z.string(),
+    claim: z.string(),
+    evidenceRecorded: z.number(),
+    questionsAnswered: z.number(),
+    summary: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    // Ownership is checked here before any write, then again by each mutation.
+    const detail = await deps.convexQuery<any>(workV2Api().workDetail, { userId, workId: args.workId });
+    if (!detail?.work) throw new Error('Albatross Work not found.');
+
+    const userSourceId = progressSourceId(args.workId, args.claim, ctx.operationBatchId);
+    await deps.convexMutation(workV2Api().attachProof, {
+      userId,
+      workId: args.workId,
+      claim: args.claim,
+      title: 'Progress reported in Albatross chat',
+      summary: args.detail || args.claim,
+      limits: args.limits || 'User-confirmed progress; connected-source corroboration may be incomplete.',
+      sourceKind: 'chat',
+      sourceId: userSourceId,
+      trust: 'confirmed',
+    });
+
+    for (const evidence of args.evidence || []) {
+      await deps.convexMutation(workV2Api().attachProof, {
+        userId,
+        workId: args.workId,
+        claim: evidence.claim || args.claim,
+        title: evidence.title,
+        summary: evidence.summary,
+        limits: evidence.limits,
+        sourceKind: evidence.sourceKind,
+        sourceId: evidence.sourceId,
+        connectionId: evidence.connectionId,
+        accountId: evidence.accountId,
+        occurredAt: evidence.occurredAt,
+        url: evidence.url,
+        trust: evidence.trust,
+      });
+    }
+
+    for (const answer of args.questionAnswers || []) {
+      await deps.convexMutation(workV2Api().answerQuestion, {
+        userId,
+        questionId: answer.questionId,
+        answer: answer.answer,
+        answeredOptionId: answer.answeredOptionId,
+      });
+    }
+
+    const evidenceRecorded = 1 + (args.evidence?.length || 0);
+    return {
+      ok: true,
+      workId: args.workId,
+      claim: args.claim,
+      evidenceRecorded,
+      questionsAnswered: args.questionAnswers?.length || 0,
+      summary: `Recorded the progress report with ${evidenceRecorded} evidence ${evidenceRecorded === 1 ? 'entry' : 'entries'}.`,
+    };
+  },
+});
+
+export const albatrossReplanWork = defineTool({
+  name: 'albatross_replan_work',
+  description:
+    'Regenerate the latest plan for the SAME Albatross Work after progress/evidence has been recorded. Creates a versioned plan revision and returns a compact before/after summary with the new current step.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    workId: z.string().min(1),
+    reason: z.string().min(1).max(1_000),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    workId: z.string(),
+    planId: z.string(),
+    title: z.string(),
+    outcome: z.string().optional(),
+    currentStep: z.string().optional(),
+    changed: z.boolean(),
+    keptSteps: z.array(z.string()),
+    removedSteps: z.array(z.string()),
+    addedSteps: z.array(z.string()),
+    actionsApplied: z.number(),
+    calendarEventsCreated: z.number(),
+    needsInput: z.boolean(),
+    summary: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const before = await deps.convexQuery<any>(workV2Api().workDetail, {
+      userId,
+      workId: args.workId,
+    });
+    if (!before?.work) throw new Error('Albatross Work not found.');
+    await deps.convexMutation(workV2Api().setAgentState, {
+      userId,
+      workId: args.workId,
+      agentState: 'researching',
+    });
+    try {
+      const generated = await deps.generateIntentPlan({
+        userId,
+        userEmail: ctx.userEmail,
+        userName: ctx.userName,
+        intentId: args.workId,
+        timezone: ctx.userTimezone,
+      });
+      let after = await deps.convexQuery<any>(workV2Api().workDetail, {
+        userId,
+        workId: args.workId,
+      });
+      if (!after?.plan || String(after.plan._id) !== String(generated.planId)) {
+        throw new Error('The revised Albatross plan could not be loaded.');
+      }
+
+      let actionsApplied = 0;
+      let calendarEventsCreated = 0;
+      const firstOpen =
+        (after.questions || []).find((question: any) => question.status === 'pending') ||
+        (after.work.questions || []).find((question: any) => !question.answer);
+      if (firstOpen) {
+        await deps.convexMutation(workV2Api().upsertQuestion, {
+          userId,
+          workId: args.workId,
+          legacyQuestionId: firstOpen.legacyQuestionId || firstOpen.id,
+          kind: 'clarification',
+          prompt: firstOpen.prompt,
+          reason: 'This answer changes the next step or what Albatross will create.',
+          options: (firstOpen.options || []).map((option: any) => ({
+            id: option.id,
+            label: option.label || option.title,
+            description: option.description || option.detail,
+          })),
+          sourceRefs: after.plan.sourceRefs || [],
+        });
+      } else {
+        const applications =
+          (await deps
+            .convexQuery<any[]>(albatrossApi().listPlanApplications, {
+              userId,
+              intentId: args.workId,
+              limit: 100,
+            })
+            .catch(() => [])) || [];
+        const pendingActions = unappliedActions(after.plan.digitalActions || [], applications);
+        if (pendingActions.length) {
+          await deps.convexMutation(workV2Api().setAgentState, {
+            userId,
+            workId: args.workId,
+            agentState: 'applying',
+          });
+          const operationBatchId = ctx.operationBatchId || deps.newOperationBatchId();
+          const result: any = await deps.invokeTool(
+            albatrossApplyIntentPlan,
+            {
+              intentId: args.workId,
+              intentText: after.work.rawText,
+              intentTitle: after.work.title,
+              areaId: after.work.primaryAreaId ? String(after.work.primaryAreaId) : after.work.areaId,
+              existingProjectId: after.work.primaryProjectId
+                ? String(after.work.primaryProjectId)
+                : undefined,
+              projectMode: after.work.primaryProjectId ? 'task_only' : 'auto',
+              projectTitle: after.plan.proposedProjectTitle,
+              operationBatchId,
+              plan: {
+                id: String(after.plan._id),
+                intentId: args.workId,
+                outcome: after.plan.outcome,
+                digitalActions: pendingActions,
+                sourceRefs: after.plan.sourceRefs,
+              },
+            },
+            { ...ctx, operationBatchId },
+          );
+          const appliedSteps = appliedStepsFromApplyResult(result);
+          await deps.convexMutation((deps.api as any).albatrossIntents.markPlanApplied, {
+            userId,
+            planId: String(after.plan._id),
+            applicationId: result.applicationId,
+            appliedSteps,
+          });
+          actionsApplied = (result.operations || []).filter(
+            (operation: any) => operation.tool !== 'albatross_create_project',
+          ).length;
+          calendarEventsCreated = (result.operations || []).filter(
+            (operation: any) => operation.kind === 'calendar_event',
+          ).length;
+        } else if ((after.plan.digitalActions || []).length) {
+          await deps.convexMutation((deps.api as any).albatrossIntents.markPlanApplied, {
+            userId,
+            planId: String(after.plan._id),
+            appliedSteps: [],
+          });
+        }
+      }
+
+      // A revised plan can legitimately stop at a new question. Research is
+      // still finished in that case; leaving the Work in `researching` makes
+      // the UI look stuck while it is actually waiting for the user.
+      await deps.convexMutation(workV2Api().setAgentState, {
+        userId,
+        workId: args.workId,
+        agentState: 'idle',
+      });
+
+      after = await deps.convexQuery<any>(workV2Api().workDetail, {
+        userId,
+        workId: args.workId,
+      });
+      if (!after?.work || !after?.plan) {
+        throw new Error('The revised Albatross plan could not be reloaded.');
+      }
+      const revision = summarizeWorkPlanRevision(before.plan, after.plan);
+      const title = String(after.work.title || after.plan.outcome || before.work.rawText || 'Albatross Work');
+      const needsInput = Boolean(firstOpen);
+      const activity = [
+        actionsApplied ? `created ${actionsApplied} ${actionsApplied === 1 ? 'action' : 'actions'}` : '',
+        calendarEventsCreated
+          ? `placed ${calendarEventsCreated} ${calendarEventsCreated === 1 ? 'hold' : 'holds'} on the calendar`
+          : '',
+      ].filter(Boolean);
+      return {
+        ok: true,
+        workId: args.workId,
+        planId: String(generated.planId),
+        title,
+        outcome: after.plan.outcome,
+        currentStep: revision.currentStep,
+        changed: revision.changed,
+        keptSteps: revision.keptSteps,
+        removedSteps: revision.removedSteps,
+        addedSteps: revision.addedSteps,
+        actionsApplied,
+        calendarEventsCreated,
+        needsInput,
+        summary: needsInput
+          ? 'Updated the plan as far as the evidence allows. One answer is still needed in chat.'
+          : revision.currentStep
+            ? `Updated the plan${activity.length ? `, ${activity.join(' and ')}` : ''}. The next step is “${revision.currentStep}”.`
+            : `Updated the plan${activity.length ? ` and ${activity.join(' and ')}` : ''}; no remaining step is currently proposed.`,
+      };
+    } catch (error) {
+      await deps
+        .convexMutation(workV2Api().setAgentState, {
+          userId,
+          workId: args.workId,
+          agentState: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+  },
+});
+
 function approvalToolFor(name: string): AnyTool {
   if (name === 'send_message') return deps.tools.sendMessage;
   if (name === 'calendar_create_event') return deps.tools.calendarCreateEvent;
@@ -295,6 +685,7 @@ export const albatrossApplyIntentPlan = defineTool({
     intentTitle: z.string().optional(),
     areaId: z.string().optional(),
     account: z.string().optional(),
+    existingProjectId: z.string().optional(),
     projectMode: z.enum(['auto', 'project', 'task_only', 'ask']).default('auto'),
     projectTitle: z.string().optional(),
     operationBatchId: z.string().optional(),
@@ -322,13 +713,13 @@ export const albatrossApplyIntentPlan = defineTool({
       intentText: args.intentText,
       intentTitle: args.intentTitle,
       areaId: args.areaId,
-      projectMode: args.projectMode,
+      projectMode: args.existingProjectId ? 'task_only' : args.projectMode,
       projectTitle: args.projectTitle,
       account,
       plan: args.plan as any,
     });
 
-    let projectId: string | undefined;
+    let projectId: string | undefined = args.existingProjectId;
     const operations: any[] = [];
     const artifacts: any[] = [];
     const approvalIds: string[] = [];

@@ -167,6 +167,7 @@ export function AssistantChat() {
   const chatScopeKind = useClientStore((s) => s.chatScopeKind);
   const chatScopeAreaId = useClientStore((s) => s.chatScopeAreaId);
   const chatScopeWorkId = useClientStore((s) => s.chatScopeWorkId);
+  const chatScopeLabel = useClientStore((s) => s.chatScopeLabel);
   const setChatScope = useClientStore((s) => s.setChatScope);
   const scopeKey = `${chatScopeKind}:${chatScopeAreaId || ''}:${chatScopeWorkId || ''}`;
 
@@ -196,12 +197,12 @@ export function AssistantChat() {
             chatScopeKind === 'area' && chatScopeAreaId
               ? { mode: 'area', areaId: chatScopeAreaId }
               : undefined,
+          contextAttachments:
+            chatScopeKind === 'work' && chatScopeWorkId ? [{ kind: 'work', id: chatScopeWorkId }] : undefined,
           extraSystem:
-            chatScopeKind === 'work' && chatScopeWorkId
-              ? `This conversation is scoped to Albatross Work ${chatScopeWorkId}. Keep questions and actions about that Work unless the user explicitly broadens scope.`
-              : chatScopeKind === 'area' && chatScopeAreaId
-                ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
-                : undefined,
+            chatScopeKind === 'area' && chatScopeAreaId
+              ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
+              : undefined,
         },
       }),
     [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
@@ -245,11 +246,17 @@ export function AssistantChat() {
     void regenerate();
   }, [status, messages, regenerate]);
 
+  const streaming = status === 'streaming' || status === 'submitted';
+  const busy = streaming || uploadingFiles;
+
   // --- Persistent sessions: restore the last chat, autosave as you go ---
   const lastChatId = useClientStore((s) => s.lastChatId);
   const lastChatAt = useClientStore((s) => s.lastChatAt);
   const setLastChatId = useClientStore((s) => s.setLastChatId);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionLoadGenerationRef = useRef(0);
+  const activeScopeKeyRef = useRef(scopeKey);
+  activeScopeKeyRef.current = scopeKey;
   const restoredRef = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const priorScopeRef = useRef(scopeKey);
@@ -257,15 +264,25 @@ export function AssistantChat() {
   useEffect(() => {
     if (priorScopeRef.current === scopeKey) return;
     priorScopeRef.current = scopeKey;
+    sessionLoadGenerationRef.current += 1;
     sessionIdRef.current = null;
     setMessages([]);
   }, [scopeKey, setMessages]);
 
   const loadSession = useCallback(
     async (id: string) => {
+      if (busy) return false;
+      const generation = ++sessionLoadGenerationRef.current;
+      const loadScopeKey = activeScopeKeyRef.current;
       try {
         const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
         const data = await res.json();
+        if (
+          generation !== sessionLoadGenerationRef.current ||
+          loadScopeKey !== activeScopeKeyRef.current
+        ) {
+          return false;
+        }
         if (data?.ok && Array.isArray(data.session?.messages)) {
           sessionIdRef.current = id;
           setLastChatId(id);
@@ -277,7 +294,7 @@ export function AssistantChat() {
       }
       return false;
     },
-    [setLastChatId, setMessages],
+    [busy, setLastChatId, setMessages],
   );
 
   // First open: pick up where the user left off — but only if that
@@ -322,10 +339,12 @@ export function AssistantChat() {
   }, [chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
 
   const startNewChat = useCallback(() => {
+    if (busy) return;
+    sessionLoadGenerationRef.current += 1;
     sessionIdRef.current = null;
     setLastChatId(null);
     setMessages([]);
-  }, [setLastChatId, setMessages]);
+  }, [busy, setLastChatId, setMessages]);
 
   const { data: sessionsData } = useQuery({
     queryKey: ['chat-sessions', scopeKey],
@@ -455,9 +474,6 @@ export function AssistantChat() {
     }
   }, [messages, qc]);
 
-  const streaming = status === 'streaming' || status === 'submitted';
-  const busy = streaming || uploadingFiles;
-
   // Message count from the previous commit — messages at or above this index
   // mounted in this commit (a restored batch gets staggered entrances, a
   // freshly streamed message floats in immediately).
@@ -470,6 +486,7 @@ export function AssistantChat() {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
     if ((!trimmed && !filesForTurn.length) || busy) return;
+    sessionLoadGenerationRef.current += 1;
     emptyRetryCount.current = 0; // fresh turn — reset empty-completion retries
 
     let stagedUploads: StagedChatUpload[] = [];
@@ -502,9 +519,6 @@ export function AssistantChat() {
         ? `Active account: ${activeAccount}`
         : 'Working across all mailboxes (call list_accounts to enumerate).',
       selectedThreadId ? `Currently focused thread id: ${selectedThreadId}` : '',
-      chatScopeKind === 'work' && chatScopeWorkId
-        ? `This conversation is scoped to Albatross Work ${chatScopeWorkId}. Keep questions and actions about that Work unless the user explicitly broadens scope.`
-        : '',
       chatScopeKind === 'area' && chatScopeAreaId
         ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
         : '',
@@ -528,6 +542,8 @@ export function AssistantChat() {
       {
         body: {
           extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
+          contextAttachments:
+            chatScopeKind === 'work' && chatScopeWorkId ? [{ kind: 'work', id: chatScopeWorkId }] : undefined,
         },
       } as any,
     );
@@ -604,9 +620,12 @@ export function AssistantChat() {
                   onClick={() => {
                     if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
                   }}
-                  className="truncate font-medium text-[var(--color-text)] hover:underline"
+                  disabled={busy || chatScopeKind === 'global'}
+                  className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
                 >
-                  Albatross{chatScopeKind === 'work' ? ' · Work' : chatScopeKind === 'area' ? ' · Area' : ''}
+                  {chatScopeKind === 'global'
+                    ? 'Albatross'
+                    : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
                 </button>
               </div>
               <div className="flex items-center gap-0.5">
@@ -614,6 +633,7 @@ export function AssistantChat() {
                   variant="ghost"
                   size="icon-sm"
                   onClick={startNewChat}
+                  disabled={busy}
                   title="New chat"
                   className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                 >
@@ -625,6 +645,7 @@ export function AssistantChat() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      disabled={busy}
                       title="Chat history"
                       className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                     >
@@ -641,6 +662,7 @@ export function AssistantChat() {
                         <DropdownMenuItem
                           key={session._id}
                           onSelect={() => void loadSession(session._id)}
+                          disabled={busy}
                           className="flex flex-col items-start gap-0.5"
                         >
                           <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
@@ -654,7 +676,7 @@ export function AssistantChat() {
                       ))
                     )}
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={startNewChat}>
+                    <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
                       <Plus className="size-3.5" />
                       Start a new chat
                     </DropdownMenuItem>
@@ -683,7 +705,12 @@ export function AssistantChat() {
                   </p>
                 </div>
                 <div className="flex w-full max-w-[320px] flex-col gap-2">
-                  {(selectedThreadId ? THREAD_SUGGESTIONS : BASE_SUGGESTIONS).map((s) => (
+                  {(chatScopeKind === 'work'
+                    ? WORK_SUGGESTIONS
+                    : selectedThreadId
+                      ? THREAD_SUGGESTIONS
+                      : BASE_SUGGESTIONS
+                  ).map((s) => (
                     <PromptSuggestion
                       key={s}
                       variant="outline"
@@ -764,6 +791,25 @@ export function AssistantChat() {
                 maxHeight={176}
                 className="rounded-2xl border-[var(--color-control-border)] bg-[var(--color-control)]/95 shadow-[var(--shadow-pop)]"
               >
+                {chatScopeKind !== 'global' ? (
+                  <div className="flex px-1 pt-1">
+                    <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
+                      <span className="truncate">
+                        {chatScopeKind === 'work' ? 'Work' : 'Area'}: {chatScopeLabel || 'Current context'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setChatScope({ kind: 'global' })}
+                        disabled={busy}
+                        aria-label={`Detach ${chatScopeKind}`}
+                        title={`Detach ${chatScopeKind}`}
+                        className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <X className="size-2.5" />
+                      </button>
+                    </span>
+                  </div>
+                ) : null}
                 <PromptInputTextarea
                   placeholder="Find, draft, schedule, label, anything…"
                   className="text-[13px] leading-relaxed text-[var(--color-text)]"
@@ -869,6 +915,12 @@ const THREAD_SUGGESTIONS = [
   'Summarize this thread',
   'Draft a polite no to the latest message',
   'Extract action items',
+];
+
+const WORK_SUGGESTIONS = [
+  'I have already made progress. Search my connected sources and update this plan.',
+  'What is the next concrete step?',
+  'Check whether the evidence says any step is already done.',
 ];
 
 function hasVisibleContent(message: any): boolean {

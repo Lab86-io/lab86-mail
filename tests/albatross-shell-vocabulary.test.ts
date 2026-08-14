@@ -146,14 +146,42 @@ describe('no surface tallies open work', () => {
   });
 });
 
-describe('the questions are answerable where they are shown', () => {
-  test('the Albatross page renders every waiting question', () => {
-    // A question renders inside the plan document's gate when the page
-    // carries it, and as a host card when it does not. Never in neither.
+describe('the questions use the main attached conversation', () => {
+  test('the Albatross page routes waiting questions to chat', () => {
     const detail = read('components/albatross/WorkDetail.tsx');
-    expect(detail).toContain('hostQuestions.map');
-    expect(detail).toContain('hasFrontierGate');
-    expect(detail).not.toContain('const pendingQuestion =');
+    expect(detail).toContain('Answer in chat');
+    expect(detail).toMatch(/setChatScope\(\{\s*kind: 'work',\s*workId,/);
+    expect(detail).not.toContain('WorkQuestionCard');
+    expect(detail).not.toContain('hasFrontierGate');
+  });
+
+  test('attached Work cannot be detached while its request is active', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat).toMatch(/title=\{`Detach \$\{chatScopeKind\}`\}[\s\S]*?disabled=\{busy\}/);
+    expect(chat).toMatch(/aria-label=\{`Detach \$\{chatScopeKind\}`\}[\s\S]*?disabled:cursor-not-allowed/);
+    expect(chat).toMatch(
+      /title=\{[\s\S]*?'Return to global conversation'[\s\S]*?disabled=\{busy \|\| chatScopeKind === 'global'\}/,
+    );
+  });
+
+  test('active requests cannot replace the conversation from history controls', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat).toMatch(/const loadSession = useCallback\([\s\S]*?if \(busy\) return false;/);
+    expect(chat).toMatch(/const startNewChat = useCallback\(\(\) => \{\s*if \(busy\) return;/);
+    expect(chat).toMatch(/onClick=\{startNewChat\}\s*disabled=\{busy\}\s*title="New chat"/);
+    expect(chat).toMatch(/onSelect=\{\(\) => void loadSession\(session\._id\)\}\s*disabled=\{busy\}/);
+  });
+
+  test('a delayed history response cannot overwrite a changed conversation', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat).toMatch(/const generation = \+\+sessionLoadGenerationRef\.current;/);
+    expect(chat).toMatch(/generation !== sessionLoadGenerationRef\.current/);
+    expect(chat).toMatch(/loadScopeKey !== activeScopeKeyRef\.current/);
+    expect(chat).toMatch(
+      /if \(priorScopeRef\.current === scopeKey\) return;[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/,
+    );
+    expect(chat).toMatch(/const startNewChat = useCallback\([\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
+    expect(chat).toMatch(/const send = async[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
   });
 
   test('the truncated floating copy of the question is gone', () => {

@@ -34,6 +34,9 @@ export interface TodayWork extends WorkStateInput {
   areaName?: string | null;
   openQuestions: number;
   updatedAt: number;
+  nextStep?: string | null;
+  scheduledStartAt?: number | null;
+  scheduledEndAt?: number | null;
 }
 
 export interface TodayApproval {
@@ -98,6 +101,11 @@ export function openWork(work: TodayWork[]): TodayWork[] {
   );
 }
 
+/** A real applied calendar hold, not a model's unsaved suggestion. */
+export function hasUpcomingBooking(work: TodayWork, nowMs = Date.now()): boolean {
+  return Boolean(work.scheduledEndAt && work.scheduledEndAt > nowMs);
+}
+
 export const CAPACITY_SHOWN: Record<Capacity, number> = { low: 1, normal: 3, high: 6 };
 
 /**
@@ -106,8 +114,14 @@ export const CAPACITY_SHOWN: Record<Capacity, number> = { low: 1, normal: 3, hig
  * that hides without saying so is the same sin as a list of overdue work, just
  * politer. `heldBack` exists so the surface can offer the remainder.
  */
-export function readyToMove(work: TodayWork[], capacity: Capacity): { items: TodayWork[]; heldBack: number } {
-  const sorted = openWork(work).sort((a, b) => b.updatedAt - a.updatedAt);
+export function readyToMove(
+  work: TodayWork[],
+  capacity: Capacity,
+  nowMs = Date.now(),
+): { items: TodayWork[]; heldBack: number } {
+  const sorted = openWork(work)
+    .filter((row) => !hasUpcomingBooking(row, nowMs))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
   const shown = sorted.slice(0, CAPACITY_SHOWN[capacity]);
   return { items: shown, heldBack: sorted.length - shown.length };
 }

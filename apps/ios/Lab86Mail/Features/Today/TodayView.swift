@@ -87,7 +87,9 @@ struct TodayView: View {
                 // there is only ever one of it on the page.
                 DailyBriefMasthead(generatedAt: Date.now, art: store.dailyReport?.art)
                 todayDeck
-                liveLayer
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    liveLayer(now: context.date)
+                }
                 briefLayer
                     .padding(.bottom, 32)
             }
@@ -152,7 +154,7 @@ struct TodayView: View {
     }
 
     /// Always current, because it is read rather than written.
-    @ViewBuilder private var liveLayer: some View {
+    @ViewBuilder private func liveLayer(now: Date) -> some View {
         if !store.approvals.isEmpty || !needsYouWork.isEmpty {
             todaySection("Needs you", note: "Albatross cannot move these without you.") {
                 VStack(spacing: 0) {
@@ -214,7 +216,7 @@ struct TodayView: View {
             }
         }
 
-        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou }
+        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou && !$0.hasUpcomingBooking(at: now) }
         if !moving.isEmpty {
             todaySection("Could move today", note: "Albatross is carrying these.") {
                 VStack(spacing: 0) {

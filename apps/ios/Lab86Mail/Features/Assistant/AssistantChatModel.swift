@@ -397,8 +397,11 @@ final class AssistantChatModel {
                 body["areaDiscovery"] = .object(["mode": .string("area"), "areaId": .string(areaID)])
             }
         case .work:
-            scopeLine = scope.contextID.map {
-                "This conversation is scoped to Albatross Work \($0). Keep context and actions within that Work unless the user explicitly broadens scope."
+            scopeLine = nil
+            if let workID = scope.contextID {
+                body["contextAttachments"] = .array([
+                    .object(["kind": .string("work"), "id": .string(workID)])
+                ])
             }
         }
         let context = [scopeLine, uploadContext.nilIfBlank].compactMap { $0 }.joined(separator: "\n\n")
@@ -598,4 +601,3 @@ final class AssistantChatModel {
         return "Working — \(readable)"
     }
 }
-

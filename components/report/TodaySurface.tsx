@@ -17,6 +17,7 @@ import {
   dayShapeLine,
   dayWindow,
   fixedSchedule,
+  hasUpcomingBooking,
   importantMailToday,
   needsYouToday,
   openWork,
@@ -57,7 +58,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const capacity = useClientStore((s) => s.capacity);
   const setCapacity = useClientStore((s) => s.setCapacity);
   // One timestamp for the whole render, so the window and the dateline agree.
-  const [nowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const window = useMemo(() => dayWindow(nowMs), [nowMs]);
 
   const work = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as
@@ -72,12 +73,21 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
     | undefined;
 
   const rows = work || [];
+  // Calendar holds expire while Today may remain open on a second monitor.
+  // Refresh the eligibility clock on a bounded cadence so Work returns to
+  // “Could move today” without requiring a reload or another Convex write.
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
   const attention = needsYouToday(rows, approvals || []);
   const schedule = fixedSchedule(events || []);
-  const ready = readyToMove(rows, capacity);
+  const ready = readyToMove(rows, capacity, nowMs);
   const [showAllReady, setShowAllReady] = useState(false);
   const [dayChangedOpen, setDayChangedOpen] = useState(false);
-  const readyItems = showAllReady ? openWork(rows) : ready.items;
+  const readyItems = showAllReady
+    ? openWork(rows).filter((row) => !hasUpcomingBooking(row, nowMs))
+    : ready.items;
   const waiting = waitingOnSomebody(rows);
   const loading = work === undefined;
 

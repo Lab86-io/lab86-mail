@@ -136,7 +136,8 @@ export async function advanceWork(input: AdvanceWorkInput) {
         intentText: work.rawText,
         intentTitle: work.title,
         areaId: work.primaryAreaId ? String(work.primaryAreaId) : work.areaId,
-        projectMode: work.primaryProjectId ? 'project' : 'auto',
+        existingProjectId: work.primaryProjectId ? String(work.primaryProjectId) : undefined,
+        projectMode: work.primaryProjectId ? 'task_only' : 'auto',
         projectTitle: plan.proposedProjectTitle,
         operationBatchId,
         plan: {
