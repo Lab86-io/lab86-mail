@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import type { OutcomeContract } from '@/lib/albatross/contract';
-import { hasFrontierGate } from '@/lib/albatross/plan-frontier';
 import type { EvidenceLike } from '@/lib/albatross/proof';
 import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
@@ -160,11 +159,6 @@ export function WorkDetail({ workId }: { workId: string }) {
   const { work, plan } = detail;
   const pendingQuestions = detail.questions.filter((question) => question.status === 'pending');
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
-  // The document carries its own question gate once the durable id is bound.
-  // The host renders a question only while the page cannot.
-  const hostQuestions = pendingQuestions.filter(
-    (question) => !document || !hasFrontierGate(document, String(question._id)),
-  );
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
 
@@ -193,7 +187,11 @@ export function WorkDetail({ workId }: { workId: string }) {
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    setChatScope({ kind: 'work', workId });
+                    setChatScope({
+                      kind: 'work',
+                      workId,
+                      label: plan?.outcome || work.title || work.rawText,
+                    });
                     setAiBarOpen(true);
                   }}
                 >
@@ -227,16 +225,31 @@ export function WorkDetail({ workId }: { workId: string }) {
             </div>
           ) : null}
 
-          {hostQuestions.length ? (
-            <section className="mt-6">
-              <h2 className="text-[13px] font-medium text-[var(--color-warning)]">
-                {hostQuestions.length === 1
-                  ? 'Albatross needs one thing'
-                  : `Albatross needs ${hostQuestions.length} things`}
+          {pendingQuestions.length ? (
+            <section className="mt-6 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">
+              <h2 className="text-[13px] font-medium text-[var(--color-text)]">
+                {pendingQuestions[0].prompt}
               </h2>
-              {hostQuestions.map((question) => (
-                <WorkQuestionCard key={question._id} question={question} />
-              ))}
+              <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+                Answer in the attached conversation so Albatross can research the answer and rewrite the plan.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-3"
+                aria-label="Answer in chat about this Albatross"
+                onClick={() => {
+                  setChatScope({
+                    kind: 'work',
+                    workId,
+                    label: plan?.outcome || work.title || work.rawText,
+                  });
+                  setAiBarOpen(true);
+                }}
+              >
+                Answer in chat
+              </Button>
             </section>
           ) : null}
 
@@ -463,95 +476,6 @@ function LegacyPlanNotice({ workId, onError }: { workId: string; onError: (messa
       >
         {busy ? 'Rebuilding…' : 'Rebuild the plan'}
       </Button>
-    </section>
-  );
-}
-
-// The `reason` field carries pipeline notes as often as it carries something a
-// person would want to read ("Migrated from the current plan question."). Show
-// it only when it explains the question rather than the machinery.
-function humanReason(reason: string | undefined): string | null {
-  if (!reason) return null;
-  const internal = /\b(migrat|plan question|pipeline|classifier|backfill)\b/i;
-  return internal.test(reason) ? null : reason;
-}
-
-function WorkQuestionCard({ question }: { question: WorkQuestion }) {
-  const reason = humanReason(question.reason);
-  const [answer, setAnswer] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    const option = question.options?.find((item) => item.id === selected);
-    const value = answer.trim() || option?.label || '';
-    if (!value || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await postJson(
-        `/api/albatross/work/questions/${encodeURIComponent(question._id)}/answer`,
-        {
-          answer: value,
-          answeredOptionId: selected || undefined,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        },
-        'Could not save that answer.',
-      );
-      setAnswer('');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save that answer.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <section className="my-5 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">
-      <h3 className="text-[15px] font-medium leading-snug">{question.prompt}</h3>
-      {reason ? <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">{reason}</p> : null}
-      {question.options?.length ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {question.options.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              aria-pressed={selected === option.id}
-              onClick={() => setSelected(option.id)}
-              className={cn(
-                'rounded-lg border px-3 py-2 text-left text-[12px] transition-colors',
-                selected === option.id
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-border-strong)]',
-              )}
-            >
-              <span className="block font-medium">{option.label}</span>
-              {option.description ? (
-                <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)]">
-                  {option.description}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <div className="mt-3 flex gap-2">
-        <input
-          value={answer}
-          onChange={(event) => setAnswer(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') void submit();
-          }}
-          aria-label="Answer in your own words"
-          placeholder="Or answer in your own words"
-          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
-        />
-        <Button size="sm" disabled={busy || (!answer.trim() && !selected)} onClick={() => void submit()}>
-          {busy ? 'Saving…' : 'Answer'}
-        </Button>
-      </div>
-      {error ? <p className="mt-2 text-[11.5px] text-[var(--color-danger)]">{error}</p> : null}
     </section>
   );
 }

@@ -100,6 +100,9 @@ export const AGENT_TOOL_NAMES = new Set([
   'albatross_create_sprint',
   'albatross_list_sprints',
   'albatross_preview_undo_unresolved',
+  'albatross_get_work_context',
+  'albatross_record_progress',
+  'albatross_replan_work',
   'area_list',
   'area_create',
   'area_update_identity',
@@ -173,15 +176,18 @@ export const AGENT_TOOL_NAMES = new Set([
 ]);
 
 const AGENT_TOOL_TIMEOUT_MS = 75_000;
+const ALBATROSS_REPLAN_TIMEOUT_MS = 210_000;
 
 type UiStreamWriter = Parameters<Parameters<typeof createUIMessageStream>[0]['execute']>[0]['writer'];
 
 async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMs =
+    toolName === 'albatross_replan_work' ? ALBATROSS_REPLAN_TIMEOUT_MS : AGENT_TOOL_TIMEOUT_MS;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error(`${toolName} timed out after ${Math.round(AGENT_TOOL_TIMEOUT_MS / 1000)}s`));
-    }, AGENT_TOOL_TIMEOUT_MS);
+      reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
   });
   try {
     return await Promise.race([promise, timeout]);

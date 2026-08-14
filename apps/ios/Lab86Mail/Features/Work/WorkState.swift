@@ -13,6 +13,9 @@ struct WorkListItem: Identifiable, Hashable, Sendable {
     let openQuestions: Int
     let updatedAt: Date?
     let planError: String?
+    let nextStep: String?
+    let scheduledStartAt: Date?
+    let scheduledEndAt: Date?
 
     /// What the row calls itself. Never an id, never a blank line.
     var displayTitle: String {
@@ -34,6 +37,9 @@ struct WorkListItem: Identifiable, Hashable, Sendable {
         openQuestions = Int(json["openQuestions"]?.doubleValue ?? 0)
         updatedAt = CalendarDateParser.date(json["updatedAt"])
         planError = json["planError"]?.stringValue?.nilIfBlank
+        nextStep = json["nextStep"]?.stringValue?.nilIfBlank
+        scheduledStartAt = CalendarDateParser.date(json["scheduledStartAt"])
+        scheduledEndAt = CalendarDateParser.date(json["scheduledEndAt"])
     }
 }
 
@@ -112,6 +118,15 @@ extension WorkListItem {
     /// Closed on paper, but Albatross is still waiting on an answer.
     var isUnresolved: Bool { isClosed && openQuestions > 0 }
 
+    var hasUpcomingBooking: Bool {
+        hasUpcomingBooking(at: .now)
+    }
+
+    func hasUpcomingBooking(at date: Date) -> Bool {
+        guard let scheduledEndAt else { return false }
+        return scheduledEndAt > date
+    }
+
     var state: WorkState {
         if isUnresolved { return .unresolved }
         // Released is checked before archived: a thing put down on purpose must
@@ -136,7 +151,9 @@ extension WorkListItem {
         case .done: return "This reached the outcome you wanted"
         case .released: return "You put this down"
         case .archived: return "Filed away"
-        default: return "Albatross is carrying this"
+        default:
+            if let nextStep { return "Next: \(nextStep)" }
+            return "Albatross is carrying this"
         }
     }
 }

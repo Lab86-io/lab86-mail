@@ -8,6 +8,7 @@ import type { NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
+import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
@@ -25,6 +26,34 @@ interface AgentRequestBody {
   extraSystem?: string;
   timezone?: string;
   areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
+  contextAttachments?: Array<{ kind: 'work'; id: string }>;
+}
+
+export class InvalidContextAttachmentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidContextAttachmentError';
+  }
+}
+
+export function normalizeContextAttachments(value: unknown): Array<{ kind: 'work'; id: string }> {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new InvalidContextAttachmentError('contextAttachments must be an array.');
+  if (value.length > 3) throw new InvalidContextAttachmentError('At most 3 context attachments are allowed.');
+  const seen = new Set<string>();
+  return value.map((entry) => {
+    if (!entry || typeof entry !== 'object')
+      throw new InvalidContextAttachmentError('Invalid context attachment.');
+    const kind = (entry as any).kind;
+    const id = typeof (entry as any).id === 'string' ? (entry as any).id.trim() : '';
+    if (kind !== 'work' || !id || id.length > 180) {
+      throw new InvalidContextAttachmentError('Invalid Work context attachment.');
+    }
+    const key = `${kind}:${id}`;
+    if (seen.has(key)) throw new InvalidContextAttachmentError('Duplicate context attachment.');
+    seen.add(key);
+    return { kind, id };
+  });
 }
 
 function messageText(message: UIMessage): string {
@@ -146,11 +175,21 @@ export async function POST(req: NextRequest) {
             return '';
           })
       : '';
+    const contextAttachments = normalizeContextAttachments(body.contextAttachments);
+    const attachedContexts = await Promise.all(
+      contextAttachments.map((attachment) =>
+        readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
+          (result) => result.systemContext,
+        ),
+      ),
+    );
     const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
-        [body.extraSystem, areaDiscoveryContext, compactionNote].filter(Boolean).join('\n\n') || undefined,
+        [body.extraSystem, areaDiscoveryContext, ...attachedContexts, compactionNote]
+          .filter(Boolean)
+          .join('\n\n') || undefined,
       userId: user.userId,
       userEmail: user.email,
       userName: user.name,
@@ -159,7 +198,14 @@ export async function POST(req: NextRequest) {
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
-    const status = err instanceof AuthRequiredError ? 401 : 500;
+    const status =
+      err instanceof AuthRequiredError
+        ? 401
+        : err instanceof InvalidContextAttachmentError
+          ? 400
+          : err instanceof WorkContextNotFoundError
+            ? 404
+            : 500;
     console.error('[agent-route]', errorForLog(err));
     if (status === 500) {
       return agentErrorStreamResponse(err?.message || 'agent failed');

@@ -60,10 +60,10 @@ describe('CodeRabbit Albatross regressions', () => {
     const companion = read('components/albatross/AlbatrossCompanion.tsx');
     expect(artifactFrame).toContain('sandbox="allow-scripts allow-popups"');
     expect(artifactFrame).not.toContain('allow-popups-to-escape-sandbox');
-    expect(detail).toContain('aria-label="Answer in your own words"');
-    // The floating card was removed in the Albatross shell round — the
-    // questions live on the Albatross page now. Only the picture-in-picture
-    // input remains here, and it keeps its label.
+    expect(detail).not.toContain('aria-label="Answer in your own words"');
+    expect(detail).toContain('aria-label="Answer in chat about this Albatross"');
+    // Work questions now leave the document for the attached conversation.
+    // The legacy picture-in-picture input remains separately accessible.
     expect(companion.match(/aria-label="Answer Albatross in your own words"/g)).toHaveLength(1);
   });
 });

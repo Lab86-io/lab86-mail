@@ -13,7 +13,6 @@ struct WorkDetailView: View {
     @State private var isLoading = false
     @State private var artifactHeight: CGFloat = 360
     @State private var artifactNonce = UUID().uuidString
-    @State private var questionForReview: WorkDetail.Question?
     @State private var isMutating = false
     @State private var showsArchiveConfirmation = false
     @State private var artifactReview: ArtifactReviewRequest?
@@ -70,14 +69,6 @@ struct WorkDetailView: View {
             }
         }
         .task(id: route.id) { await load(initial: true) }
-        .sheet(item: $questionForReview) { question in
-            WorkQuestionReviewSheet(
-                question: question,
-                workTitle: detail?.work.title ?? route.title ?? "Work"
-            ) {
-                await load(initial: false)
-            }
-        }
         .confirmationDialog(
             "Archive this Work?",
             isPresented: $showsArchiveConfirmation,
@@ -123,8 +114,14 @@ struct WorkDetailView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
-                            Button("Review and answer") {
-                                questionForReview = question
+                            Button("Answer in chat") {
+                                environment.startAssistantChat(
+                                    scope: AssistantChatScope(
+                                        kind: .work,
+                                        contextID: route.workID,
+                                        label: detail.plan?.outcome ?? detail.work.title ?? route.title
+                                    )
+                                )
                             }
                             .buttonStyle(.borderedProminent)
                         }
@@ -411,94 +408,6 @@ struct WorkDetailView: View {
         defer { isMutating = false }
         if await environment.store.updateWorkState(route.workID, state: state) {
             await load(initial: false)
-        }
-    }
-}
-
-struct WorkQuestionReviewSheet: View {
-    @Environment(AppEnvironment.self) private var environment
-    @Environment(\.dismiss) private var dismiss
-    let question: WorkDetail.Question
-    let workTitle: String
-    let onAnswered: () async -> Void
-    @State private var answer = ""
-    @State private var selectedOptionID: String?
-    @State private var isSubmitting = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Asked by") {
-                    Label(workTitle, systemImage: "scope")
-                    if let reason = question.reason {
-                        Text(reason)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Section("Question") {
-                    Text(question.prompt)
-                        .font(.body.weight(.medium))
-                    ForEach(question.options) { option in
-                        Button {
-                            selectedOptionID = option.id
-                            answer = option.label
-                        } label: {
-                            HStack(alignment: .top) {
-                                Image(systemName: selectedOptionID == option.id ? "checkmark.circle.fill" : "circle")
-                                VStack(alignment: .leading) {
-                                    Text(option.label)
-                                    if let detail = option.detail {
-                                        Text(detail)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    TextField("Or type an answer", text: $answer, axis: .vertical)
-                        .lineLimit(2...6)
-                }
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    }
-                }
-            }
-            .navigationTitle("Answer in Context")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isSubmitting ? "Submitting…" : "Submit") {
-                        Task { await submit() }
-                    }
-                    .disabled(isSubmitting || answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func submit() async {
-        isSubmitting = true
-        defer { isSubmitting = false }
-        let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        if await environment.store.answerWorkQuestion(
-            question,
-            answer: trimmed,
-            optionID: selectedOptionID
-        ) {
-            await onAnswered()
-            dismiss()
-        } else {
-            errorMessage = environment.store.workError ?? "Answering failed."
         }
     }
 }

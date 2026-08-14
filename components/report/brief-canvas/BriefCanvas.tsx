@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
+import { FRONTIER_GATE_REGION_ID } from '@/lib/albatross/plan-frontier';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
 import { useClientStore } from '@/lib/client-state';
@@ -58,7 +59,16 @@ export function BriefCanvas({
   embedded?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const document = useMemo(() => parseBriefDocument(value), [value]);
+  const document = useMemo(() => {
+    const parsed = parseBriefDocument(value);
+    return {
+      ...parsed,
+      // Earlier Work plans embedded their blocking question inside the brief.
+      // Questions now belong to the attached conversation, including for old
+      // saved documents that have not been regenerated yet.
+      regions: parsed.regions.filter((region) => region.id !== FRONTIER_GATE_REGION_ID),
+    };
+  }, [value]);
   const refs = useMemo(() => collectBriefRefs(document), [document]);
   const [hiddenRefs, setHiddenRefs] = useState<Set<string>>(() => new Set());
   const [completedRefs, setCompletedRefs] = useState<Map<string, boolean>>(() => new Map());

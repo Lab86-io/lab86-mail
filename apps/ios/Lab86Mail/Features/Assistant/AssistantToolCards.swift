@@ -93,7 +93,38 @@ enum AssistantToolCard: Equatable, Sendable {
     // MARK: - Parsing
 
     static func parse(toolName: String, output: JSONValue) -> AssistantToolCard? {
-        guard toolName.hasPrefix("show_") else { return nil }
+        let albatrossTools = ["albatross_record_progress", "albatross_replan_work"]
+        guard toolName.hasPrefix("show_") || albatrossTools.contains(toolName) else { return nil }
+        if toolName == "albatross_record_progress" {
+            guard output["ok"]?.boolValue != false else {
+                return output["error"]?.stringValue.map { .summary(tool: toolName, $0) }
+            }
+            let claim = output["claim"]?.stringValue ?? output["summary"]?.stringValue ?? "Updated this Albatross."
+            return .summary(tool: toolName, "Progress saved: \(claim)")
+        }
+        if toolName == "albatross_replan_work" {
+            guard output["ok"]?.boolValue != false else {
+                return output["error"]?.stringValue.map { .summary(tool: toolName, $0) }
+            }
+            var items: [PlanItem] = []
+            if let current = output["currentStep"]?.stringValue {
+                items.append(PlanItem(label: current, done: false, active: true))
+            }
+            if let holds = output["calendarEventsCreated"]?.doubleValue, holds > 0 {
+                items.append(PlanItem(
+                    label: holds == 1 ? "Placed on your calendar" : "Placed \(Int(holds)) holds on your calendar",
+                    done: true,
+                    active: false
+                ))
+            }
+            items += (output["addedSteps"]?.arrayValue ?? []).compactMap(\.stringValue).filter {
+                $0 != output["currentStep"]?.stringValue
+            }.map { PlanItem(label: $0, done: false, active: false) }
+            if !items.isEmpty {
+                return .plan(title: output["title"]?.stringValue ?? "Updated plan", items)
+            }
+            return .summary(tool: toolName, output["summary"]?.stringValue ?? "Updated the plan.")
+        }
         let payload = output["payload"] ?? .null
         guard output["ok"]?.boolValue != false else {
             return output["error"]?.stringValue.map { .summary(tool: toolName, $0) }

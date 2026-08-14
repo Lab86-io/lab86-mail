@@ -163,6 +163,7 @@ describe('buildAPNsPayload for urgent mail', () => {
     const payload = buildAPNsPayload({ ...envelope, type: 'mail_message' });
     expect(payload.aps['interruption-level']).toBeUndefined();
     expect(payload.aps.category).toBe('LAB86_MAIL');
+    expect(payload.aps['relevance-score']).toBe(0.25);
   });
 
   test('flags a code push so the woken app refreshes its codes', () => {

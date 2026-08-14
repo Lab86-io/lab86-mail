@@ -90,6 +90,7 @@ export interface ClientState {
   chatScopeKind: 'global' | 'area' | 'work';
   chatScopeAreaId: string | null;
   chatScopeWorkId: string | null;
+  chatScopeLabel: string | null;
   // Reader takes over (almost) the whole window; not persisted.
   threadFullscreen: boolean;
   // Persisted id of the most recent AI chat session, so reopening the app
@@ -177,6 +178,7 @@ export interface ClientState {
     kind: 'global' | 'area' | 'work';
     areaId?: string | null;
     workId?: string | null;
+    label?: string | null;
   }) => void;
   setThreadFullscreen: (full: boolean) => void;
   setLastChatId: (id: string | null) => void;
@@ -309,6 +311,7 @@ export const useClientStore = create<ClientState>()(
       chatScopeKind: 'global',
       chatScopeAreaId: null,
       chatScopeWorkId: null,
+      chatScopeLabel: null,
       threadFullscreen: false,
       lastChatId: null,
       lastChatAt: null,
@@ -407,8 +410,13 @@ export const useClientStore = create<ClientState>()(
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
-      setChatScope: ({ kind, areaId, workId }) =>
-        set({ chatScopeKind: kind, chatScopeAreaId: areaId || null, chatScopeWorkId: workId || null }),
+      setChatScope: ({ kind, areaId, workId, label }) =>
+        set({
+          chatScopeKind: kind,
+          chatScopeAreaId: areaId || null,
+          chatScopeWorkId: workId || null,
+          chatScopeLabel: kind === 'global' ? null : label?.trim() || null,
+        }),
       setThreadFullscreen: (threadFullscreen) => set({ threadFullscreen }),
       setLastChatId: (lastChatId) => set({ lastChatId, lastChatAt: lastChatId ? Date.now() : null }),
       setPendingReplyBody: (pendingReplyBody) => set({ pendingReplyBody }),

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  attachResearchRefs,
+  escapePlanHtml,
   mergePlanQuestions,
   type PlanContextRef,
   parsePlanGeneration,
@@ -30,6 +32,10 @@ const validPlan = {
 };
 
 describe('parsePlanGeneration', () => {
+  test('escapes every HTML-significant character in the static fallback', () => {
+    expect(escapePlanHtml(`&<>"'`)).toBe('&amp;&lt;&gt;&quot;&#39;');
+  });
+
   test('parses a clean JSON object', () => {
     const plan = parsePlanGeneration(JSON.stringify(validPlan));
     expect(plan.title).toBe('Finish passport application');
@@ -130,6 +136,83 @@ describe('resolveSourceRefs', () => {
   });
 });
 
+describe('planner research provenance', () => {
+  test('turns every supported research result into bounded, reusable plan refs', () => {
+    const refs: PlanContextRef[] = [];
+    expect(attachResearchRefs('mcp_search', null, refs, {})).toBeNull();
+
+    const fetched = attachResearchRefs('browserbase_fetch', { content: 'x'.repeat(30_000) }, refs, {
+      url: 'https://travel.state.gov/passports',
+    });
+    expect(fetched.content).toHaveLength(24_000);
+    expect(fetched.refId).toBe('ref1');
+    const fetchedAgain = attachResearchRefs('browserbase_fetch', { content: 'updated' }, refs, {
+      url: 'https://travel.state.gov/passports',
+    });
+    expect(fetchedAgain.refId).toBe('ref1');
+    expect(refs.filter((ref) => ref.id === 'https://travel.state.gov/passports')).toHaveLength(1);
+
+    const cases = [
+      ['calendar_search_events', { events: [{ providerEventId: 'provider-1', title: 'Appointment' }] }],
+      ['calendar_search_events', { events: [{ eventId: 'event-2', name: 'Focus hold' }] }],
+      [
+        'corpus_search',
+        {
+          items: [
+            { source: 'mcp', externalId: 'meeting-1', summary: 'Granola meeting notes' },
+            { source: 'mail', threadId: 'thread-1', subject: 'Receipt', account: 'mail-1' },
+          ],
+        },
+      ],
+      [
+        'github_search',
+        {
+          items: [
+            { id: 'gh-1', kind: 'pull_request', title: 'PR' },
+            { id: 'gh-2', kind: 'commit', title: 'Commit' },
+            { id: 'gh-3', kind: 'project', title: 'Project' },
+            { id: 'gh-4', kind: 'project_item', title: 'Project item' },
+            { id: 'gh-5', kind: 'issue', title: 'Issue' },
+          ],
+        },
+      ],
+      ['mcp_list_items', { items: [{ id: 'mcp-1', title: 'Meeting' }] }],
+      ['cloud_file_search', { files: [{ webUrl: 'https://drive.test/file', name: 'Application.pdf' }] }],
+      ['browserbase_search', { results: [{ url: 'https://usa.gov/passport', title: 'Passport help' }] }],
+    ] as const;
+
+    for (const [toolName, result] of cases) {
+      const attached = attachResearchRefs(toolName, result, refs, {});
+      const rows = attached.items || attached.files || attached.events || attached.results;
+      expect(rows.every((row: any) => row.refId)).toBe(true);
+    }
+
+    const duplicate = attachResearchRefs(
+      'mcp_search',
+      { items: [{ id: 'mcp-1', title: 'Same meeting, fresher label' }] },
+      refs,
+      {},
+    );
+    expect(duplicate.items[0].refId).toBe(refs.find((ref) => ref.id === 'mcp-1')?.refId);
+    expect(attachResearchRefs('mcp_connection_status', { connections: [] }, refs, {})).toEqual({
+      connections: [],
+    });
+    expect(new Set(refs.map((ref) => ref.kind))).toEqual(
+      new Set([
+        'manual',
+        'calendar_event',
+        'mcp_item',
+        'mail_thread',
+        'github_pull_request',
+        'github_commit',
+        'github_project',
+        'github_project_item',
+        'github_issue',
+      ]),
+    );
+  });
+});
+
 describe('generateIntentPlan orchestration', () => {
   const { __setIntentPlanDepsForTest, generateIntentPlan } = require('../lib/albatross/intent-plan');
 
@@ -144,6 +227,7 @@ describe('generateIntentPlan orchestration', () => {
       updateIntent: 'm:updateIntent',
       savePlan: 'm:savePlan',
     },
+    albatrossWorkV2: { workDetail: 'q:workDetail' },
   };
 
   const AREAS = [
@@ -186,6 +270,8 @@ describe('generateIntentPlan orchestration', () => {
     intent?: Record<string, unknown>;
     planText?: string;
     artifactText?: string | Error;
+    currentPlan?: Record<string, unknown> | null;
+    workDetail?: Record<string, unknown> | null;
   }) {
     const calls: { mutations: Array<{ fn: string; args: any }>; generations: any[] } = {
       mutations: [],
@@ -201,7 +287,8 @@ describe('generateIntentPlan orchestration', () => {
     __setIntentPlanDepsForTest({
       api: fakeApi,
       convexQuery: async (fn: string) => {
-        if (fn === 'q:getIntentWorkbench') return { intent, plan: null };
+        if (fn === 'q:getIntentWorkbench') return { intent, plan: overrides.currentPlan ?? null };
+        if (fn === 'q:workDetail') return overrides.workDetail ?? null;
         if (fn === 'q:listAreas') return AREAS;
         if (fn === 'q:listVerifiedFacts') return FACTS;
         if (fn === 'q:areaHome') {
@@ -323,9 +410,25 @@ describe('generateIntentPlan orchestration', () => {
     expect(planSystem).toContain('Projects are epics that contain multiple tasks');
     expect(planSystem).toContain('3 or more task actions, or work stretching beyond a week');
     expect(planSystem).toContain('REQUIRED for multi-step work');
+    expect(planSystem).toContain('calendar_suggest_times');
+    expect(planSystem).toContain('add ONE calendar_event');
+    expect(Object.keys(calls.generations[0].tools)).toEqual(
+      expect.arrayContaining([
+        'corpus_search',
+        'calendar_search_events',
+        'calendar_suggest_times',
+        'cloud_file_search',
+        'mcp_connection_status',
+        'mcp_search',
+        'mcp_list_items',
+        'github_search',
+        'browserbase_search',
+        'browserbase_fetch',
+      ]),
+    );
   });
 
-  test('document composition gets step keys verbatim plus the frontier contract', async () => {
+  test('document composition gets step keys verbatim and routes questions to attached chat', async () => {
     const { calls } = wire({});
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
     const artifactGen = calls.generations.find((g: any) => g.feature === 'albatross_plan_artifact');
@@ -337,17 +440,19 @@ describe('generateIntentPlan orchestration', () => {
     expect(pack.services.map((service: any) => service.id)).toEqual(['mail']);
 
     // The composer prompt carries the live-page contract: verbatim step keys
-    // on checklist items, and no invented content past the question frontier.
+    // on checklist items, and no invented inline question/chat experience.
     const system = artifactGen.system as string;
     expect(system).toContain('stepKey');
     expect(system).toContain(`copy that action's "key" verbatim`);
     expect(system).toContain('Never invent a stepKey');
     expect(system).toContain('Do NOT restate them');
-    expect(system).toContain('the host appends the question gate');
+    expect(system).toContain('attached Albatross chat');
+    expect(system).toContain('Do NOT restate them');
+    expect(system).toContain('imitate a chat inside this document');
     expect(system).toContain('Do not invent apply_plan or toggle_step actions');
   });
 
-  test('an open question no longer suppresses the page: the document ships with the gate', async () => {
+  test('an open question keeps the page but does not render an embedded chat or gate', async () => {
     const planText = JSON.stringify({
       ...goodGeneration,
       questions: [
@@ -366,12 +471,8 @@ describe('generateIntentPlan orchestration', () => {
     const save = calls.mutations.find((m) => m.fn === 'm:savePlan');
     expect(save!.args.artifactSource).toBe('document-v2');
     const regions = save!.args.document.regions;
-    expect(regions.at(-1).id).toBe('frontier-gate');
-    const gate = regions.at(-1).tree;
-    const kinds = gate.children.map((child: any) => child.kind);
-    expect(kinds).toEqual(['decision', 'prompt', 'checklist']);
-    // The gate's outline names the steps that wait behind the answer.
-    expect(gate.children[2].items[0].stepKey).toBe('step-1');
+    expect(regions.some((region: any) => region.id === 'frontier-gate')).toBe(false);
+    expect(regions[0].tree.items[0].stepKey).toBe('step-1');
   });
 
   test('every referenced service reaches the composer pack', async () => {
@@ -480,6 +581,50 @@ describe('generateIntentPlan orchestration', () => {
     });
     await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
     expect(calls.generations[0].prompt).toContain('voice transcript: upload en why ess taxes');
+  });
+
+  test('replanning sees the current plan and confirmed progress instead of restarting', async () => {
+    const currentPlan = {
+      _id: 'plan_old',
+      outcome: 'NYS taxes filed',
+      summary: 'Download, upload, and confirm.',
+      digitalActions: [{ title: 'Download the NYS PDF' }, { title: 'Upload the NYS PDF' }],
+      physicalActions: [],
+    };
+    const { calls } = wire({
+      currentPlan,
+      workDetail: {
+        evidence: [
+          {
+            claim: 'An older note.',
+            sourceKind: 'chat',
+            trust: 'confirmed',
+            occurredAt: 100,
+          },
+          {
+            claim: 'The NYS PDF is already downloaded.',
+            sourceKind: 'chat',
+            trust: 'confirmed',
+            limits: 'No receipt needed for this step.',
+            occurredAt: 300,
+          },
+          {
+            claim: 'A middle note.',
+            sourceKind: 'chat',
+            trust: 'confirmed',
+            occurredAt: 200,
+          },
+        ],
+      },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const prompt = calls.generations[0].prompt as string;
+    expect(prompt).toContain('Current Work state (for plan revision)');
+    expect(prompt).toContain('Download the NYS PDF');
+    expect(prompt).toContain('already downloaded');
+    expect(prompt).toContain('chat, confirmed');
+    expect(prompt.indexOf('already downloaded')).toBeLessThan(prompt.indexOf('A middle note'));
+    expect(prompt.indexOf('A middle note')).toBeLessThan(prompt.indexOf('An older note'));
   });
 });
 

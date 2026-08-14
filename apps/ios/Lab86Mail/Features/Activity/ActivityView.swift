@@ -8,7 +8,6 @@ struct ActivityView: View {
     @State private var completedCandidateIDs: Set<String> = []
     @State private var isSavingCheckin = false
     @State private var checkinError: String?
-    @State private var questionForReview: PendingWorkQuestionSummary?
     @State private var archivedRaw = ""
     @State private var readRaw = ""
     @State private var showsArchived = false
@@ -131,7 +130,20 @@ struct ActivityView: View {
                                             .buttonStyle(.bordered)
                                         }
                                         Spacer()
-                                        Button("Answer") { questionForReview = item }
+                                        Button("Answer in chat") {
+                                            dismiss()
+                                            if let workID = item.workID {
+                                                environment.startAssistantChat(
+                                                    scope: AssistantChatScope(
+                                                        kind: .work,
+                                                        contextID: workID,
+                                                        label: item.workTitle
+                                                    )
+                                                )
+                                            } else {
+                                                environment.startAssistantChat()
+                                            }
+                                        }
                                             .buttonStyle(.borderedProminent)
                                     }
                                 }
@@ -226,11 +238,6 @@ struct ActivityView: View {
                 loadCheckinDraft()
             }
             .refreshable { await environment.store.refreshToday() }
-            .sheet(item: $questionForReview) { item in
-                WorkQuestionReviewSheet(question: item.question, workTitle: item.workTitle) {
-                    await environment.store.refreshToday()
-                }
-            }
         }
     }
 
