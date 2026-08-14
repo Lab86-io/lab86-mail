@@ -213,16 +213,28 @@ describe('Xcode Cloud build discovery', () => {
     await expect(
       validateWorkflowXcodeVersion('production/workflow', '27.0', async (path: string) => {
         requests.push(path);
-        return { data: { attributes: { version: '26.6' } } };
+        return {
+          data: {
+            relationships: {
+              xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode-26' } },
+            },
+          },
+          included: [{ type: 'ciXcodeVersions', id: 'xcode-26', attributes: { version: '26.6' } }],
+        };
       }),
     ).rejects.toThrow('uses Xcode 26.6, expected 27.0');
     expect(requests).toEqual([
-      '/v1/ciWorkflows/production%2Fworkflow/xcodeVersion?fields[ciXcodeVersions]=version',
+      '/v1/ciWorkflows/production%2Fworkflow?include=xcodeVersion&fields[ciXcodeVersions]=version',
     ]);
 
     await expect(
       validateWorkflowXcodeVersion('production-workflow', '27.0', async () => ({
-        data: { attributes: { version: '27.0' } },
+        data: {
+          relationships: {
+            xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode-27' } },
+          },
+        },
+        included: [{ type: 'ciXcodeVersions', id: 'xcode-27', attributes: { version: '27.0' } }],
       })),
     ).resolves.toBeUndefined();
   });
