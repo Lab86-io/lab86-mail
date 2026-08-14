@@ -46,7 +46,11 @@ test('staging builds iOS 27 in the production Xcode Cloud environment', () => {
   assert.match(contents, /if: github\.ref == 'refs\/heads\/staging'/);
   assert.match(contents, /XCODE_CLOUD_WORKFLOW_NAME: Production App Store/);
   assert.match(contents, /XCODE_CLOUD_BRANCH_NAME: staging/);
-  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/staging/);
+  assert.match(contents, /permissions:\s+contents: write/);
+  assert.match(contents, /name: Pin immutable staging source/);
+  assert.match(contents, /tag="ios-staging-\$\{SOURCE_SHA\}"/);
+  assert.match(contents, /test "\$\(git rev-list -n 1 "\$ref"\)" = "\$SOURCE_SHA"/);
+  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.source\.outputs\.git_ref \}\}/);
   assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
   assert.doesNotMatch(contents, /xcodebuild/);
   assert.match(project, /deploymentTarget:\s+iOS: "27\.0"/);
@@ -85,7 +89,7 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /actions: read/);
   assert.match(contents, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
   assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
-  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/main/);
+  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: \$\{\{ steps\.release\.outputs\.git_ref \}\}/);
   assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ steps\.verify\.outputs\.build_sha \}\}/);
   assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
   assert.match(

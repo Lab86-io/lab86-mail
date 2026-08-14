@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { AppStoreConnectRequestError } from '../.github/scripts/app-store-connect.mjs';
 import {
+  assertImmutableExpectedSource,
   assertExpectedBuildSource,
   collectAppStoreConnectPages,
   createBuildRunPayload,
@@ -185,6 +186,19 @@ describe('Xcode Cloud build discovery', () => {
     expect(() => assertExpectedBuildSource({ attributes: {} }, 'short-sha')).toThrow(
       'must be a full lowercase commit SHA',
     );
+  });
+
+  test('rejects an expected commit build when its source branch can move', () => {
+    const expectedCommit = 'a'.repeat(40);
+    expect(() =>
+      assertImmutableExpectedSource({ attributes: { canonicalName: 'refs/heads/staging' } }, expectedCommit),
+    ).toThrow('must be built from a pre-verified immutable tag');
+    expect(() =>
+      assertImmutableExpectedSource(
+        { attributes: { canonicalName: `refs/tags/ios-staging-${expectedCommit}` } },
+        expectedCommit,
+      ),
+    ).not.toThrow();
   });
 
   test('hydrates a sparse build creation response before verifying its source commit', async () => {
