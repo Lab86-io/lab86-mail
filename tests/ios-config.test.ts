@@ -192,6 +192,33 @@ describe('native iOS authentication configuration', () => {
     expect(shell).not.toContain('toolbarMinimizeBehavior');
   });
 
+  test('gates iOS 27 mail assistant schemas away from the Xcode 26 staging compiler', () => {
+    const mailIntentFiles = [
+      'MailAppSchemaEntities.swift',
+      'MailAppSchemaIntents.swift',
+      'MailIntentAttachmentStore.swift',
+      'MailIntentService.swift',
+    ];
+
+    for (const file of mailIntentFiles) {
+      const source = readFileSync(path.join(process.cwd(), 'apps/ios/Lab86Mail/App', file), 'utf8');
+      expect(source.startsWith('#if compiler(>=6.4)\n')).toBe(true);
+      expect(source.trimEnd().endsWith('#endif')).toBe(true);
+    }
+
+    const entities = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/App/MailAppSchemaEntities.swift'),
+      'utf8',
+    );
+    const intents = readFileSync(
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/App/MailAppSchemaIntents.swift'),
+      'utf8',
+    );
+    expect(entities).toContain('@AppEnum(schema: .mail.category)');
+    expect(intents).toContain('@AppIntent(schema: .mail.openDraft)');
+    expect(intents).toContain('@AppIntent(schema: .mail.openMessage)');
+  });
+
   test('shares file creation and navigation across iOS creation surfaces', () => {
     const environment = readFileSync(
       path.join(process.cwd(), 'apps/ios/Lab86Mail/App/AppEnvironment.swift'),

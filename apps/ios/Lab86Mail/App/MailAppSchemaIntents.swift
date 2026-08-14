@@ -1,3 +1,4 @@
+#if compiler(>=6.4)
 import AppIntents
 import Foundation
 
@@ -320,3 +321,4 @@ struct AlbatrossDeleteMailIntent: DeleteIntent {
         return .result()
     }
 }
+#endif
