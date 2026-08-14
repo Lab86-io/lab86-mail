@@ -163,6 +163,58 @@ describe('shape rides capture and planning', () => {
     await t.mutation(api.albatrossIntents.savePlan, base);
     expect((await t.run((ctx) => ctx.db.get(workId)))?.shape).toBe('project');
   });
+
+  test('replanning keeps settled proof requirements but never transfers proof to a different requirement', async () => {
+    const t = newHarness();
+    const settledAt = Date.now() - 1_000;
+    const workId = await seedWork(t, {
+      contract: {
+        outcome: 'The passport application is accepted.',
+        proofs: [
+          {
+            id: 'old-confirmation',
+            what: 'The passport application confirmation arrived',
+            satisfiedBy: 'Confirmation email',
+            satisfiedAt: settledAt,
+          },
+        ],
+        closeWhen: 'outcome_confirmed',
+        updatedAt: settledAt,
+      },
+    });
+    const base = {
+      ...caller,
+      intentId: workId,
+      outcome: 'The passport application is accepted.',
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+      contract: {
+        outcome: 'The passport application is accepted.',
+        proofs: [{ id: 'new-confirmation', what: 'The passport application confirmation arrived' }],
+        closeWhen: 'outcome_confirmed' as const,
+      },
+    };
+
+    await t.mutation(api.albatrossIntents.savePlan, base);
+    let work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.contract?.proofs[0]).toMatchObject({
+      id: 'new-confirmation',
+      satisfiedBy: 'Confirmation email',
+      satisfiedAt: settledAt,
+    });
+
+    await t.mutation(api.albatrossIntents.savePlan, {
+      ...base,
+      contract: {
+        ...base.contract,
+        proofs: [{ id: 'new-confirmation', what: 'The physical passport arrived' }],
+      },
+    });
+    work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.contract?.proofs[0]?.satisfiedAt).toBeUndefined();
+  });
 });
 
 describe('the document binds to live records', () => {

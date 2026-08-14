@@ -23,7 +23,7 @@ struct TodayCompositionTests {
 
     @Test func aDayWithCarriedWorkDoesNotClaimToBeEmpty() {
         // Live defect on the web: the header read "The day is yours" while
-        // "Could move today" showed an Albatross underneath it.
+        // the authoritative current move showed an Albatross underneath it.
         #expect(
             TodayComposition.dayShapeLine(
                 needsYouCount: 0, eventCount: 0, capacity: .normal, carryingCount: 1

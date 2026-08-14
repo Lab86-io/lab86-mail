@@ -2,8 +2,8 @@
 
 /* Shared Document Picture-in-Picture window (Chromium: Chrome, Dia, Arc).
  * One always-on-top browser window owned by the app: capture opens it by
- * default (inside the click gesture, as the API requires) and IntentPip
- * portals the live planning card into it — there is no in-app fallback.
+ * default (inside the click gesture, as the API requires) and the mounted
+ * Albatross companion portals the live planning card into it.
  * Theme is mirrored continuously — next-themes drives dark mode via a
  * class on :root, which a bare pip document would never receive. */
 

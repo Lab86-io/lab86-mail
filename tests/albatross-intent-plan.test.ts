@@ -3,6 +3,7 @@ import {
   attachResearchRefs,
   escapePlanHtml,
   mergePlanQuestions,
+  outcomeContractForPlan,
   type PlanContextRef,
   parsePlanGeneration,
   resolveSourceRefs,
@@ -110,6 +111,32 @@ describe('parsePlanGeneration', () => {
 
   test('throws when required fields are missing after repair', () => {
     expect(() => parsePlanGeneration(JSON.stringify({ title: 'x' }))).toThrow(/failed validation/);
+  });
+
+  test('normal planning always produces an outcome contract', () => {
+    const plan = parsePlanGeneration(JSON.stringify(validPlan));
+    expect(outcomeContractForPlan(plan)).toMatchObject({
+      outcome: validPlan.outcome,
+      closeWhen: 'outcome_confirmed',
+      proofs: [{ what: 'Something confirms it happened' }],
+    });
+  });
+
+  test('keeps the planner named proof requirements when supplied', () => {
+    const plan = parsePlanGeneration(
+      JSON.stringify({
+        ...validPlan,
+        contract: {
+          proofs: [{ id: 'confirmation', what: 'The passport agency issued a confirmation number' }],
+          closeWhen: 'outcome_confirmed',
+          contradictions: ['The application was rejected'],
+        },
+      }),
+    );
+    expect(outcomeContractForPlan(plan)).toMatchObject({
+      proofs: [{ id: 'confirmation', what: 'The passport agency issued a confirmation number' }],
+      contradictions: ['The application was rejected'],
+    });
   });
 });
 
@@ -594,6 +621,27 @@ describe('generateIntentPlan orchestration', () => {
     const { calls } = wire({
       currentPlan,
       workDetail: {
+        execution: {
+          guideSteps: [
+            { title: 'Download the NYS PDF', done: true },
+            { title: 'Upload the NYS PDF', done: false },
+          ],
+        },
+        contract: {
+          proofs: [
+            { id: 'receipt', what: 'The filing receipt arrived', satisfiedAt: 250 },
+            { id: 'acceptance', what: 'The return was accepted' },
+          ],
+        },
+        lapses: [
+          {
+            stepTitle: 'Upload the NYS PDF',
+            recovery: 'shrink',
+            reasonKind: 'too_large',
+            revisedStep: 'Open the upload page',
+            createdAt: 400,
+          },
+        ],
         evidence: [
           {
             claim: 'An older note.',
@@ -623,6 +671,11 @@ describe('generateIntentPlan orchestration', () => {
     expect(prompt).toContain('Download the NYS PDF');
     expect(prompt).toContain('already downloaded');
     expect(prompt).toContain('chat, confirmed');
+    expect(prompt).toContain('Steps already completed:');
+    expect(prompt).toContain('[settled] The filing receipt arrived');
+    expect(prompt).toContain('[still needed] The return was accepted');
+    expect(prompt).toContain('Recent plan recoveries (newest first):');
+    expect(prompt).toContain('because too large; replacement: Open the upload page');
     expect(prompt.indexOf('already downloaded')).toBeLessThan(prompt.indexOf('A middle note'));
     expect(prompt.indexOf('A middle note')).toBeLessThan(prompt.indexOf('An older note'));
   });

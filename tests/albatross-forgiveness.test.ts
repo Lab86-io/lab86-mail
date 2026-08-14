@@ -9,6 +9,7 @@ import {
   type Recovery,
   recoveriesFor,
   recoveryAcknowledgement,
+  recoveryWorkState,
   reEntryDaysAway,
   reEntryLine,
   reviewBatch,
@@ -89,6 +90,13 @@ describe('recoveries follow from the reason', () => {
         expect(recoveryAcknowledgement(recovery)).toBeTruthy();
       }
     }
+  });
+
+  test('waiting, pausing, and releasing change authoritative Work state', () => {
+    expect(recoveryWorkState('wait')).toBe('waiting');
+    expect(recoveryWorkState('pause')).toBe('paused');
+    expect(recoveryWorkState('release')).toBe('released');
+    expect(recoveryWorkState('move')).toBeNull();
   });
 });
 

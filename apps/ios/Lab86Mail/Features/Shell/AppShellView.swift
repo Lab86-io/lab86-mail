@@ -410,7 +410,6 @@ private struct SourceList: View {
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
     private var areas: [AreaSummary] { environment.store.areas }
-    private var scopes: [MailCategoryScope] { MailCategoryScope.allCases }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -522,18 +521,6 @@ private struct SourceList: View {
             }
         }
 
-        Divider()
-            .padding(.vertical, 12)
-            .sidebarPage(engagement: engagement, focusY: focus)
-
-        sectionHeader("Mail")
-            .sidebarPage(engagement: engagement, focusY: focus)
-
-        ForEach(Array(scopes.enumerated()), id: \.element) { offset, category in
-            mailFilterButton(category)
-                .sidebarWheelDetent(primaries.count + areas.count + offset)
-                .sidebarPage(engagement: engagement, focusY: focus)
-        }
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -555,9 +542,8 @@ private struct SourceList: View {
     private func refresh() {
         model.destinations = primaries.map(SidebarDestination.primary)
             + areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
-            + scopes.map(SidebarDestination.mail)
-        // The seams: first area, and first mail scope.
-        model.boundaryIndices = [primaries.count, primaries.count + areas.count]
+        // The seam between product sources and the user's contextual hierarchy.
+        model.boundaryIndices = [primaries.count]
         model.reduceMotion = reduceMotion
         model.currentIndex = { [weak model] in
             guard let model else { return nil }
@@ -573,9 +559,6 @@ private struct SourceList: View {
             return .area(id: route.areaID, name: route.name ?? "")
         }
         switch environment.navigation.selectedTab {
-        // Mail is not a peer row; its scopes are. Chat has no row at all, so
-        // the wheel falls back to the top of the hierarchy.
-        case .mail: return .mail(.main)
         case .chat: return nil
         case let tab: return .primary(tab)
         }
@@ -686,35 +669,6 @@ private struct SourceList: View {
         .buttonStyle(.plain)
         .accessibilityLabel(areaAccessibilityLabel(area))
         .accessibilityAddTraits(isSelected(area) ? [.isButton, .isSelected] : .isButton)
-    }
-
-    private func mailFilterButton(_ category: MailCategoryScope) -> some View {
-        Button {
-            guard !model.suppressesRowTaps else { return }
-            environment.navigation.selectPrimary(.mail)
-            environment.navigation.pendingMailCategory = category.rawValue
-            onSelect()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: category.symbol)
-                    .font(.footnote)
-                    .frame(width: 20)
-                    .foregroundStyle(.secondary)
-                SidebarRowTitle(
-                    text: category.title,
-                    font: .subheadline,
-                    model: model,
-                    destination: .mail(category),
-                    restingWeight: .regular
-                )
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var areaState: some View {

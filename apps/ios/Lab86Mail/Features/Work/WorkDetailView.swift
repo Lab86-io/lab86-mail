@@ -104,6 +104,10 @@ struct WorkDetailView: View {
 
                 workLead(detail)
 
+                if let step = detail.execution.currentStep {
+                    currentStepSection(step, execution: detail.execution)
+                }
+
                 if let question = detail.questions.first(where: { $0.status == "pending" }) {
                     documentSection("Needs you") {
                         VStack(alignment: .leading, spacing: 10) {
@@ -168,30 +172,29 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if let plan = detail.plan, !plan.actions.isEmpty {
-                    documentSection("What Albatross created") {
+                if !detail.execution.guideSteps.isEmpty {
+                    documentSection("The plan") {
                         VStack(spacing: 0) {
-                            ForEach(plan.actions) { action in
+                            ForEach(Array(detail.execution.guideSteps.enumerated()), id: \.element.id) { offset, step in
                                 HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: plan.appliedStepKeys.contains(action.id)
-                                        ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(plan.appliedStepKeys.contains(action.id) ? .green : .secondary)
+                                    Text(step.done ? "Done" : "\(offset + 1)")
+                                        .font(.caption.monospacedDigit().weight(.medium))
+                                        .foregroundStyle(step.done ? Color.green : Color.secondary)
+                                        .frame(width: 38, alignment: .leading)
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(action.title)
-                                        if let detail = action.detail {
+                                        Text(step.title)
+                                            .strikethrough(step.done)
+                                        if let detail = step.detail {
                                             Text(detail)
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
-                                    Spacer(minLength: 4)
-                                    Text(action.kind.replacingOccurrences(of: "_", with: " ").capitalized)
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 10)
                                 .accessibilityElement(children: .combine)
-                                Divider()
+                                if offset < detail.execution.guideSteps.count - 1 { Divider() }
                             }
                         }
                     }
@@ -211,8 +214,6 @@ struct WorkDetailView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(plan.artifactTitle ?? "Brief")
                             .font(.caption.weight(.semibold))
-                            .textCase(.uppercase)
-                            .tracking(1.2)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 20)
 
@@ -280,8 +281,6 @@ struct WorkDetailView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Desired outcome")
                     .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .tracking(1.2)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(detail.work.stateLabel)
@@ -311,6 +310,61 @@ struct WorkDetailView: View {
         .padding(.top, 20)
         .padding(.bottom, 24)
         .accessibilityElement(children: .contain)
+    }
+
+    private func currentStepSection(
+        _ step: WorkDetail.ExecutionStep,
+        execution: WorkDetail.Execution
+    ) -> some View {
+        documentSection("Do this next") {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(step.title)
+                        .font(.title3.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail = step.detail {
+                        Text(detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(execution.remainingSteps == 1
+                        ? "This is the last planned step."
+                        : "\(execution.remainingSteps) of \(execution.totalSteps) planned steps remain.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let rawURL = step.url, let url = URL(string: rawURL) {
+                    Button("Open the relevant site") { openURL(url) }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 44)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { currentStepActions(step) }
+                    VStack(alignment: .leading, spacing: 10) { currentStepActions(step) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func currentStepActions(_ step: WorkDetail.ExecutionStep) -> some View {
+        Button(isMutating ? "Updating…" : "Mark this step done") {
+            Task { await completeCurrentStep(step) }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isMutating)
+        .frame(minHeight: 44)
+
+        Button("Discuss this") {
+            environment.startAssistantChat(
+                scope: AssistantChatScope(kind: .work, contextID: route.workID, label: route.title)
+            )
+        }
+        .buttonStyle(.bordered)
+        .frame(minHeight: 44)
     }
 
     private func documentSection<Content: View>(
@@ -407,6 +461,14 @@ struct WorkDetailView: View {
         isMutating = true
         defer { isMutating = false }
         if await environment.store.updateWorkState(route.workID, state: state) {
+            await load(initial: false)
+        }
+    }
+
+    private func completeCurrentStep(_ step: WorkDetail.ExecutionStep) async {
+        isMutating = true
+        defer { isMutating = false }
+        if await environment.store.completeWorkStep(route.workID, stepKey: step.id) {
             await load(initial: false)
         }
     }

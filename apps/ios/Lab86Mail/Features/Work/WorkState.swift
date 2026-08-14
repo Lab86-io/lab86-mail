@@ -1,7 +1,7 @@
 import Foundation
 
 /// One Albatross in the list: an unresolved outcome the user is carrying.
-struct WorkListItem: Identifiable, Hashable, Sendable {
+struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String?
     let rawText: String
@@ -40,6 +40,71 @@ struct WorkListItem: Identifiable, Hashable, Sendable {
         nextStep = json["nextStep"]?.stringValue?.nilIfBlank
         scheduledStartAt = CalendarDateParser.date(json["scheduledStartAt"])
         scheduledEndAt = CalendarDateParser.date(json["scheduledEndAt"])
+    }
+}
+
+/// The server's single answer to “what now?” and the separate recovery lane.
+struct WorkExecutionMove: Identifiable, Hashable, Codable, Sendable {
+    let workID: String
+    let workTitle: String
+    let stepKey: String?
+    let stepTitle: String
+    let detail: String?
+    let url: String?
+    let phase: String
+    let scheduledStartAt: Date?
+    let scheduledEndAt: Date?
+    let remainingSteps: Int
+    let totalSteps: Int
+    let areaName: String?
+
+    var id: String { "\(workID):\(stepKey ?? stepTitle)" }
+
+    init?(json: JSONValue) {
+        guard let workID = json["workId"]?.stringValue,
+              let stepTitle = json["stepTitle"]?.stringValue?.nilIfBlank else { return nil }
+        self.workID = workID
+        workTitle = json["workTitle"]?.stringValue?.nilIfBlank ?? "Albatross"
+        stepKey = json["stepKey"]?.stringValue?.nilIfBlank
+        self.stepTitle = stepTitle
+        detail = json["detail"]?.stringValue?.nilIfBlank
+        url = json["url"]?.stringValue?.nilIfBlank
+        phase = json["phase"]?.stringValue ?? "unscheduled"
+        scheduledStartAt = CalendarDateParser.date(json["scheduledStartAt"])
+        scheduledEndAt = CalendarDateParser.date(json["scheduledEndAt"])
+        remainingSteps = max(0, Int(json["remainingSteps"]?.doubleValue ?? 0))
+        totalSteps = max(0, Int(json["totalSteps"]?.doubleValue ?? 0))
+        areaName = json["areaName"]?.stringValue?.nilIfBlank
+    }
+}
+
+struct WorkExecutionSnapshot: Hashable, Codable, Sendable {
+    let currentMove: WorkExecutionMove?
+    let missedMoves: [WorkExecutionMove]
+    let needsYou: [WorkListItem]
+
+    init(json: JSONValue?) {
+        currentMove = json?["currentMove"].flatMap(WorkExecutionMove.init)
+        missedMoves = (json?["missedMoves"]?.arrayValue ?? []).compactMap(WorkExecutionMove.init)
+        needsYou = (json?["needsYou"]?.arrayValue ?? []).compactMap(WorkListItem.init)
+    }
+}
+
+struct WorkProofCandidate: Identifiable, Hashable, Codable, Sendable {
+    let workID: String
+    let workTitle: String
+    let proofID: String?
+    let proofWhat: String?
+
+    var id: String { "\(workID):\(proofID ?? "outcome")" }
+
+    init?(json: JSONValue) {
+        guard let workID = json["workId"]?.stringValue,
+              let workTitle = json["workTitle"]?.stringValue?.nilIfBlank else { return nil }
+        self.workID = workID
+        self.workTitle = workTitle
+        proofID = json["proofId"]?.stringValue?.nilIfBlank
+        proofWhat = json["proofWhat"]?.stringValue?.nilIfBlank
     }
 }
 

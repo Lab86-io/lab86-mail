@@ -19,6 +19,11 @@ struct ThreadView: View {
     @State private var expandedMessageID: String?
     @State private var linkedTasks: [TaskSummary] = []
     @State private var openTask: TaskSummary?
+    @State private var proofCandidates: [WorkProofCandidate] = []
+    @State private var attachedProofTitle: String?
+    @State private var isAttachingProof = false
+    @State private var showsProofChoices = false
+    @State private var dismissedProofOffer = false
 
     var body: some View {
         Group {
@@ -153,6 +158,15 @@ struct ThreadView: View {
             if let modelSummary {
                 summaryCard(modelSummary)
             }
+            if let attachedProofTitle {
+                Text("Filed as proof for \(attachedProofTitle).")
+                    .font(.subheadline)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.12), in: .rect(cornerRadius: 12))
+            } else if !dismissedProofOffer, let candidate = proofCandidates.first {
+                proofOffer(candidate, detail: detail)
+            }
             if !linkedTasks.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Linked tasks")
@@ -182,6 +196,76 @@ struct ThreadView: View {
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func proofOffer(_ candidate: WorkProofCandidate, detail: MailThreadDetail) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Does this settle something you are carrying?")
+                .font(.headline)
+            Text(
+                candidate.proofWhat.map { "Albatross matched this to “\($0)” for \(candidate.workTitle)." }
+                    ?? "Albatross matched this to the outcome for \(candidate.workTitle)."
+            )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { proofOfferActions(candidate, detail: detail) }
+                VStack(alignment: .leading, spacing: 8) { proofOfferActions(candidate, detail: detail) }
+            }
+
+            if showsProofChoices, proofCandidates.count > 1 {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Choose another Albatross")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(proofCandidates.dropFirst()) { alternate in
+                        Button(alternate.workTitle) {
+                            Task { await attachProof(alternate, detail: detail) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isAttachingProof)
+                        .frame(minHeight: 44)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(environment.theme.accentSoftColor, in: .rect(cornerRadius: 14))
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(environment.theme.accentColor)
+                .frame(width: 3)
+        }
+    }
+
+    @ViewBuilder
+    private func proofOfferActions(_ candidate: WorkProofCandidate, detail: MailThreadDetail) -> some View {
+        Button(isAttachingProof ? "Checking…" : "Yes, use as proof") {
+            Task { await attachProof(candidate, detail: detail) }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isAttachingProof)
+        .frame(minHeight: 44)
+
+        if proofCandidates.count > 1 {
+            Button(showsProofChoices ? "Never mind" : "Choose another") {
+                showsProofChoices.toggle()
+            }
+            .buttonStyle(.bordered)
+            .disabled(isAttachingProof)
+            .frame(minHeight: 44)
+        }
+
+        Button { dismissedProofOffer = true } label: {
+            Text("Not related").underline()
+        }
+            .buttonStyle(.plain)
+            .disabled(isAttachingProof)
+            .frame(minHeight: 44)
     }
 
     private func metaLine(_ detail: MailThreadDetail) -> String {
@@ -275,6 +359,12 @@ struct ThreadView: View {
             if expandedMessageID == nil { expandedMessageID = detail?.messages.last?.id }
             if let summary, summary.unread { await environment.store.markRead(summary) }
             linkedTasks = await environment.store.tasksForThread(route.threadID)
+            if let detail {
+                proofCandidates = await environment.store.proofMatches(
+                    subject: detail.subject,
+                    snippet: detail.messages.last?.body ?? ""
+                )
+            }
             await resolveSenderPhotos()
         } catch {
             errorMessage = error.localizedDescription
@@ -327,6 +417,23 @@ struct ThreadView: View {
             modelSummary = try await environment.modelRouter.summarize(thread: route, content: content)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func attachProof(_ candidate: WorkProofCandidate, detail: MailThreadDetail) async {
+        isAttachingProof = true
+        defer { isAttachingProof = false }
+        let attached = await environment.store.attachMailProof(
+            candidate,
+            route: route,
+            subject: detail.subject,
+            snippet: detail.messages.last?.body ?? ""
+        )
+        if attached {
+            attachedProofTitle = candidate.workTitle
+            proofCandidates = []
+        } else {
+            errorMessage = environment.store.workError ?? "This proof could not be attached."
         }
     }
 

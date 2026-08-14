@@ -137,4 +137,53 @@ struct WorkStateTests {
         #expect(groups.count == 1)
         #expect(groups[0].state == .inProgress)
     }
+
+    @Test func executionSnapshotKeepsCurrentMissedAndNeedsYouSeparate() throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let value = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(
+                #"""
+                {
+                  "currentMove": {
+                    "workId":"current", "workTitle":"Renew passport",
+                    "stepKey":"book", "stepTitle":"Book the appointment",
+                    "phase":"active", "scheduledStartAt":2000000,
+                    "remainingSteps":2, "totalSteps":3, "areaName":"Personal"
+                  },
+                  "missedMoves": [{
+                    "workId":"missed", "workTitle":"Submit expenses",
+                    "stepTitle":"Upload the receipts", "phase":"missed",
+                    "remainingSteps":1, "totalSteps":2
+                  }],
+                  "needsYou": [{
+                    "_id":"asking", "title":"Choose a hotel", "rawText":"Choose a hotel",
+                    "status":"needs_answers", "openQuestions":1
+                  }]
+                }
+                """#.utf8
+            )
+        )
+
+        let snapshot = WorkExecutionSnapshot(json: value)
+
+        #expect(snapshot.currentMove?.workID == "current")
+        #expect(snapshot.currentMove?.scheduledStartAt == now)
+        #expect(snapshot.currentMove?.stepTitle == "Book the appointment")
+        #expect(snapshot.missedMoves.map(\.workID) == ["missed"])
+        #expect(snapshot.needsYou.map(\.id) == ["asking"])
+    }
+
+    @Test func mailProofCandidateNamesTheExactRequirementBeforeConfirmation() {
+        let candidate = WorkProofCandidate(json: .object([
+            "workId": .string("passport"),
+            "workTitle": .string("Renew passport"),
+            "proofId": .string("confirmation"),
+            "proofWhat": .string("The application confirmation arrived"),
+        ]))
+
+        #expect(candidate?.workID == "passport")
+        #expect(candidate?.proofID == "confirmation")
+        #expect(candidate?.proofWhat == "The application confirmation arrived")
+    }
 }

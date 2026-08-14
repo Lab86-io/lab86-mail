@@ -16,6 +16,7 @@ import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatros
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { useSidebar } from '@/components/ui/sidebar';
+import { openPipWindow } from '@/lib/albatross/pip-window';
 import { capturePillHidden, useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -430,12 +431,16 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     if (listening) stopListening();
     const trimmed = text.trim();
     if (!trimmed) return;
+    // Document PiP requires the original click gesture. Open it before the
+    // request so planning and questions may continue outside the app window.
+    void openPipWindow();
     setSaveError(null);
     send({ type: 'submit', multi: false });
     void persist(trimmed, source);
   };
 
   const decide = (decision: 'split' | 'keep') => {
+    void openPipWindow();
     send({ type: decision });
     void persist(text.trim(), source);
   };

@@ -17,6 +17,7 @@ import { cloudFileSearch } from '@/lib/tools/files';
 import { githubSearch, mcpConnectionStatus, mcpListItems, mcpSearch } from '@/lib/tools/mcp';
 import { type AnyTool, invokeTool } from '@/lib/tools/registry';
 import { browserbaseFetch, browserbaseSearch } from '@/lib/tools/web';
+import { type OutcomeContract, proposeContract } from './contract';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from './work-shape';
 import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
@@ -138,6 +139,15 @@ const physicalActionSchema = z.object({
   url: z.string().max(500).optional(),
 });
 
+const generatedContractSchema = z.object({
+  proofs: z
+    .array(z.object({ id: z.string().max(120).optional(), what: z.string().min(1).max(300) }))
+    .min(1)
+    .max(12),
+  closeWhen: z.enum(['action_succeeded', 'outcome_likely', 'outcome_confirmed', 'never_automatically']),
+  contradictions: z.array(z.string().min(1).max(300)).max(12).optional(),
+});
+
 export const planGenerationSchema = z.object({
   title: z.string().min(1).max(180),
   kind: z.enum(INTENT_KINDS).catch('unknown'),
@@ -156,9 +166,41 @@ export const planGenerationSchema = z.object({
   sourceRefIds: z.array(z.string()).max(20).default([]),
   mapQuery: z.string().max(200).nullish(),
   places: z.array(placeSchema).max(6).default([]),
+  contract: generatedContractSchema.optional(),
 });
 
 export type PlanGeneration = z.infer<typeof planGenerationSchema>;
+
+/** Every ordinary plan writes down what would settle it, even when the model omits that field. */
+export function outcomeContractForPlan(generation: PlanGeneration): OutcomeContract {
+  if (generation.contract) {
+    return {
+      outcome: generation.outcome,
+      proofs: generation.contract.proofs.map((proof, index) => ({
+        id: proof.id || `proof-${index + 1}`,
+        what: proof.what,
+      })),
+      closeWhen: generation.contract.closeWhen,
+      contradictions: generation.contract.contradictions,
+    };
+  }
+  const searchable = [
+    generation.title,
+    generation.outcome,
+    ...generation.digitalActions.map((action) => action.title),
+    ...generation.physicalActions.map((action) => action.title),
+  ]
+    .join(' ')
+    .toLowerCase();
+  const kind = generation.digitalActions.some((action) => action.kind === 'email_draft')
+    ? 'send'
+    : /\b(buy|purchase|order|pay for)\b/.test(searchable)
+      ? 'buy'
+      : /\b(book|reserve|appointment|registration)\b/.test(searchable)
+        ? 'book'
+        : 'general';
+  return proposeContract(generation.outcome, kind);
+}
 
 export interface PlanContextRef {
   refId: string;
@@ -344,6 +386,7 @@ Respond with ONE JSON object, no prose, matching:
   "questions": [{"id": string, "prompt": string, "options"?: [{"id": string, "title": string, "detail"?: string, "address"?: string, "hoursText"?: string, "website"?: string}]}],
   "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft"|"document", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "documentKind"?: "doc"|"sheet"|"deck", "instructions"?: string, "sourceRefIds"?: string[]}],
   "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
+  "contract": {"proofs": [{"id"?: string, "what": string}], "closeWhen": "action_succeeded"|"outcome_likely"|"outcome_confirmed"|"never_automatically", "contradictions"?: [string]}, // name the concrete receipts, confirmations, replies, or observations that would settle the outcome; use never_automatically when closing it would be risky
   "assumptions": [string],
   "sourceRefIds": [string],           // refIds from the provided evidence you actually used
   "mapQuery": string|null,            // when the plan involves ONE specific real-world place, its map search string ("Penn Yan DMV, Penn Yan NY") copied/derived from evidence or the user's words — never invented; else null
@@ -585,6 +628,13 @@ function currentWorkBlock(workbench: any, detail: any) {
         lines.push(`${index + 1}. ${step}`);
       });
     }
+    const completed = (detail?.execution?.guideSteps || []).filter((step: any) => step.done);
+    if (completed.length) {
+      lines.push('Steps already completed:');
+      completed.slice(0, 24).forEach((step: any) => {
+        lines.push(`- ${step.title}`);
+      });
+    }
   }
   if (evidence.length) {
     lines.push('Durable progress and evidence (newest first):');
@@ -592,6 +642,24 @@ function currentWorkBlock(workbench: any, detail: any) {
       const claim = item.claim || item.summary || item.title;
       lines.push(
         `- ${claim} [${item.sourceKind || 'source'}, ${item.trust || 'unknown trust'}]${item.limits ? `; limits: ${item.limits}` : ''}`,
+      );
+    });
+  }
+  const contract = detail?.contract;
+  if (contract?.proofs?.length) {
+    lines.push('Outcome proof requirements:');
+    contract.proofs.slice(0, 12).forEach((proof: any) => {
+      lines.push(`- ${proof.satisfiedAt ? '[settled]' : '[still needed]'} ${proof.what}`);
+    });
+  }
+  const lapses = [...(detail?.lapses || [])]
+    .sort((left: any, right: any) => Number(right.createdAt || 0) - Number(left.createdAt || 0))
+    .slice(0, 8);
+  if (lapses.length) {
+    lines.push('Recent plan recoveries (newest first):');
+    lapses.forEach((lapse: any) => {
+      lines.push(
+        `- ${lapse.stepTitle || 'A planned step'}: ${lapse.recovery || 'review'}${lapse.reasonKind ? ` because ${String(lapse.reasonKind).replaceAll('_', ' ')}` : ''}${lapse.revisedStep ? `; replacement: ${lapse.revisedStep}` : ''}`,
       );
     });
   }
@@ -898,6 +966,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       artifactTitle: generation.title,
       mapQuery: generation.mapQuery ?? generation.places[0]?.mapsQuery ?? undefined,
       places: generation.places,
+      contract: outcomeContractForPlan(generation),
     });
 
     return {

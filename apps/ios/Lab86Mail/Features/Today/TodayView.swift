@@ -102,7 +102,20 @@ struct TodayView: View {
         } action: { _, crossed in
             showsInlineDate = crossed
         }
-        .refreshable { await store.refreshToday() }
+        .refreshable {
+            await store.refreshToday()
+            await store.refreshExecution()
+        }
+        .task(id: "today-execution-poll") {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(300))
+                } catch {
+                    return
+                }
+                await store.refreshExecution()
+            }
+        }
         .overlay {
             if store.isLoading && store.dailyReport == nil && store.events.isEmpty && store.approvals.isEmpty {
                 ProgressView("Putting your day together…")
@@ -129,7 +142,7 @@ struct TodayView: View {
     /// let the masthead say "Nothing needs you today" while that page showed a
     /// needs-you group.
     private var needsYouCount: Int {
-        store.approvals.count + store.allWork.filter(\.needsYou).count
+        store.approvals.count + store.workExecution.needsYou.count
     }
 
     /// What Albatross is carrying on its own. The sentence says "Albatross is
@@ -150,11 +163,81 @@ struct TodayView: View {
     /// The short list of Albatrosses that cannot move without the user, ordered
     /// by how much is waiting on them.
     private var needsYouWork: [WorkListItem] {
-        store.allWork.filter(\.needsYou).sorted { $0.openQuestions > $1.openQuestions }
+        store.workExecution.needsYou
     }
 
     /// Always current, because it is read rather than written.
     @ViewBuilder private func liveLayer(now: Date) -> some View {
+        if let move = store.workExecution.currentMove {
+            todaySection("Do this next", note: currentMoveNote(move, now: now)) {
+                Button {
+                    environment.navigation.openWork(id: move.workID, title: move.workTitle)
+                } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text([move.workTitle, move.areaName].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(move.stepTitle)
+                            .font(.system(.title3, design: .serif).weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let detail = move.detail {
+                            Text(detail)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Divider()
+                        HStack {
+                            Text(move.remainingSteps == 1
+                                ? "Last planned step"
+                                : "\(move.remainingSteps) of \(move.totalSteps) steps remain")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("Open guided work")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(environment.theme.accentColor)
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(.secondarySystemGroupedBackground))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(environment.theme.accentColor.opacity(0.3))
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the current step and its full plan")
+            }
+        } else if store.workDidLoad {
+            todaySection("Do this next", note: "There is no concrete move waiting.") {
+                Text("The current plan is clear. Add something only if it deserves a place in the day.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [5]))
+                    )
+            }
+        }
+
+        if !store.workExecution.missedMoves.isEmpty {
+            todaySection("The plan slipped", note: "Choose what should happen now.") {
+                VStack(spacing: 12) {
+                    ForEach(store.workExecution.missedMoves) { move in
+                        MissedMoveRecoveryView(move: move)
+                    }
+                }
+            }
+        }
+
         if !store.approvals.isEmpty || !needsYouWork.isEmpty {
             todaySection("Needs you", note: "Albatross cannot move these without you.") {
                 VStack(spacing: 0) {
@@ -210,45 +293,8 @@ struct TodayView: View {
             if store.todaysEvents.isEmpty {
                 scheduleEmptyState
             } else {
-                DayRibbonView(events: store.todaysEvents, now: Date()) { event in
+                DayRibbonView(events: store.todaysEvents, now: now) { event in
                     environment.navigation.openEvent(event)
-                }
-            }
-        }
-
-        let moving = store.allWork.filter { !$0.isClosed && !$0.needsYou && !$0.hasUpcomingBooking(at: now) }
-        if !moving.isEmpty {
-            todaySection("Could move today", note: "Albatross is carrying these.") {
-                VStack(spacing: 0) {
-                    ForEach(moving.prefix(6)) { item in
-                        Button {
-                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.displayTitle)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.primary)
-                                Text(item.standingLine)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-
-        let openTasks = store.tasks.filter { !$0.completed }
-        if !openTasks.isEmpty {
-            todaySection("Tasks", note: "From your boards.") {
-                VStack(spacing: 0) {
-                    ForEach(openTasks.prefix(8)) { task in
-                        TaskRow(task: task)
-                            .padding(.vertical, 4)
-                    }
                 }
             }
         }
@@ -267,6 +313,14 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    private func currentMoveNote(_ move: WorkExecutionMove, now: Date) -> String {
+        if move.phase == "active" { return "This block is happening now." }
+        if move.phase == "upcoming", let start = move.scheduledStartAt {
+            return "Protected for \(start.formatted(date: .abbreviated, time: .shortened))."
+        }
+        return "The clearest concrete move."
     }
 
     /// A section rule in the editorial voice: a hairline, a serif heading, a
@@ -511,6 +565,70 @@ struct TodayView: View {
                 source: store.dailyReport?.title ?? "Daily Report"
             )
         }
+    }
+}
+
+private struct MissedMoveRecoveryView: View {
+    @Environment(AppEnvironment.self) private var environment
+    let move: WorkExecutionMove
+
+    @State private var isRecovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(move.workTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(move.stepTitle)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let start = move.scheduledStartAt {
+                    Text("Was planned for \(start.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { recoveryButtons }
+                VStack(alignment: .leading, spacing: 8) { recoveryButtons }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .disabled(isRecovering)
+        .overlay {
+            if isRecovering {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.systemBackground).opacity(0.86))
+                ProgressView("Updating the plan…")
+                    .font(.caption)
+            }
+        }
+    }
+
+    @ViewBuilder private var recoveryButtons: some View {
+        recoveryButton("Find another time", recovery: "move")
+        recoveryButton("Make it smaller", recovery: "shrink")
+        recoveryButton("Rebuild", recovery: "rebuild")
+        recoveryButton("It happened", recovery: "done")
+    }
+
+    private func recoveryButton(_ title: String, recovery: String) -> some View {
+        Button(title) {
+            isRecovering = true
+            Task {
+                _ = await environment.store.recoverWork(move, recovery: recovery)
+                isRecovering = false
+            }
+        }
+        .buttonStyle(.bordered)
+        .frame(minHeight: 44)
     }
 }
 
