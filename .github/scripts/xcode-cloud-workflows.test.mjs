@@ -43,9 +43,11 @@ test('staging builds iOS 27 in the production Xcode Cloud environment', () => {
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
   assert.match(contents, /name: Build iOS 27 in Xcode Cloud and distribute to TestFlight/);
+  assert.match(contents, /if: github\.ref == 'refs\/heads\/staging'/);
   assert.match(contents, /XCODE_CLOUD_WORKFLOW_NAME: Production App Store/);
   assert.match(contents, /XCODE_CLOUD_BRANCH_NAME: staging/);
   assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/staging/);
+  assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
   assert.doesNotMatch(contents, /xcodebuild/);
   assert.match(project, /deploymentTarget:\s+iOS: "27\.0"/);
   assert.match(project, /xcodeVersion: "27\.0"/);
@@ -85,6 +87,7 @@ test('production preserves diagnostics with an immutable upload action', () => {
   assert.match(contents, /name: production-release-\$\{\{ steps\.deploy\.outputs\.run_id \}\}/);
   assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/main/);
   assert.match(contents, /XCODE_CLOUD_EXPECTED_COMMIT_SHA: \$\{\{ steps\.verify\.outputs\.build_sha \}\}/);
+  assert.match(contents, /XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27\.0"/);
   assert.match(
     readFileSync(new URL('./start-xcode-cloud.mjs', import.meta.url), 'utf8'),
     /manualTagStartCondition/,

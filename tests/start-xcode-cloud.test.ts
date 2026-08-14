@@ -16,6 +16,7 @@ import {
   selectBranchRefID,
   selectWorkflowID,
   startBuildRunWithConditionPropagation,
+  validateWorkflowXcodeVersion,
 } from '../.github/scripts/start-xcode-cloud.mjs';
 
 describe('Xcode Cloud build discovery', () => {
@@ -135,6 +136,25 @@ describe('Xcode Cloud build discovery', () => {
         },
       },
     });
+  });
+
+  test('rejects a workflow whose selected Xcode version is not iOS 27', async () => {
+    const requests: string[] = [];
+    await expect(
+      validateWorkflowXcodeVersion('production/workflow', '27.0', async (path: string) => {
+        requests.push(path);
+        return { data: { attributes: { version: '26.6' } } };
+      }),
+    ).rejects.toThrow('uses Xcode 26.6, expected 27.0');
+    expect(requests).toEqual([
+      '/v1/ciWorkflows/production%2Fworkflow/xcodeVersion?fields[ciXcodeVersions]=version',
+    ]);
+
+    await expect(
+      validateWorkflowXcodeVersion('production-workflow', '27.0', async () => ({
+        data: { attributes: { version: '27.0' } },
+      })),
+    ).resolves.toBeUndefined();
   });
 
   test('requires Xcode Cloud to report the expected immutable source commit', () => {

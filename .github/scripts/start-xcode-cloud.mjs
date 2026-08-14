@@ -282,6 +282,22 @@ export function hasExplicitBuildTarget(workflowID, branchRefID) {
   return Boolean(workflowID && branchRefID);
 }
 
+export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, appStoreConnect) {
+  if (!expectedVersion) return;
+  if (!workflowID) {
+    throw new Error('Cannot validate Xcode Cloud version without a workflow ID.');
+  }
+  const response = await appStoreConnect(
+    `/v1/ciWorkflows/${encodeURIComponent(workflowID)}/xcodeVersion?fields[ciXcodeVersions]=version`,
+  );
+  const actualVersion = response.data?.attributes?.version;
+  if (actualVersion !== expectedVersion) {
+    throw new Error(
+      `Xcode Cloud workflow uses Xcode ${actualVersion ?? 'unknown'}, expected ${expectedVersion}.`,
+    );
+  }
+}
+
 function appStoreConnectPath(url) {
   const parsed = new URL(url, 'https://api.appstoreconnect.apple.com');
   if (parsed.origin !== 'https://api.appstoreconnect.apple.com') {
@@ -426,6 +442,12 @@ export async function main() {
       );
     }
   }
+
+  await validateWorkflowXcodeVersion(
+    workflowID,
+    process.env.XCODE_CLOUD_EXPECTED_XCODE_VERSION,
+    appStoreConnect,
+  );
 
   const response = await startBuildRunWithConditionPropagation(() =>
     appStoreConnect('/v1/ciBuildRuns', {
