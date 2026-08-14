@@ -172,6 +172,18 @@ describe('the questions use the main attached conversation', () => {
     expect(chat).toMatch(/onSelect=\{\(\) => void loadSession\(session\._id\)\}\s*disabled=\{busy\}/);
   });
 
+  test('a delayed history response cannot overwrite a changed conversation', () => {
+    const chat = read('components/shell/AIBar.tsx');
+    expect(chat).toMatch(/const generation = \+\+sessionLoadGenerationRef\.current;/);
+    expect(chat).toMatch(/generation !== sessionLoadGenerationRef\.current/);
+    expect(chat).toMatch(/loadScopeKey !== activeScopeKeyRef\.current/);
+    expect(chat).toMatch(
+      /if \(priorScopeRef\.current === scopeKey\) return;[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/,
+    );
+    expect(chat).toMatch(/const startNewChat = useCallback\([\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
+    expect(chat).toMatch(/const send = async[\s\S]*?sessionLoadGenerationRef\.current \+= 1;/);
+  });
+
   test('the truncated floating copy of the question is gone', () => {
     const companion = read('components/albatross/AlbatrossCompanion.tsx');
     expect(companion).not.toContain('fixed bottom-20 right-6');

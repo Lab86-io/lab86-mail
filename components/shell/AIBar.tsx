@@ -254,6 +254,9 @@ export function AssistantChat() {
   const lastChatAt = useClientStore((s) => s.lastChatAt);
   const setLastChatId = useClientStore((s) => s.setLastChatId);
   const sessionIdRef = useRef<string | null>(null);
+  const sessionLoadGenerationRef = useRef(0);
+  const activeScopeKeyRef = useRef(scopeKey);
+  activeScopeKeyRef.current = scopeKey;
   const restoredRef = useRef(false);
   const saveTimer = useRef<number | null>(null);
   const priorScopeRef = useRef(scopeKey);
@@ -261,6 +264,7 @@ export function AssistantChat() {
   useEffect(() => {
     if (priorScopeRef.current === scopeKey) return;
     priorScopeRef.current = scopeKey;
+    sessionLoadGenerationRef.current += 1;
     sessionIdRef.current = null;
     setMessages([]);
   }, [scopeKey, setMessages]);
@@ -268,9 +272,17 @@ export function AssistantChat() {
   const loadSession = useCallback(
     async (id: string) => {
       if (busy) return false;
+      const generation = ++sessionLoadGenerationRef.current;
+      const loadScopeKey = activeScopeKeyRef.current;
       try {
         const res = await fetch(`/api/chats?id=${encodeURIComponent(id)}`);
         const data = await res.json();
+        if (
+          generation !== sessionLoadGenerationRef.current ||
+          loadScopeKey !== activeScopeKeyRef.current
+        ) {
+          return false;
+        }
         if (data?.ok && Array.isArray(data.session?.messages)) {
           sessionIdRef.current = id;
           setLastChatId(id);
@@ -328,6 +340,7 @@ export function AssistantChat() {
 
   const startNewChat = useCallback(() => {
     if (busy) return;
+    sessionLoadGenerationRef.current += 1;
     sessionIdRef.current = null;
     setLastChatId(null);
     setMessages([]);
@@ -473,6 +486,7 @@ export function AssistantChat() {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
     if ((!trimmed && !filesForTurn.length) || busy) return;
+    sessionLoadGenerationRef.current += 1;
     emptyRetryCount.current = 0; // fresh turn — reset empty-completion retries
 
     let stagedUploads: StagedChatUpload[] = [];
