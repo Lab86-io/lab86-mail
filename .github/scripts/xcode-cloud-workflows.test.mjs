@@ -37,16 +37,18 @@ test('staging no longer runs on a push to staging', () => {
   assert.match(contents, /^on:\s*\n\s+workflow_dispatch:/m);
 });
 
-test('staging preserves diagnostics and signed IPA with immutable upload actions', () => {
+test('staging builds iOS 27 in the production Xcode Cloud environment', () => {
   const contents = workflow('xcode-cloud-staging.yml');
+  const project = readFileSync(new URL('../../apps/ios/project.yml', import.meta.url), 'utf8');
 
   assert.match(contents, /runs-on: blacksmith-6vcpu-macos-latest/);
-  assert.match(contents, /name: Compile app and test bundles/);
-  assert.match(contents, /name: Generate production-configured project/);
-  assert.match(contents, /CI_BRANCH: staging/);
-  assert.match(contents, /LAB86_BUILD_CHANNEL: production/);
-  assert.match(contents, /CODE_SIGNING_ALLOWED=NO\s+build-for-testing/);
-  assert.match(contents, /needs: compile-native\s+if: \$\{\{ inputs\.distribute == true \}\}/);
+  assert.match(contents, /name: Build iOS 27 in Xcode Cloud and distribute to TestFlight/);
+  assert.match(contents, /XCODE_CLOUD_WORKFLOW_NAME: Production App Store/);
+  assert.match(contents, /XCODE_CLOUD_BRANCH_NAME: staging/);
+  assert.match(contents, /XCODE_CLOUD_GIT_REF_NAME: refs\/heads\/staging/);
+  assert.doesNotMatch(contents, /xcodebuild/);
+  assert.match(project, /deploymentTarget:\s+iOS: "27\.0"/);
+  assert.match(project, /xcodeVersion: "27\.0"/);
   assert.match(contents, new RegExp(immutableCheckout));
   assert.match(contents, /node --test \.github\/scripts\/app-store-connect\.test\.mjs/);
   assert.match(contents, /node --test \.github\/scripts\/upload-ios-export\.test\.mjs/);
