@@ -621,6 +621,27 @@ describe('generateIntentPlan orchestration', () => {
     const { calls } = wire({
       currentPlan,
       workDetail: {
+        execution: {
+          guideSteps: [
+            { title: 'Download the NYS PDF', done: true },
+            { title: 'Upload the NYS PDF', done: false },
+          ],
+        },
+        contract: {
+          proofs: [
+            { id: 'receipt', what: 'The filing receipt arrived', satisfiedAt: 250 },
+            { id: 'acceptance', what: 'The return was accepted' },
+          ],
+        },
+        lapses: [
+          {
+            stepTitle: 'Upload the NYS PDF',
+            recovery: 'shrink',
+            reasonKind: 'too_large',
+            revisedStep: 'Open the upload page',
+            createdAt: 400,
+          },
+        ],
         evidence: [
           {
             claim: 'An older note.',
@@ -650,6 +671,11 @@ describe('generateIntentPlan orchestration', () => {
     expect(prompt).toContain('Download the NYS PDF');
     expect(prompt).toContain('already downloaded');
     expect(prompt).toContain('chat, confirmed');
+    expect(prompt).toContain('Steps already completed:');
+    expect(prompt).toContain('[settled] The filing receipt arrived');
+    expect(prompt).toContain('[still needed] The return was accepted');
+    expect(prompt).toContain('Recent plan recoveries (newest first):');
+    expect(prompt).toContain('because too large; replacement: Open the upload page');
     expect(prompt.indexOf('already downloaded')).toBeLessThan(prompt.indexOf('A middle note'));
     expect(prompt.indexOf('A middle note')).toBeLessThan(prompt.indexOf('An older note'));
   });
