@@ -68,6 +68,7 @@ let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
 let workDetailFixture: any = null;
+let generatedPlanIdFixture = 'plan_revised';
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
@@ -220,6 +221,7 @@ beforeEach(() => {
   connectedAccountsFixture = [];
   areaFixture = null;
   workDetailFixture = null;
+  generatedPlanIdFixture = 'plan_revised';
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -257,7 +259,7 @@ beforeEach(() => {
           ],
         },
       };
-      return { planId: 'plan_revised', title: 'Renew passport', outcome: 'Passport renewed' };
+      return { planId: generatedPlanIdFixture, title: 'Renew passport', outcome: 'Passport renewed' };
     }) as any,
   });
 });
@@ -954,6 +956,23 @@ describe('Albatross tools', () => {
       ),
     ).toBe(true);
     expect(toolInvocations.some((call) => call.tool === 'albatross_apply_intent_plan')).toBe(false);
+  });
+
+  test('replan rejects a generated revision that cannot be loaded', async () => {
+    workDetailFixture = {
+      work: { _id: 'work_missing_revision', title: 'Renew passport', rawText: 'Renew my passport' },
+      plan: { _id: 'plan_old', digitalActions: [] },
+      questions: [],
+      evidence: [],
+    };
+    generatedPlanIdFixture = 'plan_missing';
+
+    await expect(
+      runTool(albatross.albatrossReplanWork.handler, {
+        workId: 'work_missing_revision',
+        reason: 'Refresh the plan.',
+      }),
+    ).rejects.toThrow(/could not be loaded/);
   });
 
   test('tools require an authenticated user', async () => {
