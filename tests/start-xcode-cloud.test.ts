@@ -13,6 +13,7 @@ import {
   main,
   manualBranchConditionAllows,
   manualTagConditionAllows,
+  matchesExpectedXcodeVersion,
   resolveBuildRunSource,
   resolveGitReferenceWithPropagation,
   selectBranchRefID,
@@ -237,6 +238,27 @@ describe('Xcode Cloud build discovery', () => {
         included: [{ type: 'ciXcodeVersions', id: 'xcode-27', attributes: { version: '27.0' } }],
       })),
     ).resolves.toBeUndefined();
+
+    await expect(
+      validateWorkflowXcodeVersion('production-workflow', '27.0', async () => ({
+        data: {
+          relationships: {
+            xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode-27-build' } },
+          },
+        },
+        included: [{ type: 'ciXcodeVersions', id: 'xcode-27-build', attributes: { version: '27A5237l' } }],
+      })),
+    ).resolves.toBeUndefined();
+  });
+
+  test('accepts Apple Xcode 27 build identifiers without accepting adjacent major versions', () => {
+    expect(matchesExpectedXcodeVersion('27A5237l', '27.0')).toBe(true);
+    expect(matchesExpectedXcodeVersion('27.1', '27.0')).toBe(true);
+    expect(matchesExpectedXcodeVersion('26A5237l', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('270A5237l', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27.', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27.foo', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27A', '27.0')).toBe(false);
   });
 
   test('requires Xcode Cloud to report the expected immutable source commit', () => {
