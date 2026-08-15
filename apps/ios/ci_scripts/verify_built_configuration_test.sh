@@ -19,9 +19,9 @@ write_plist() {
 
 run_verifier() {
   local channel="$1"
-  TARGET_BUILD_DIR="$test_root" \
+  env -u CI_BRANCH -u CI_TAG -u CI_GIT_REF -u CI_COMMIT \
+    TARGET_BUILD_DIR="$test_root" \
     INFOPLIST_PATH=Info.plist \
-    CI_BRANCH='' \
     LAB86_BUILD_CHANNEL="$channel" \
     "$script_dir/verify_built_configuration.sh"
 }
@@ -32,6 +32,21 @@ run_branch_verifier() {
     TARGET_BUILD_DIR="$test_root" \
     INFOPLIST_PATH=Info.plist \
     CI_BRANCH="$branch" \
+    CI_TAG='' \
+    CI_GIT_REF="refs/heads/$branch" \
+    CI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    "$script_dir/verify_built_configuration.sh"
+}
+
+run_tag_verifier() {
+  local tag="$1"
+  local commit="$2"
+  env -u LAB86_BUILD_CHANNEL -u CI_BRANCH \
+    TARGET_BUILD_DIR="$test_root" \
+    INFOPLIST_PATH=Info.plist \
+    CI_TAG="$tag" \
+    CI_GIT_REF="refs/tags/$tag" \
+    CI_COMMIT="$commit" \
     "$script_dir/verify_built_configuration.sh"
 }
 
@@ -64,6 +79,9 @@ run_branch_verifier main
 if TARGET_BUILD_DIR="$test_root" \
   INFOPLIST_PATH=Info.plist \
   CI_BRANCH=main \
+  CI_TAG='' \
+  CI_GIT_REF=refs/heads/main \
+  CI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   LAB86_BUILD_CHANNEL=staging \
   "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
   echo 'Branch verification must reject a mismatched explicit channel.' >&2
@@ -73,6 +91,9 @@ fi
 if TARGET_BUILD_DIR="$test_root" \
   INFOPLIST_PATH=Info.plist \
   CI_BRANCH='```main```' \
+  CI_TAG='' \
+  CI_GIT_REF=refs/heads/main \
+  CI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   LAB86_BUILD_CHANNEL=production \
   "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
   echo 'A malformed Xcode Cloud branch must not select production.' >&2
@@ -82,9 +103,21 @@ fi
 if TARGET_BUILD_DIR="$test_root" \
   INFOPLIST_PATH=Info.plist \
   CI_BRANCH=feature \
+  CI_TAG='' \
+  CI_GIT_REF=refs/heads/feature \
+  CI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   LAB86_BUILD_CHANNEL=production \
   "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
   echo 'Branch verification must reject an unknown Xcode Cloud branch.' >&2
+  exit 1
+fi
+
+staging_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+run_tag_verifier "ios-staging-$staging_sha" "$staging_sha"
+run_tag_verifier v0.10.0 cccccccccccccccccccccccccccccccccccccccc
+
+if run_tag_verifier "ios-staging-$staging_sha" dddddddddddddddddddddddddddddddddddddddd 2>/dev/null; then
+  echo 'Tag verification must reject a staging tag whose embedded SHA differs from CI_COMMIT.' >&2
   exit 1
 fi
 

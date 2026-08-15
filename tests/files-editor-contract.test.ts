@@ -63,10 +63,12 @@ describe('provider-faithful file editing contracts', () => {
     const postClone = source('apps/ios/ci_scripts/ci_post_clone.sh');
     const verifier = source('apps/ios/ci_scripts/verify_built_configuration.sh');
 
-    expect(postClone).toContain('main|staging)');
+    expect(postClone).toContain('refs/heads/main|refs/heads/staging)');
+    expect(postClone).toContain('refs/tags/ios-staging-*');
     expect(postClone).not.toContain('mail-staging.lab86.io');
     expect(postClone).not.toContain('pk_test_');
-    expect(verifier).toContain('main|staging)');
+    expect(verifier).toContain('refs/heads/main|refs/heads/staging)');
+    expect(verifier).toContain('refs/tags/ios-staging-*');
     expect(verifier).not.toContain('mail-staging.lab86.io');
   });
 
