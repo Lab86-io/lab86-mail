@@ -31,21 +31,47 @@ xcconfig_url() {
   printf '%s' "$1" | sed 's#://#:/\$()/#'
 }
 
-# CI_BRANCH is supplied by Xcode Cloud, not its environment editor. Treat it as
-# an exact authorization boundary rather than repairing a malformed value.
+# Xcode Cloud supplies branch and tag identities separately. Treat the
+# canonical ref as an exact authorization boundary rather than repairing a
+# malformed value.
 cloud_branch="${CI_BRANCH:-}"
-case "$cloud_branch" in
-  main|staging)
-    expected_build_channel=production
+cloud_tag="${CI_TAG:-}"
+cloud_git_ref="${CI_GIT_REF:-}"
+cloud_commit="${CI_COMMIT:-}"
+authorized_source=false
+
+case "$cloud_git_ref" in
+  refs/heads/main|refs/heads/staging)
+    expected_branch="${cloud_git_ref#refs/heads/}"
+    [[ "$cloud_branch" == "$expected_branch" && -z "$cloud_tag" ]] && authorized_source=true
     ;;
-  *)
-    echo "Xcode Cloud builds must originate from main or staging." >&2
-    exit 1
+  refs/tags/ios-staging-*)
+    expected_commit="${cloud_tag#ios-staging-}"
+    if [[ -z "$cloud_branch" \
+      && "$cloud_git_ref" == "refs/tags/$cloud_tag" \
+      && "$expected_commit" =~ ^[0-9a-f]{40}$ \
+      && "$cloud_commit" == "$expected_commit" ]]; then
+      authorized_source=true
+    fi
+    ;;
+  refs/tags/v*)
+    if [[ -z "$cloud_branch" \
+      && "$cloud_git_ref" == "refs/tags/$cloud_tag" \
+      && "$cloud_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+      && "$cloud_commit" =~ ^[0-9a-f]{40}$ ]]; then
+      authorized_source=true
+    fi
     ;;
 esac
+
+if [[ "$authorized_source" != true ]]; then
+  echo "Xcode Cloud builds must originate from an authorized main, staging, or immutable release ref." >&2
+  exit 1
+fi
+expected_build_channel=production
 requested_build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
 if [[ -n "$requested_build_channel" && "$requested_build_channel" != "$expected_build_channel" ]]; then
-  echo "LAB86_BUILD_CHANNEL does not match Xcode Cloud branch $cloud_branch." >&2
+  echo "LAB86_BUILD_CHANNEL does not match Xcode Cloud source $cloud_git_ref." >&2
   exit 1
 fi
 build_channel="$expected_build_channel"

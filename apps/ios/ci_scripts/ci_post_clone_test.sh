@@ -18,8 +18,10 @@ run_post_clone() {
 }
 
 unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
-  CLERK_FRONTEND_API_HOST LAB86_BUILD_CHANNEL CI_BRANCH
+  CLERK_FRONTEND_API_HOST LAB86_BUILD_CHANNEL CI_BRANCH CI_TAG CI_GIT_REF CI_COMMIT
 export CI_BRANCH=staging
+export CI_GIT_REF=refs/heads/staging
+export CI_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 run_post_clone
 
 production_key="pk_live_$(printf '%s$' 'clerk.mail.lab86.io' | base64 | tr -d '\n=')"
@@ -45,6 +47,7 @@ unset LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY CONVEX_DEPLOYMENT_URL \
   CLERK_FRONTEND_API_HOST
 unset LAB86_BUILD_CHANNEL
 export CI_BRANCH=main
+export CI_GIT_REF=refs/heads/main
 run_post_clone
 
 expected_production="LAB86_INFO_API_BASE_URL = https:/\$()/mail.lab86.io
@@ -82,15 +85,42 @@ fi
 unset LAB86_BUILD_CHANNEL LAB86_API_BASE_URL CLERK_PUBLISHABLE_KEY \
   CONVEX_DEPLOYMENT_URL CLERK_FRONTEND_API_HOST
 export CI_BRANCH='```main```'
+export CI_GIT_REF=refs/heads/main
 if run_post_clone 2>/dev/null; then
   echo 'A malformed Xcode Cloud branch must not select production.' >&2
   exit 1
 fi
 
 export CI_BRANCH=feature/not-a-release
+export CI_GIT_REF=refs/heads/feature/not-a-release
 export LAB86_BUILD_CHANNEL=production
 if run_post_clone 2>/dev/null; then
   echo 'An unknown Xcode Cloud branch must fail closed even with an explicit channel.' >&2
+  exit 1
+fi
+
+unset LAB86_BUILD_CHANNEL CI_BRANCH
+staging_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+export CI_TAG="ios-staging-$staging_sha"
+export CI_GIT_REF="refs/tags/$CI_TAG"
+export CI_COMMIT="$staging_sha"
+run_post_clone
+
+export CI_COMMIT=cccccccccccccccccccccccccccccccccccccccc
+if run_post_clone 2>/dev/null; then
+  echo 'A staging tag whose embedded SHA differs from CI_COMMIT must fail closed.' >&2
+  exit 1
+fi
+
+export CI_TAG=v0.10.0
+export CI_GIT_REF=refs/tags/v0.10.0
+export CI_COMMIT=dddddddddddddddddddddddddddddddddddddddd
+run_post_clone
+
+export CI_TAG=v0.10
+export CI_GIT_REF=refs/tags/v0.10
+if run_post_clone 2>/dev/null; then
+  echo 'A malformed production release tag must fail closed.' >&2
   exit 1
 fi
 
