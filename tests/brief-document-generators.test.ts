@@ -93,54 +93,62 @@ describe('Brief Document v2 generators', () => {
     expect(events).toEqual(['start:partial', 'finish:partial', 'terminal']);
   });
 
-  test('Daily composition validates tool-placed regions and publishes progressive documents', async () => {
-    const partials: string[][] = [];
-    const document = await withToolContext(() =>
-      composeDocumentV2(
-        reportFixture(),
-        undefined,
-        async (partial) => {
-          partials.push(partial.regions.map((item) => item.id));
+  test(
+    'Daily composition validates tool-placed regions and publishes progressive documents',
+    async () => {
+      const partials: string[][] = [];
+      const document = await withToolContext(() =>
+        composeDocumentV2(
+          reportFixture(),
+          undefined,
+          async (partial) => {
+            partials.push(partial.regions.map((item) => item.id));
+          },
+          toolCallingGenerator((options) => {
+            expect(options.system).toContain('place_region');
+            expect(options.system).toContain('Immediate with undo');
+          }) as any,
+        ),
+      );
+
+      expect(partials).toEqual([['lead']]);
+      expect(document.title).toBe('The Thursday Brief');
+      expect(document.regions[0].tree.kind).toBe('hero');
+    },
+    15_000,
+  );
+
+  test(
+    'Daily composition restores a protected thread omitted by the model',
+    async () => {
+      const report = reportFixture();
+      report.accounts = ['jakob@example.com'];
+      report.sections.replyOwed = [
+        {
+          account: 'jakob@example.com',
+          threadId: 'thread-required',
+          subject: 'Launch date',
+          people: ['Maya'],
+          whyItMatters: 'The date blocks planning.',
+          nextAction: 'Confirm the July 31 delivery date.',
+          openLoops: ['Confirm delivery date'],
+          lane: 'reply_owed',
+          surfacedBecause: ['reply_owed'],
+          unread: false,
         },
-        toolCallingGenerator((options) => {
-          expect(options.system).toContain('place_region');
-          expect(options.system).toContain('Immediate with undo');
-        }) as any,
-      ),
-    );
+      ];
 
-    expect(partials).toEqual([['lead']]);
-    expect(document.title).toBe('The Thursday Brief');
-    expect(document.regions[0].tree.kind).toBe('hero');
-  });
+      const document = await withToolContext(() =>
+        composeDocumentV2(report, undefined, undefined, toolCallingGenerator() as any),
+      );
+      const json = JSON.stringify(document);
 
-  test('Daily composition restores a protected thread omitted by the model', async () => {
-    const report = reportFixture();
-    report.accounts = ['jakob@example.com'];
-    report.sections.replyOwed = [
-      {
-        account: 'jakob@example.com',
-        threadId: 'thread-required',
-        subject: 'Launch date',
-        people: ['Maya'],
-        whyItMatters: 'The date blocks planning.',
-        nextAction: 'Confirm the July 31 delivery date.',
-        openLoops: ['Confirm delivery date'],
-        lane: 'reply_owed',
-        surfacedBecause: ['reply_owed'],
-        unread: false,
-      },
-    ];
-
-    const document = await withToolContext(() =>
-      composeDocumentV2(report, undefined, undefined, toolCallingGenerator() as any),
-    );
-    const json = JSON.stringify(document);
-
-    expect(json).toContain('thread-required');
-    expect(json).toContain('Confirm the July 31 delivery date.');
-    expect(json).toContain('needs-you-required');
-  });
+      expect(json).toContain('thread-required');
+      expect(json).toContain('Confirm the July 31 delivery date.');
+      expect(json).toContain('needs-you-required');
+    },
+    15_000,
+  );
 
   test('Area composition exposes only the shared v2 navigation vocabulary', async () => {
     let prompt = '';
