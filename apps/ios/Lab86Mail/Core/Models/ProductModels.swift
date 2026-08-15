@@ -1494,6 +1494,28 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let url: String?
         let done: Bool
         let cardID: String?
+        // The step contract, written at plan time. All optional so cached
+        // snapshots from older servers keep decoding.
+        let stepMode: String?
+        let doneWhen: String?
+        let evidenceKind: String?
+        let verificationLevel: String?
+        let verificationEvidenceTitle: String?
+
+        /// The honest words for how a completed step earned its check.
+        var verificationLabel: String? {
+            switch verificationLevel {
+            case "reported": return "Marked done"
+            case "artifact": return "Noted"
+            case "observed": return "Verified on the page"
+            case "confirmed": return "Confirmed"
+            default: return nil
+            }
+        }
+
+        var isOffline: Bool {
+            stepMode == "you_do_offline" || (stepMode == nil && kind == "physical")
+        }
 
         private init(
             id: String,
@@ -1502,7 +1524,12 @@ struct WorkDetail: Hashable, Codable, Sendable {
             detail: String?,
             url: String?,
             done: Bool,
-            cardID: String?
+            cardID: String?,
+            stepMode: String?,
+            doneWhen: String?,
+            evidenceKind: String?,
+            verificationLevel: String?,
+            verificationEvidenceTitle: String?
         ) {
             self.id = id
             self.kind = kind
@@ -1511,6 +1538,11 @@ struct WorkDetail: Hashable, Codable, Sendable {
             self.url = url
             self.done = done
             self.cardID = cardID
+            self.stepMode = stepMode
+            self.doneWhen = doneWhen
+            self.evidenceKind = evidenceKind
+            self.verificationLevel = verificationLevel
+            self.verificationEvidenceTitle = verificationEvidenceTitle
         }
 
         init?(json: JSONValue) {
@@ -1523,6 +1555,11 @@ struct WorkDetail: Hashable, Codable, Sendable {
             url = json["url"]?.stringValue?.nilIfBlank
             done = json["done"]?.boolValue ?? false
             cardID = json["cardId"]?.stringValue?.nilIfBlank
+            stepMode = json["stepMode"]?.stringValue?.nilIfBlank
+            doneWhen = json["doneWhen"]?.stringValue?.nilIfBlank
+            evidenceKind = json["evidenceKind"]?.stringValue?.nilIfBlank
+            verificationLevel = json["verification"]?["level"]?.stringValue?.nilIfBlank
+            verificationEvidenceTitle = json["verification"]?["evidenceTitle"]?.stringValue?.nilIfBlank
         }
 
         func completing() -> ExecutionStep {
@@ -1533,7 +1570,12 @@ struct WorkDetail: Hashable, Codable, Sendable {
                 detail: detail,
                 url: url,
                 done: true,
-                cardID: cardID
+                cardID: cardID,
+                stepMode: stepMode,
+                doneWhen: doneWhen,
+                evidenceKind: evidenceKind,
+                verificationLevel: verificationLevel ?? "reported",
+                verificationEvidenceTitle: verificationEvidenceTitle
             )
         }
     }

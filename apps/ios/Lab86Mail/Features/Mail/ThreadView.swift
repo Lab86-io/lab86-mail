@@ -459,7 +459,9 @@ struct ThreadView: View {
         let matches = await environment.store.proofMatches(
             subject: detail.subject,
             snippet: messageBody,
-            messageID: messageID
+            messageID: messageID,
+            accountID: route.accountID,
+            providerThreadID: route.threadID
         )
         guard let current = self.detail?.messages.last,
               current.id == messageID,
