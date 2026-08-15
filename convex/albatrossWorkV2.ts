@@ -14,11 +14,18 @@ import {
 } from '../lib/albatross/projection-budget';
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
-import { internal } from './_generated/api';
+import {
+  mergeStepProgress,
+  planStepsForProgress,
+  progressFromPlanCompletions,
+  type StepProgressEntry,
+} from '../lib/albatross/step-progress';
+import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { recordCompletionEvent } from './albatrossWork';
+import { completeCardForWork } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
@@ -79,6 +86,7 @@ function bounded(value: string | undefined | null, max: number) {
 
 type PlanStepAction = {
   key?: string;
+  actionKey?: string;
   kind?: string;
   title?: string;
   description?: string;
@@ -90,13 +98,10 @@ type PlanStepAction = {
 };
 
 function keyedPlanActions(plan: Doc<'albatrossIntentPlans'>) {
-  const digital = ((plan.digitalActions || []) as PlanStepAction[])
-    .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
-    .map((action, index) => ({ action, key: action.key || `step-${index + 1}`, kind: 'digital' as const }));
-  const physical = ((plan.physicalActions || []) as PlanStepAction[])
-    .filter((action) => action.title?.trim())
-    .map((action, index) => ({ action, key: `physical-${index + 1}`, kind: 'physical' as const }));
-  return [...digital, ...physical];
+  return planStepsForProgress(plan).map((step) => ({
+    ...step,
+    action: step.action as PlanStepAction,
+  }));
 }
 
 function preserveRaw(value: string, max = 20_000) {
@@ -380,21 +385,56 @@ export const completeStep = mutation({
     if (!work.latestPlanId) throw new Error('This Albatross does not have a plan yet.');
     const plan = await ctx.db.get(work.latestPlanId);
     if (!plan || plan.userId !== userId) throw new Error('Plan not found.');
-    const stepKeys = keyedPlanActions(plan).map((step) => step.key);
-    if (!stepKeys.includes(args.stepKey)) throw new Error('Plan step not found.');
+    const planSteps = keyedPlanActions(plan);
+    const selected = planSteps.find((step) => step.key === args.stepKey);
+    if (!selected) throw new Error('Plan step not found.');
     const ts = now();
+    const source = args.source ?? 'user';
     const completedSteps = plan.completedSteps || [];
-    const transitioned = !completedSteps.some((step) => step.stepKey === args.stepKey);
-    if (transitioned) {
+    const baselineProgress = mergeStepProgress(
+      work.stepProgress as StepProgressEntry[] | undefined,
+      progressFromPlanCompletions(plan),
+    );
+    const transitioned = !baselineProgress.some((row) => row.identity === selected.identity);
+    const nextProgress = transitioned
+      ? mergeStepProgress(baselineProgress, [
+          {
+            identity: selected.identity,
+            actionKey: selected.actionKey,
+            kind: selected.kind === 'physical' ? 'physical' : selected.action.kind || 'task',
+            title: selected.action.title!.trim().slice(0, 240),
+            cardId: selected.cardId,
+            completedAt: ts,
+            source,
+          },
+        ])
+      : baselineProgress;
+    const progressWasMigrated =
+      nextProgress.length !== (work.stepProgress || []).length ||
+      nextProgress.some((row, index) => row.identity !== work.stepProgress?.[index]?.identity);
+    if (progressWasMigrated || !work.stepProgressMigratedAt) {
+      await ctx.db.patch(args.workId, {
+        stepProgress: nextProgress,
+        stepProgressMigratedAt: work.stepProgressMigratedAt ?? ts,
+        updatedAt: ts,
+      });
+    }
+    if (!completedSteps.some((step) => step.stepKey === args.stepKey)) {
       await ctx.db.patch(plan._id, {
         completedSteps: [
           ...completedSteps,
-          { stepKey: args.stepKey.slice(0, 80), completedAt: ts, source: args.source ?? 'user' },
+          { stepKey: args.stepKey.slice(0, 80), completedAt: ts, source },
         ].slice(-60),
         updatedAt: ts,
       });
     }
-    const completedKeys = new Set([...completedSteps.map((step) => step.stepKey), args.stepKey]);
+    const applied = plan.appliedSteps?.find((step) => step.stepKey === args.stepKey);
+    if (applied?.cardId) {
+      const cardId = ctx.db.normalizeId('cards', applied.cardId);
+      if (!cardId) throw new Error('Plan card not found.');
+      await completeCardForWork(ctx, userId, cardId, ts);
+    }
+    const completedIdentities = new Set(nextProgress.map((row) => row.identity));
     const cardSteps = plan.appliedSteps?.filter((step) => step.cardId) || [];
     const cards = await Promise.all(
       cardSteps.map(async (step) => {
@@ -402,14 +442,48 @@ export const completeStep = mutation({
         return { stepKey: step.stepKey, card: cardId ? await ctx.db.get(cardId) : null };
       }),
     );
-    cards.forEach(({ stepKey, card }) => {
-      if (card?.completedAt) completedKeys.add(stepKey);
-    });
-    const applied = plan.appliedSteps?.find((step) => step.stepKey === args.stepKey);
+    const completedCardIds = new Set(
+      cards.filter(({ card }) => Boolean(card?.completedAt)).map(({ card }) => String(card!._id)),
+    );
+    const allStepsComplete =
+      planSteps.length > 0 &&
+      planSteps.every(
+        (step) =>
+          completedIdentities.has(step.identity) || Boolean(step.cardId && completedCardIds.has(step.cardId)),
+      );
+    if (
+      transitioned &&
+      allStepsComplete &&
+      !['done', 'released', 'archived'].includes(work.workState || 'active')
+    ) {
+      const existing = work.pendingStepEvidence;
+      const requestedAt =
+        existing?.planId === String(plan._id) && existing.stepIdentity === selected.identity
+          ? existing.requestedAt
+          : ts;
+      await ctx.db.patch(args.workId, {
+        pendingStepEvidenceAt: requestedAt,
+        pendingStepEvidence: {
+          planId: String(plan._id),
+          stepIdentity: selected.identity,
+          stepTitle: selected.action.title!.trim().slice(0, 240),
+          cardId: applied?.cardId,
+          requestedAt,
+        },
+        updatedAt: ts,
+      });
+      // Scheduling from a mutation is atomic. The five-minute evidence cron is
+      // the recovery path if this immediate conductor run is interrupted.
+      await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.stepEvidenceMaterializeTick, {});
+    }
     return {
       stepKey: args.stepKey,
+      stepIdentity: selected.identity,
+      stepTitle: selected.action.title!.trim(),
+      planId: String(plan._id),
       cardId: applied?.cardId || null,
-      allStepsComplete: stepKeys.length > 0 && stepKeys.every((key) => completedKeys.has(key)),
+      allStepsComplete,
+      workState: work.workState || 'active',
       transitioned,
     };
   },
@@ -847,11 +921,12 @@ async function bindGateQuestionId(
 ) {
   if (!legacyQuestionId || legacyQuestionId === durableQuestionId) return;
   const work = await ctx.db.get(workId);
-  if (!work?.latestPlanId) return;
-  const plan = await ctx.db.get(work.latestPlanId);
+  const targetPlanId = work?.pendingPlanId || work?.latestPlanId;
+  if (!work || !targetPlanId) return;
+  const plan = await ctx.db.get(targetPlanId);
   if (!plan || plan.userId !== work.userId || !plan.document) return;
   const { document, changed } = bindFrontierQuestionId(plan.document, legacyQuestionId, durableQuestionId);
-  if (changed) await ctx.db.patch(work.latestPlanId, { document, updatedAt: now() });
+  if (changed) await ctx.db.patch(targetPlanId, { document, updatedAt: now() });
 }
 
 export const upsertQuestion = mutation({
@@ -1187,21 +1262,17 @@ type ProjectedPlanStep = {
 function projectedPlanSteps(
   plan: Doc<'albatrossIntentPlans'> | null | undefined,
   completedCardIds: Set<string>,
+  workProgress?: readonly StepProgressEntry[],
 ): ProjectedPlanStep[] {
   if (!plan) return [];
   const appliedByKey = new Map((plan.appliedSteps || []).map((step) => [step.stepKey, step] as const));
-  const completedKeys = new Set(
-    (
-      (
-        plan as Doc<'albatrossIntentPlans'> & {
-          completedSteps?: Array<{ stepKey: string; completedAt: number }>;
-        }
-      ).completedSteps || []
-    ).map((step) => step.stepKey),
+  const completedIdentities = new Set(
+    mergeStepProgress(workProgress, progressFromPlanCompletions(plan)).map((row) => row.identity),
   );
-  const digital = keyedPlanActions(plan)
+  const planSteps = keyedPlanActions(plan);
+  const digital = planSteps
     .filter((step) => step.kind === 'digital')
-    .map(({ action, key }) => {
+    .map(({ action, key, identity }) => {
       const applied = appliedByKey.get(key);
       return {
         key,
@@ -1209,20 +1280,22 @@ function projectedPlanSteps(
         title: action.title!.trim(),
         detail: bounded(action.description || action.detail, 1_200) || null,
         url: bounded(action.url || action.sourceRefs?.find((ref) => ref.url)?.url, 2_000) || null,
-        done: completedKeys.has(key) || Boolean(applied?.cardId && completedCardIds.has(applied.cardId)),
+        done:
+          completedIdentities.has(identity) ||
+          Boolean(applied?.cardId && completedCardIds.has(applied.cardId)),
         cardId: applied?.cardId || null,
       };
     });
-  const physical = keyedPlanActions(plan)
+  const physical = planSteps
     .filter((step) => step.kind === 'physical')
-    .map(({ action, key }) => {
+    .map(({ action, key, identity }) => {
       return {
         key,
         kind: 'physical',
         title: action.title!.trim(),
         detail: bounded(action.detail, 1_200) || null,
         url: bounded(action.url, 2_000) || null,
-        done: completedKeys.has(key),
+        done: completedIdentities.has(identity),
         cardId: null,
       };
     });
@@ -1323,7 +1396,11 @@ async function projectedWorkRows(
 
   return projectedEntries.map(({ row }) => {
     const plan = planByWork.get(String(row._id));
-    const steps = projectedPlanSteps(plan, completedCardIds);
+    const steps = projectedPlanSteps(
+      plan,
+      completedCardIds,
+      row.stepProgress as StepProgressEntry[] | undefined,
+    );
     const nextStep = steps.find((step) => !step.done);
     const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     return {
@@ -1468,16 +1545,97 @@ export const evidenceReconcileCandidates = internalQuery({
   },
 });
 
+/** Final-step evidence waiting to be materialized by the conductor. */
+export const pendingStepEvidenceCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_pending_step_evidence', (q) => q.gt('pendingStepEvidenceAt', 0))
+      .take(25);
+    return rows.flatMap((work) => {
+      const pending = work.pendingStepEvidence;
+      if (!pending) return [];
+      return [{ userId: work.userId, workId: work._id, ...pending }];
+    });
+  },
+});
+
+/** Clear only the outbox entry a successful conductor pass materialized. */
+export const clearPendingStepEvidence = internalMutation({
+  args: { workId: v.id('albatrossIntents'), requestedAt: v.number() },
+  handler: async (ctx, args) => {
+    const work = await ctx.db.get(args.workId);
+    if (work?.pendingStepEvidence?.requestedAt !== args.requestedAt) return false;
+    await ctx.db.patch(work._id, {
+      pendingStepEvidenceAt: undefined,
+      pendingStepEvidence: undefined,
+      updatedAt: now(),
+    });
+    return true;
+  },
+});
+
+async function materializePendingStepEvidence(ctx: ActionCtx, secret: string, refs: any) {
+  const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
+  for (const entry of pending) {
+    try {
+      await ctx.runMutation((api as any).albatrossWorkV2.attachProof, {
+        internalSecret: secret,
+        userId: entry.userId,
+        workId: entry.workId,
+        claim: `Every planned step is complete: ${entry.stepTitle}`,
+        title: `Completed ${entry.stepTitle}`,
+        summary: 'The user marked the final remaining plan step complete.',
+        limits:
+          'This confirms the plan actions, but an external outcome may still need its own reply or receipt.',
+        sourceKind: entry.cardId ? 'task' : 'manual',
+        sourceId: entry.cardId || `plan:${entry.planId}:steps-complete`,
+        trust: 'confirmed',
+        settleContract: false,
+      });
+      await ctx.runMutation(refs.clearPendingStepEvidence, {
+        workId: entry.workId,
+        requestedAt: entry.requestedAt,
+      });
+    } catch (error) {
+      console.error(
+        `[evidence reconcile cron] could not materialize final-step evidence for ${String(entry.workId)}`,
+        error,
+      );
+    }
+  }
+}
+
+/** Materialize final-step proof without running URL-dependent plan reconciliation. */
+export const stepEvidenceMaterializeTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!secret) {
+      console.error('[step evidence materializer] missing internal secret');
+      return;
+    }
+    await materializePendingStepEvidence(ctx, secret, (internal as any).albatrossWorkV2);
+  },
+});
+
 export const evidenceReconcileTick = internalAction({
   args: {},
   handler: async (ctx: ActionCtx) => {
-    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
-    if (!appUrl || !secret) {
-      console.error('[evidence reconcile cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
+    if (!secret) {
+      console.error('[evidence reconcile cron] missing internal secret');
       return;
     }
     const refs = (internal as any).albatrossWorkV2;
+    await materializePendingStepEvidence(ctx, secret, refs);
+
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    if (!appUrl) {
+      console.error('[evidence reconcile cron] missing LAB86_MAIL_PUBLIC_URL');
+      return;
+    }
     const candidates = await ctx.runQuery(refs.evidenceReconcileCandidates, {});
     let completed = 0;
     for (const candidate of candidates) {
@@ -1552,7 +1710,11 @@ export const workDetail = query({
     const completedCardIds = new Set(
       cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
     );
-    const guideSteps = projectedPlanSteps(plan, completedCardIds);
+    const guideSteps = projectedPlanSteps(
+      plan,
+      completedCardIds,
+      work.stepProgress as StepProgressEntry[] | undefined,
+    );
     const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
     return {
@@ -1642,10 +1804,48 @@ export const migrateLegacyBatch = internalMutation({
   handler: async (ctx, args) => {
     const page = await ctx.db
       .query('albatrossIntents')
-      .paginate({ cursor: args.cursor ?? null, numItems: Math.min(Math.max(args.limit ?? 50, 1), 100) });
+      .paginate({ cursor: args.cursor ?? null, numItems: Math.min(Math.max(args.limit ?? 25, 1), 25) });
     const ts = now();
     for (const work of page.page) {
       const patch: Record<string, unknown> = {};
+      if (!work.stepProgressMigratedAt) {
+        const historicalPlans = await ctx.db
+          .query('albatrossIntentPlans')
+          .withIndex('by_user_intent', (q) => q.eq('userId', work.userId).eq('intentId', work._id))
+          .order('desc')
+          .take(20);
+        let migratedProgress = mergeStepProgress(
+          work.stepProgress as StepProgressEntry[] | undefined,
+          historicalPlans.flatMap((plan) => progressFromPlanCompletions(plan)),
+        );
+        const currentPlan = historicalPlans.find((plan) => plan._id === work.latestPlanId);
+        if (currentPlan) {
+          const boundSteps = planStepsForProgress(currentPlan).filter((step) => step.cardId);
+          const completedCards = (
+            await Promise.all(
+              boundSteps.map(async (step): Promise<StepProgressEntry[]> => {
+                const cardId = ctx.db.normalizeId('cards', step.cardId!);
+                const card = cardId ? await ctx.db.get(cardId) : null;
+                if (!card?.completedAt || card.userId !== work.userId) return [];
+                return [
+                  {
+                    identity: step.identity,
+                    actionKey: step.actionKey,
+                    kind: step.action.kind || 'task',
+                    title: step.action.title!.trim().slice(0, 240),
+                    cardId: step.cardId,
+                    completedAt: card.completedAt,
+                    source: 'task',
+                  },
+                ];
+              }),
+            )
+          ).flat();
+          migratedProgress = mergeStepProgress(migratedProgress, completedCards);
+        }
+        patch.stepProgress = migratedProgress;
+        patch.stepProgressMigratedAt = ts;
+      }
       if (!work.captureId) {
         const captureId = await ctx.db.insert('albatrossCaptures', {
           userId: work.userId,

@@ -1171,15 +1171,28 @@ final class ProductStore {
     func completeWorkStep(_ workID: String, stepKey: String?) async -> Bool {
         var body: [String: JSONValue] = ["timezone": .string(TimeZone.current.identifier)]
         if let stepKey { body["stepKey"] = .string(stepKey) }
+        let previous = workDetails[workID]
+        let optimistic = stepKey.flatMap { previous?.completing(stepID: $0) }
+        if let optimistic { workDetails[workID] = optimistic }
         do {
             _ = try await backend.post(
                 path: "/api/albatross/work/\(workID)/step",
                 body: .object(body)
             )
-            workDetails.removeValue(forKey: workID)
-            await refreshWork()
+            // The authoritative write has returned. Refresh projections in the
+            // background without evicting the last-good detail or keeping the
+            // completion button blocked on another network round trip.
+            Task { [weak self] in
+                guard let self else { return }
+                await self.refreshWork()
+                _ = try? await self.loadWorkDetail(workID)
+            }
             return true
         } catch {
+            if workDetails[workID] == optimistic {
+                if let previous { workDetails[workID] = previous }
+                else { workDetails.removeValue(forKey: workID) }
+            }
             workError = error.localizedDescription
             return false
         }

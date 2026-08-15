@@ -168,6 +168,35 @@ async function recordCardCompletion(ctx: MutationCtx, userId: string, card: any,
   });
 }
 
+/**
+ * Complete a plan-bound card inside the Work step mutation. Keeping this in
+ * the same transaction as the Work progress write removes the provider/tool
+ * round trip while preserving the board's Done-column and activity rules.
+ */
+export async function completeCardForWork(
+  ctx: MutationCtx,
+  userId: string,
+  cardId: Id<'cards'>,
+  completedAt: number,
+) {
+  const card = await ctx.db.get(cardId);
+  if (!card || card.userId !== userId) throw new Error('Card not found.');
+  if (card.completedAt) return { transitioned: false, card };
+
+  const patch: Record<string, unknown> = { completedAt, updatedAt: completedAt };
+  const columns = await columnsForBoard(ctx, card.boardId);
+  const done = columns.find((column) => isDoneColumn(column.name));
+  if (done && card.columnId !== done._id) {
+    patch.columnId = done._id;
+    patch.order = await appendOrderInColumn(ctx, done._id);
+  }
+  await recordCardCompletion(ctx, userId, card, completedAt);
+  await ctx.db.patch(cardId, patch);
+  const fresh = await ctx.db.get(cardId);
+  if (fresh) await appendActivity(ctx, fresh, userId, 'updated', 'completedAt');
+  return { transitioned: true, card: (await ctx.db.get(cardId)) || card };
+}
+
 function sourceIndexFields(source: any) {
   const threadId = typeof source?.threadId === 'string' ? source.threadId : undefined;
   const eventId =

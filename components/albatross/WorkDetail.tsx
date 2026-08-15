@@ -103,6 +103,13 @@ export function workDetailRecoveryPrompt(detail: WorkDetailData, workId: string,
   };
 }
 
+export function guideStepsWithOptimisticCompletion(
+  steps: WorkDetailData['execution']['guideSteps'],
+  completed: ReadonlySet<string>,
+) {
+  return steps.map((step) => (completed.has(step.key) ? { ...step, done: true } : step));
+}
+
 export function WorkDetailRecovery({
   detail,
   workId,
@@ -150,7 +157,10 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [completing, setCompleting] = useState(false);
   const [guided, setGuided] = useState(false);
   const [activeGuideId, setActiveGuideId] = useState<string>();
-  const [completingStep, setCompletingStep] = useState(false);
+  const [optimisticCompletedSteps, setOptimisticCompletedSteps] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [savingStepIds, setSavingStepIds] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -166,6 +176,20 @@ export function WorkDetail({ workId }: { workId: string }) {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => globalThis.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!detail) return;
+    const serverCompleted = new Set(
+      detail.execution.guideSteps.filter((step) => step.done).map((step) => step.key),
+    );
+    const currentStepKeys = new Set(detail.execution.guideSteps.map((step) => step.key));
+    setOptimisticCompletedSteps((current) => {
+      const pending = [...current].filter(
+        (stepKey) => currentStepKeys.has(stepKey) && !serverCompleted.has(stepKey),
+      );
+      return pending.length === current.size ? current : new Set(pending);
+    });
+  }, [detail]);
 
   const advance = async () => {
     setAdvancing(true);
@@ -200,7 +224,15 @@ export function WorkDetail({ workId }: { workId: string }) {
   };
 
   const completeGuidedStep = async (stepKey: string) => {
-    setCompletingStep(true);
+    const visibleSteps = guideStepsWithOptimisticCompletion(
+      detail?.execution.guideSteps || [],
+      optimisticCompletedSteps,
+    );
+    const selectedIndex = visibleSteps.findIndex((step) => step.key === stepKey);
+    const nextStep = visibleSteps.slice(selectedIndex + 1).find((step) => !step.done);
+    setOptimisticCompletedSteps((current) => new Set([...current, stepKey]));
+    setSavingStepIds((current) => new Set([...current, stepKey]));
+    setActiveGuideId(nextStep?.key || stepKey);
     setError(null);
     try {
       await postJson(
@@ -208,11 +240,20 @@ export function WorkDetail({ workId }: { workId: string }) {
         { stepKey, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
         'Could not complete this step.',
       );
-      setActiveGuideId(undefined);
     } catch (cause) {
+      setOptimisticCompletedSteps((current) => {
+        const next = new Set(current);
+        next.delete(stepKey);
+        return next;
+      });
+      setActiveGuideId(stepKey);
       setError(cause instanceof Error ? cause.message : 'Could not complete this step.');
     } finally {
-      setCompletingStep(false);
+      setSavingStepIds((current) => {
+        const next = new Set(current);
+        next.delete(stepKey);
+        return next;
+      });
     }
   };
 
@@ -237,6 +278,11 @@ export function WorkDetail({ workId }: { workId: string }) {
   }
 
   const { work, plan } = detail;
+  const visibleGuideSteps = guideStepsWithOptimisticCompletion(
+    detail.execution.guideSteps,
+    optimisticCompletedSteps,
+  );
+  const visibleCurrentStep = visibleGuideSteps.find((step) => !step.done) || null;
   const pendingQuestions = detail.questions.filter((question) => question.status === 'pending');
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
@@ -250,10 +296,10 @@ export function WorkDetail({ workId }: { workId: string }) {
     setAiBarOpen(true);
   };
 
-  if (guided && detail.execution.guideSteps.length) {
+  if (guided && visibleGuideSteps.length) {
     return (
       <GuidedStepPane
-        steps={detail.execution.guideSteps.map((step) => ({
+        steps={visibleGuideSteps.map((step) => ({
           id: step.key,
           title: step.title,
           detail: step.detail,
@@ -267,12 +313,12 @@ export function WorkDetail({ workId }: { workId: string }) {
                 : [],
           done: step.done,
         }))}
-        activeId={activeGuideId || detail.execution.currentStep?.key}
+        activeId={activeGuideId || visibleCurrentStep?.key}
         onSelect={setActiveGuideId}
         onExit={() => setGuided(false)}
         onComplete={(stepKey) => void completeGuidedStep(stepKey)}
         onDiscuss={openAttachedChat}
-        completing={completingStep}
+        savingIds={savingStepIds}
         error={error}
       />
     );

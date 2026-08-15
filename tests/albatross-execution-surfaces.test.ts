@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
 import { GuidedStepPane } from '../components/albatross/GuidedStep';
 import {
+  guideStepsWithOptimisticCompletion,
   type WorkDetailData,
   WorkDetailRecovery,
   workDetailRecoveryPrompt,
@@ -89,6 +90,33 @@ describe('the execution loop owns the visible product surfaces', () => {
     expect(html).toContain('Discuss this');
   });
 
+  test('guided execution checks a step locally before the server projection refreshes', () => {
+    const steps: WorkDetailData['execution']['guideSteps'] = [
+      {
+        key: 'one',
+        kind: 'task',
+        title: 'First step',
+        detail: null,
+        url: null,
+        done: false,
+        cardId: null,
+      },
+      {
+        key: 'two',
+        kind: 'task',
+        title: 'Second step',
+        detail: null,
+        url: null,
+        done: false,
+        cardId: null,
+      },
+    ];
+
+    const optimistic = guideStepsWithOptimisticCompletion(steps, new Set(['one']));
+    expect(optimistic.map((step) => step.done)).toEqual([true, false]);
+    expect(steps.map((step) => step.done)).toEqual([false, false]);
+  });
+
   test('missed work renders keyed recovery controls', () => {
     const html = renderToStaticMarkup(
       createElement(LapsePrompt, {
@@ -115,7 +143,13 @@ describe('the execution loop owns the visible product surfaces', () => {
       plannedAt: 1_786_700_000_000,
     });
     expect(
-      renderToStaticMarkup(createElement(WorkDetailRecovery, { detail: elapsed, workId: 'passport', nowMs })),
+      renderToStaticMarkup(
+        createElement(WorkDetailRecovery, {
+          detail: elapsed,
+          workId: 'passport',
+          nowMs,
+        }),
+      ),
     ).toContain('Complete the passport form');
 
     expect(workDetailRecoveryPrompt(workDetail(nowMs + 1), 'passport', nowMs)).toBeNull();

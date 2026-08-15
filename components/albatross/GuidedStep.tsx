@@ -32,7 +32,7 @@ export function GuidedStepPane({
   onExit,
   onComplete,
   onDiscuss,
-  completing,
+  savingIds,
   error,
 }: {
   steps: GuidedStep[];
@@ -41,7 +41,7 @@ export function GuidedStepPane({
   onExit?: () => void;
   onComplete?: (id: string) => void;
   onDiscuss?: () => void;
-  completing?: boolean;
+  savingIds?: ReadonlySet<string>;
   error?: string | null;
 }) {
   const active = steps.find((step) => step.id === (activeId || steps[0]?.id)) || steps[0];
@@ -69,6 +69,7 @@ export function GuidedStepPane({
                 <button
                   type="button"
                   onClick={() => onSelect?.(step.id)}
+                  aria-busy={savingIds?.has(step.id) || undefined}
                   className={cn(
                     'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors',
                     current
@@ -152,8 +153,13 @@ export function GuidedStepPane({
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)]/70 pt-3">
             {!active.done && onComplete ? (
-              <Button type="button" size="sm" disabled={completing} onClick={() => onComplete(active.id)}>
-                {completing ? 'Saving…' : 'Mark this step done'}
+              <Button
+                type="button"
+                size="sm"
+                disabled={savingIds?.has(active.id)}
+                onClick={() => onComplete(active.id)}
+              >
+                {savingIds?.has(active.id) ? 'Saving…' : 'Mark this step done'}
               </Button>
             ) : (
               <span className="text-[12px] text-[var(--color-text-muted)]">This step is complete.</span>
