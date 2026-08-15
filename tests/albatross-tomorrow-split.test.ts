@@ -105,3 +105,22 @@ describe('tomorrow external ids', () => {
     expect(tomorrowExternalId('c-1', '!!!', new Set())).toBe('checkin:c-1:tomorrow:work');
   });
 });
+
+describe('external id exhaustion and empty splits', () => {
+  test('an exhausted suffix range still returns a unique id', () => {
+    const taken = new Set<string>(['checkin:c-1:tomorrow:work']);
+    for (let suffix = 2; suffix < 20; suffix += 1) {
+      taken.add(`checkin:c-1:tomorrow:work-${suffix}`);
+    }
+    const id = tomorrowExternalId('c-1', '!!!', taken);
+    expect(id).toBe(`checkin:c-1:tomorrow:work-${taken.size + 1}`);
+    expect(taken.has(id)).toBe(false);
+  });
+
+  test('a reply whose items all filter out falls back to the raw answer', () => {
+    const raw = JSON.stringify({ work: [{ title: '   ', rawText: 'x' }] });
+    const result = parseTomorrowSplit(raw, 'The real answer.', NO_IDS);
+    expect(result.fallback).toBe(true);
+    expect(result.items[0].rawText).toBe('The real answer.');
+  });
+});
