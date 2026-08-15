@@ -36,16 +36,19 @@ const apiMock = {
     areaWork: 'albatrossWorkV2.areaWork',
     workDetail: 'albatrossWorkV2.workDetail',
     allWork: 'albatrossWorkV2.allWork',
+    executionSnapshot: 'albatrossWorkV2.executionSnapshot',
   },
 };
 
 const NOW = 1_760_000_000_000;
 let mutationCalls: Array<{ fn: string; args: any }> = [];
 let queryCalls: Array<{ fn: string; args: any }> = [];
+let failExecution = false;
 
 beforeEach(() => {
   mutationCalls = [];
   queryCalls = [];
+  failExecution = false;
   __setAreaToolDepsForTest({
     api: apiMock as any,
     now: () => NOW,
@@ -78,6 +81,21 @@ beforeEach(() => {
           { _id: 'work_1', title: 'Set up a gold allocation', openQuestions: 3, areaName: 'Money' },
           { _id: 'work_2', title: 'Renew the passport', openQuestions: 0, areaName: null },
         ];
+      }
+      if (fn === apiMock.albatrossWorkV2.executionSnapshot) {
+        if (failExecution) throw new Error('execution projection unavailable');
+        return {
+          currentMove: {
+            workId: 'work_2',
+            workTitle: 'Renew the passport',
+            stepTitle: 'Book the passport appointment',
+            phase: 'unscheduled',
+            remainingSteps: 2,
+            totalSteps: 3,
+          },
+          missedMoves: [],
+          needsYou: [],
+        };
       }
       if (fn === apiMock.albatross.getArea) {
         return { _id: args.areaId, name: 'Cardhunt job', status: 'active', boardId: 'board_new' };
@@ -494,11 +512,16 @@ describe('work_list', () => {
     // The native Albatrosses page listed Areas because nothing server-callable
     // could answer "what am I carrying". This is that answer.
     const result: any = await runTool(workList.handler, {});
-    expect(queryCalls[0]).toMatchObject({
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.allWork)).toMatchObject({
       fn: apiMock.albatrossWorkV2.allWork,
       args: { userId: TEST_USER.userId },
     });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)).toMatchObject({
+      fn: apiMock.albatrossWorkV2.executionSnapshot,
+      args: { userId: TEST_USER.userId, limit: 60 },
+    });
     expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(result.execution.currentMove.stepTitle).toBe('Book the passport appointment');
     expect(workList.mutating).toBe(false);
     // The description has to match what comes back. It returns every state, so
     // it must not promise only what is unresolved.
@@ -507,12 +530,27 @@ describe('work_list', () => {
 
   test('passes a limit through only when one was asked for', async () => {
     await runTool(workList.handler, { limit: 25 });
-    expect(queryCalls[0].args.limit).toBe(25);
+    expect(queryCalls.every((call) => call.args.limit === 25)).toBe(true);
     queryCalls.length = 0;
     await runTool(workList.handler, {});
     // Absent, not undefined: the query applies its own default, and sending an
-    // explicit undefined would override it in some transports.
-    expect('limit' in queryCalls[0].args).toBe(false);
+    // explicit undefined would override it in some transports. The heavier
+    // execution projection has its own bounded default.
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.allWork)?.args).toEqual({
+      userId: TEST_USER.userId,
+    });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)?.args).toEqual({
+      userId: TEST_USER.userId,
+      limit: 60,
+    });
+  });
+
+  test('keeps the Work list when the optional execution projection fails', async () => {
+    failExecution = true;
+    const result: any = await runTool(workList.handler, {});
+
+    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(result.execution).toBeNull();
   });
 
   test('refuses a limit outside what the query will honour', () => {

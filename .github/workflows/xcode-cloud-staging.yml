@@ -1,12 +1,9 @@
 name: Xcode Cloud staging trigger
 
-# Disabled on push. Tier 2 replaced what this was for: a dev-signed build from
-# the working tree lands on the phone in about a minute, without a commit, and
-# the staging Xcode Cloud build had been failing in ci_post_clone for weeks
-# without anybody needing it. The production trigger is the one that matters.
-#
-# The machinery stays, and stays tested, so it can be run by hand if the
-# question is ever specifically "does a staging archive still build".
+# Disabled on push. Run this deliberately when a staging batch needs native
+# acceptance before promotion. It uses the same iOS 27 Xcode Cloud environment
+# as production, targets the exact staging SHA, and remains production-configured
+# because every distributed build must talk to production services.
 on:
   workflow_dispatch:
 
@@ -16,11 +13,12 @@ concurrency:
 
 jobs:
   start-xcode-cloud:
-    name: Build in Xcode Cloud and distribute to TestFlight
+    if: github.ref == 'refs/heads/staging'
+    name: Build iOS 27 in Xcode Cloud and distribute to TestFlight
     runs-on: blacksmith-6vcpu-macos-latest
     timeout-minutes: 90
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -35,14 +33,36 @@ jobs:
           bash apps/ios/ci_scripts/ci_post_clone_test.sh
           apps/ios/ci_scripts/verify_built_configuration_test.sh
 
+      - name: Pin immutable staging source
+        id: source
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="ios-staging-${SOURCE_SHA}"
+          ref="refs/tags/${tag}"
+          if git ls-remote --exit-code --tags origin "$ref" >/dev/null; then
+            git fetch --no-tags origin "$ref:$ref"
+            test "$(git rev-list -n 1 "$ref")" = "$SOURCE_SHA"
+          else
+            git tag "$tag" "$SOURCE_SHA"
+            git push origin "$ref"
+          fi
+          echo "git_ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Start staging build
         id: start
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
-          XCODE_CLOUD_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36
-          XCODE_CLOUD_BRANCH_REF_ID: 12bf4a16-c48a-4b1b-b524-ff04e6bd4278
+          APP_STORE_APP_ID: 6792830834
+          XCODE_CLOUD_WORKFLOW_NAME: Production App Store
+          XCODE_CLOUD_BRANCH_NAME: staging
+          XCODE_CLOUD_GIT_REF_NAME: ${{ steps.source.outputs.git_ref }}
+          XCODE_CLOUD_EXPECTED_COMMIT_SHA: ${{ github.sha }}
+          XCODE_CLOUD_EXPECTED_XCODE_VERSION: "27.0"
+          XCODE_CLOUD_TEMPLATE_WORKFLOW_ID: 304D20E5-2087-4E0D-8A6E-5E6025DEED36
         run: node .github/scripts/start-xcode-cloud.mjs
 
       - name: Wait for Xcode Cloud export

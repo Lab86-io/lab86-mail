@@ -51,6 +51,28 @@ async function seedAreaWork() {
   return { t, ...seeded };
 }
 
+async function seedMailThread(t: any, accountId: string, providerThreadId: string) {
+  await t.run((ctx) => {
+    const ts = Date.now();
+    return ctx.db.insert('mailCorpusThreads', {
+      userId,
+      accountId,
+      grantId: `grant:${accountId}`,
+      provider: 'google',
+      providerThreadId,
+      subject: 'Confirmation',
+      fromAddress: 'service@example.test',
+      lastDate: ts,
+      snippet: 'Confirmed',
+      labels: ['INBOX'],
+      unread: false,
+      yearMonth: '2026-08',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  });
+}
+
 describe('Albatross Work v2 Area Brief reads', () => {
   test('Railway internal caller can load area Work and Work detail', async () => {
     const { t, areaId, workId } = await seedAreaWork();
@@ -106,7 +128,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
         workId,
         claim: 'The application was purchased.',
         title,
-        sourceKind: 'mail_thread' as const,
+        sourceKind: 'mcp_item' as const,
         sourceId: 'provider-thread-1',
         accountId,
         connectionId,
@@ -124,5 +146,197 @@ describe('Albatross Work v2 Area Brief reads', () => {
     const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
     expect(detail.evidence).toHaveLength(3);
     expect(detail.evidence.find((evidence) => evidence._id === first)?.title).toBe('Updated receipt');
+  });
+
+  test('validated mail proof is observed and cannot auto-close a confirmed outcome', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    await t.run((ctx) =>
+      ctx.db.patch(workId, {
+        contract: {
+          outcome: 'The passport application is accepted.',
+          proofs: [{ id: 'confirmation', what: 'The passport application confirmation arrived' }],
+          closeWhen: 'outcome_confirmed',
+          updatedAt: Date.now(),
+        },
+      }),
+    );
+    await seedMailThread(t, 'personal-mail', 'passport-confirmation-thread');
+
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...caller,
+      workId,
+      claim: 'The passport application confirmation arrived.',
+      title: 'Passport application confirmation',
+      sourceKind: 'mail_thread',
+      sourceId: 'passport-confirmation-thread',
+      accountId: 'personal-mail',
+      trust: 'confirmed',
+      proofId: 'confirmation',
+    });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.work).toMatchObject({ workState: 'active', status: 'ready' });
+    expect(detail.contract?.proofs[0]).toMatchObject({
+      id: 'confirmation',
+      satisfiedBy: 'Passport application confirmation',
+    });
+    expect(detail.contract?.proofs[0]?.satisfiedAt).toBeNumber();
+    expect(detail.evidence[0]?.trust).toBe('observed');
+  });
+
+  test('proof never auto-closes Work the user paused or left waiting', async () => {
+    for (const workState of ['paused', 'waiting'] as const) {
+      const { t, workId } = await seedAreaWork();
+      const caller = { internalSecret: SECRET, userId };
+      await t.run((ctx) =>
+        ctx.db.patch(workId, {
+          workState,
+          contract: {
+            outcome: 'The passport application is accepted.',
+            proofs: [{ id: 'confirmation', what: 'The acceptance was confirmed' }],
+            closeWhen: 'outcome_confirmed',
+            updatedAt: Date.now(),
+          },
+        }),
+      );
+
+      await t.mutation(api.albatrossWorkV2.attachProof, {
+        ...caller,
+        workId,
+        claim: 'The acceptance was confirmed.',
+        title: 'Acceptance confirmation',
+        sourceKind: 'manual',
+        sourceId: `manual-${workState}`,
+        trust: 'confirmed',
+        proofId: 'confirmation',
+      });
+
+      const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+      expect(detail.work.workState).toBe(workState);
+      expect(detail.contract?.proofs[0]?.satisfiedAt).toBeNumber();
+    }
+  });
+
+  test('finishing a plan step records progress without impersonating outcome proof', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    await t.run((ctx) =>
+      ctx.db.patch(workId, {
+        contract: {
+          outcome: 'The passport application is accepted.',
+          proofs: [{ id: 'confirmation', what: 'The passport application confirmation arrived' }],
+          closeWhen: 'outcome_confirmed',
+          updatedAt: Date.now(),
+        },
+      }),
+    );
+
+    await t.mutation(api.albatrossWorkV2.attachProof, {
+      ...caller,
+      workId,
+      claim: 'Every planned form-filling step is complete.',
+      title: 'Completed the application steps',
+      sourceKind: 'task',
+      sourceId: 'application-task',
+      trust: 'confirmed',
+      settleContract: false,
+    });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.work.workState).not.toBe('done');
+    expect(detail.contract?.proofs[0]?.satisfiedAt).toBeUndefined();
+    expect(detail.evidence).toHaveLength(1);
+  });
+
+  test('execution projection and step completion share one live plan state', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    const nowMs = Date.now();
+    const planId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'applied',
+        outcome: 'The application is submitted.',
+        summary: 'Submit it online, save the receipt, then mail the original.',
+        digitalActions: [
+          {
+            key: 'focus-block',
+            kind: 'calendar_event',
+            title: 'Submit the application online',
+            startIso: new Date(nowMs - 5 * 60_000).toISOString(),
+            endIso: new Date(nowMs + 25 * 60_000).toISOString(),
+          },
+          {
+            key: 'submit',
+            kind: 'task',
+            title: 'Submit the application online',
+            description: 'Use the official portal and stop before any unexpected charge.',
+            url: 'https://example.test/official-portal',
+          },
+          { key: 'save', kind: 'task', title: 'Save the confirmation receipt' },
+        ],
+        physicalActions: [{ title: 'Mail the original document', detail: 'Use tracked mail.' }],
+        assumptions: [],
+        sourceRefs: [],
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      });
+      await ctx.db.patch(workId, { latestPlanId: id, priority: 1, updatedAt: nowMs });
+      return id;
+    });
+
+    const snapshot = await t.query(api.albatrossWorkV2.executionSnapshot, {
+      ...caller,
+      nowMs,
+    });
+    expect(snapshot.currentMove).toMatchObject({
+      workId: String(workId),
+      stepKey: 'submit',
+      stepTitle: 'Submit the application online',
+      phase: 'active',
+      url: 'https://example.test/official-portal',
+      remainingSteps: 3,
+      totalSteps: 3,
+    });
+
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'submit',
+        source: 'user',
+      }),
+    ).toMatchObject({ stepKey: 'submit', allStepsComplete: false, transitioned: true });
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'submit',
+        source: 'user',
+      }),
+    ).toMatchObject({ stepKey: 'submit', allStepsComplete: false, transitioned: false });
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'save',
+        source: 'evidence',
+      }),
+    ).toMatchObject({ stepKey: 'save', allStepsComplete: false, transitioned: true });
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'physical-1',
+        source: 'user',
+      }),
+    ).toMatchObject({ stepKey: 'physical-1', allStepsComplete: true, transitioned: true });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.plan?._id).toBe(planId);
+    expect(detail.execution).toMatchObject({ currentStep: null, remainingSteps: 0, totalSteps: 3 });
+    expect(detail.execution.guideSteps.every((step) => step.done)).toBe(true);
   });
 });

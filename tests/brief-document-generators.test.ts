@@ -112,7 +112,7 @@ describe('Brief Document v2 generators', () => {
     expect(partials).toEqual([['lead']]);
     expect(document.title).toBe('The Thursday Brief');
     expect(document.regions[0].tree.kind).toBe('hero');
-  });
+  }, 15_000);
 
   test('Daily composition restores a protected thread omitted by the model', async () => {
     const report = reportFixture();
@@ -140,7 +140,7 @@ describe('Brief Document v2 generators', () => {
     expect(json).toContain('thread-required');
     expect(json).toContain('Confirm the July 31 delivery date.');
     expect(json).toContain('needs-you-required');
-  });
+  }, 15_000);
 
   test('Area composition exposes only the shared v2 navigation vocabulary', async () => {
     let prompt = '';

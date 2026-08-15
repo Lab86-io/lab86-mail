@@ -1,9 +1,72 @@
 import { describe, expect, test } from 'bun:test';
-import { checkinCallerArgs } from '@/lib/albatross/checkin';
+import { dailyCheckinAnswerPayload, dailyCheckinResponseError } from '@/components/albatross/DailyCheckin';
+import { checkinCallerArgs, tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
 
 describe('Albatross check-in server caller', () => {
   test('passes the authenticated Clerk user through to internal-secret Convex calls', () => {
     expect(checkinCallerArgs(' user_123 ')).toEqual({ userId: 'user_123' });
     expect(() => checkinCallerArgs(' ')).toThrow('userId is required');
+  });
+
+  test('retries an interrupted tomorrow plan but never duplicates applied work or its question', () => {
+    expect(tomorrowWorkPlanStatus(null)).toBe('advance');
+    expect(tomorrowWorkPlanStatus({ plan: { status: 'ready' }, questions: [] })).toBe('advance');
+    expect(tomorrowWorkPlanStatus({ plan: { status: 'applied' }, questions: [] })).toBe('already_applied');
+    expect(
+      tomorrowWorkPlanStatus({
+        plan: { status: 'needs_answers' },
+        questions: [{ status: 'pending' }],
+      }),
+    ).toBe('needs_input');
+  });
+});
+
+describe('daily check-in answer payload', () => {
+  const checkin = {
+    _id: 'checkin-1',
+    localDate: '2026-08-14',
+    status: 'open',
+    candidateItems: [
+      { kind: 'work' as const, id: 'work-1', title: 'Renew passport' },
+      { kind: 'event' as const, id: 'event-1', title: 'Passport appointment' },
+    ],
+  };
+
+  test('submits a tomorrow-only check-in without inventing completed work', () => {
+    expect(
+      dailyCheckinAnswerPayload(
+        checkin,
+        new Set(),
+        '   ',
+        '  Submit the passport renewal before lunch.  ',
+        'America/New_York',
+      ),
+    ).toEqual({
+      responseText: '',
+      tomorrowIntentText: 'Submit the passport renewal before lunch.',
+      completed: [],
+      timezone: 'America/New_York',
+    });
+  });
+
+  test('includes only explicitly selected candidate evidence', () => {
+    expect(
+      dailyCheckinAnswerPayload(checkin, new Set(['event:event-1']), ' Appointment done. ', '', 'UTC'),
+    ).toEqual({
+      responseText: 'Appointment done.',
+      tomorrowIntentText: '',
+      completed: [{ kind: 'event', id: 'event-1' }],
+      timezone: 'UTC',
+    });
+  });
+
+  test('keeps a degraded tomorrow plan visible with its retryable error', () => {
+    expect(
+      dailyCheckinResponseError(true, {
+        tomorrowPlanStatus: 'degraded',
+        tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
+      }),
+    ).toBe('Tomorrow planning is temporarily unavailable.');
+    expect(dailyCheckinResponseError(true, { tomorrowPlanStatus: 'ready' })).toBeNull();
   });
 });

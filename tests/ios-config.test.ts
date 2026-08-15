@@ -93,7 +93,8 @@ describe('native iOS authentication configuration', () => {
     expect(baseConfig).toContain('LAB86_INFO_API_BASE_URL = https:/$()/mail.lab86.io');
     expect(postClone).not.toContain('mail-staging.lab86.io');
     expect(postClone).not.toContain('pk_test_');
-    expect(postClone).toContain('main|staging)');
+    expect(postClone).toContain('refs/heads/main|refs/heads/staging)');
+    expect(postClone).toContain('refs/tags/ios-staging-*');
     expect(postClone).toContain('LAB86_INFO_API_BASE_URL = $' + '{api_base_url}');
     expect(project).toContain('Verify embedded release configuration');
     expect(project).toContain('basedOnDependencyAnalysis: false');
@@ -104,6 +105,9 @@ describe('native iOS authentication configuration', () => {
     expect(builtVerifier).toContain('[[ "$api_base_url" == "https://mail.lab86.io" ]]');
     expect(builtVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
     expect(exportVerifier).toContain('codesign -d --entitlements :- "$app_path"');
+    expect(exportVerifier).not.toContain('mail-staging.lab86.io');
+    expect(exportVerifier).not.toContain('precise-skunk-847.convex.cloud');
+    expect(exportVerifier).not.toContain('pk_test_');
     expect(exportVerifier).toContain('expected_clerk_host="clerk.mail.lab86.io"');
     expect(exportVerifier).toContain('[[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]]');
     expect(exportVerifier).toContain('.webcredentials.apps | arrays | index($application_id) != null');

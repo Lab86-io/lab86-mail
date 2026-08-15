@@ -114,9 +114,13 @@ final class ProductStore {
     /// Every Albatross the user is carrying. This is what the Albatrosses page
     /// shows; areas are how they are filed, not what they are.
     private(set) var allWork: [WorkListItem] = []
+    private(set) var workExecution = WorkExecutionSnapshot(json: nil)
     private var mailSearchGeneration = 0
     private var projectPaneLoadGeneration: [String: Int] = [:]
     private var projectPaneSessionGeneration = 0
+    private var workProjectionGeneration = 0
+    private var workProjectionLoads = 0
+    private var accountSessionGeneration = 0
 
     init(
         tools: any ToolInvoking,
@@ -1057,32 +1061,77 @@ final class ProductStore {
     }
 
     func refreshWork() async {
-        isLoadingWork = true
-        defer { isLoadingWork = false }
+        let sessionGeneration = accountSessionGeneration
         do {
             let result = try await tools.invoke("area_list", arguments: ["status": .string("active")])
+            guard sessionGeneration == accountSessionGeneration else { return }
             areas = (result["areas"]?.arrayValue ?? []).compactMap(AreaSummary.init)
             // The Albatrosses page lists work, not areas. A failure here keeps
             // the last-good list rather than blanking the page — but it must not
             // report an empty list as "you are carrying nothing", so with no
             // cache to fall back on the failure is recorded.
             do {
-                let listed = try await tools.invoke("work_list", arguments: [:])
-                allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
-                workDidLoad = true
-                workError = nil
+                try await loadWorkProjection(sessionGeneration: sessionGeneration)
             } catch {
+                guard sessionGeneration == accountSessionGeneration else { return }
                 if allWork.isEmpty { throw error }
                 workError = error.localizedDescription
                 workDidLoad = true
             }
+            guard sessionGeneration == accountSessionGeneration else { return }
             await persistCache()
         } catch {
+            guard sessionGeneration == accountSessionGeneration else { return }
             // Keep the last-good cached areas visible and record the failure only
             // on the Work surface. A Work failure must never blank Mail or raise
             // the app-wide `errorMessage`.
             workError = error.localizedDescription
         }
+    }
+
+    /// Refresh the server-owned current move without reloading the Area rail.
+    /// Today polls this lightly so a block that just passed can enter recovery
+    /// without waiting for an app relaunch.
+    func refreshExecution() async {
+        let sessionGeneration = accountSessionGeneration
+        do {
+            try await loadWorkProjection(sessionGeneration: sessionGeneration)
+            guard sessionGeneration == accountSessionGeneration else { return }
+            await persistCache()
+        } catch {
+            guard sessionGeneration == accountSessionGeneration else { return }
+            workError = error.localizedDescription
+        }
+    }
+
+    private func loadWorkProjection(sessionGeneration: Int) async throws {
+        workProjectionGeneration += 1
+        let generation = workProjectionGeneration
+        workProjectionLoads += 1
+        isLoadingWork = true
+        defer {
+            if sessionGeneration == accountSessionGeneration {
+                workProjectionLoads = max(0, workProjectionLoads - 1)
+                isLoadingWork = workProjectionLoads > 0
+            }
+        }
+
+        let listed: JSONValue
+        do {
+            listed = try await tools.invoke("work_list", arguments: [:])
+        } catch {
+            // A newer request owns the visible state and its own error. An
+            // older request finishing late must not overwrite either one.
+            guard generation == workProjectionGeneration,
+                  sessionGeneration == accountSessionGeneration else { return }
+            throw error
+        }
+        guard generation == workProjectionGeneration,
+              sessionGeneration == accountSessionGeneration else { return }
+        allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
+        workExecution = WorkExecutionSnapshot(json: listed["execution"])
+        workDidLoad = true
+        workError = nil
     }
 
     func answerWorkQuestion(_ question: WorkDetail.Question, answer: String, optionID: String?) async -> Bool {
@@ -1110,6 +1159,101 @@ final class ProductStore {
                 path: "/api/albatross/work/\(workID)/advance",
                 body: .object(["timezone": .string(TimeZone.current.identifier)])
             )
+            await refreshWork()
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    func completeWorkStep(_ workID: String, stepKey: String?) async -> Bool {
+        var body: [String: JSONValue] = ["timezone": .string(TimeZone.current.identifier)]
+        if let stepKey { body["stepKey"] = .string(stepKey) }
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/\(workID)/step",
+                body: .object(body)
+            )
+            workDetails.removeValue(forKey: workID)
+            await refreshWork()
+            return true
+        } catch {
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Returns the request-scoped failure message, or nil when recovery was accepted.
+    func recoverWork(_ move: WorkExecutionMove, recovery: String) async -> String? {
+        var body: [String: JSONValue] = [
+            "recovery": .string(recovery),
+            "reasonKind": .string("other"),
+            "timezone": .string(TimeZone.current.identifier),
+        ]
+        if let stepKey = move.stepKey { body["stepKey"] = .string(stepKey) }
+        if let plannedAt = move.scheduledStartAt {
+            body["plannedAt"] = .number(plannedAt.timeIntervalSince1970 * 1_000)
+        }
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/\(move.workID)/recover",
+                body: .object(body)
+            )
+            workDetails.removeValue(forKey: move.workID)
+            await refreshWork()
+            return nil
+        } catch {
+            let message = error.localizedDescription
+            return message
+        }
+    }
+
+    func proofMatches(subject: String, snippet: String, messageID: String?) async -> [WorkProofCandidate] {
+        do {
+            let result = try await backend.post(
+                path: "/api/albatross/proof-matches",
+                body: .object([
+                    "subject": .string(subject),
+                    "snippet": .string(String(snippet.prefix(2_000))),
+                ])
+            )
+            return (result["candidates"]?.arrayValue ?? []).compactMap {
+                WorkProofCandidate(
+                    json: $0,
+                    matchedMessageID: messageID,
+                    matchedContent: String(snippet.prefix(2_000))
+                )
+            }
+        } catch {
+            // Proof suggestions are opportunistic. Mail remains fully readable
+            // when matching is unavailable, so this does not raise a global error.
+            return []
+        }
+    }
+
+    func attachMailProof(
+        _ candidate: WorkProofCandidate,
+        route: ThreadRoute,
+        subject: String,
+        snippet: String
+    ) async -> Bool {
+        var body: [String: JSONValue] = [
+            "claim": .string(candidate.proofWhat ?? "Something about \(candidate.workTitle) happened."),
+            "title": .string(subject),
+            "summary": .string(String((candidate.matchedContent ?? snippet).prefix(2_000))),
+            "sourceKind": .string("mail_thread"),
+            "sourceId": .string(route.threadID),
+            "accountId": .string(route.accountID),
+            "timezone": .string(TimeZone.current.identifier),
+        ]
+        if let proofID = candidate.proofID { body["proofId"] = .string(proofID) }
+        do {
+            _ = try await backend.post(
+                path: "/api/albatross/work/\(candidate.workID)/proof",
+                body: .object(body)
+            )
+            workDetails.removeValue(forKey: candidate.workID)
             await refreshWork()
             return true
         } catch {
@@ -2171,22 +2315,39 @@ final class ProductStore {
                 "responseText": .string(responseText),
                 "tomorrowIntentText": .string(tomorrowIntentText),
                 "completed": .array(completedJSON),
+                "timezone": .string(TimeZone.current.identifier),
             ])
         )
+        try applyCheckinAnswerResponse(response)
+        await persistCache()
+        await refreshToday()
+    }
+
+    /// Applies only a fully planned answer. A degraded tomorrow plan remains
+    /// visible and retryable instead of being mistaken for a finished check-in.
+    func applyCheckinAnswerResponse(_ response: JSONValue) throws {
         guard response["ok"]?.boolValue == true else {
             throw BackendError.server(status: 500, message: response["error"]?.stringValue ?? "Check-in failed.")
+        }
+        if response["tomorrowPlanStatus"]?.stringValue == "degraded" {
+            throw BackendError.server(
+                status: 503,
+                message: response["tomorrowPlanError"]?.stringValue
+                    ?? "Tomorrow planning is temporarily unavailable."
+            )
         }
         if response["status"]?.stringValue == "answered" {
             self.checkin = nil
         }
-        await persistCache()
-        await refreshToday()
     }
 
     func clearError() { errorMessage = nil }
     func clearMailError() { mailErrorMessage = nil }
 
     func clearForSignOut() async {
+        // Invalidate every suspended account-owned request before the first await.
+        accountSessionGeneration += 1
+        workProjectionGeneration += 1
         liveMailTask?.cancel()
         liveMailTask = nil
         for task in areaBriefMonitoringTasks.values { task.cancel() }
@@ -2216,6 +2377,8 @@ final class ProductStore {
         dailyReport = nil
         areaDetails = [:]
         workDetails = [:]
+        allWork = []
+        workExecution = WorkExecutionSnapshot(json: nil)
         errorMessage = nil
         mailErrorMessage = nil
         calendarError = nil
@@ -2223,6 +2386,7 @@ final class ProductStore {
         calendarDidLoad = false
         briefError = nil
         workError = nil
+        workProjectionLoads = 0
         isLoadingWork = false
         workDidLoad = false
         tasksDidLoad = false
@@ -2394,6 +2558,8 @@ final class ProductStore {
         dailyReport = snapshot.dailyReport
         areaDetails = snapshot.areaDetails ?? [:]
         workDetails = snapshot.workDetails ?? [:]
+        allWork = snapshot.allWork ?? []
+        workExecution = snapshot.workExecution ?? WorkExecutionSnapshot(json: nil)
         // A nonempty cached Area list is immediately useful: treat it as last-good
         // so Work shows the list (not a loading/empty state) before the first
         // server refresh completes.
@@ -2423,6 +2589,8 @@ final class ProductStore {
             dailyReport: dailyReport,
             areaDetails: areaDetails,
             workDetails: workDetails,
+            allWork: allWork,
+            workExecution: workExecution,
             savedAt: .now
         )
         try? await cache.save(snapshot, owner: cacheOwner)

@@ -19,7 +19,7 @@ export type LapseReason =
   | 'forgot'
   | 'other';
 
-export type Recovery = 'move' | 'shrink' | 'wait' | 'delegate' | 'pause' | 'release' | 'rebuild';
+export type Recovery = 'done' | 'move' | 'shrink' | 'wait' | 'delegate' | 'pause' | 'release' | 'rebuild';
 
 /** What the user says happened. Every one of these is a normal thing. */
 export const LAPSE_REASONS: Array<{ kind: LapseReason; label: string }> = [
@@ -34,6 +34,7 @@ export const LAPSE_REASONS: Array<{ kind: LapseReason; label: string }> = [
 ];
 
 export const RECOVERY_LABEL: Record<Recovery, string> = {
+  done: 'It happened',
   move: 'Find another time',
   shrink: 'Make it smaller',
   wait: 'Wait on somebody',
@@ -43,32 +44,49 @@ export const RECOVERY_LABEL: Record<Recovery, string> = {
   rebuild: 'Rebuild the plan',
 };
 
+export function recoveryWorkState(recovery: Recovery): 'waiting' | 'paused' | 'released' | null {
+  if (recovery === 'wait') return 'waiting';
+  if (recovery === 'pause') return 'paused';
+  if (recovery === 'release') return 'released';
+  return null;
+}
+
 /**
  * The recoveries worth offering for a given reason. Offering all seven every
  * time is its own kind of burden; the useful move is usually implied by what
  * the person just said.
  */
 export function recoveriesFor(reason: LapseReason | null): Recovery[] {
+  let choices: Recovery[];
   switch (reason) {
     case 'no_energy':
-      return ['shrink', 'move', 'pause'];
+      choices = ['shrink', 'move', 'pause'];
+      break;
     case 'no_time':
-      return ['move', 'shrink', 'delegate'];
+      choices = ['move', 'shrink', 'delegate'];
+      break;
     case 'something_else_came_first':
-      return ['move', 'pause'];
+      choices = ['move', 'pause'];
+      break;
     case 'blocked':
-      return ['wait', 'rebuild', 'pause'];
+      choices = ['wait', 'rebuild', 'pause'];
+      break;
     case 'need_help':
-      return ['delegate', 'rebuild', 'wait'];
+      choices = ['delegate', 'rebuild', 'wait'];
+      break;
     case 'step_too_large':
-      return ['shrink', 'rebuild'];
+      choices = ['shrink', 'rebuild'];
+      break;
     case 'matters_less_now':
-      return ['pause', 'release'];
+      choices = ['pause', 'release'];
+      break;
     case 'forgot':
-      return ['move', 'shrink'];
+      choices = ['move', 'shrink'];
+      break;
     default:
-      return ['move', 'shrink', 'pause', 'release'];
+      choices = ['move', 'shrink', 'pause', 'release'];
   }
+  return [...choices, 'done'];
 }
 
 /**
@@ -97,6 +115,8 @@ export function shrinkSuggestion(stepTitle?: string | null): string {
 /** How Albatross acknowledges the answer. It agrees; it never consoles. */
 export function recoveryAcknowledgement(recovery: Recovery): string {
   switch (recovery) {
+    case 'done':
+      return 'Recorded as done. Albatross will carry the next move forward.';
     case 'move':
       return 'Moved. Albatross will look for another opening.';
     case 'shrink':

@@ -16,6 +16,7 @@ import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatros
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import { useSidebar } from '@/components/ui/sidebar';
+import { openPipWindow } from '@/lib/albatross/pip-window';
 import { capturePillHidden, useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
@@ -92,6 +93,16 @@ export function resolveCapturePieces(rawText: string, decision: 'split' | 'keep'
   const trimmed = rawText.trim();
   if (!trimmed) return [];
   return decision === 'split' ? splitIntentText(trimmed) : [trimmed];
+}
+
+/** Request document PiP synchronously inside the click gesture, then begin persistence. */
+export function requestPipBeforePersist<T>(requestPip: () => unknown, persist: () => T): T {
+  try {
+    void Promise.resolve(requestPip()).catch(() => undefined);
+  } catch {
+    // PiP is an enhancement. A browser denial must never lose the capture.
+  }
+  return persist();
 }
 
 /* ------------------------------------------------------------------ */
@@ -430,14 +441,16 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     if (listening) stopListening();
     const trimmed = text.trim();
     if (!trimmed) return;
+    // Document PiP requires the original click gesture. Open it before the
+    // request so planning and questions may continue outside the app window.
     setSaveError(null);
     send({ type: 'submit', multi: false });
-    void persist(trimmed, source);
+    void requestPipBeforePersist(openPipWindow, () => persist(trimmed, source));
   };
 
   const decide = (decision: 'split' | 'keep') => {
     send({ type: decision });
-    void persist(text.trim(), source);
+    void requestPipBeforePersist(openPipWindow, () => persist(text.trim(), source));
   };
 
   const pieces = state === 'split' ? splitIntentText(text.trim()) : [];

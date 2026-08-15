@@ -1,9 +1,9 @@
 'use client';
 
 import { useConvexAuth, useQuery } from 'convex/react';
-import { ArrowLeft, CircleAlert, LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ReleaseSheet } from '@/components/albatross/Forgiveness';
+import { GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
@@ -56,6 +56,28 @@ interface WorkDetailData {
   project: null | { _id: string; title: string; outcome?: string; status: string };
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
+  execution: {
+    currentStep: null | {
+      key: string;
+      kind: string;
+      title: string;
+      detail: string | null;
+      url: string | null;
+      done: boolean;
+      cardId: string | null;
+    };
+    guideSteps: Array<{
+      key: string;
+      kind: string;
+      title: string;
+      detail: string | null;
+      url: string | null;
+      done: boolean;
+      cardId: string | null;
+    }>;
+    remainingSteps: number;
+    totalSteps: number;
+  };
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
   application: null | {
@@ -94,6 +116,9 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [guided, setGuided] = useState(false);
+  const [activeGuideId, setActiveGuideId] = useState<string>();
+  const [completingStep, setCompletingStep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   // The stored application keeps its artifacts after an undo; the ledger must
@@ -136,10 +161,27 @@ export function WorkDetail({ workId }: { workId: string }) {
     }
   };
 
+  const completeGuidedStep = async (stepKey: string) => {
+    setCompletingStep(true);
+    setError(null);
+    try {
+      await postJson(
+        `/api/albatross/work/${encodeURIComponent(workId)}/step`,
+        { stepKey, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        'Could not complete this step.',
+      );
+      setActiveGuideId(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not complete this step.');
+    } finally {
+      setCompletingStep(false);
+    }
+  };
+
   if (detail === undefined) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-        <LoaderCircle className="size-4 animate-spin" /> Loading
+      <div className="flex h-full items-center justify-center text-[12.5px] text-[var(--color-text-muted)]">
+        Loading this Albatross…
       </div>
     );
   }
@@ -161,12 +203,48 @@ export function WorkDetail({ workId }: { workId: string }) {
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
+  const openAttachedChat = () => {
+    setChatScope({
+      kind: 'work',
+      workId,
+      label: plan?.outcome || work.title || work.rawText,
+    });
+    setAiBarOpen(true);
+  };
+
+  if (guided && detail.execution.guideSteps.length) {
+    return (
+      <GuidedStepPane
+        steps={detail.execution.guideSteps.map((step) => ({
+          id: step.key,
+          title: step.title,
+          detail: step.detail,
+          url: step.url,
+          knows: [],
+          needsYou:
+            step.kind === 'physical'
+              ? ['Complete the real-world part and return here to record it.']
+              : step.url
+                ? ['Review the page before anything is submitted.']
+                : [],
+          done: step.done,
+        }))}
+        activeId={activeGuideId || detail.execution.currentStep?.key}
+        onSelect={setActiveGuideId}
+        onExit={() => setGuided(false)}
+        onComplete={(stepKey) => void completeGuidedStep(stepKey)}
+        onDiscuss={openAttachedChat}
+        completing={completingStep}
+        error={error}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <Button type="button" size="xs" variant="ghost" onClick={() => setSelectedWorkId(null)}>
-          <ArrowLeft className="size-3.5" /> Back
+          Back
         </Button>
         <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">Albatross</span>
@@ -182,24 +260,18 @@ export function WorkDetail({ workId }: { workId: string }) {
             state={workStateKey({ ...work, openQuestions: pendingQuestions.length })}
             actions={
               <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setChatScope({
-                      kind: 'work',
-                      workId,
-                      label: plan?.outcome || work.title || work.rawText,
-                    });
-                    setAiBarOpen(true);
-                  }}
-                >
+                <Button type="button" size="sm" variant="outline" onClick={openAttachedChat}>
                   Discuss
                 </Button>
-                <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
-                  {advancing ? 'Working…' : 'Continue'}
-                </Button>
+                {detail.execution.currentStep ? (
+                  <Button type="button" size="sm" onClick={() => setGuided(true)}>
+                    Open guided work
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
+                    {advancing ? 'Working…' : 'Continue'}
+                  </Button>
+                )}
                 {open ? (
                   <Button
                     type="button"
@@ -239,17 +311,32 @@ export function WorkDetail({ workId }: { workId: string }) {
                 variant="outline"
                 className="mt-3"
                 aria-label="Answer in chat about this Albatross"
-                onClick={() => {
-                  setChatScope({
-                    kind: 'work',
-                    workId,
-                    label: plan?.outcome || work.title || work.rawText,
-                  });
-                  setAiBarOpen(true);
-                }}
+                onClick={openAttachedChat}
               >
                 Answer in chat
               </Button>
+            </section>
+          ) : null}
+
+          {detail.execution.currentStep ? (
+            <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+              <p className="text-[11.5px] text-[var(--color-text-faint)]">Current step</p>
+              <h2 className="mt-1 font-serif text-[18px] font-semibold">
+                {detail.execution.currentStep.title}
+              </h2>
+              {detail.execution.currentStep.detail ? (
+                <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                  {detail.execution.currentStep.detail}
+                </p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)]/70 pt-3">
+                <span className="text-[12px] text-[var(--color-text-muted)]">
+                  {detail.execution.remainingSteps} of {detail.execution.totalSteps} steps remain
+                </span>
+                <Button type="button" size="sm" onClick={() => setGuided(true)}>
+                  Start this step
+                </Button>
+              </div>
             </section>
           ) : null}
 
@@ -272,7 +359,9 @@ export function WorkDetail({ workId }: { workId: string }) {
               <h2 className="text-[13px] font-semibold text-[var(--color-text)]">The proposed steps</h2>
               <div className="mt-2 divide-y divide-[var(--color-border)]/60">
                 {(plan.digitalActions || []).map((action) => {
-                  const done = plan.appliedSteps?.some((step) => step.stepKey === action.key);
+                  const done = detail.execution.guideSteps.some(
+                    (step) => step.key === action.key && step.done,
+                  );
                   return (
                     <div
                       key={action.actionKey || action.key || action.title}
@@ -434,8 +523,8 @@ export function WorkDetail({ workId }: { workId: string }) {
           ) : null}
 
           {error || work.planError ? (
-            <div className="mt-4 flex gap-2 rounded-lg border border-[var(--color-danger)]/25 bg-[var(--color-danger-soft)] p-3 text-[12px] text-[var(--color-danger)]">
-              <CircleAlert className="mt-0.5 size-4 shrink-0" /> {error || work.planError}
+            <div className="mt-4 rounded-lg border border-[var(--color-danger)]/25 bg-[var(--color-danger-soft)] p-3 text-[12px] text-[var(--color-danger)]">
+              {error || work.planError}
             </div>
           ) : null}
         </div>

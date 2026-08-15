@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { planNeedsConductor } from '../lib/albatross/execution';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -72,6 +73,18 @@ const appliedStepValidator = v.object({
   draftId: v.optional(v.string()),
 });
 
+const outcomeContractValidator = v.object({
+  outcome: v.string(),
+  proofs: v.array(v.object({ id: v.string(), what: v.string() })),
+  closeWhen: v.union(
+    v.literal('action_succeeded'),
+    v.literal('outcome_likely'),
+    v.literal('outcome_confirmed'),
+    v.literal('never_automatically'),
+  ),
+  contradictions: v.optional(v.array(v.string())),
+});
+
 const sourceRefValidator = v.object({
   kind: v.string(),
   id: v.string(),
@@ -97,6 +110,13 @@ async function resolveUserId(
 function bounded(value: string | undefined, max: number, fallback = '') {
   if (value === undefined) return undefined;
   return normalizeText(value, fallback).slice(0, max);
+}
+
+function normalizedProofRequirement(value: string) {
+  return normalizeText(value, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 // Raw dumps are always preserved (epic non-negotiable #6): trim the ends and cap
@@ -152,19 +172,20 @@ export const createIntent = mutation({
         .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
         .unique();
       if (existing) {
-        if (!existing.areaId) {
-          await ctx.db.patch(existing._id, {
-            areaId: await normalizeIntentAreaId(ctx, userId, args.areaId),
-            areaAutoAssigned: undefined,
-            updatedAt: now(),
-          });
-        }
+        await ctx.db.patch(existing._id, {
+          ...(!existing.areaId ? { areaId: await normalizeIntentAreaId(ctx, userId, args.areaId) } : {}),
+          areaAutoAssigned: undefined,
+          conversationId: existing.conversationId || `work_${String(existing._id)}`,
+          workState: existing.workState || 'active',
+          agentState: existing.agentState || 'researching',
+          updatedAt: now(),
+        });
         return existing._id;
       }
     }
     const ts = now();
     const areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
-    return ctx.db.insert('albatrossIntents', {
+    const intentId = await ctx.db.insert('albatrossIntents', {
       userId,
       externalId,
       rawText,
@@ -174,9 +195,14 @@ export const createIntent = mutation({
       status: 'captured',
       areaId,
       areaAutoAssigned: undefined,
+      workState: 'active',
+      agentState: 'researching',
+      lastAgentRunAt: ts,
       createdAt: ts,
       updatedAt: ts,
     });
+    await ctx.db.patch(intentId, { conversationId: `work_${String(intentId)}` });
+    return intentId;
   },
 });
 
@@ -439,6 +465,7 @@ export const savePlan = mutation({
     model: v.optional(v.string()),
     mapQuery: v.optional(v.string()),
     places: v.optional(v.array(placeValidator)),
+    contract: v.optional(outcomeContractValidator),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -446,6 +473,33 @@ export const savePlan = mutation({
     const ts = now();
     const openQuestions = (args.questions || []).filter((question) => !question.answer);
     const planStatus = openQuestions.length ? 'needs_answers' : 'ready';
+    const previousProofs = new Map(
+      (intent.contract?.proofs || []).map(
+        (proof) => [normalizedProofRequirement(proof.what), proof] as const,
+      ),
+    );
+    const nextContract = args.contract
+      ? {
+          outcome: bounded(args.contract.outcome, 600, 'Outcome')!,
+          proofs: args.contract.proofs.slice(0, 12).map((proof, index) => {
+            const what = bounded(proof.what, 300, 'Something confirms it happened')!;
+            const settled = previousProofs.get(normalizedProofRequirement(what));
+            return {
+              id: bounded(proof.id, 120, `proof-${index + 1}`)!,
+              what,
+              ...(settled?.satisfiedAt
+                ? { satisfiedBy: settled.satisfiedBy, satisfiedAt: settled.satisfiedAt }
+                : {}),
+            };
+          }),
+          closeWhen: args.contract.closeWhen,
+          contradictions: args.contract.contradictions
+            ?.slice(0, 12)
+            .map((row) => bounded(row, 300)!)
+            .filter(Boolean),
+          updatedAt: ts,
+        }
+      : intent.contract;
 
     if (intent.latestPlanId) {
       const previous = await ctx.db.get(intent.latestPlanId);
@@ -500,6 +554,7 @@ export const savePlan = mutation({
       priority:
         args.priority !== undefined ? Math.min(Math.max(Math.round(args.priority), 1), 3) : intent.priority,
       questions: args.questions ?? intent.questions,
+      contract: nextContract,
       latestPlanId: planId,
       planError: undefined,
       planAttempts: 0,
@@ -599,6 +654,117 @@ export const planReconcileTick = internalAction({
       concurrency: 2,
     });
     console.log(`[plan-reconcile cron] re-kicked ${ok}/${retry.length} stale plans`);
+  },
+});
+
+const CONDUCTOR_RETRY_AFTER_MS = 6 * 60 * 60_000;
+const CONDUCTOR_IN_FLIGHT_MS = 5 * 60_000;
+
+/** Find active Work whose plan has a concrete step but no calendar block. */
+export const conductorCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    // Order by the lease so each tick moves claimed rows behind untouched
+    // candidates. A creation-time window would starve older Work forever once
+    // the table grew past its fixed limit.
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_work_state_conductor', (q) => q.eq('workState', 'active'))
+      .take(250);
+    const open = rows.filter((row) => {
+      const state = row.workState || (['done', 'archived'].includes(row.status) ? row.status : 'active');
+      if (state !== 'active') return false;
+      if (row.planError || row.status === 'needs_answers') return false;
+      if ((row.questions || []).some((question) => !question.answer)) return false;
+      if (row.lastConductorAt && row.lastConductorAt > ts - CONDUCTOR_RETRY_AFTER_MS) return false;
+      if (
+        ['researching', 'applying'].includes(row.agentState || '') &&
+        (row.lastAgentRunAt || row.updatedAt) > ts - CONDUCTOR_IN_FLIGHT_MS
+      )
+        return false;
+      return row.status !== 'planning';
+    });
+    const withPlans = await Promise.all(
+      open.map(async (row) => ({ row, plan: row.latestPlanId ? await ctx.db.get(row.latestPlanId) : null })),
+    );
+    return (
+      withPlans
+        .filter(({ row, plan }) => {
+          if (plan && plan.userId !== row.userId) return false;
+          return planNeedsConductor(plan);
+        })
+        // Each advance may use the full four-minute app timeout. Keep one tick
+        // bounded to four concurrent requests so it always fits the cron cadence.
+        .slice(0, 4)
+        .map(({ row }) => ({ workId: row._id, userId: row.userId }))
+    );
+  },
+});
+
+/** Acquire the conductor lease after candidate selection so overlapping ticks cannot double-run. */
+export const beginConductor = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const work = await ctx.db.get(args.workId);
+    if (!work) return false;
+    const ts = now();
+    if (work.lastConductorAt && work.lastConductorAt > ts - CONDUCTOR_RETRY_AFTER_MS) return false;
+    await ctx.db.patch(args.workId, { lastConductorAt: ts, updatedAt: ts });
+    return true;
+  },
+});
+
+/** Release failed conductor claims immediately instead of hiding them for six hours. */
+export const releaseConductor = internalMutation({
+  args: { workIds: v.array(v.id('albatrossIntents')) },
+  handler: async (ctx, args) => {
+    for (const workId of args.workIds.slice(0, 4)) {
+      const work = await ctx.db.get(workId);
+      if (work) await ctx.db.patch(workId, { lastConductorAt: undefined });
+    }
+  },
+});
+
+export const conductorTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[work-conductor cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
+      return;
+    }
+    // Backfill the first legacy page before relying on the workState index;
+    // the mutation schedules the remaining pages until the migration is done.
+    await ctx.runMutation(internal.albatrossWorkV2.migrateLegacyBatch, { limit: 100 });
+    const candidates = await ctx.runQuery(internal.albatrossIntents.conductorCandidates, {});
+    const claimed: Array<{ userId: string; workId: Id<'albatrossIntents'> }> = [];
+    for (const candidate of candidates) {
+      const ok = await ctx.runMutation(internal.albatrossIntents.beginConductor, {
+        workId: candidate.workId,
+      });
+      if (ok) claimed.push({ userId: candidate.userId, workId: candidate.workId });
+    }
+    if (!claimed.length) return;
+    const results = await Promise.all(
+      claimed.map(
+        async (candidate) =>
+          (await fanOutInternalPost(`${appUrl}/api/cron/work-conductor`, secret, [candidate], {
+            label: 'work-conductor cron',
+            timeoutMs: 240_000,
+            concurrency: 1,
+          })) === 1,
+      ),
+    );
+    const failed = claimed.filter((_, index) => !results[index]);
+    if (failed.length) {
+      await ctx.runMutation(internal.albatrossIntents.releaseConductor, {
+        workIds: failed.map((row) => row.workId),
+      });
+    }
+    const completed = results.filter(Boolean).length;
+    console.log(`[work-conductor cron] advanced ${completed}/${claimed.length} Work items`);
   },
 });
 

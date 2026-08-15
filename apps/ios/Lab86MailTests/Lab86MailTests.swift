@@ -256,6 +256,48 @@ struct Lab86MailTests {
         }
     }
 
+    private actor SuspendedWorkProjectionTools: ToolInvoking {
+        private var workContinuations: [Int: CheckedContinuation<JSONValue, any Error>] = [:]
+        private var workRequestCount = 0
+        private var workRequestWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
+            if name == "area_list" {
+                return .object([
+                    "areas": .array([
+                        .object(["_id": .string("area-1"), "name": .string("Home"), "kind": .string("area")]),
+                    ]),
+                ])
+            }
+            if name == "work_list" {
+                let call = workRequestCount
+                workRequestCount += 1
+                return try await withCheckedThrowingContinuation { continuation in
+                    workContinuations[call] = continuation
+                    let ready = workRequestWaiters.filter { workRequestCount >= $0.count }
+                    workRequestWaiters.removeAll { workRequestCount >= $0.count }
+                    for waiter in ready { waiter.continuation.resume() }
+                }
+            }
+            return .object([:])
+        }
+
+        func waitForWorkRequests(_ count: Int) async {
+            if workRequestCount >= count { return }
+            await withCheckedContinuation { continuation in
+                if workRequestCount >= count {
+                    continuation.resume()
+                } else {
+                    workRequestWaiters.append((count, continuation))
+                }
+            }
+        }
+
+        func resolveWork(call: Int, with value: JSONValue) {
+            workContinuations.removeValue(forKey: call)?.resume(returning: value)
+        }
+    }
+
     private actor StubCommandSubmitter: MobileCommandSubmitting {
         enum Behavior: Sendable {
             case receipt(OutboxCommandReceipt)
@@ -742,6 +784,25 @@ struct Lab86MailTests {
     }
 
     @Test
+    func legacyWorkDetailCacheWithoutExecutionStillDecodes() throws {
+        let legacy = Data(#"""
+        {"accounts":[],"threads":[],"events":[],"tasks":[],"areas":[],"approvals":[],"suggestions":[],
+         "workDetails":{"work-1":{"work":{"id":"work-1","title":"Renew passport","rawText":"Renew passport",
+         "status":"ready","workState":"active","agentState":"idle"},
+         "plan":{"id":"plan-1","status":"applied","outcome":"Passport renewed","summary":"Follow the official flow.",
+         "assumptions":[],"sources":[],"actions":[],"appliedStepKeys":[]}}},"savedAt":1000}
+        """#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+
+        let restored = try decoder.decode(ProductSnapshot.self, from: legacy)
+
+        #expect(restored.workDetails?["work-1"]?.work.title == "Renew passport")
+        #expect(restored.workDetails?["work-1"]?.execution.currentStep == nil)
+        #expect(restored.workExecution == nil)
+    }
+
+    @Test
     func calendarEventParsesEveryTimestampShapeAndRejectsInvalidDates() throws {
         func make(_ start: JSONValue, _ end: JSONValue) -> CalendarEventSummary? {
             CalendarEventSummary(json: .object([
@@ -859,11 +920,17 @@ struct Lab86MailTests {
 
     @Test @MainActor
     func typedRoutesRespectTheVisibleHierarchyAndPreserveAreaContext() {
-        #expect(PrimaryTab.sourceList == [.today, .tasks, .calendar, .files, .work])
-        #expect(!PrimaryTab.sourceList.contains(.mail))
-        #expect(PrimaryTab.today.title == "Brief")
-        #expect(PrimaryTab.work.title == "Areas")
+        #expect(PrimaryTab.sourceList == [.today, .mail, .work, .calendar, .files])
+        #expect(PrimaryTab.sourceList.contains(.mail))
+        #expect(!PrimaryTab.sourceList.contains(.tasks))
+        #expect(PrimaryTab.today.title == "Today")
+        #expect(PrimaryTab.work.title == "Albatrosses")
         #expect(PrimaryTab.files.title == "Files")
+
+        let legacyTasks = NavigationModel()
+        legacyTasks.openPrimaryView("tasks")
+        #expect(legacyTasks.selectedTab == .tasks)
+        #expect(!PrimaryTab.sourceList.contains(legacyTasks.selectedTab))
 
         let navigation = NavigationModel()
         navigation.openEvent(
@@ -914,7 +981,8 @@ struct Lab86MailTests {
             {"work":{"_id":"w1","title":"Prepare launch review","rawText":"Get launch ready","status":"ready","workState":"active","agentState":"idle","updatedAt":1752600000000},
              "plan":{"_id":"p1","status":"ready","outcome":"A review ready to send","summary":"Evidence assembled.","artifactHtml":"<main><h1>Review</h1></main>","artifactTitle":"Launch brief","assumptions":["Dates are current"],"sourceRefs":[{"kind":"mailThread","id":"t1","label":"Launch thread"}],"digitalActions":[{"key":"draft","kind":"mail_draft","title":"Draft response"}],"physicalActions":[],"appliedSteps":[{"stepKey":"draft","kind":"mail_draft"}]},
              "project":{"_id":"project-1","title":"Launch","status":"active"},
-             "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]}}
+             "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]},
+             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1}}
             """#.utf8)
         )
         let detail = try #require(WorkDetail(json: value))
@@ -926,6 +994,9 @@ struct Lab86MailTests {
         #expect(detail.plan?.appliedStepKeys.contains("draft") == true)
         #expect(detail.project?.title == "Launch")
         #expect(detail.application?.operationIDs == ["operation-1"])
+        #expect(detail.execution.currentStep?.id == "draft")
+        #expect(detail.execution.currentStep?.url == "https://example.test/review")
+        #expect(detail.execution.remainingSteps == 1)
     }
 
     @Test @MainActor
@@ -1180,8 +1251,25 @@ struct Lab86MailTests {
                 .object(["_id": .string("area-2"), "name": .string("Home"), "kind": .string("area")]),
             ]),
         ])
+        let work = JSONValue.object([
+            "work": .array([
+                .object([
+                    "_id": .string("work-1"), "title": .string("Renew passport"),
+                    "rawText": .string("Renew passport"), "status": .string("applied"),
+                    "openQuestions": .number(0),
+                ]),
+            ]),
+            "execution": .object([
+                "currentMove": .object([
+                    "workId": .string("work-1"), "workTitle": .string("Renew passport"),
+                    "stepTitle": .string("Book the appointment"), "phase": .string("unscheduled"),
+                    "remainingSteps": .number(2), "totalSteps": .number(3),
+                ]),
+                "missedMoves": .array([]), "needsYou": .array([]),
+            ]),
+        ])
         let store = ProductStore(
-            tools: ScriptedTools(responses: ["area_list": areas]),
+            tools: ScriptedTools(responses: ["area_list": areas, "work_list": work]),
             backend: BackendClient(baseURL: nil)
         )
         store.workError = "stale failure"
@@ -1191,6 +1279,8 @@ struct Lab86MailTests {
         #expect(store.areas.map(\.id) == ["area-1", "area-2"])
         #expect(store.workDidLoad)
         #expect(store.workError == nil)
+        #expect(store.allWork.map(\.id) == ["work-1"])
+        #expect(store.workExecution.currentMove?.stepTitle == "Book the appointment")
         #expect(!store.isLoadingWork)
         #expect(store.errorMessage == nil)
     }
@@ -1211,6 +1301,65 @@ struct Lab86MailTests {
         #expect(!store.isLoadingWork)
         #expect(!store.workDidLoad)
         #expect(store.areas.isEmpty)
+    }
+
+    @Test @MainActor
+    func workRefreshFinishingAfterSignOutCannotRestoreAccountState() async {
+        let tools = SuspendedWorkProjectionTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        let refresh = Task { await store.refreshWork() }
+        await tools.waitForWorkRequests(1)
+        #expect(store.areas.map(\.id) == ["area-1"])
+
+        await store.clearForSignOut()
+        await tools.resolveWork(call: 0, with: .object([
+            "work": .array([
+                .object([
+                    "_id": .string("work-1"), "title": .string("Renew passport"),
+                    "rawText": .string("Renew passport"), "status": .string("ready"),
+                ]),
+            ]),
+            "execution": .object([
+                "currentMove": .object([
+                    "workId": .string("work-1"), "workTitle": .string("Renew passport"),
+                    "stepTitle": .string("Submit the form"), "phase": .string("unscheduled"),
+                ]),
+                "missedMoves": .array([]), "needsYou": .array([]),
+            ]),
+        ]))
+        await refresh.value
+
+        #expect(store.areas.isEmpty)
+        #expect(store.allWork.isEmpty)
+        #expect(store.workExecution.currentMove == nil)
+        #expect(store.workError == nil)
+        #expect(!store.workDidLoad)
+    }
+
+    @Test @MainActor
+    func staleSessionCleanupCannotHideANewWorkRefresh() async {
+        let tools = SuspendedWorkProjectionTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        let oldRefresh = Task { await store.refreshExecution() }
+        await tools.waitForWorkRequests(1)
+
+        await store.clearForSignOut()
+        let newRefresh = Task { await store.refreshExecution() }
+        await tools.waitForWorkRequests(2)
+        #expect(store.isLoadingWork)
+
+        await tools.resolveWork(call: 0, with: .object(["work": .array([])]))
+        await oldRefresh.value
+        #expect(store.isLoadingWork)
+
+        await tools.resolveWork(call: 1, with: .object([
+            "work": .array([]),
+            "execution": .object(["missedMoves": .array([]), "needsYou": .array([])]),
+        ]))
+        await newRefresh.value
+
+        #expect(!store.isLoadingWork)
+        #expect(store.workDidLoad)
     }
 
     @Test @MainActor
@@ -1346,6 +1495,33 @@ struct Lab86MailTests {
         #expect(checkin?.candidates.first?.title == "Ship native mail")
         #expect(checkin?.reflectionText == "Shipped the inline reply.")
         #expect(checkin?.tomorrowIntentText == "Verify production APNs.")
+    }
+
+    @Test @MainActor
+    func degradedTomorrowPlanningKeepsTheCheckinAndReturnsItsSafeError() throws {
+        let value = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(#"{"_id":"checkin-1","localDate":"2026-08-14","status":"open","candidateItems":[]}"#.utf8)
+        )
+        let store = ProductStore(
+            tools: ScriptedTools(responses: [:]),
+            backend: BackendClient(baseURL: nil)
+        )
+        store.checkin = try #require(CheckinSummary(json: value))
+
+        do {
+            try store.applyCheckinAnswerResponse(.object([
+                "ok": .bool(true),
+                "status": .string("answered"),
+                "tomorrowPlanStatus": .string("degraded"),
+                "tomorrowPlanError": .string("Tomorrow planning is temporarily unavailable."),
+            ]))
+            Issue.record("Expected degraded tomorrow planning to remain retryable")
+        } catch {
+            #expect(error.localizedDescription == "Tomorrow planning is temporarily unavailable.")
+        }
+
+        #expect(store.checkin?.id == "checkin-1")
     }
 
     @Test @MainActor

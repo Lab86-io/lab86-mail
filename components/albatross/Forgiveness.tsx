@@ -20,6 +20,38 @@ import {
 } from '@/lib/albatross/forgiveness';
 import { cn } from '@/lib/utils';
 
+interface LapseRecoveryRequest {
+  workId: string;
+  stepKey: string;
+  recovery: Recovery;
+  timezone: string;
+  stepTitle?: string | null;
+  plannedAt?: number;
+  reasonKind?: LapseReason | null;
+}
+
+/** Persist one keyed recovery and surface non-JSON gateway failures as a stable product error. */
+export async function submitLapseRecovery(
+  input: LapseRecoveryRequest,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+) {
+  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(input.workId)}/recover`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      recovery: input.recovery,
+      stepKey: input.stepKey,
+      timezone: input.timezone,
+      stepTitle: input.stepTitle || undefined,
+      plannedAt: input.plannedAt,
+      reasonKind: input.reasonKind || 'other',
+    }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error || 'Could not save that.');
+  return result;
+}
+
 /**
  * A step did not happen.
  *
@@ -29,16 +61,17 @@ import { cn } from '@/lib/utils';
  */
 export function LapsePrompt({
   workId,
+  stepKey,
   stepTitle,
   plannedAt,
   onDone,
 }: {
   workId: string;
+  stepKey: string;
   stepTitle?: string | null;
   plannedAt?: number;
   onDone?: () => void;
 }) {
-  const recordLapse = useMutation(api.albatrossWorkV2.recordLapse);
   const [reason, setReason] = useState<LapseReason | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Recovery | null>(null);
@@ -49,14 +82,14 @@ export function LapsePrompt({
     setBusy(true);
     setError(null);
     try {
-      await recordLapse({
-        workId: workId as Id<'albatrossIntents'>,
-        stepTitle: stepTitle || undefined,
-        plannedAt,
-        reasonKind: reason || 'other',
-        reasonSource: 'user',
+      await submitLapseRecovery({
+        workId,
+        stepKey,
         recovery,
-        revisedStep: recovery === 'shrink' ? shrinkSuggestion(stepTitle) : undefined,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        stepTitle,
+        plannedAt,
+        reasonKind: reason,
       });
       setDone(recovery);
       onDone?.();

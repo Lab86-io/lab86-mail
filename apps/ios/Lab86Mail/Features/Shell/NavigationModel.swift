@@ -7,8 +7,6 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     case calendar
     case work
     case files
-    // Mail is intentionally not a peer in the visible source list. It remains
-    // a routable root for Siri, search, notifications, and unfiled mail.
     case mail
     // A conversation with Albatross, separate from intent capture. Started
     // from the sidebar plus; never listed as a peer destination.
@@ -40,11 +38,10 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    // Files belongs with the personal productivity destinations. Areas stays
-    // last as the handoff into the user's contextual workspace hierarchy.
-    // Same order as the web rail: the day, the things being carried, then the
-    // systems those things run on. The board is not a peer destination.
-    static let sourceList: [PrimaryTab] = [.today, .work, .calendar, .files, .tasks]
+    // Today is the execution surface; Mail is one ordinary source; durable
+    // outcomes live under Albatrosses. Tasks remains routable for old links but
+    // is no longer a competing primary board.
+    static let sourceList: [PrimaryTab] = [.today, .mail, .work, .calendar, .files]
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { submitLapseRecovery } from '../components/albatross/Forgiveness';
 import {
   isStale,
   LAPSE_REASONS,
@@ -9,6 +10,7 @@ import {
   type Recovery,
   recoveriesFor,
   recoveryAcknowledgement,
+  recoveryWorkState,
   reEntryDaysAway,
   reEntryLine,
   reviewBatch,
@@ -89,6 +91,60 @@ describe('recoveries follow from the reason', () => {
         expect(recoveryAcknowledgement(recovery)).toBeTruthy();
       }
     }
+  });
+
+  test('waiting, pausing, and releasing change authoritative Work state', () => {
+    expect(recoveryWorkState('wait')).toBe('waiting');
+    expect(recoveryWorkState('pause')).toBe('paused');
+    expect(recoveryWorkState('release')).toBe('released');
+    expect(recoveryWorkState('move')).toBeNull();
+  });
+});
+
+describe('keyed lapse recovery requests', () => {
+  test('sends the displayed step key and complete recovery context', async () => {
+    let request: { url: string; body: Record<string, unknown> } | undefined;
+    await submitLapseRecovery(
+      {
+        workId: 'passport/work',
+        stepKey: 'official-site',
+        recovery: 'shrink',
+        timezone: 'America/New_York',
+        stepTitle: 'Complete the official form',
+        plannedAt: 1_786_700_000_000,
+        reasonKind: 'step_too_large',
+      },
+      async (url, init) => {
+        request = { url, body: JSON.parse(String(init.body)) };
+        return Response.json({ ok: true });
+      },
+    );
+
+    expect(request).toEqual({
+      url: '/api/albatross/work/passport%2Fwork/recover',
+      body: {
+        recovery: 'shrink',
+        stepKey: 'official-site',
+        timezone: 'America/New_York',
+        stepTitle: 'Complete the official form',
+        plannedAt: 1_786_700_000_000,
+        reasonKind: 'step_too_large',
+      },
+    });
+  });
+
+  test('surfaces non-OK and non-JSON responses', async () => {
+    await expect(
+      submitLapseRecovery(
+        {
+          workId: 'work-1',
+          stepKey: 'step-1',
+          recovery: 'move',
+          timezone: 'UTC',
+        },
+        async () => new Response('<h1>bad gateway</h1>', { status: 502 }),
+      ),
+    ).rejects.toThrow('Could not save that.');
   });
 });
 

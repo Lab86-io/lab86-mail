@@ -1486,6 +1486,42 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let detail: String?
     }
 
+    struct ExecutionStep: Identifiable, Hashable, Codable, Sendable {
+        let id: String
+        let kind: String
+        let title: String
+        let detail: String?
+        let url: String?
+        let done: Bool
+        let cardID: String?
+
+        init?(json: JSONValue) {
+            guard let id = json["key"]?.stringValue,
+                  let title = json["title"]?.stringValue?.nilIfBlank else { return nil }
+            self.id = id
+            kind = json["kind"]?.stringValue ?? "task"
+            self.title = title
+            detail = json["detail"]?.stringValue?.nilIfBlank
+            url = json["url"]?.stringValue?.nilIfBlank
+            done = json["done"]?.boolValue ?? false
+            cardID = json["cardId"]?.stringValue?.nilIfBlank
+        }
+    }
+
+    struct Execution: Hashable, Codable, Sendable {
+        let currentStep: ExecutionStep?
+        let guideSteps: [ExecutionStep]
+        let remainingSteps: Int
+        let totalSteps: Int
+
+        init(json: JSONValue?) {
+            currentStep = json?["currentStep"].flatMap(ExecutionStep.init)
+            guideSteps = (json?["guideSteps"]?.arrayValue ?? []).compactMap(ExecutionStep.init)
+            remainingSteps = max(0, Int(json?["remainingSteps"]?.doubleValue ?? 0))
+            totalSteps = max(0, Int(json?["totalSteps"]?.doubleValue ?? 0))
+        }
+    }
+
     struct Plan: Identifiable, Hashable, Codable, Sendable {
         let id: String
         let status: String
@@ -1601,8 +1637,27 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let project: Project?
     let questions: [Question]
     let application: Application?
+    let execution: Execution
     let contract: Contract?
     let evidence: [Evidence]
+
+    private enum CodingKeys: String, CodingKey {
+        case work, plan, project, questions, application, execution, contract, evidence
+    }
+
+    // Snapshots written before guided execution carry no `execution` key.
+    // Keep the in-memory model non-optional while decoding that older cache.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        work = try container.decode(Work.self, forKey: .work)
+        plan = try container.decodeIfPresent(Plan.self, forKey: .plan)
+        project = try container.decodeIfPresent(Project.self, forKey: .project)
+        questions = try container.decodeIfPresent([Question].self, forKey: .questions) ?? []
+        application = try container.decodeIfPresent(Application.self, forKey: .application)
+        execution = try container.decodeIfPresent(Execution.self, forKey: .execution) ?? Execution(json: nil)
+        contract = try container.decodeIfPresent(Contract.self, forKey: .contract)
+        evidence = try container.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
+    }
 
     /// Where the outcome stands. This is a state, not a sentence: the views test
     /// it to decide colour, weight and whether the contract may close, so a copy
@@ -1669,6 +1724,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             planError: workJSON?["planError"]?.stringValue?.nilIfBlank,
             updatedAt: CalendarDateParser.date(workJSON?["updatedAt"])
         )
+        execution = Execution(json: json["execution"])
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {
@@ -1681,7 +1737,7 @@ struct WorkDetail: Hashable, Codable, Sendable {
             }
             let digital = (planJSON["digitalActions"]?.arrayValue ?? []).compactMap { row -> Action? in
                 guard let title = row["title"]?.stringValue?.nilIfBlank else { return nil }
-                let key = row["actionKey"]?.stringValue ?? row["key"]?.stringValue ?? title
+                let key = row["key"]?.stringValue ?? row["actionKey"]?.stringValue ?? title
                 return Action(id: key, kind: row["kind"]?.stringValue ?? "action", title: title, detail: nil)
             }
             let physical = (planJSON["physicalActions"]?.arrayValue ?? []).compactMap { row -> Action? in
@@ -1929,4 +1985,3 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
         tomorrowIntentText = json["tomorrowIntentText"]?.stringValue?.nilIfBlank
     }
 }
-

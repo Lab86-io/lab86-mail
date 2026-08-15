@@ -17,37 +17,63 @@ clerk_key="$(plist_value CLERK_PUBLISHABLE_KEY)"
 
 # Xcode Cloud does not guarantee that custom workflow environment variables
 # remain available to target build phases. Derive the release channel from its
-# immutable source branch, exactly as ci_post_clone.sh does, and only use the
+# immutable source ref, exactly as ci_post_clone.sh does, and only use the
 # explicit channel for local/non-cloud builds.
 normalize_cloud_value() {
   printf '%s' "$1" | tr -d '`\r\n'
 }
 
-# CI_BRANCH is supplied by Xcode Cloud, not its environment editor. Treat it as
-# an exact authorization boundary rather than repairing a malformed value.
 cloud_branch="${CI_BRANCH:-}"
+cloud_tag="${CI_TAG:-}"
+cloud_git_ref="${CI_GIT_REF:-}"
+cloud_commit="${CI_COMMIT:-}"
 requested_build_channel="$(normalize_cloud_value "${LAB86_BUILD_CHANNEL:-}")"
-case "$cloud_branch" in
-  main|staging)
-    branch_build_channel=production
+source_build_channel=
+authorized_source=false
+
+case "$cloud_git_ref" in
+  refs/heads/main|refs/heads/staging)
+    expected_branch="${cloud_git_ref#refs/heads/}"
+    [[ "$cloud_branch" == "$expected_branch" && -z "$cloud_tag" ]] && authorized_source=true
     ;;
-  "")
-    branch_build_channel=
+  refs/tags/ios-staging-*)
+    expected_commit="${cloud_tag#ios-staging-}"
+    if [[ -z "$cloud_branch" \
+      && "$cloud_git_ref" == "refs/tags/$cloud_tag" \
+      && "$expected_commit" =~ ^[0-9a-f]{40}$ \
+      && "$cloud_commit" == "$expected_commit" ]]; then
+      authorized_source=true
+    fi
     ;;
-  *)
-    echo "Xcode Cloud builds must originate from main or staging." >&2
-    exit 1
+  refs/tags/v*)
+    if [[ -z "$cloud_branch" \
+      && "$cloud_git_ref" == "refs/tags/$cloud_tag" \
+      && "$cloud_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+      && "$cloud_commit" =~ ^[0-9a-f]{40}$ ]]; then
+      authorized_source=true
+    fi
     ;;
 esac
 
-if [[ -n "$branch_build_channel" \
-  && -n "$requested_build_channel" \
-  && "$requested_build_channel" != "$branch_build_channel" ]]; then
-  echo "LAB86_BUILD_CHANNEL does not match Xcode Cloud branch $cloud_branch." >&2
+if [[ -n "$cloud_git_ref" ]]; then
+  if [[ "$authorized_source" != true ]]; then
+    echo "Xcode Cloud builds must originate from an authorized main, staging, or immutable release ref." >&2
+    exit 1
+  fi
+  source_build_channel=production
+elif [[ -n "$cloud_branch" || -n "$cloud_tag" || -n "$cloud_commit" ]]; then
+  echo "An incomplete Xcode Cloud source identity is not authorized." >&2
   exit 1
 fi
 
-build_channel="${branch_build_channel:-${requested_build_channel:-production}}"
+if [[ -n "$source_build_channel" \
+  && -n "$requested_build_channel" \
+  && "$requested_build_channel" != "$source_build_channel" ]]; then
+  echo "LAB86_BUILD_CHANNEL does not match Xcode Cloud source $cloud_git_ref." >&2
+  exit 1
+fi
+
+build_channel="${source_build_channel:-${requested_build_channel:-production}}"
 
 echo "Verifying release configuration: channel=$build_channel api=$api_base_url convex=$convex_url"
 

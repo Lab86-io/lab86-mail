@@ -2,10 +2,9 @@
 
 import { useQuery as useReactQuery } from '@tanstack/react-query';
 import { useConvexAuth, useQuery } from 'convex/react';
-import { CalendarDays, LoaderCircle } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
-import { ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
+import { LapsePrompt, ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
 import { AlbatrossRow } from '@/components/albatross/primitives';
 import { BriefMasthead } from '@/components/report/brief-canvas/BriefMasthead';
 import { DayRibbon } from '@/components/report/DayRibbon';
@@ -17,12 +16,10 @@ import {
   dayShapeLine,
   dayWindow,
   fixedSchedule,
-  hasUpcomingBooking,
   importantMailToday,
   needsYouToday,
   openWork,
   practiceLine,
-  readyToMove,
   type TodayApproval,
   type TodayEvent,
   type TodayPractice,
@@ -32,6 +29,57 @@ import {
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
+
+interface ExecutionMove {
+  workId: string;
+  workTitle: string;
+  stepKey: string | null;
+  stepTitle: string;
+  detail: string | null;
+  phase: 'active' | 'upcoming' | 'unscheduled' | 'missed';
+  scheduledStartAt: number | null;
+  scheduledEndAt: number | null;
+  remainingSteps: number;
+  totalSteps: number;
+  areaName: string | null;
+}
+
+interface ExecutionSnapshot {
+  currentMove: ExecutionMove | null;
+  missedMoves: ExecutionMove[];
+  needsYou: TodayWork[];
+}
+
+/** Recovery requires the stable server step key used by the recovery mutation. */
+export function keyedMissedMoves<T extends { stepKey: string | null }>(
+  moves: T[],
+): Array<T & { stepKey: string }> {
+  return moves.filter((move): move is T & { stepKey: string } => Boolean(move.stepKey));
+}
+
+export function MissedMovesRecoverySection({
+  moves,
+}: {
+  moves: Array<Pick<ExecutionMove, 'workId' | 'stepKey' | 'stepTitle' | 'scheduledStartAt'>>;
+}) {
+  const keyedMoves = keyedMissedMoves(moves);
+  if (!keyedMoves.length) return null;
+  return (
+    <Section title="The plan slipped" note="Choose what should happen now.">
+      <div className="space-y-3">
+        {keyedMoves.map((move) => (
+          <LapsePrompt
+            key={`${move.workId}:${move.stepKey || move.stepTitle}`}
+            workId={move.workId}
+            stepKey={move.stepKey}
+            stepTitle={move.stepTitle}
+            plannedAt={move.scheduledStartAt || undefined}
+          />
+        ))}
+      </div>
+    </Section>
+  );
+}
 
 /**
  * Today. What deserves attention today, given the life this person actually
@@ -64,6 +112,9 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const work = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as
     | TodayWork[]
     | undefined;
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
+    | ExecutionSnapshot
+    | undefined;
   const events = useQuery(
     api.calendarData.dayEvents,
     isAuthenticated ? { startAt: window.startAt, endAt: window.endAt } : 'skip',
@@ -74,22 +125,21 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
 
   const rows = work || [];
   // Calendar holds expire while Today may remain open on a second monitor.
-  // Refresh the eligibility clock on a bounded cadence so Work returns to
-  // “Could move today” without requiring a reload or another Convex write.
+  // Refresh the eligibility clock on a bounded cadence so the authoritative
+  // current move and missed-block recovery stay honest without a reload.
   useEffect(() => {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => globalThis.clearInterval(timer);
   }, []);
-  const attention = needsYouToday(rows, approvals || []);
+  const clientAttention = needsYouToday(rows, approvals || []);
+  const attention = {
+    work: execution?.needsYou || [],
+    approvals: clientAttention.approvals,
+  };
   const schedule = fixedSchedule(events || []);
-  const ready = readyToMove(rows, capacity, nowMs);
-  const [showAllReady, setShowAllReady] = useState(false);
   const [dayChangedOpen, setDayChangedOpen] = useState(false);
-  const readyItems = showAllReady
-    ? openWork(rows).filter((row) => !hasUpcomingBooking(row, nowMs))
-    : ready.items;
   const waiting = waitingOnSomebody(rows);
-  const loading = work === undefined;
+  const loading = work === undefined || execution === undefined;
 
   const checkin = useQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
     | DailyCheckinData
@@ -252,10 +302,56 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               ) : null}
 
               {loading ? (
-                <p className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                  <LoaderCircle className="size-4 animate-spin" /> Loading
-                </p>
+                <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading today’s move…</p>
               ) : null}
+
+              {execution?.currentMove ? (
+                <Section
+                  title="Do this next"
+                  note={
+                    execution.currentMove.phase === 'active'
+                      ? 'This block is happening now.'
+                      : execution.currentMove.phase === 'upcoming' && execution.currentMove.scheduledStartAt
+                        ? `Protected for ${new Intl.DateTimeFormat([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(execution.currentMove.scheduledStartAt)}.`
+                        : 'The clearest concrete move.'
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => openAlbatross(execution.currentMove!.workId)}
+                    className="w-full rounded-xl border border-[var(--color-accent)]/35 bg-[var(--color-bg-elevated)] px-5 py-5 text-left shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-bg-subtle)]"
+                  >
+                    <span className="block text-[11.5px] text-[var(--color-text-faint)]">
+                      {execution.currentMove.workTitle}
+                      {execution.currentMove.areaName ? ` · ${execution.currentMove.areaName}` : ''}
+                    </span>
+                    <span className="mt-1 block font-serif text-[20px] font-semibold leading-tight">
+                      {execution.currentMove.stepTitle}
+                    </span>
+                    {execution.currentMove.detail ? (
+                      <span className="mt-1.5 block max-w-2xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                        {execution.currentMove.detail}
+                      </span>
+                    ) : null}
+                    <span className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--color-border)]/70 pt-3 text-[12px]">
+                      <span className="text-[var(--color-text-muted)]">
+                        {execution.currentMove.remainingSteps === 1
+                          ? 'Last planned step'
+                          : `${execution.currentMove.remainingSteps} of ${execution.currentMove.totalSteps} steps remain`}
+                      </span>
+                      <span className="font-medium text-[var(--color-accent)]">Open guided work</span>
+                    </span>
+                  </button>
+                </Section>
+              ) : !loading ? (
+                <Section title="Do this next" note="There is no concrete move waiting.">
+                  <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
+                    The current plan is clear. Add something only if it deserves a place in the day.
+                  </p>
+                </Section>
+              ) : null}
+
+              <MissedMovesRecoverySection moves={execution?.missedMoves || []} />
 
               {attention.work.length || attention.approvals.length ? (
                 <Section title="Needs you" note="Albatross cannot move these without you.">
@@ -292,30 +388,6 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                   <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
                     Nothing needs you right now.
                   </p>
-                </Section>
-              ) : null}
-
-              {readyItems.length ? (
-                <Section title="Could move today" note="Albatross is carrying these. None of them is booked.">
-                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    {readyItems.map((item) => (
-                      <li key={item._id}>
-                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                      </li>
-                    ))}
-                  </ul>
-                  {/* Capacity shortens the day; it never hides it. */}
-                  {ready.heldBack && !showAllReady ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllReady(true)}
-                      className="mt-2 text-[12px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
-                    >
-                      {ready.heldBack === 1
-                        ? 'One more is held back for the capacity you set — show it'
-                        : `${ready.heldBack} more are held back for the capacity you set — show them`}
-                    </button>
-                  ) : null}
                 </Section>
               ) : null}
 
@@ -385,7 +457,10 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 </Section>
               ) : null}
 
-              {!loading && !attention.work.length && !attention.approvals.length && !readyItems.length ? (
+              {!loading &&
+              !attention.work.length &&
+              !attention.approvals.length &&
+              !execution?.currentMove ? (
                 <div className="mt-2">
                   <button
                     type="button"
@@ -405,8 +480,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                     <DayRibbon events={schedule} nowMs={nowMs} />
                   </div>
                 ) : (
-                  <p className="flex items-center gap-2 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
-                    <CalendarDays className="size-4 shrink-0" aria-hidden />
+                  <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
                     Nothing is booked today. The whole day is open air.
                   </p>
                 )}

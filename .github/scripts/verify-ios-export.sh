@@ -54,19 +54,19 @@ clerk_key="$(plist_value CLERK_PUBLISHABLE_KEY)"
 
 case "$channel" in
   staging)
-    [[ "$api_base_url" == "https://mail-staging.lab86.io" ]] || {
-      echo "Staging IPA contains an invalid API base URL." >&2
+    [[ "$api_base_url" == "https://mail.lab86.io" ]] || {
+      echo "Staging IPA does not contain the production API base URL." >&2
       exit 1
     }
-    [[ "$convex_url" == "https://precise-skunk-847.convex.cloud" ]] || {
-      echo "Staging IPA contains an invalid Convex deployment." >&2
+    [[ "$convex_url" == "https://proficient-viper-594.convex.cloud" ]] || {
+      echo "Staging IPA does not contain the production Convex deployment." >&2
       exit 1
     }
-    [[ "$clerk_key" == pk_test_* ]] || {
-      echo "Staging IPA does not contain a Clerk test publishable key." >&2
+    [[ "$clerk_key" == pk_live_* ]] || {
+      echo "Staging IPA does not contain a live Clerk publishable key." >&2
       exit 1
     }
-    expected_clerk_host="together-sawfish-53.clerk.accounts.dev"
+    expected_clerk_host="clerk.mail.lab86.io"
     ;;
   production)
     [[ "$api_base_url" == "https://mail.lab86.io" ]] || {

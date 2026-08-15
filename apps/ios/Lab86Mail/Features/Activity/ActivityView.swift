@@ -26,12 +26,6 @@ struct ActivityView: View {
         }
     }
 
-    private var visibleSuggestions: [SuggestionSummary] {
-        environment.store.suggestions.filter {
-            archivedIDs.contains("suggestion:\($0.id)") == showsArchived
-        }
-    }
-
     private var visibleQuestions: [PendingWorkQuestionSummary] {
         environment.store.pendingQuestions.filter {
             archivedIDs.contains("question:\($0.id)") == showsArchived
@@ -42,15 +36,35 @@ struct ActivityView: View {
         NavigationStack {
             List {
                 if visibleApprovals.isEmpty
-                    && visibleSuggestions.isEmpty
                     && visibleQuestions.isEmpty
+                    && (environment.store.workExecution.currentMove == nil || showsArchived)
                     && (environment.store.checkin == nil || showsArchived) {
                     ContentUnavailableView(
                         "Nothing needs your approval",
                         systemImage: "checkmark.shield",
-                        description: Text("Suggestions, check-ins, and actions that need a decision will appear here.")
+                        description: Text("Check-ins, questions, and actions that need a decision will appear here.")
                     )
                 } else {
+                    if !showsArchived, let move = environment.store.workExecution.currentMove {
+                        Section("Do this next") {
+                            Button {
+                                dismiss()
+                                environment.navigation.openWork(id: move.workID, title: move.workTitle)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(move.stepTitle)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                    Text(move.workTitle)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens the current step and its full plan")
+                        }
+                    }
                     if !showsArchived, let checkin = environment.store.checkin {
                         Section("What did you actually get done today?") {
                             Text("Tell Albatross what moved. Suggestions are evidence—you decide what is complete.")
@@ -65,16 +79,16 @@ struct ActivityView: View {
                                         toggle(candidate.id)
                                     } label: {
                                         HStack {
-                                            Image(
-                                                systemName: completedCandidateIDs.contains(candidate.id)
-                                                    ? "checkmark.circle.fill" : "circle"
-                                            )
-                                            .foregroundStyle(
-                                                completedCandidateIDs.contains(candidate.id) ? Color.accentColor : .secondary
-                                            )
+                                            Text(completedCandidateIDs.contains(candidate.id) ? "Done" : "Mark done")
+                                                .font(.caption.weight(.medium))
+                                                .foregroundStyle(
+                                                    completedCandidateIDs.contains(candidate.id)
+                                                        ? Color.accentColor : .secondary
+                                                )
+                                                .frame(minWidth: 68, alignment: .leading)
                                             VStack(alignment: .leading) {
                                                 Text(candidate.title).foregroundStyle(.primary)
-                                                Text(candidate.kind.capitalized)
+                                                Text(candidate.kind)
                                                     .font(.caption)
                                                     .foregroundStyle(.secondary)
                                             }
@@ -88,7 +102,7 @@ struct ActivityView: View {
                             }
                         }
                         Section("What do you want to get done tomorrow?") {
-                            Text("This becomes an explicit intent signal for the next brief and its recommended next moves.")
+                            Text("Albatross turns this into Work and protects its first move on the calendar.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             TextEditor(text: $tomorrowText)
@@ -98,7 +112,7 @@ struct ActivityView: View {
                             Button {
                                 Task { await saveCheckin(checkin) }
                             } label: {
-                                if isSavingCheckin { ProgressView() } else { Text("Save Daily Alignment") }
+                                if isSavingCheckin { ProgressView() } else { Text("Save check-in") }
                             }
                             .disabled(
                                 isSavingCheckin || (
@@ -153,42 +167,6 @@ struct ActivityView: View {
                             }
                         }
                     }
-                    if !visibleSuggestions.isEmpty {
-                        Section("Found in your mail") {
-                            ForEach(visibleSuggestions) { suggestion in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    activityTitle(suggestion.title, id: "suggestion:\(suggestion.id)")
-                                    Text(suggestion.sender)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                    if let start = suggestion.start {
-                                        Text(start.formatted(date: .abbreviated, time: .shortened))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    HStack {
-                                        Button(showsArchived ? "Restore" : "Archive") {
-                                            setArchived("suggestion:\(suggestion.id)", archived: !showsArchived)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        Button("Dismiss", role: .destructive) {
-                                            Task { await environment.store.actOnSuggestion(id: suggestion.id, action: "dismiss") }
-                                        }
-                                        .buttonStyle(.bordered)
-                                        Spacer()
-                                        Button("Add to Calendar") {
-                                            Task { await environment.store.actOnSuggestion(id: suggestion.id, action: "accept") }
-                                        }
-                                        .buttonStyle(.borderedProminent)
-                                    }
-                                }
-                                .padding(.vertical, 5)
-                                .contextMenu {
-                                    readButton("suggestion:\(suggestion.id)")
-                                }
-                            }
-                        }
-                    }
                     if !visibleApprovals.isEmpty {
                         Section("Waiting for you") {
                             ForEach(visibleApprovals) { approval in
@@ -235,9 +213,13 @@ struct ActivityView: View {
             .task {
                 loadLocalState()
                 await environment.store.refreshToday()
+                await environment.store.refreshExecution()
                 loadCheckinDraft()
             }
-            .refreshable { await environment.store.refreshToday() }
+            .refreshable {
+                await environment.store.refreshToday()
+                await environment.store.refreshExecution()
+            }
         }
     }
 
@@ -277,7 +259,6 @@ struct ActivityView: View {
     private func markVisibleRead() {
         var ids = readIDs
         ids.formUnion(visibleApprovals.map { "approval:\($0.id)" })
-        ids.formUnion(visibleSuggestions.map { "suggestion:\($0.id)" })
         ids.formUnion(visibleQuestions.map { "question:\($0.id)" })
         readRaw = ids.sorted().joined(separator: "\n")
         persistLocalState()

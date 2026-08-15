@@ -9,12 +9,46 @@ export interface DailyCheckinData {
   _id: string;
   localDate: string;
   status: string;
+  tomorrowIntentText?: string | null;
   candidateItems: Array<{
     kind: 'work' | 'project' | 'task' | 'event' | 'artifact';
     id: string;
     title: string;
     suggestedState?: string;
   }>;
+}
+
+/** Build the durable answer payload from either prose, tomorrow's intent, or selected evidence. */
+export function dailyCheckinAnswerPayload(
+  checkin: DailyCheckinData,
+  selected: ReadonlySet<string>,
+  responseText: string,
+  tomorrowIntentText: string,
+  timezone: string,
+) {
+  return {
+    responseText: responseText.trim(),
+    tomorrowIntentText: tomorrowIntentText.trim(),
+    completed: checkin.candidateItems
+      .filter((item) => selected.has(`${item.kind}:${item.id}`))
+      .map((item) => ({ kind: item.kind, id: item.id })),
+    timezone,
+  };
+}
+
+export function dailyCheckinResponseError(
+  responseOK: boolean,
+  body: { error?: unknown; tomorrowPlanStatus?: unknown; tomorrowPlanError?: unknown },
+): string | null {
+  if (!responseOK) {
+    return typeof body.error === 'string' && body.error ? body.error : 'Could not save the check-in.';
+  }
+  if (body.tomorrowPlanStatus === 'degraded') {
+    return typeof body.tomorrowPlanError === 'string' && body.tomorrowPlanError
+      ? body.tomorrowPlanError
+      : 'Tomorrow planning is temporarily unavailable.';
+  }
+  return null;
 }
 
 export function DailyCheckin({
@@ -27,6 +61,7 @@ export function DailyCheckin({
   onOpenChange: (open: boolean) => void;
 }) {
   const [text, setText] = useState('');
+  const [tomorrowText, setTomorrowText] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,21 +76,28 @@ export function DailyCheckin({
   };
 
   const submit = async () => {
-    if (!checkin || busy || (!text.trim() && !selected.size)) return;
+    if (!checkin || busy || (!text.trim() && !tomorrowText.trim() && !selected.size)) return;
     setBusy(true);
     setError(null);
     try {
-      const completed = checkin.candidateItems
-        .filter((item) => selected.has(`${item.kind}:${item.id}`))
-        .map((item) => ({ kind: item.kind, id: item.id }));
       const response = await fetch(`/api/albatross/checkin/${encodeURIComponent(checkin._id)}/answer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ responseText: text.trim(), completed }),
+        body: JSON.stringify(
+          dailyCheckinAnswerPayload(
+            checkin,
+            selected,
+            text,
+            tomorrowText,
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ),
+        ),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not save the check-in.');
+      const responseError = dailyCheckinResponseError(response.ok, body);
+      if (responseError) throw new Error(responseError);
       setText('');
+      setTomorrowText('');
       setSelected(new Set());
       onOpenChange(false);
     } catch (cause) {
@@ -84,6 +126,22 @@ export function DailyCheckin({
               placeholder="I shipped…, made progress on…, and didn’t get to…"
               className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
             />
+            <div>
+              <label htmlFor="tomorrow-intent" className="text-[12.5px] font-medium">
+                What should tomorrow protect?
+              </label>
+              <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                Albatross will turn this into Work and put its first move on the calendar.
+              </p>
+              <textarea
+                id="tomorrow-intent"
+                value={tomorrowText}
+                onChange={(event) => setTomorrowText(event.target.value)}
+                rows={3}
+                placeholder="Submit the passport renewal before lunch…"
+                className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+              />
+            </div>
             {checkin.candidateItems.length ? (
               <div>
                 <p className="mb-2 text-[11px] font-medium text-[var(--color-text-faint)]">
@@ -126,7 +184,10 @@ export function DailyCheckin({
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Later
               </Button>
-              <Button disabled={busy || (!text.trim() && !selected.size)} onClick={() => void submit()}>
+              <Button
+                disabled={busy || (!text.trim() && !tomorrowText.trim() && !selected.size)}
+                onClick={() => void submit()}
+              >
                 {busy ? 'Saving…' : 'Save check-in'}
               </Button>
             </div>
