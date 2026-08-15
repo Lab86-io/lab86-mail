@@ -1,5 +1,27 @@
 import SwiftUI
 
+func passedWorkExecutionMove(_ detail: WorkDetail, at now: Date) -> WorkExecutionMove? {
+    guard let step = detail.execution.currentStep,
+          let end = detail.execution.scheduledEndAt,
+          end <= now,
+          !["done", "released", "archived"].contains(detail.work.workState)
+    else { return nil }
+    return WorkExecutionMove(
+        workID: detail.work.id,
+        workTitle: detail.plan?.outcome ?? detail.work.title,
+        stepKey: step.id,
+        stepTitle: step.title,
+        detail: step.detail,
+        url: step.url,
+        phase: "missed",
+        scheduledStartAt: detail.execution.scheduledStartAt,
+        scheduledEndAt: end,
+        remainingSteps: detail.execution.remainingSteps,
+        totalSteps: detail.execution.totalSteps,
+        areaName: nil
+    )
+}
+
 // A durable Work item rendered as a document: desired outcome and plan context
 // first, followed by the same sandboxed plan artifact used by the desktop Work
 // surface. The server remains the single owner of Work and its plan provenance.
@@ -103,6 +125,16 @@ struct WorkDetailView: View {
                 }
 
                 workLead(detail)
+
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    if let move = passedWorkExecutionMove(detail, at: context.date) {
+                        bareSection {
+                            MissedMoveRecoveryView(move: move) {
+                                Task { await load(initial: false) }
+                            }
+                        }
+                    }
+                }
 
                 if let step = detail.execution.currentStep {
                     currentStepSection(step, execution: detail.execution)

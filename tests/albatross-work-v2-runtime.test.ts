@@ -339,4 +339,116 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(detail.execution).toMatchObject({ currentStep: null, remainingSteps: 0, totalSteps: 3 });
     expect(detail.execution.guideSteps.every((step) => step.done)).toBe(true);
   });
+
+  test('execution projection keeps completion after more than one thousand applied card ids', async () => {
+    const t = convexTest(schema, convexModules);
+    const caller = { internalSecret: SECRET, userId };
+    const nowMs = Date.now();
+    const targetWorkId = await t.run(async (ctx) => {
+      const boardId = await ctx.db.insert('boards', {
+        ownerUserId: userId,
+        title: 'Projection regression',
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      });
+      const columnId = await ctx.db.insert('boardColumns', {
+        boardId,
+        name: 'Done',
+        order: 0,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      });
+      const completedCardId = await ctx.db.insert('cards', {
+        boardId,
+        columnId,
+        userId,
+        title: 'Final projected step',
+        order: 0,
+        completedAt: nowMs,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      });
+
+      // These paused plans contribute 1,008 distinct applied card ids before
+      // the active target plan. They do not compete for the current move.
+      for (let workIndex = 0; workIndex < 84; workIndex += 1) {
+        const updatedAt = nowMs - workIndex;
+        const workId = await ctx.db.insert('albatrossIntents', {
+          userId,
+          rawText: `Paused projection ${workIndex}`,
+          source: 'text',
+          title: `Paused projection ${workIndex}`,
+          status: 'ready',
+          workState: 'paused',
+          agentState: 'idle',
+          createdAt: updatedAt,
+          updatedAt,
+        });
+        const actions = Array.from({ length: 12 }, (_, stepIndex) => ({
+          key: `step-${stepIndex}`,
+          kind: 'task',
+          title: `Step ${stepIndex}`,
+        }));
+        const planId = await ctx.db.insert('albatrossIntentPlans', {
+          userId,
+          intentId: workId,
+          status: 'applied',
+          outcome: `Paused outcome ${workIndex}`,
+          digitalActions: actions,
+          physicalActions: [],
+          assumptions: [],
+          sourceRefs: [],
+          appliedSteps: actions.map((action, stepIndex) => ({
+            stepKey: action.key,
+            kind: 'task',
+            cardId: `missing-card-${workIndex}-${stepIndex}`,
+          })),
+          createdAt: updatedAt,
+          updatedAt,
+        });
+        await ctx.db.patch(workId, { latestPlanId: planId });
+      }
+
+      const targetUpdatedAt = nowMs - 10_000;
+      const workId = await ctx.db.insert('albatrossIntents', {
+        userId,
+        rawText: 'Completed target projection',
+        source: 'text',
+        title: 'Completed target projection',
+        status: 'applied',
+        workState: 'active',
+        agentState: 'idle',
+        createdAt: targetUpdatedAt,
+        updatedAt: targetUpdatedAt,
+      });
+      const planId = await ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'applied',
+        outcome: 'The target projection is complete.',
+        digitalActions: [{ key: 'final-step', kind: 'task', title: 'Final projected step' }],
+        physicalActions: [],
+        assumptions: [],
+        sourceRefs: [],
+        appliedSteps: [{ stepKey: 'final-step', kind: 'task', cardId: String(completedCardId) }],
+        createdAt: targetUpdatedAt,
+        updatedAt: targetUpdatedAt,
+      });
+      await ctx.db.patch(workId, { latestPlanId: planId });
+      return workId;
+    });
+
+    const rows = await t.query(api.albatrossWorkV2.allWork, { ...caller, limit: 100 });
+    const target = rows.find((row) => row._id === String(targetWorkId));
+    expect(target?.guideSteps).toMatchObject([{ key: 'final-step', done: true }]);
+    expect(target?.nextStep).toBeNull();
+
+    const snapshot = await t.query(api.albatrossWorkV2.executionSnapshot, {
+      ...caller,
+      limit: 100,
+      nowMs,
+    });
+    expect(snapshot.currentMove).toBeNull();
+    expect(snapshot.missedMoves).toEqual([]);
+  });
 });

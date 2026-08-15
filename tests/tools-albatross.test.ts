@@ -29,6 +29,10 @@ const apiMock = {
   accounts: {
     listConnectedAccounts: 'accounts.listConnectedAccounts',
   },
+  calendarData: {
+    listCalendars: 'calendarData.listCalendars',
+    getSyncStates: 'calendarData.getSyncStates',
+  },
   albatross: {
     getArea: 'albatross.getArea',
   },
@@ -43,6 +47,7 @@ const apiMock = {
     attachProof: 'albatrossWorkV2.attachProof',
     answerQuestion: 'albatrossWorkV2.answerQuestion',
     setAgentState: 'albatrossWorkV2.setAgentState',
+    completeEvidenceReconcile: 'albatrossWorkV2.completeEvidenceReconcile',
     upsertQuestion: 'albatrossWorkV2.upsertQuestion',
   },
   albatrossIntents: {
@@ -58,10 +63,13 @@ const operationCalls: any[] = [];
 const undoCalls: any[] = [];
 const approvalOrder: string[] = [];
 const toolInvocations: Array<{ tool: string; args: any }> = [];
+const queryFailures = new Set<string>();
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
 let workDetailFixture: any = null;
+let generatedPlanIdFixture = 'plan_revised';
+let evidenceAtDuringPlanFixture: number | undefined;
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
@@ -122,7 +130,17 @@ async function convexMutationMock(fn: string, args: any) {
 }
 
 async function convexQueryMock(fn: string, args: any) {
+  if (queryFailures.has(fn)) throw new Error(`Query failed: ${fn}`);
   if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
+  if (fn === apiMock.calendarData.listCalendars)
+    return connectedAccountsFixture.map((account, index) => ({
+      accountId: account.accountId,
+      providerCalendarId: `calendar-${index}`,
+      isPrimary: index === 0,
+      readOnly: false,
+    }));
+  if (fn === apiMock.calendarData.getSyncStates)
+    return connectedAccountsFixture.map((account) => ({ accountId: account.accountId, status: 'idle' }));
   if (fn === apiMock.albatross.getArea) return areaFixture;
   if (fn === apiMock.albatrossWork.listApprovals)
     return [{ approvalId: 'approval_pending', status: args.status }];
@@ -199,10 +217,13 @@ beforeEach(() => {
   undoCalls.length = 0;
   approvalOrder.length = 0;
   toolInvocations.length = 0;
+  queryFailures.clear();
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
   workDetailFixture = null;
+  generatedPlanIdFixture = 'plan_revised';
+  evidenceAtDuringPlanFixture = undefined;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -220,6 +241,12 @@ beforeEach(() => {
         if (!(workDetailFixture.questions || []).some((row: any) => row.status === 'answered')) {
           throw new Error('Planner did not receive the persisted question answer.');
         }
+      }
+      if (evidenceAtDuringPlanFixture !== undefined && workDetailFixture?.work) {
+        workDetailFixture = {
+          ...workDetailFixture,
+          work: { ...workDetailFixture.work, lastEvidenceAt: evidenceAtDuringPlanFixture },
+        };
       }
       workDetailFixture = {
         ...workDetailFixture,
@@ -240,7 +267,7 @@ beforeEach(() => {
           ],
         },
       };
-      return { planId: 'plan_revised', title: 'Renew passport', outcome: 'Passport renewed' };
+      return { planId: generatedPlanIdFixture, title: 'Renew passport', outcome: 'Passport renewed' };
     }) as any,
   });
 });
@@ -564,6 +591,47 @@ describe('Albatross tools', () => {
     });
     const cardInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
     expect(cardInvocation?.args.boardId).toBeUndefined();
+  });
+
+  test('apply_intent_plan keeps safe task execution available when account and area lookups fail', async () => {
+    queryFailures.add(apiMock.accounts.listConnectedAccounts);
+    queryFailures.add(apiMock.albatross.getArea);
+
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_resilient',
+      areaId: 'area_unavailable',
+      projectMode: 'task_only',
+      plan: { digitalActions: [{ kind: 'task', key: 'step-1', title: 'Keep moving' }] },
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    const taskInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
+    expect(taskInvocation).toBeDefined();
+    expect(taskInvocation?.args.boardId).toBeUndefined();
+  });
+
+  test('account resolution keeps a connected fallback when calendar lookup fails', async () => {
+    connectedAccountsFixture = [{ accountId: 'healthy', status: 'connected' }];
+    queryFailures.add(apiMock.calendarData.listCalendars);
+
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_mail_fallback',
+      projectMode: 'task_only',
+      plan: {
+        digitalActions: [
+          {
+            kind: 'email_draft',
+            key: 'draft-1',
+            title: 'Draft the inquiry',
+            to: 'office@example.test',
+            body: 'Are appointments available?',
+          },
+        ],
+      },
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(toolInvocations.find((call) => call.tool === 'save_draft')?.args.account).toBe('healthy');
   });
 
   test('apply_intent_plan records queued status when nothing can be executed yet', async () => {
@@ -924,9 +992,88 @@ describe('Albatross tools', () => {
     expect(toolInvocations.some((call) => call.tool === 'albatross_apply_intent_plan')).toBe(false);
   });
 
+  test('explicit replanning acknowledges only the evidence watermark it started with', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_evidence_race',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+        lastEvidenceAt: 100,
+      },
+      plan: { _id: 'plan_old', outcome: 'Passport renewed', digitalActions: [] },
+      questions: [],
+      evidence: [],
+    };
+    evidenceAtDuringPlanFixture = 200;
+
+    await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_evidence_race',
+      reason: 'A receipt was attached.',
+    });
+
+    expect(workDetailFixture.work.lastEvidenceAt).toBe(200);
+    expect(mutationCalls).toContainEqual({
+      fn: apiMock.albatrossWorkV2.completeEvidenceReconcile,
+      args: { userId: 'test_user_tools', workId: 'work_evidence_race', evidenceAt: 100 },
+    });
+  });
+
+  test('replan rejects a generated revision that cannot be loaded', async () => {
+    workDetailFixture = {
+      work: { _id: 'work_missing_revision', title: 'Renew passport', rawText: 'Renew my passport' },
+      plan: { _id: 'plan_old', digitalActions: [] },
+      questions: [],
+      evidence: [],
+    };
+    generatedPlanIdFixture = 'plan_missing';
+
+    await expect(
+      runTool(albatross.albatrossReplanWork.handler, {
+        workId: 'work_missing_revision',
+        reason: 'Refresh the plan.',
+      }),
+    ).rejects.toThrow(/could not be loaded/);
+  });
+
   test('tools require an authenticated user', async () => {
     await expect(
       runTool(albatross.albatrossListProjects.handler, { limit: 1 }, { userId: undefined }),
     ).rejects.toThrow(/Not authenticated/);
+  });
+
+  test('default execution account skips stale grants and prefers a primary writable calendar', () => {
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [
+          { accountId: 'stale', status: 'connected' },
+          { accountId: 'healthy', status: 'connected' },
+        ],
+        [
+          { accountId: 'stale', isPrimary: true, readOnly: false },
+          { accountId: 'healthy', isPrimary: true, readOnly: false },
+        ],
+        [
+          { accountId: 'stale', status: 'unauthorized' },
+          { accountId: 'healthy', status: 'idle' },
+        ],
+      ),
+    ).toBe('healthy');
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [{ accountId: 'healthy', status: 'connected' }],
+        [{ accountId: 'healthy', readOnly: false }],
+        [],
+      ),
+    ).toBe('healthy');
+    expect(
+      albatross.selectDefaultExecutionAccount([{ accountId: 'mail-only', status: 'connected' }], [], []),
+    ).toBe('mail-only');
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [{ accountId: 'stale', status: 'connected' }],
+        [],
+        [{ accountId: 'stale', status: 'unauthorized' }],
+      ),
+    ).toBeUndefined();
   });
 });

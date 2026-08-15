@@ -2,12 +2,14 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
-import { Averia_Serif_Libre, Fraunces, Hanken_Grotesk, Instrument_Serif } from 'next/font/google';
+import { Averia_Serif_Libre, Fraunces, Instrument_Serif } from 'next/font/google';
+import type { CSSProperties } from 'react';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
+import { GROTESK_FONT_FAMILY } from '@/lib/theme/font-families';
 import './globals.css';
 
 // Warm editorial display serif — used for the Daily Report masthead, datelines,
@@ -36,15 +38,6 @@ const instrument = Instrument_Serif({
   weight: ['400'],
   style: ['normal', 'italic'],
   variable: '--font-instrument',
-  display: 'swap',
-});
-
-// Warm modern grotesque — a friendlier sans option than Geist for the display
-// layer (and the brief body).
-const hanken = Hanken_Grotesk({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-hanken',
   display: 'swap',
 });
 
@@ -88,7 +81,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable} ${instrument.variable} ${hanken.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable} ${instrument.variable}`}
+      style={{ '--font-hanken': GROTESK_FONT_FAMILY } as CSSProperties}
     >
       <body>
         {clerkEnabled ? (

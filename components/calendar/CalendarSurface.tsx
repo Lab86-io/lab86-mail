@@ -1,9 +1,15 @@
 'use client';
 
-import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
+import {
+  useConvexAuth,
+  useMutation as useConvexMutation,
+  useQuery_experimental as useConvexQuery,
+  useQuery,
+} from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { LapsePrompt } from '@/components/albatross/Forgiveness';
 import { CalendarBody } from '@/components/calendar/engine/calendar-body';
 import { type CalendarPersistence, CalendarProvider } from '@/components/calendar/engine/calendar-context';
 import { CalendarHeader } from '@/components/calendar/engine/calendar-header';
@@ -36,6 +42,8 @@ const WINDOW_PAST_MS = 92 * 86_400_000;
 const WINDOW_FUTURE_MS = 366 * 86_400_000;
 
 export function CalendarSurface() {
+  const { isAuthenticated } = useConvexAuth();
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // Stable bounds: recomputing per render would resubscribe the live query.
   const [window] = useState(() => ({
     startAt: Date.now() - WINDOW_PAST_MS,
@@ -56,6 +64,21 @@ export function CalendarSurface() {
     args: window,
   });
   const updateCard = useConvexMutation((api as any).boards.updateCard);
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
+    | {
+        missedMoves: Array<{
+          workId: string;
+          stepKey: string | null;
+          stepTitle: string;
+          scheduledStartAt: number | null;
+        }>;
+      }
+    | undefined;
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   // One nudge per mount: kicks a debounced resync for stale/never-synced
   // accounts (the tool no-ops when everything is fresh).
@@ -142,26 +165,34 @@ export function CalendarSurface() {
     );
   }, [eventRows, users, calendars, colorByCalendar, dueCards]);
 
+  const unauthorizedAccountIDs = useMemo(
+    () =>
+      new Set(syncStates.filter((state) => state.status === 'unauthorized').map((state) => state.accountId)),
+    [syncStates],
+  );
+
   // New events land on the primary writable calendar; edits route to the
   // event's own calendar. Failures toast and the live resync restores truth.
   const defaultCalendar = useMemo(() => {
-    const writable = calendars.filter((cal) => !cal.readOnly && !cal.hidden);
+    const writable = calendars.filter(
+      (cal) => !cal.readOnly && !cal.hidden && !unauthorizedAccountIDs.has(cal.accountId),
+    );
     return writable.find((cal) => cal.isPrimary) || writable[0] || null;
-  }, [calendars]);
+  }, [calendars, unauthorizedAccountIDs]);
 
   // Options for the add-event dialog: every writable calendar with its
   // categorical color; the account decides the color, not a "variant".
   const writableCalendars = useMemo(
     () =>
       calendars
-        .filter((cal) => !cal.readOnly && !cal.hidden)
+        .filter((cal) => !cal.readOnly && !cal.hidden && !unauthorizedAccountIDs.has(cal.accountId))
         .map((cal) => ({
           id: cal.providerCalendarId,
           name: cal.name,
           colorHex: colorByCalendar.get(cal.providerCalendarId) || TABLEAU10[0],
           accountId: cal.accountId,
         })),
-    [calendars, colorByCalendar],
+    [calendars, colorByCalendar, unauthorizedAccountIDs],
   );
 
   const persistence: CalendarPersistence = useMemo(
@@ -251,6 +282,7 @@ export function CalendarSurface() {
   const syncing = syncStates.filter((state) => state.status === 'syncing');
   const loading = liveCalendars.status !== 'success' || liveEvents.status !== 'success';
   const nothingSynced = !loading && calendars.length === 0;
+  const passedMove = execution?.missedMoves.find((move) => Boolean(move.stepKey));
 
   if (nothingSynced) {
     return (
@@ -304,6 +336,16 @@ export function CalendarSurface() {
                 }`,
             )
             .join('  ·  ')}
+        </div>
+      ) : null}
+      {passedMove?.stepKey ? (
+        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3">
+          <LapsePrompt
+            workId={passedMove.workId}
+            stepKey={passedMove.stepKey}
+            stepTitle={passedMove.stepTitle}
+            plannedAt={passedMove.scheduledStartAt || undefined}
+          />
         </div>
       ) : null}
       {/* font-display so the calendar's headings, dates, and event titles

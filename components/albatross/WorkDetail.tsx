@@ -2,7 +2,7 @@
 
 import { useConvexAuth, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
-import { ReleaseSheet } from '@/components/albatross/Forgiveness';
+import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
@@ -26,7 +26,7 @@ interface WorkQuestion {
   options?: Array<{ id: string; label: string; description?: string }>;
 }
 
-interface WorkDetailData {
+export interface WorkDetailData {
   work: {
     _id: string;
     title?: string;
@@ -77,6 +77,8 @@ interface WorkDetailData {
     }>;
     remainingSteps: number;
     totalSteps: number;
+    scheduledStartAt: number | null;
+    scheduledEndAt: number | null;
   };
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
@@ -86,6 +88,36 @@ interface WorkDetailData {
     operationIds: string[];
     artifacts: Array<{ kind: string; id: string; title?: string; operationId?: string }>;
   };
+}
+
+export function workDetailRecoveryPrompt(detail: WorkDetailData, workId: string, nowMs: number) {
+  const step = detail.execution.currentStep;
+  const endAt = detail.execution.scheduledEndAt;
+  const open = !['done', 'released', 'archived'].includes(detail.work.workState || 'active');
+  if (!open || !step?.key || !endAt || endAt > nowMs) return null;
+  return {
+    workId,
+    stepKey: step.key,
+    stepTitle: step.title,
+    plannedAt: detail.execution.scheduledStartAt || undefined,
+  };
+}
+
+export function WorkDetailRecovery({
+  detail,
+  workId,
+  nowMs,
+}: {
+  detail: WorkDetailData;
+  workId: string;
+  nowMs: number;
+}) {
+  const prompt = workDetailRecoveryPrompt(detail, workId, nowMs);
+  return prompt ? (
+    <div className="mt-6">
+      <LapsePrompt {...prompt} />
+    </div>
+  ) : null;
 }
 
 /**
@@ -121,6 +153,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [completingStep, setCompletingStep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // The stored application keeps its artifacts after an undo; the ledger must
   // not keep offering Undo for a change that is already gone.
   const [undoneOperations, setUndoneOperations] = useState<ReadonlySet<string>>(new Set());
@@ -128,6 +161,11 @@ export function WorkDetail({ workId }: { workId: string }) {
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
   }, [detail?.work.primaryAreaId, setSelectedAreaId]);
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   const advance = async () => {
     setAdvancing(true);
@@ -296,6 +334,8 @@ export function WorkDetail({ workId }: { workId: string }) {
               />
             </div>
           ) : null}
+
+          <WorkDetailRecovery detail={detail} workId={workId} nowMs={nowMs} />
 
           {pendingQuestions.length ? (
             <section className="mt-6 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">

@@ -25,13 +25,21 @@ struct CalendarView: View {
 
     var body: some View {
         @Bindable var navigation = environment.navigation
-        Group {
-            switch viewMode {
-            case "agenda": agendaBody
-            case "week": weekBody
-            case "month": monthBody
-            case "year": yearBody
-            default: dayBody
+        VStack(spacing: 0) {
+            if let move = store.workExecution.missedMoves.first(where: { $0.stepKey != nil }) {
+                MissedMoveRecoveryView(move: move)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                Divider()
+            }
+            Group {
+                switch viewMode {
+                case "agenda": agendaBody
+                case "week": weekBody
+                case "month": monthBody
+                case "year": yearBody
+                default: dayBody
+                }
             }
         }
         .navigationTitle(navigationTitleText)

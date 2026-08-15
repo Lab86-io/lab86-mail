@@ -32,7 +32,7 @@ export function buildNativeDailyReportArtifact(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400..700&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&display=swap">
 <style>
 *,*::before,*::after{box-sizing:border-box}
 :root{--brief-bg:#faf9f6;--brief-ink:#1a1a1a;--brief-muted:#6b6b6b;--brief-hairline:#e6e3dc;--brief-accent:#c2683c;--brief-accent-soft:rgba(194,104,60,.14);--brief-accent-2:#774914;--brief-font-display:'Fraunces',Georgia,serif;--brief-font-body:'Geist',system-ui,sans-serif;--brief-display-tracking:0em}

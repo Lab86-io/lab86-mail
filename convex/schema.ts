@@ -994,6 +994,12 @@ export default defineSchema({
     ),
     lastAgentRunAt: v.optional(v.number()),
     lastEvidenceAt: v.optional(v.number()),
+    // Evidence can arrive from mail while nobody has the Work detail open.
+    // The evidence conductor advances the plan after that durable write and
+    // records which evidence timestamp it has reconciled. A short claim keeps
+    // overlapping ticks from running the same Work twice.
+    lastEvidenceReconcileAt: v.optional(v.number()),
+    evidenceReconcileClaimedAt: v.optional(v.number()),
     priority: v.optional(v.number()),
     questions: v.optional(
       v.array(
@@ -1065,6 +1071,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_external', ['userId', 'externalId'])
+    .index('by_updatedAt', ['updatedAt'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
     .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
@@ -2108,6 +2115,30 @@ export default defineSchema({
     ),
     responseText: v.optional(v.string()),
     tomorrowIntentText: v.optional(v.string()),
+    // Saving a prompt is deliberately separate from the slower interpretation
+    // it triggers. These states let web and iOS confirm the durable write
+    // immediately while bounded cron conductors finish the background work.
+    reflectionReconcileStatus: v.optional(
+      v.union(v.literal('pending'), v.literal('processing'), v.literal('ready'), v.literal('failed')),
+    ),
+    reflectionReconcileAttempts: v.optional(v.number()),
+    reflectionReconcileClaimedAt: v.optional(v.number()),
+    reflectionReconcileNextAt: v.optional(v.number()),
+    reflectionReconcileError: v.optional(v.string()),
+    tomorrowPlanStatus: v.optional(
+      v.union(
+        v.literal('pending'),
+        v.literal('planning'),
+        v.literal('ready'),
+        v.literal('needs_input'),
+        v.literal('failed'),
+      ),
+    ),
+    tomorrowPlanAttempts: v.optional(v.number()),
+    tomorrowPlanClaimedAt: v.optional(v.number()),
+    tomorrowPlanNextAt: v.optional(v.number()),
+    tomorrowPlanError: v.optional(v.string()),
+    tomorrowWorkId: v.optional(v.id('albatrossIntents')),
     reconciledChanges: v.optional(
       v.array(
         v.object({
@@ -2128,7 +2159,9 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_date', ['userId', 'localDate'])
-    .index('by_user_status_date', ['userId', 'status', 'localDate']),
+    .index('by_user_status_date', ['userId', 'status', 'localDate'])
+    .index('by_reflection_reconcile', ['reflectionReconcileStatus', 'reflectionReconcileNextAt'])
+    .index('by_tomorrow_plan', ['tomorrowPlanStatus', 'tomorrowPlanNextAt']),
 
   auditEvents: defineTable({
     userId: v.optional(v.string()),

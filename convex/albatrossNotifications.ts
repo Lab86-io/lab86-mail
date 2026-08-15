@@ -1,14 +1,17 @@
 import { v } from 'convex/values';
 import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
+import { checkinRetryDelayMs } from '../lib/albatross/retry';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
-import type { MutationCtx, QueryCtx } from './_generated/server';
-import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
+import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const DEFAULT_TZ = 'UTC';
 const DEFAULT_CHECKIN_TIME = '19:00';
 const DEFAULT_EMAIL_DELAY = 90;
+const CHECKIN_BACKGROUND_LEASE_MS = 10 * 60_000;
+const CHECKIN_BACKGROUND_MAX_ATTEMPTS = 6;
 
 async function authenticatedUserId(ctx: QueryCtx | MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
@@ -197,6 +200,59 @@ async function ensureDailyAlignmentNotifications(
     }
   }
   return notificationIds;
+}
+
+async function applyCompletedCandidates(
+  ctx: MutationCtx,
+  row: Doc<'albatrossDailyCheckins'>,
+  completed: ReadonlySet<string>,
+  ts: number,
+) {
+  const changes: Array<{ kind: string; id: string; previousState?: string; nextState?: string }> = [];
+  for (const item of row.candidateItems) {
+    if (!completed.has(`${item.kind}:${item.id}`)) continue;
+    if (item.kind === 'work') {
+      const workId = ctx.db.normalizeId('albatrossIntents', item.id);
+      if (workId) {
+        const work = await ctx.db.get(workId);
+        if (work?.userId === row.userId && work.workState !== 'done') {
+          await ctx.db.patch(workId, {
+            workState: 'done',
+            status: 'done',
+            agentState: 'idle',
+            updatedAt: ts,
+          });
+          changes.push({
+            kind: 'work',
+            id: item.id,
+            previousState: work.workState || work.status,
+            nextState: 'done',
+          });
+        }
+      }
+    }
+    if (item.kind === 'project') {
+      const projectId = ctx.db.normalizeId('albatrossProjects', item.id);
+      if (projectId) {
+        const project = await ctx.db.get(projectId);
+        if (project?.userId === row.userId && project.status !== 'done') {
+          await ctx.db.patch(projectId, { status: 'done', completedAt: ts, updatedAt: ts });
+          changes.push({ kind: 'project', id: item.id, previousState: project.status, nextState: 'done' });
+        }
+      }
+    }
+    if (item.kind === 'task') {
+      const cardId = ctx.db.normalizeId('cards', item.id);
+      if (cardId) {
+        const card = await ctx.db.get(cardId);
+        if (card?.userId === row.userId && !card.completedAt) {
+          await ctx.db.patch(cardId, { completedAt: ts, updatedAt: ts });
+          changes.push({ kind: 'task', id: item.id, previousState: 'open', nextState: 'done' });
+        }
+      }
+    }
+  }
+  return changes;
 }
 
 export const getPreferences = query({
@@ -826,64 +882,57 @@ export const answerCheckin = mutation({
       ...(args.completed || []).map((entry) => `${entry.kind}:${entry.id}`),
       ...inferredCompleted.map((entry) => `${entry.kind}:${entry.id}`),
     ]);
-    const changes: Array<{ kind: string; id: string; previousState?: string; nextState?: string }> = [];
     const ts = now();
-    for (const item of promptKind === 'reflection' ? row.candidateItems : []) {
-      if (!completed.has(`${item.kind}:${item.id}`)) continue;
-      if (item.kind === 'work') {
-        const workId = ctx.db.normalizeId('albatrossIntents', item.id);
-        if (workId) {
-          const work = await ctx.db.get(workId);
-          if (work?.userId === userId && work.workState !== 'done') {
-            await ctx.db.patch(workId, {
-              workState: 'done',
-              status: 'done',
-              agentState: 'idle',
-              updatedAt: ts,
-            });
-            changes.push({
-              kind: 'work',
-              id: item.id,
-              previousState: work.workState || work.status,
-              nextState: 'done',
-            });
-          }
-        }
-      }
-      if (item.kind === 'project') {
-        const projectId = ctx.db.normalizeId('albatrossProjects', item.id);
-        if (projectId) {
-          const project = await ctx.db.get(projectId);
-          if (project?.userId === userId && project.status !== 'done') {
-            await ctx.db.patch(projectId, { status: 'done', completedAt: ts, updatedAt: ts });
-            changes.push({ kind: 'project', id: item.id, previousState: project.status, nextState: 'done' });
-          }
-        }
-      }
-      if (item.kind === 'task') {
-        const cardId = ctx.db.normalizeId('cards', item.id);
-        if (cardId) {
-          const card = await ctx.db.get(cardId);
-          if (card?.userId === userId && !card.completedAt) {
-            await ctx.db.patch(cardId, { completedAt: ts, updatedAt: ts });
-            changes.push({ kind: 'task', id: item.id, previousState: 'open', nextState: 'done' });
-          }
-        }
-      }
-    }
+    const changes =
+      promptKind === 'reflection' ? await applyCompletedCandidates(ctx, row, completed, ts) : [];
     const reflectionText = promptKind === 'reflection' ? responseText || row.responseText : row.responseText;
     const tomorrowIntentText =
       promptKind === 'tomorrow' ? responseText || row.tomorrowIntentText : row.tomorrowIntentText;
     const isComplete = Boolean(reflectionText?.trim() && tomorrowIntentText?.trim());
+    const reflectionShouldReconcile = Boolean(
+      responseText &&
+        (responseText !== row.responseText?.trim() ||
+          row.reflectionReconcileStatus === 'failed' ||
+          !row.reflectionReconcileStatus),
+    );
+    const tomorrowShouldPlan = Boolean(
+      responseText &&
+        (responseText !== row.tomorrowIntentText?.trim() ||
+          row.tomorrowPlanStatus === 'failed' ||
+          !row.tomorrowPlanStatus),
+    );
     await ctx.db.patch(row._id, {
       status: isComplete ? 'answered' : 'open',
       ...(promptKind === 'reflection'
         ? {
             responseText: reflectionText,
-            reconciledChanges: [...(row.reconciledChanges ?? []), ...changes],
+            reconciledChanges: [...(row.reconciledChanges ?? []).slice(-120), ...changes].slice(-120),
             reflectionAnsweredAt: ts,
+            ...(reflectionShouldReconcile
+              ? {
+                  reflectionReconcileStatus: 'pending' as const,
+                  reflectionReconcileAttempts: 0,
+                  reflectionReconcileClaimedAt: undefined,
+                  reflectionReconcileNextAt: ts,
+                  reflectionReconcileError: undefined,
+                }
+              : !row.reflectionReconcileStatus
+                ? { reflectionReconcileStatus: 'ready' as const }
+                : {}),
           }
-        : { tomorrowIntentText, tomorrowIntentAnsweredAt: ts }),
+        : {
+            tomorrowIntentText,
+            tomorrowIntentAnsweredAt: ts,
+            ...(tomorrowShouldPlan
+              ? {
+                  tomorrowPlanStatus: 'pending' as const,
+                  tomorrowPlanAttempts: 0,
+                  tomorrowPlanClaimedAt: undefined,
+                  tomorrowPlanNextAt: ts,
+                  tomorrowPlanError: undefined,
+                }
+              : {}),
+          }),
       ...(isComplete ? { answeredAt: ts } : {}),
       updatedAt: ts,
     });
@@ -914,7 +963,392 @@ export const answerCheckin = mutation({
       changes,
       matchedByReflection: inferredCompleted.map((entry) => ({ kind: entry.kind, id: entry.id })),
       status: isComplete ? 'answered' : 'open',
+      promptKind,
+      ...(promptKind === 'reflection'
+        ? {
+            reflectionReconcileStatus: reflectionShouldReconcile
+              ? 'pending'
+              : row.reflectionReconcileStatus || 'ready',
+          }
+        : {
+            tomorrowPlanStatus: tomorrowShouldPlan ? 'pending' : row.tomorrowPlanStatus || 'pending',
+          }),
     };
+  },
+});
+
+async function queuedCheckins(ctx: QueryCtx, kind: 'reflection' | 'tomorrow', limit: number) {
+  const ts = now();
+  const index = kind === 'reflection' ? 'by_reflection_reconcile' : 'by_tomorrow_plan';
+  const statusField = kind === 'reflection' ? 'reflectionReconcileStatus' : 'tomorrowPlanStatus';
+  const nextField = kind === 'reflection' ? 'reflectionReconcileNextAt' : 'tomorrowPlanNextAt';
+  const queuedStatuses = ['pending', 'failed'] as const;
+  const rows: Doc<'albatrossDailyCheckins'>[] = [];
+  for (const status of queuedStatuses) {
+    const batch = await ctx.db
+      .query('albatrossDailyCheckins')
+      .withIndex(index as any, (q: any) => q.eq(statusField, status).lte(nextField, ts))
+      .take(limit);
+    rows.push(...batch);
+  }
+  const processingStatus = kind === 'reflection' ? 'processing' : 'planning';
+  const stale = await ctx.db
+    .query('albatrossDailyCheckins')
+    .withIndex(index as any, (q: any) => q.eq(statusField, processingStatus).lte(nextField, ts))
+    .take(limit);
+  rows.push(...stale);
+  return [...new Map(rows.map((row) => [String(row._id), row] as const)).values()]
+    .filter((row) =>
+      kind === 'reflection'
+        ? Boolean(row.responseText?.trim()) &&
+          (row.reflectionReconcileAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS
+        : Boolean(row.tomorrowIntentText?.trim()) &&
+          (row.tomorrowPlanAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS,
+    )
+    .sort((a, b) => {
+      const aNext = kind === 'reflection' ? a.reflectionReconcileNextAt : a.tomorrowPlanNextAt;
+      const bNext = kind === 'reflection' ? b.reflectionReconcileNextAt : b.tomorrowPlanNextAt;
+      return Number(aNext || 0) - Number(bNext || 0) || a.createdAt - b.createdAt;
+    })
+    .slice(0, limit);
+}
+
+export const reflectionReconcileCandidates = internalQuery({
+  args: {},
+  handler: (ctx) => queuedCheckins(ctx, 'reflection', 6),
+});
+
+export const tomorrowPlanCandidates = internalQuery({
+  args: {},
+  handler: (ctx) => queuedCheckins(ctx, 'tomorrow', 4),
+});
+
+export const beginReflectionReconcile = internalMutation({
+  args: { checkinId: v.id('albatrossDailyCheckins') },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.checkinId);
+    if (!row?.responseText?.trim()) return null;
+    const ts = now();
+    if (
+      !['pending', 'failed', 'processing'].includes(row.reflectionReconcileStatus || '') ||
+      (row.reflectionReconcileNextAt ?? Number.POSITIVE_INFINITY) > ts ||
+      (row.reflectionReconcileAttempts ?? 0) >= CHECKIN_BACKGROUND_MAX_ATTEMPTS
+    ) {
+      return null;
+    }
+    const attempts = (row.reflectionReconcileAttempts ?? 0) + 1;
+    await ctx.db.patch(row._id, {
+      reflectionReconcileStatus: 'processing',
+      reflectionReconcileAttempts: attempts,
+      reflectionReconcileClaimedAt: ts,
+      reflectionReconcileNextAt: ts + CHECKIN_BACKGROUND_LEASE_MS,
+      reflectionReconcileError: undefined,
+      updatedAt: ts,
+    });
+    return {
+      userId: row.userId,
+      checkinId: String(row._id),
+      responseText: row.responseText,
+      candidateItems: row.candidateItems,
+      attempts,
+    };
+  },
+});
+
+export const beginTomorrowPlan = internalMutation({
+  args: { checkinId: v.id('albatrossDailyCheckins') },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.checkinId);
+    if (!row?.tomorrowIntentText?.trim()) return null;
+    const ts = now();
+    if (
+      !['pending', 'failed', 'planning'].includes(row.tomorrowPlanStatus || '') ||
+      (row.tomorrowPlanNextAt ?? Number.POSITIVE_INFINITY) > ts ||
+      (row.tomorrowPlanAttempts ?? 0) >= CHECKIN_BACKGROUND_MAX_ATTEMPTS
+    ) {
+      return null;
+    }
+    const attempts = (row.tomorrowPlanAttempts ?? 0) + 1;
+    await ctx.db.patch(row._id, {
+      tomorrowPlanStatus: 'planning',
+      tomorrowPlanAttempts: attempts,
+      tomorrowPlanClaimedAt: ts,
+      tomorrowPlanNextAt: ts + CHECKIN_BACKGROUND_LEASE_MS,
+      tomorrowPlanError: undefined,
+      updatedAt: ts,
+    });
+    return {
+      userId: row.userId,
+      checkinId: String(row._id),
+      tomorrowIntentText: row.tomorrowIntentText,
+      timezone: row.timezone,
+      attempts,
+    };
+  },
+});
+
+export const completeReflectionReconcile = mutation({
+  args: {
+    ...notificationCallerArgs,
+    checkinId: v.id('albatrossDailyCheckins'),
+    completed: v.array(v.object({ kind: v.string(), id: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await notificationCallerUserId(ctx, args);
+    const row = await ctx.db.get(args.checkinId);
+    if (!row || row.userId !== userId) throw new Error('Check-in not found.');
+    if (row.reflectionReconcileStatus !== 'processing') return { applied: 0, stale: true };
+    const completed = new Set(args.completed.slice(0, 60).map((entry) => `${entry.kind}:${entry.id}`));
+    const ts = now();
+    const changes = await applyCompletedCandidates(ctx, row, completed, ts);
+    await ctx.db.patch(row._id, {
+      reconciledChanges: [...(row.reconciledChanges ?? []), ...changes].slice(-120),
+      reflectionReconcileStatus: 'ready',
+      reflectionReconcileClaimedAt: undefined,
+      reflectionReconcileNextAt: undefined,
+      reflectionReconcileError: undefined,
+      updatedAt: ts,
+    });
+    return { applied: changes.length, stale: false };
+  },
+});
+
+export const failReflectionReconcile = mutation({
+  args: {
+    ...notificationCallerArgs,
+    checkinId: v.id('albatrossDailyCheckins'),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await notificationCallerUserId(ctx, args);
+    const row = await ctx.db.get(args.checkinId);
+    if (!row || row.userId !== userId) throw new Error('Check-in not found.');
+    if (row.reflectionReconcileStatus !== 'processing') return { retrying: false, stale: true };
+    const ts = now();
+    const attempts = row.reflectionReconcileAttempts ?? 1;
+    const retrying = attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS;
+    await ctx.db.patch(row._id, {
+      reflectionReconcileStatus: 'failed',
+      reflectionReconcileClaimedAt: undefined,
+      reflectionReconcileNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
+      reflectionReconcileError: args.error.trim().slice(0, 500),
+      updatedAt: ts,
+    });
+    return { retrying, stale: false };
+  },
+});
+
+export const completeTomorrowPlan = mutation({
+  args: {
+    ...notificationCallerArgs,
+    checkinId: v.id('albatrossDailyCheckins'),
+    workId: v.id('albatrossIntents'),
+    status: v.union(v.literal('ready'), v.literal('needs_input')),
+  },
+  handler: async (ctx, args) => {
+    const userId = await notificationCallerUserId(ctx, args);
+    const row = await ctx.db.get(args.checkinId);
+    const work = await ctx.db.get(args.workId);
+    if (!row || row.userId !== userId || !work || work.userId !== userId) {
+      throw new Error('Check-in plan not found.');
+    }
+    if (row.tomorrowPlanStatus !== 'planning') return { stale: true };
+    const ts = now();
+    await ctx.db.patch(row._id, {
+      tomorrowWorkId: args.workId,
+      tomorrowPlanStatus: args.status,
+      tomorrowPlanClaimedAt: undefined,
+      tomorrowPlanNextAt: undefined,
+      tomorrowPlanError: undefined,
+      updatedAt: ts,
+    });
+    return { stale: false };
+  },
+});
+
+export const failTomorrowPlan = mutation({
+  args: {
+    ...notificationCallerArgs,
+    checkinId: v.id('albatrossDailyCheckins'),
+    workId: v.optional(v.id('albatrossIntents')),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await notificationCallerUserId(ctx, args);
+    const row = await ctx.db.get(args.checkinId);
+    if (!row || row.userId !== userId) throw new Error('Check-in not found.');
+    if (row.tomorrowPlanStatus !== 'planning') return { retrying: false, stale: true };
+    const ts = now();
+    const attempts = row.tomorrowPlanAttempts ?? 1;
+    const retrying = attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS;
+    await ctx.db.patch(row._id, {
+      ...(args.workId ? { tomorrowWorkId: args.workId } : {}),
+      tomorrowPlanStatus: 'failed',
+      tomorrowPlanClaimedAt: undefined,
+      tomorrowPlanNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
+      tomorrowPlanError: args.error.trim().slice(0, 500),
+      updatedAt: ts,
+    });
+    return { retrying, stale: false };
+  },
+});
+
+export const releaseReflectionReconcile = internalMutation({
+  args: { checkinId: v.id('albatrossDailyCheckins') },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.checkinId);
+    if (!row || row.reflectionReconcileStatus !== 'processing') return;
+    const ts = now();
+    const attempts = row.reflectionReconcileAttempts ?? 1;
+    await ctx.db.patch(row._id, {
+      reflectionReconcileStatus: 'failed',
+      reflectionReconcileClaimedAt: undefined,
+      reflectionReconcileNextAt:
+        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + checkinRetryDelayMs(attempts) : undefined,
+      reflectionReconcileError: 'The background check did not answer.',
+      updatedAt: ts,
+    });
+  },
+});
+
+export const releaseTomorrowPlan = internalMutation({
+  args: { checkinId: v.id('albatrossDailyCheckins') },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.checkinId);
+    if (!row || row.tomorrowPlanStatus !== 'planning') return;
+    const ts = now();
+    const attempts = row.tomorrowPlanAttempts ?? 1;
+    await ctx.db.patch(row._id, {
+      tomorrowPlanStatus: 'failed',
+      tomorrowPlanClaimedAt: undefined,
+      tomorrowPlanNextAt:
+        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + checkinRetryDelayMs(attempts) : undefined,
+      tomorrowPlanError: 'Tomorrow planning did not answer.',
+      updatedAt: ts,
+    });
+  },
+});
+
+async function runCheckinBackgroundTick(ctx: ActionCtx, kind: 'reflection' | 'tomorrow') {
+  const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+  const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+  if (!appUrl || !secret) {
+    console.error(`[checkin-${kind} cron] missing LAB86_MAIL_PUBLIC_URL or internal secret`);
+    return;
+  }
+  const refs = internal.albatrossNotifications as any;
+  const candidates = await ctx.runQuery(
+    kind === 'reflection' ? refs.reflectionReconcileCandidates : refs.tomorrowPlanCandidates,
+    {},
+  );
+  let completed = 0;
+  for (const candidate of candidates) {
+    const claim = await ctx.runMutation(
+      kind === 'reflection' ? refs.beginReflectionReconcile : refs.beginTomorrowPlan,
+      { checkinId: candidate._id },
+    );
+    if (!claim) continue;
+    const ok =
+      (await fanOutInternalPost(`${appUrl}/api/cron/checkin-${kind}`, secret, [claim], {
+        label: `checkin-${kind} cron`,
+        timeoutMs: 240_000,
+        concurrency: 1,
+      })) === 1;
+    if (ok) completed += 1;
+    else {
+      await ctx.runMutation(
+        kind === 'reflection' ? refs.releaseReflectionReconcile : refs.releaseTomorrowPlan,
+        { checkinId: candidate._id },
+      );
+    }
+  }
+  if (candidates.length) {
+    console.log(`[checkin-${kind} cron] completed ${completed}/${candidates.length}`);
+  }
+}
+
+export const reflectionReconcileTick = internalAction({
+  args: {},
+  handler: (ctx) => runCheckinBackgroundTick(ctx, 'reflection'),
+});
+
+export const tomorrowPlanTick = internalAction({
+  args: {},
+  handler: (ctx) => runCheckinBackgroundTick(ctx, 'tomorrow'),
+});
+
+export const queueWorkConductorNotice = internalMutation({
+  args: {
+    userId: v.string(),
+    workId: v.string(),
+    title: v.string(),
+    body: v.string(),
+    dedupeKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', args.dedupeKey))
+      .unique();
+    if (existing) return { created: false, notificationId: existing._id };
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    const ts = now();
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'work_question',
+        title: args.title.slice(0, 180),
+        body: args.body.slice(0, 1_000),
+        entityKind: 'work',
+        entityId: args.workId,
+        deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
+        dedupeKey: args.dedupeKey.slice(0, 500),
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId,
+      enabled: preference?.inAppEnabled !== false,
+      timestamp: ts,
+    });
+    return { created: true, notificationId };
+  },
+});
+
+export const missedMoveTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.missedRecoveryCandidates, {});
+    for (const candidate of candidates) {
+      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+        userId: candidate.userId,
+        workId: candidate.workId,
+        title: 'That block passed',
+        body: `Choose what happens next for “${candidate.stepTitle}”: move it, make it smaller, rebuild it, or mark it done.`,
+        dedupeKey: `missed-move:${candidate.workId}:${candidate.scheduledStartAt}`,
+      });
+    }
+  },
+});
+
+export const stalenessReviewTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.stalenessReviewCandidates, {});
+    for (const candidate of candidates) {
+      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+        userId: candidate.userId,
+        workId: candidate.workId,
+        title: 'Still carrying this?',
+        body: `“${candidate.workTitle}” has been quiet. Keep it moving, pause it, or put it down.`,
+        dedupeKey: `stale-work:${candidate.workId}:${candidate.updatedAt}`,
+      });
+    }
   },
 });
 

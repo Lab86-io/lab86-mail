@@ -1,12 +1,11 @@
 import type { NextRequest } from 'next/server';
-import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 30;
 
 const SOURCE_KINDS = [
   'mail_thread',
@@ -34,7 +33,6 @@ interface WorkProofDependencies {
   attachProof: (args: Record<string, unknown>) => Promise<string>;
   workDetail: (args: { userId: string; workId: string }) => Promise<any>;
   mailThread: (args: { userId: string; accountId: string; providerThreadId: string }) => Promise<any>;
-  advanceWork: typeof advanceWork;
 }
 
 const defaults: WorkProofDependencies = {
@@ -43,7 +41,6 @@ const defaults: WorkProofDependencies = {
   attachProof: (args) => convexMutation<string>((api as any).albatrossWorkV2.attachProof, args),
   workDetail: (args) => convexQuery<any>((api as any).albatrossWorkV2.workDetail, args),
   mailThread: (args) => convexQuery<any>((api as any).mailCorpus.getCorpusThread, args),
-  advanceWork,
 };
 
 function isSourceKind(value: unknown): value is SourceKind {
@@ -114,16 +111,13 @@ export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
       });
       const detail = await deps.workDetail({ userId: user.userId, workId });
       const closed = detail?.work?.workState === 'done';
-      if (!closed) {
-        await deps.advanceWork({
-          userId: user.userId,
-          userEmail: user.email,
-          userName: user.name,
-          workId,
-          timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-        });
-      }
-      return Response.json({ ok: true, evidenceId, closed, replanned: !closed });
+      return Response.json({
+        ok: true,
+        evidenceId,
+        closed,
+        replanned: false,
+        replanStatus: closed ? 'not_needed' : 'queued',
+      });
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
       const status = error instanceof AuthRequiredError ? 401 : 500;

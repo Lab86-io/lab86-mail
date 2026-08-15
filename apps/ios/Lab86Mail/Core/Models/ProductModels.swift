@@ -1513,12 +1513,16 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let guideSteps: [ExecutionStep]
         let remainingSteps: Int
         let totalSteps: Int
+        let scheduledStartAt: Date?
+        let scheduledEndAt: Date?
 
         init(json: JSONValue?) {
             currentStep = json?["currentStep"].flatMap(ExecutionStep.init)
             guideSteps = (json?["guideSteps"]?.arrayValue ?? []).compactMap(ExecutionStep.init)
             remainingSteps = max(0, Int(json?["remainingSteps"]?.doubleValue ?? 0))
             totalSteps = max(0, Int(json?["totalSteps"]?.doubleValue ?? 0))
+            scheduledStartAt = CalendarDateParser.date(json?["scheduledStartAt"])
+            scheduledEndAt = CalendarDateParser.date(json?["scheduledEndAt"])
         }
     }
 
@@ -1974,6 +1978,8 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
     let candidates: [CheckinCandidateSummary]
     let reflectionText: String?
     let tomorrowIntentText: String?
+    let reflectionReconcileStatus: String?
+    let tomorrowPlanStatus: String?
 
     init?(json: JSONValue) {
         guard let id = json["_id"]?.stringValue ?? json["id"]?.stringValue else { return nil }
@@ -1983,5 +1989,7 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
         candidates = (json["candidateItems"]?.arrayValue ?? []).compactMap(CheckinCandidateSummary.init)
         reflectionText = json["responseText"]?.stringValue?.nilIfBlank
         tomorrowIntentText = json["tomorrowIntentText"]?.stringValue?.nilIfBlank
+        reflectionReconcileStatus = json["reflectionReconcileStatus"]?.stringValue?.nilIfBlank
+        tomorrowPlanStatus = json["tomorrowPlanStatus"]?.stringValue?.nilIfBlank
     }
 }

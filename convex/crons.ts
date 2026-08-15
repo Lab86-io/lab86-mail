@@ -3,6 +3,15 @@ import { internal } from './_generated/api';
 
 const crons = cronJobs();
 
+export const CONTINUOUS_EXECUTION_CRON_NAMES = {
+  scheduling: 'Work scheduling conductor',
+  reflection: 'check-in reflection reconciliation',
+  tomorrow: 'tomorrow planning conductor',
+  evidence: 'evidence reconciliation conductor',
+  recovery: 'passed block recovery',
+  review: 'shape-aware Work review',
+} as const;
+
 // Classify corpus threads that predate write-time classification (and any row
 // a writer ever missed). The mutation chains itself while full batches keep
 // coming back, so this cron is just the ignition; once the backlog is empty it
@@ -30,12 +39,57 @@ crons.interval('plan reconcile', { minutes: 5 }, internal.albatrossIntents.planR
 
 // Keep concrete Work scheduled. Existing or passed blocks are authoritative;
 // only never-scheduled plans enter this loop, with a six-hour retry lease.
-crons.interval('Work scheduling conductor', { minutes: 15 }, internal.albatrossIntents.conductorTick, {});
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.scheduling,
+  { minutes: 15 },
+  internal.albatrossIntents.conductorTick,
+  {},
+);
 
 // Local-time Albatross check-ins and their multi-channel delivery outbox.
 // Each target is deduped by user + local date, so a 15-minute cadence remains
 // safe across deploys, retries, and daylight-saving transitions.
 crons.interval('albatross notifications', { minutes: 15 }, internal.albatrossNotifications.tick, {});
+
+// Check-in writes return as soon as Convex owns the user's words. These two
+// conductors perform the slower interpretation and tomorrow planning without
+// making mobile keep a sheet open for an AI round-trip.
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.reflection,
+  { minutes: 2 },
+  internal.albatrossNotifications.reflectionReconcileTick,
+  {},
+);
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.tomorrow,
+  { minutes: 2 },
+  internal.albatrossNotifications.tomorrowPlanTick,
+  {},
+);
+
+// Proof can arrive from Mail or chat while no Work surface is open. Advance
+// that Work asynchronously, after the evidence itself is safely stored.
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.evidence,
+  { minutes: 5 },
+  internal.albatrossWorkV2.evidenceReconcileTick,
+  {},
+);
+
+// Passed calendar blocks and shape-aware quiet Work are separate signals: one
+// needs a recovery choice now; the other deserves an occasional review.
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.recovery,
+  { minutes: 5 },
+  internal.albatrossNotifications.missedMoveTick,
+  {},
+);
+crons.hourly(
+  CONTINUOUS_EXECUTION_CRON_NAMES.review,
+  { minuteUTC: 23 },
+  internal.albatrossNotifications.stalenessReviewTick,
+  {},
+);
 
 // Project-scoped routines materialize durable tasks, questions, and in-app
 // notifications. Stable local-date run keys make this safe across retries,
