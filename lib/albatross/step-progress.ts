@@ -51,7 +51,7 @@ function bounded(value: unknown, max: number) {
 
 /** Normalize exact step identity fields without introducing fuzzy matching. */
 export function normalizeStepIdentityPart(value: unknown) {
-  return bounded(value, 400).toLowerCase().replace(/\s+/g, ' ');
+  return bounded(value, 400).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 /**

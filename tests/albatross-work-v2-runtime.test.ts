@@ -360,7 +360,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
     const previousAppUrl = process.env.LAB86_MAIL_PUBLIC_URL;
     process.env.LAB86_MAIL_PUBLIC_URL = '';
     try {
-      await t.action(internal.albatrossWorkV2.evidenceReconcileTick, {});
+      await t.action(internal.albatrossWorkV2.stepEvidenceMaterializeTick, {});
     } finally {
       if (previousAppUrl === undefined) delete process.env.LAB86_MAIL_PUBLIC_URL;
       else process.env.LAB86_MAIL_PUBLIC_URL = previousAppUrl;

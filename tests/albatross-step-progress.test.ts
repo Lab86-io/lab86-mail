@@ -41,6 +41,9 @@ describe('Work-level guided-step progress', () => {
     expect(completedStepIdentity({ kind: 'physical', title: 'Mail packet' })).not.toBe(
       completedStepIdentity({ kind: 'physical', title: 'Mail the packet' }),
     );
+    expect(completedStepIdentity({ kind: ' physical ', title: '  Mail   the packet  ' })).toBe(
+      'step:physical:mail the packet',
+    );
   });
 
   test('legacy plan completions migrate into the Work ledger once', () => {

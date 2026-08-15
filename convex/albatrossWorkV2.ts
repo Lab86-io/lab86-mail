@@ -474,7 +474,7 @@ export const completeStep = mutation({
       });
       // Scheduling from a mutation is atomic. The five-minute evidence cron is
       // the recovery path if this immediate conductor run is interrupted.
-      await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.evidenceReconcileTick, {});
+      await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.stepEvidenceMaterializeTick, {});
     }
     return {
       stepKey: args.stepKey,
@@ -1576,6 +1576,50 @@ export const clearPendingStepEvidence = internalMutation({
   },
 });
 
+async function materializePendingStepEvidence(ctx: ActionCtx, secret: string, refs: any) {
+  const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
+  for (const entry of pending) {
+    try {
+      await ctx.runMutation((api as any).albatrossWorkV2.attachProof, {
+        internalSecret: secret,
+        userId: entry.userId,
+        workId: entry.workId,
+        claim: `Every planned step is complete: ${entry.stepTitle}`,
+        title: `Completed ${entry.stepTitle}`,
+        summary: 'The user marked the final remaining plan step complete.',
+        limits:
+          'This confirms the plan actions, but an external outcome may still need its own reply or receipt.',
+        sourceKind: entry.cardId ? 'task' : 'manual',
+        sourceId: entry.cardId || `plan:${entry.planId}:steps-complete`,
+        trust: 'confirmed',
+        settleContract: false,
+      });
+      await ctx.runMutation(refs.clearPendingStepEvidence, {
+        workId: entry.workId,
+        requestedAt: entry.requestedAt,
+      });
+    } catch (error) {
+      console.error(
+        `[evidence reconcile cron] could not materialize final-step evidence for ${String(entry.workId)}`,
+        error,
+      );
+    }
+  }
+}
+
+/** Materialize final-step proof without running URL-dependent plan reconciliation. */
+export const stepEvidenceMaterializeTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!secret) {
+      console.error('[step evidence materializer] missing internal secret');
+      return;
+    }
+    await materializePendingStepEvidence(ctx, secret, (internal as any).albatrossWorkV2);
+  },
+});
+
 export const evidenceReconcileTick = internalAction({
   args: {},
   handler: async (ctx: ActionCtx) => {
@@ -1585,34 +1629,7 @@ export const evidenceReconcileTick = internalAction({
       return;
     }
     const refs = (internal as any).albatrossWorkV2;
-    const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
-    for (const entry of pending) {
-      try {
-        await ctx.runMutation((api as any).albatrossWorkV2.attachProof, {
-          internalSecret: secret,
-          userId: entry.userId,
-          workId: entry.workId,
-          claim: `Every planned step is complete: ${entry.stepTitle}`,
-          title: `Completed ${entry.stepTitle}`,
-          summary: 'The user marked the final remaining plan step complete.',
-          limits:
-            'This confirms the plan actions, but an external outcome may still need its own reply or receipt.',
-          sourceKind: entry.cardId ? 'task' : 'manual',
-          sourceId: entry.cardId || `plan:${entry.planId}:steps-complete`,
-          trust: 'confirmed',
-          settleContract: false,
-        });
-        await ctx.runMutation(refs.clearPendingStepEvidence, {
-          workId: entry.workId,
-          requestedAt: entry.requestedAt,
-        });
-      } catch (error) {
-        console.error(
-          `[evidence reconcile cron] could not materialize final-step evidence for ${String(entry.workId)}`,
-          error,
-        );
-      }
-    }
+    await materializePendingStepEvidence(ctx, secret, refs);
 
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     if (!appUrl) {

@@ -85,6 +85,19 @@ describe('completeWorkStep', () => {
     });
   });
 
+  test('released and archived Work never report a queued final-step follow-up', async () => {
+    for (const workState of ['released', 'archived']) {
+      const result = await completeWorkStep(
+        { userId: 'user-1', workId: 'work-1', stepKey: 'step-1' },
+        {
+          convexQuery: async () => null,
+          convexMutation: async () => completion({ allStepsComplete: true, workState }),
+        } as any,
+      );
+      expect(result.followUp).toBe('not_needed');
+    }
+  });
+
   test('a duplicate completion does not attach proof again', async () => {
     let mutationCount = 0;
     let queryCount = 0;

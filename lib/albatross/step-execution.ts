@@ -84,7 +84,9 @@ export async function completeWorkStep(
     // Final-step evidence is an atomic outbox write in completeStep. The
     // conductor materializes proof and handles planning after this returns.
     followUp:
-      completed.transitioned && completed.allStepsComplete && completed.workState !== 'done'
+      completed.transitioned &&
+      completed.allStepsComplete &&
+      !['done', 'released', 'archived'].includes(completed.workState)
         ? ('queued' as const)
         : ('not_needed' as const),
   };
