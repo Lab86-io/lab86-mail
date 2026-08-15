@@ -961,5 +961,22 @@ describe('Albatross tools', () => {
         ],
       ),
     ).toBe('healthy');
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [{ accountId: 'healthy', status: 'connected' }],
+        [{ accountId: 'healthy', readOnly: false }],
+        [],
+      ),
+    ).toBe('healthy');
+    expect(
+      albatross.selectDefaultExecutionAccount([{ accountId: 'mail-only', status: 'connected' }], [], []),
+    ).toBe('mail-only');
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [{ accountId: 'stale', status: 'connected' }],
+        [],
+        [{ accountId: 'stale', status: 'unauthorized' }],
+      ),
+    ).toBeUndefined();
   });
 });

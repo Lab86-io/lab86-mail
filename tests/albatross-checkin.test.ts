@@ -103,6 +103,7 @@ describe('check-in background work', () => {
       completed: [{ kind: 'work', id: 'work-1' }],
     });
     expect(parseCheckinReconciliation('not json')).toEqual({ completed: [] });
+    expect(parseCheckinReconciliation('{not json}')).toEqual({ completed: [] });
   });
 
   test('backs retries off without exceeding one hour', () => {
