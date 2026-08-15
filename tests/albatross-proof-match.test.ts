@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { matchingProofId, proofCandidatesForMail, rankWorkForProof } from '../lib/albatross/proof-match';
+import {
+  matchingProofId,
+  proofCandidatesForMail,
+  proofOfferAllowed,
+  rankWorkForProof,
+  threadPrimaryCategory,
+} from '../lib/albatross/proof-match';
 
 describe('proof matching', () => {
   test('requires a lexical reason even when only one requirement is outstanding', () => {
@@ -82,5 +88,25 @@ describe('proof matching', () => {
         proofWhat: 'Passport application confirmation arrived',
       },
     ]);
+  });
+});
+
+describe('thread class helpers', () => {
+  test('classification precedence: llm verdict, then flattened primary, then smart verdict', () => {
+    expect(threadPrimaryCategory({ llmCategory: { primary: 'orders' }, smartPrimary: 'noise' })).toBe(
+      'orders',
+    );
+    expect(threadPrimaryCategory({ smartPrimary: 'finance_admin' })).toBe('finance_admin');
+    expect(threadPrimaryCategory({ smartCategory: { primary: 'main' } })).toBe('main');
+    expect(threadPrimaryCategory({ smartCategory: { primary: '' } })).toBeNull();
+    expect(threadPrimaryCategory(null)).toBeNull();
+  });
+
+  test('marketing and code mail are blocked; unclassified mail is allowed', () => {
+    expect(proofOfferAllowed('noise')).toBe(false);
+    expect(proofOfferAllowed('codes')).toBe(false);
+    expect(proofOfferAllowed('orders')).toBe(true);
+    expect(proofOfferAllowed(null)).toBe(true);
+    expect(proofOfferAllowed(undefined)).toBe(true);
   });
 });
