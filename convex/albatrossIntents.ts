@@ -618,6 +618,11 @@ export const savePlan = mutation({
         title: bounded(action.title, 200, 'Step')!,
         detail: bounded(action.detail, 1200),
         url: bounded(action.url, 500),
+        stepMode: action.stepMode,
+        doneWhen: bounded(action.doneWhen, 300),
+        evidence: action.evidence
+          ? { kind: action.evidence.kind, hint: bounded(action.evidence.hint, 300) }
+          : undefined,
       })),
       assumptions: args.assumptions.map((assumption) => bounded(assumption, 500)!).filter(Boolean),
       sourceRefs: normalizeSourceRefs(args.sourceRefs),
@@ -640,8 +645,14 @@ export const savePlan = mutation({
       updatedAt: ts,
     });
 
+    // A plan with an expected mail receipt arms the mail watcher; a revision
+    // without one disarms it.
+    const hasMailStep = [...args.digitalActions, ...args.physicalActions].some(
+      (action: any) => action?.evidence?.kind === 'mail_confirmation',
+    );
     await ctx.db.patch(args.intentId, {
       status: planStatus,
+      mailWatchAt: hasMailStep ? (intent.mailWatchAt ?? ts) : undefined,
       title: bounded(args.title, 180) ?? intent.title,
       kind: args.kind !== undefined ? bounded(args.kind, 40) : intent.kind,
       // The planner saw research the capture splitter never had, so its

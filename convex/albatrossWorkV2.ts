@@ -517,6 +517,21 @@ export const completeStep = mutation({
         (step) =>
           completedIdentities.has(step.identity) || Boolean(step.cardId && completedCardIds.has(step.cardId)),
       );
+    // The mail watcher only stays armed while an unfinished step still expects
+    // a mail confirmation.
+    const outstandingMailStep = planSteps.some(
+      (step) =>
+        step.action.evidence?.kind === 'mail_confirmation' &&
+        !completedIdentities.has(step.identity) &&
+        !(step.cardId && completedCardIds.has(step.cardId)),
+    );
+    if (Boolean(work.mailWatchAt) !== outstandingMailStep) {
+      await ctx.db.patch(args.workId, {
+        mailWatchAt: outstandingMailStep ? ts : undefined,
+        ...(outstandingMailStep ? {} : { mailWatchClaimedAt: undefined }),
+        updatedAt: ts,
+      });
+    }
     if (
       transitioned &&
       allStepsComplete &&
@@ -1668,6 +1683,101 @@ export const clearPendingStepEvidence = internalMutation({
       updatedAt: now(),
     });
     return true;
+  },
+});
+
+const MAIL_WATCH_LEASE_MS = 10 * 60 * 1000;
+
+/** Works whose applied plan still expects a mail confirmation for a step. */
+export const mailWatchCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_mail_watch', (q) => q.gt('mailWatchAt', 0))
+      .take(25);
+    return rows
+      .filter(
+        (row) =>
+          ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
+          (!row.mailWatchClaimedAt || ts - row.mailWatchClaimedAt >= MAIL_WATCH_LEASE_MS),
+      )
+      .slice(0, 4)
+      .map((row) => ({ userId: row.userId, workId: String(row._id) }));
+  },
+});
+
+export const beginMailWatch = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const ts = now();
+    const work = await ctx.db.get(args.workId);
+    if (!work?.mailWatchAt) return null;
+    if (work.mailWatchClaimedAt && ts - work.mailWatchClaimedAt < MAIL_WATCH_LEASE_MS) return null;
+    await ctx.db.patch(args.workId, { mailWatchClaimedAt: ts });
+    return { userId: work.userId, workId: String(args.workId) };
+  },
+});
+
+/** The watch pass finished: either keep polling later or stand down. */
+export const completeMailWatch = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), stillWatching: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      mailWatchAt: args.stillWatching ? ts : undefined,
+      mailWatchClaimedAt: undefined,
+      updatedAt: ts,
+    });
+    return { stillWatching: args.stillWatching };
+  },
+});
+
+export const releaseMailWatch = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.workId, { mailWatchClaimedAt: undefined });
+  },
+});
+
+export const mailWatchTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!secret) {
+      console.error('[mail watch cron] missing internal secret');
+      return;
+    }
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    if (!appUrl) {
+      console.error('[mail watch cron] missing LAB86_MAIL_PUBLIC_URL');
+      return;
+    }
+    const refs = (internal as any).albatrossWorkV2;
+    const candidates = await ctx.runQuery(refs.mailWatchCandidates, {});
+    let completed = 0;
+    for (const candidate of candidates) {
+      const claim = await ctx.runMutation(refs.beginMailWatch, { workId: candidate.workId });
+      if (!claim) continue;
+      let ok = false;
+      try {
+        ok =
+          (await fanOutInternalPost(`${appUrl}/api/cron/step-watch`, secret, [claim], {
+            label: 'mail watch cron',
+            timeoutMs: 90_000,
+            concurrency: 1,
+          })) === 1;
+        if (ok) completed += 1;
+      } finally {
+        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId: candidate.workId });
+      }
+    }
+    if (candidates.length) {
+      console.log(`[mail watch cron] completed ${completed}/${candidates.length}`);
+    }
   },
 });
 

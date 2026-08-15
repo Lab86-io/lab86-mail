@@ -1010,6 +1010,10 @@ export default defineSchema({
     // Final-step proof is an outbox entry, written atomically with completion.
     // The evidence conductor materializes it and clears it idempotently.
     pendingStepEvidenceAt: v.optional(v.number()),
+    // Armed while the applied plan holds an unfinished step whose evidence is
+    // an expected mail confirmation. The watcher conductor polls these.
+    mailWatchAt: v.optional(v.number()),
+    mailWatchClaimedAt: v.optional(v.number()),
     pendingStepEvidence: v.optional(
       v.object({
         planId: v.string(),
@@ -1122,6 +1126,7 @@ export default defineSchema({
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
+    .index('by_mail_watch', ['mailWatchAt'])
     .index('by_capture', ['captureId']),
 
   // A generated plan for one intent. digitalActions match the work-model
