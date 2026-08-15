@@ -216,6 +216,79 @@ describe('shape rides capture and planning', () => {
     expect(work?.contract?.proofs[0]?.satisfiedBy).toBeUndefined();
     expect(work?.contract?.proofs[0]?.satisfiedAt).toBeUndefined();
   });
+
+  test('a revision stays pending until apply and carries exact completed actions forward', async () => {
+    const t = newHarness();
+    const workId = await seedWork(t);
+    const previousPlanId = await t.run(async (ctx) => {
+      const ts = Date.now() - 1_000;
+      const planId = await ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'applied',
+        digitalActions: [
+          {
+            key: 'old-local-key',
+            actionKey: 'submit_application',
+            kind: 'task',
+            title: 'Submit the form',
+          },
+        ],
+        physicalActions: [],
+        assumptions: [],
+        sourceRefs: [],
+        completedSteps: [{ stepKey: 'old-local-key', completedAt: ts, source: 'user' }],
+        appliedAt: ts,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.patch(workId, { latestPlanId: planId, status: 'applied', updatedAt: ts });
+      return planId;
+    });
+
+    const candidatePlanId = await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId: workId,
+      outcome: 'The application is submitted.',
+      digitalActions: [
+        {
+          key: 'new-local-key',
+          actionKey: 'submit_application',
+          kind: 'task',
+          title: 'Submit the official application form',
+        },
+        { key: 'receipt', actionKey: 'save_receipt', kind: 'task', title: 'Save the receipt' },
+      ],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+    });
+
+    let work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.latestPlanId).toBe(previousPlanId);
+    expect(work?.pendingPlanId).toBe(candidatePlanId);
+    expect(work?.stepProgress?.map((row) => row.identity)).toContain('action:submit_application');
+    expect((await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId })).plan?._id).toBe(
+      previousPlanId,
+    );
+    expect(
+      (await t.query(api.albatrossIntents.getIntentWorkbench, { ...caller, intentId: workId })).plan?._id,
+    ).toBe(candidatePlanId);
+
+    await t.mutation(api.albatrossIntents.markPlanApplied, {
+      ...caller,
+      planId: candidatePlanId,
+      appliedSteps: [],
+    });
+    work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.latestPlanId).toBe(candidatePlanId);
+    expect(work?.pendingPlanId).toBeUndefined();
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.execution.guideSteps).toEqual([
+      expect.objectContaining({ key: 'new-local-key', done: true }),
+      expect.objectContaining({ key: 'receipt', done: false }),
+    ]);
+  });
 });
 
 describe('the document binds to live records', () => {

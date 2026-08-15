@@ -1,6 +1,11 @@
 import { v } from 'convex/values';
 import { planNeedsConductor } from '../lib/albatross/execution';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
+import {
+  mergeStepProgress,
+  progressFromPlanCompletions,
+  type StepProgressEntry,
+} from '../lib/albatross/step-progress';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -266,7 +271,8 @@ export const getIntentWorkbench = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
-    const plan = intent.latestPlanId ? await ctx.db.get(intent.latestPlanId) : null;
+    const workbenchPlanId = intent.pendingPlanId || intent.latestPlanId;
+    const plan = workbenchPlanId ? await ctx.db.get(workbenchPlanId) : null;
     return { intent, plan: plan && plan.userId === userId ? plan : null };
   },
 });
@@ -529,12 +535,23 @@ export const savePlan = mutation({
         }
       : intent.contract;
 
-    if (intent.latestPlanId) {
-      const previous = await ctx.db.get(intent.latestPlanId);
-      if (previous && previous.userId === userId && previous.status !== 'applied') {
-        await ctx.db.patch(intent.latestPlanId, { status: 'superseded', updatedAt: ts });
-      }
+    const [visiblePlan, pendingPlan] = await Promise.all([
+      intent.latestPlanId ? ctx.db.get(intent.latestPlanId) : null,
+      intent.pendingPlanId ? ctx.db.get(intent.pendingPlanId) : null,
+    ]);
+    const previousCandidate = pendingPlan || (visiblePlan?.status !== 'applied' ? visiblePlan : null);
+    if (previousCandidate && previousCandidate.userId === userId && previousCandidate.status !== 'applied') {
+      await ctx.db.patch(previousCandidate._id, { status: 'superseded', updatedAt: ts });
     }
+    const carriedProgress = mergeStepProgress(
+      intent.stepProgress as StepProgressEntry[] | undefined,
+      [visiblePlan, pendingPlan]
+        .filter((plan): plan is NonNullable<typeof plan> => Boolean(plan && plan.userId === userId))
+        .flatMap((plan) => progressFromPlanCompletions(plan)),
+    );
+    const preserveLastGood = Boolean(
+      visiblePlan && visiblePlan.userId === userId && visiblePlan.status === 'applied',
+    );
 
     const planId = await ctx.db.insert('albatrossIntentPlans', {
       userId,
@@ -583,7 +600,9 @@ export const savePlan = mutation({
         args.priority !== undefined ? Math.min(Math.max(Math.round(args.priority), 1), 3) : intent.priority,
       questions: args.questions ?? intent.questions,
       contract: nextContract,
-      latestPlanId: planId,
+      latestPlanId: preserveLastGood ? visiblePlan!._id : planId,
+      pendingPlanId: preserveLastGood ? planId : undefined,
+      ...(carriedProgress.length ? { stepProgress: carriedProgress } : {}),
       planError: undefined,
       planAttempts: 0,
       updatedAt: ts,
@@ -806,6 +825,11 @@ export const markPlanApplied = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const plan = await requirePlan(ctx, args.planId, userId);
+    const intent = await ctx.db.get(plan.intentId);
+    if (!intent || intent.userId !== userId) throw new Error('Intent not found.');
+    if (intent.pendingPlanId && intent.pendingPlanId !== plan._id) {
+      throw new Error('A newer plan revision is waiting to be applied.');
+    }
     const ts = now();
     // Apply turned plan steps into real cards. Bind the document's keyed
     // checklist items to them so every checkbox is the live task record.
@@ -830,11 +854,16 @@ export const markPlanApplied = mutation({
       appliedAt: ts,
       updatedAt: ts,
     });
-    await ctx.db.patch(plan.intentId, { status: 'applied', appliedAt: ts, updatedAt: ts });
+    await ctx.db.patch(plan.intentId, {
+      status: 'applied',
+      latestPlanId: plan._id,
+      pendingPlanId: undefined,
+      appliedAt: ts,
+      updatedAt: ts,
+    });
     // Completion history (issue #87/#18): applying a plan is the completion of
     // the intent_plan artifact. Only the first apply records an event.
     if (plan.status !== 'applied') {
-      const intent = await ctx.db.get(plan.intentId);
       await recordCompletionEvent(ctx, {
         userId,
         artifactKind: 'intent_plan',

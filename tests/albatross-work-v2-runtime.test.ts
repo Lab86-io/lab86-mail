@@ -340,6 +340,77 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(detail.execution.guideSteps.every((step) => step.done)).toBe(true);
   });
 
+  test('step completion atomically checks the bound task and moves it to Done', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    const seeded = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const boardId = await ctx.db.insert('boards', {
+        ownerUserId: userId,
+        title: 'Personal',
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const todayId = await ctx.db.insert('boardColumns', {
+        boardId,
+        name: 'Today',
+        order: 0,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const doneId = await ctx.db.insert('boardColumns', {
+        boardId,
+        name: 'Done',
+        order: 1,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const cardId = await ctx.db.insert('cards', {
+        boardId,
+        columnId: todayId,
+        userId,
+        title: 'Book the appointment',
+        order: 0,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      const planId = await ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'applied',
+        digitalActions: [
+          {
+            key: 'book',
+            actionKey: 'book_appointment',
+            kind: 'task',
+            title: 'Book the appointment',
+          },
+        ],
+        physicalActions: [],
+        assumptions: [],
+        sourceRefs: [],
+        appliedSteps: [{ stepKey: 'book', kind: 'task', cardId: String(cardId) }],
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      await ctx.db.patch(workId, { latestPlanId: planId, updatedAt: ts });
+      return { cardId, doneId };
+    });
+
+    await t.mutation(api.albatrossWorkV2.completeStep, {
+      ...caller,
+      workId,
+      stepKey: 'book',
+      source: 'user',
+    });
+    const [card, work] = await t.run((ctx) => Promise.all([ctx.db.get(seeded.cardId), ctx.db.get(workId)]));
+    expect(card?.completedAt).toBeNumber();
+    expect(card?.columnId).toBe(seeded.doneId);
+    expect(work?.stepProgress).toEqual([
+      expect.objectContaining({ identity: 'action:book_appointment', cardId: String(seeded.cardId) }),
+    ]);
+  });
+
   test('execution projection keeps completion after more than one thousand applied card ids', async () => {
     const t = convexTest(schema, convexModules);
     const caller = { internalSecret: SECRET, userId };

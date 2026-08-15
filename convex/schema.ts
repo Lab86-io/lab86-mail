@@ -1063,7 +1063,28 @@ export default defineSchema({
     // Scheduling conductor lease. An unscheduled plan is retried at most once
     // per window, while passed blocks wait for an explicit recovery choice.
     lastConductorAt: v.optional(v.number()),
+    // The visible plan is the last plan that applied successfully. A newly
+    // generated revision waits here until its artifacts are ready, so a failed
+    // regeneration cannot replace a usable guide with a half-built one.
+    pendingPlanId: v.optional(v.id('albatrossIntentPlans')),
     latestPlanId: v.optional(v.id('albatrossIntentPlans')),
+    // Completion belongs to the Work, not to one generated plan. Entries use
+    // conservative stable identities so exact steps remain done across plan
+    // revisions without fuzzy-matching unrelated work.
+    stepProgress: v.optional(
+      v.array(
+        v.object({
+          identity: v.string(),
+          actionKey: v.optional(v.string()),
+          kind: v.string(),
+          title: v.string(),
+          cardId: v.optional(v.string()),
+          completedAt: v.number(),
+          source: v.union(v.literal('user'), v.literal('task'), v.literal('evidence')),
+        }),
+      ),
+    ),
+    stepProgressMigratedAt: v.optional(v.number()),
     appliedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1209,9 +1230,9 @@ export default defineSchema({
         }),
       ),
     ),
-    // A plan artifact being created is not the same as its step being done.
-    // These user/evidence completions advance the authoritative current move;
-    // card-backed steps are also read live so completing a board card works.
+    // Legacy per-plan mirror retained during the additive migration. New reads
+    // use the Work-level stepProgress ledger; dual-writing keeps older clients
+    // and historical plan artifacts intelligible.
     completedSteps: v.optional(
       v.array(
         v.object({

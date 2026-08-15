@@ -23,7 +23,12 @@ function dependencies() {
   return {
     requireCurrentUser: mock(async () => user),
     enforceUserRateLimit: mock(async () => ({ ok: true }) as any),
-    completeWorkStep: mock(async () => ({ transitioned: true, closed: false, replanned: true })) as any,
+    completeWorkStep: mock(async () => ({
+      transitioned: true,
+      closed: false,
+      replanned: false,
+      followUp: 'not_needed',
+    })) as any,
   };
 }
 
@@ -72,6 +77,9 @@ describe('Albatross Work step route', () => {
     const response = await invoke(deps);
 
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: 'task provider unavailable' });
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: 'task provider unavailable',
+    });
   });
 });
