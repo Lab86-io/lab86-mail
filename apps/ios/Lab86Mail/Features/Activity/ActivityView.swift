@@ -6,8 +6,12 @@ struct ActivityView: View {
     @State private var checkinText = ""
     @State private var tomorrowText = ""
     @State private var completedCandidateIDs: Set<String> = []
-    @State private var isSavingCheckin = false
-    @State private var checkinError: String?
+    @State private var isSavingReflection = false
+    @State private var isSavingTomorrow = false
+    @State private var reflectionSaved = false
+    @State private var tomorrowSaved = false
+    @State private var reflectionError: String?
+    @State private var tomorrowError: String?
     @State private var archivedRaw = ""
     @State private var readRaw = ""
     @State private var showsArchived = false
@@ -73,6 +77,7 @@ struct ActivityView: View {
                             TextEditor(text: $checkinText)
                                 .frame(minHeight: 110)
                                 .accessibilityLabel("What did you get done today")
+                                .onChange(of: checkinText) { reflectionSaved = false }
                             if !checkin.candidates.isEmpty {
                                 ForEach(checkin.candidates.prefix(12)) { candidate in
                                     Button {
@@ -100,6 +105,23 @@ struct ActivityView: View {
                                     )
                                 }
                             }
+                            if let reflectionError {
+                                Text(reflectionError).font(.footnote).foregroundStyle(.red)
+                            } else if reflectionSaved {
+                                Text("Saved. Albatross is checking the details in the background.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                Task { await saveReflection(checkin) }
+                            } label: {
+                                if isSavingReflection { ProgressView() } else { Text("Save today") }
+                            }
+                            .disabled(
+                                isSavingReflection
+                                    || (checkinText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                        && completedCandidateIDs.isEmpty)
+                            )
                         }
                         Section("What do you want to get done tomorrow?") {
                             Text("Albatross turns this into Work and protects its first move on the calendar.")
@@ -108,18 +130,22 @@ struct ActivityView: View {
                             TextEditor(text: $tomorrowText)
                                 .frame(minHeight: 110)
                                 .accessibilityLabel("What do you want to get done tomorrow")
-                            if let checkinError { Text(checkinError).font(.footnote).foregroundStyle(.red) }
+                                .onChange(of: tomorrowText) { tomorrowSaved = false }
+                            if let tomorrowError {
+                                Text(tomorrowError).font(.footnote).foregroundStyle(.red)
+                            } else if tomorrowSaved {
+                                Text("Saved. Planning continues in the background.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
                             Button {
-                                Task { await saveCheckin(checkin) }
+                                Task { await saveTomorrow(checkin) }
                             } label: {
-                                if isSavingCheckin { ProgressView() } else { Text("Save check-in") }
+                                if isSavingTomorrow { ProgressView() } else { Text("Plan tomorrow") }
                             }
                             .disabled(
-                                isSavingCheckin || (
-                                    checkinText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                        && tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                        && completedCandidateIDs.isEmpty
-                                )
+                                isSavingTomorrow
+                                    || tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             )
                         }
                     }
@@ -282,23 +308,39 @@ struct ActivityView: View {
     private func toggle(_ id: String) {
         if completedCandidateIDs.contains(id) { completedCandidateIDs.remove(id) }
         else { completedCandidateIDs.insert(id) }
+        reflectionSaved = false
     }
 
-    private func saveCheckin(_ checkin: CheckinSummary) async {
-        isSavingCheckin = true
-        defer { isSavingCheckin = false }
+    private func saveReflection(_ checkin: CheckinSummary) async {
+        isSavingReflection = true
+        defer { isSavingReflection = false }
         do {
             try await environment.store.answerCheckin(
+                promptKind: "reflection",
                 responseText: checkinText.trimmingCharacters(in: .whitespacesAndNewlines),
-                tomorrowIntentText: tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines),
                 completed: checkin.candidates.filter { completedCandidateIDs.contains($0.id) }
             )
-            checkinText = ""
-            tomorrowText = ""
             completedCandidateIDs = []
-            checkinError = nil
+            reflectionError = nil
+            reflectionSaved = true
         } catch {
-            checkinError = error.localizedDescription
+            reflectionError = error.localizedDescription
+        }
+    }
+
+    private func saveTomorrow(_ checkin: CheckinSummary) async {
+        isSavingTomorrow = true
+        defer { isSavingTomorrow = false }
+        do {
+            try await environment.store.answerCheckin(
+                promptKind: "tomorrow",
+                responseText: tomorrowText.trimmingCharacters(in: .whitespacesAndNewlines),
+                completed: []
+            )
+            tomorrowError = nil
+            tomorrowSaved = true
+        } catch {
+            tomorrowError = error.localizedDescription
         }
     }
 
@@ -306,5 +348,7 @@ struct ActivityView: View {
         guard let checkin = environment.store.checkin else { return }
         if checkinText.isEmpty { checkinText = checkin.reflectionText ?? "" }
         if tomorrowText.isEmpty { tomorrowText = checkin.tomorrowIntentText ?? "" }
+        reflectionSaved = checkin.reflectionText != nil
+        tomorrowSaved = checkin.tomorrowIntentText != nil
     }
 }

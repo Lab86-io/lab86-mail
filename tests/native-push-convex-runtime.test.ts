@@ -244,6 +244,8 @@ describe('native push Convex receipts', () => {
       expect(state.row?.responseText).toBe('I shipped the first pass.');
       expect(state.row?.tomorrowIntentText).toBe('I will validate the production build.');
       expect(state.row?.reconciledChanges?.map((change) => change.id)).toEqual(workIds.map(String));
+      expect(state.row?.reflectionReconcileStatus).toBe('pending');
+      expect(state.row?.tomorrowPlanStatus).toBe('pending');
       expect(state.notification?.status).toBe('acted');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;

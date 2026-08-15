@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
@@ -9,7 +9,10 @@ export interface DailyCheckinData {
   _id: string;
   localDate: string;
   status: string;
+  responseText?: string | null;
   tomorrowIntentText?: string | null;
+  reflectionReconcileStatus?: 'pending' | 'processing' | 'ready' | 'failed' | null;
+  tomorrowPlanStatus?: 'pending' | 'planning' | 'ready' | 'needs_input' | 'failed' | null;
   candidateItems: Array<{
     kind: 'work' | 'project' | 'task' | 'event' | 'artifact';
     id: string;
@@ -18,7 +21,28 @@ export interface DailyCheckinData {
   }>;
 }
 
-/** Build the durable answer payload from either prose, tomorrow's intent, or selected evidence. */
+export function dailyCheckinSectionPayload(
+  checkin: DailyCheckinData,
+  promptKind: 'reflection' | 'tomorrow',
+  responseText: string,
+  selected: ReadonlySet<string>,
+  timezone: string,
+) {
+  return {
+    promptKind,
+    responseText: responseText.trim(),
+    ...(promptKind === 'reflection'
+      ? {
+          completed: checkin.candidateItems
+            .filter((item) => selected.has(`${item.kind}:${item.id}`))
+            .map((item) => ({ kind: item.kind, id: item.id })),
+        }
+      : {}),
+    timezone,
+  };
+}
+
+/** Retained for older callers while the endpoint accepts both request shapes. */
 export function dailyCheckinAnswerPayload(
   checkin: DailyCheckinData,
   selected: ReadonlySet<string>,
@@ -38,18 +62,13 @@ export function dailyCheckinAnswerPayload(
 
 export function dailyCheckinResponseError(
   responseOK: boolean,
-  body: { error?: unknown; tomorrowPlanStatus?: unknown; tomorrowPlanError?: unknown },
+  body: { error?: unknown },
 ): string | null {
-  if (!responseOK) {
-    return typeof body.error === 'string' && body.error ? body.error : 'Could not save the check-in.';
-  }
-  if (body.tomorrowPlanStatus === 'degraded') {
-    return typeof body.tomorrowPlanError === 'string' && body.tomorrowPlanError
-      ? body.tomorrowPlanError
-      : 'Tomorrow planning is temporarily unavailable.';
-  }
-  return null;
+  if (responseOK) return null;
+  return typeof body.error === 'string' && body.error ? body.error : 'Could not save this answer.';
 }
+
+type SaveState = 'idle' | 'saving' | 'saved';
 
 export function DailyCheckin({
   checkin,
@@ -63,8 +82,21 @@ export function DailyCheckin({
   const [text, setText] = useState('');
   const [tomorrowText, setTomorrowText] = useState('');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [reflectionState, setReflectionState] = useState<SaveState>('idle');
+  const [tomorrowState, setTomorrowState] = useState<SaveState>('idle');
+  const [reflectionError, setReflectionError] = useState<string | null>(null);
+  const [tomorrowError, setTomorrowError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!checkin) return;
+    setText(checkin.responseText || '');
+    setTomorrowText(checkin.tomorrowIntentText || '');
+    setReflectionState(checkin.responseText?.trim() ? 'saved' : 'idle');
+    setTomorrowState(checkin.tomorrowIntentText?.trim() ? 'saved' : 'idle');
+    setReflectionError(null);
+    setTomorrowError(null);
+    setSelected(new Set());
+  }, [checkin?._id, checkin?.responseText, checkin?.tomorrowIntentText]);
 
   const toggle = (key: string) => {
     setSelected((current) => {
@@ -73,81 +105,75 @@ export function DailyCheckin({
       else next.add(key);
       return next;
     });
+    setReflectionState('idle');
   };
 
-  const submit = async () => {
-    if (!checkin || busy || (!text.trim() && !tomorrowText.trim() && !selected.size)) return;
-    setBusy(true);
+  const save = async (promptKind: 'reflection' | 'tomorrow') => {
+    if (!checkin) return;
+    const isReflection = promptKind === 'reflection';
+    const value = isReflection ? text : tomorrowText;
+    if (!value.trim() && !(isReflection && selected.size)) return;
+    const setState = isReflection ? setReflectionState : setTomorrowState;
+    const setError = isReflection ? setReflectionError : setTomorrowError;
+    setState('saving');
     setError(null);
     try {
       const response = await fetch(`/api/albatross/checkin/${encodeURIComponent(checkin._id)}/answer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(
-          dailyCheckinAnswerPayload(
+          dailyCheckinSectionPayload(
             checkin,
+            promptKind,
+            value,
             selected,
-            text,
-            tomorrowText,
             Intl.DateTimeFormat().resolvedOptions().timeZone,
           ),
         ),
       });
-      const body = await response.json();
+      const body = await response.json().catch(() => ({}));
       const responseError = dailyCheckinResponseError(response.ok, body);
       if (responseError) throw new Error(responseError);
-      setText('');
-      setTomorrowText('');
-      setSelected(new Set());
-      onOpenChange(false);
+      setState('saved');
+      if (isReflection) setSelected(new Set());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save the check-in.');
-    } finally {
-      setBusy(false);
+      setState('idle');
+      setError(cause instanceof Error ? cause.message : 'Could not save this answer.');
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-xl overflow-y-auto">
-        <DialogTitle className="font-serif text-2xl">What did you actually get done today?</DialogTitle>
+        <DialogTitle className="font-serif text-2xl">Daily check-in</DialogTitle>
         <DialogDescription>
-          Tell Albatross what moved. Suggestions are evidence, not assumptions—you decide what is complete.
+          Save either answer when it is ready. Albatross finishes the slower interpretation in the background.
         </DialogDescription>
         {!checkin ? (
           <p className="py-6 text-[12.5px] text-[var(--color-text-muted)]">Preparing today’s check-in…</p>
         ) : (
           <div className="space-y-4">
-            <textarea
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              rows={5}
-              autoFocus
-              placeholder="I shipped…, made progress on…, and didn’t get to…"
-              className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
-            />
-            <div>
-              <label htmlFor="tomorrow-intent" className="text-[12.5px] font-medium">
-                What should tomorrow protect?
+            <section className="rounded-xl border border-[var(--color-border)] p-4">
+              <label htmlFor="today-reflection" className="text-[13.5px] font-medium">
+                What did you actually get done today?
               </label>
               <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
-                Albatross will turn this into Work and put its first move on the calendar.
+                Tell Albatross what moved. Suggestions are evidence, not assumptions.
               </p>
               <textarea
-                id="tomorrow-intent"
-                value={tomorrowText}
-                onChange={(event) => setTomorrowText(event.target.value)}
-                rows={3}
-                placeholder="Submit the passport renewal before lunch…"
-                className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+                id="today-reflection"
+                value={text}
+                onChange={(event) => {
+                  setText(event.target.value);
+                  setReflectionState('idle');
+                }}
+                rows={4}
+                autoFocus
+                placeholder="I shipped…, made progress on…, and didn’t get to…"
+                className="mt-3 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
               />
-            </div>
-            {checkin.candidateItems.length ? (
-              <div>
-                <p className="mb-2 text-[11px] font-medium text-[var(--color-text-faint)]">
-                  Mark anything that is truly done
-                </p>
-                <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
+              {checkin.candidateItems.length ? (
+                <div className="mt-3 divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
                   {checkin.candidateItems.slice(0, 12).map((item) => {
                     const key = `${item.kind}:${item.id}`;
                     const active = selected.has(key);
@@ -170,25 +196,57 @@ export function DailyCheckin({
                           {active ? '✓' : ''}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-[12.5px]">{item.title}</span>
-                        <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
-                          {item.kind}
-                        </span>
+                        <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">{item.kind}</span>
                       </button>
                     );
                   })}
                 </div>
+              ) : null}
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <SaveFeedback state={reflectionState} error={reflectionError} />
+                <Button
+                  size="sm"
+                  disabled={reflectionState === 'saving' || (!text.trim() && !selected.size)}
+                  onClick={() => void save('reflection')}
+                >
+                  {reflectionState === 'saving' ? 'Saving…' : 'Save today'}
+                </Button>
               </div>
-            ) : null}
-            {error ? <p className="text-[12px] text-[var(--color-danger)]">{error}</p> : null}
-            <div className="flex justify-end gap-2">
+            </section>
+
+            <section className="rounded-xl border border-[var(--color-border)] p-4">
+              <label htmlFor="tomorrow-intent" className="text-[13.5px] font-medium">
+                What should tomorrow protect?
+              </label>
+              <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                Albatross will turn this into Work and schedule its first move after the answer is saved.
+              </p>
+              <textarea
+                id="tomorrow-intent"
+                value={tomorrowText}
+                onChange={(event) => {
+                  setTomorrowText(event.target.value);
+                  setTomorrowState('idle');
+                }}
+                rows={3}
+                placeholder="Submit the passport renewal before lunch…"
+                className="mt-3 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <SaveFeedback state={tomorrowState} error={tomorrowError} background />
+                <Button
+                  size="sm"
+                  disabled={tomorrowState === 'saving' || !tomorrowText.trim()}
+                  onClick={() => void save('tomorrow')}
+                >
+                  {tomorrowState === 'saving' ? 'Saving…' : 'Plan tomorrow'}
+                </Button>
+              </div>
+            </section>
+
+            <div className="flex justify-end">
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Later
-              </Button>
-              <Button
-                disabled={busy || (!text.trim() && !tomorrowText.trim() && !selected.size)}
-                onClick={() => void submit()}
-              >
-                {busy ? 'Saving…' : 'Save check-in'}
+                Close
               </Button>
             </div>
           </div>
@@ -196,4 +254,24 @@ export function DailyCheckin({
       </DialogContent>
     </Dialog>
   );
+}
+
+function SaveFeedback({
+  state,
+  error,
+  background = false,
+}: {
+  state: SaveState;
+  error: string | null;
+  background?: boolean;
+}) {
+  if (error) return <p className="text-[11.5px] text-[var(--color-danger)]">{error} Try again.</p>;
+  if (state === 'saved') {
+    return (
+      <p className="text-[11.5px] text-[var(--color-text-muted)]">
+        {background ? 'Saved. Planning continues in the background.' : 'Saved.'}
+      </p>
+    );
+  }
+  return <span />;
 }

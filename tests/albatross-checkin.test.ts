@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { dailyCheckinAnswerPayload, dailyCheckinResponseError } from '@/components/albatross/DailyCheckin';
-import { checkinCallerArgs, tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
+import {
+  dailyCheckinAnswerPayload,
+  dailyCheckinResponseError,
+  dailyCheckinSectionPayload,
+} from '@/components/albatross/DailyCheckin';
+import {
+  checkinCallerArgs,
+  checkinRetryDelayMs,
+  parseCheckinReconciliation,
+  tomorrowWorkPlanStatus,
+} from '@/lib/albatross/checkin';
 
 describe('Albatross check-in server caller', () => {
   test('passes the authenticated Clerk user through to internal-secret Convex calls', () => {
@@ -60,13 +69,45 @@ describe('daily check-in answer payload', () => {
     });
   });
 
-  test('keeps a degraded tomorrow plan visible with its retryable error', () => {
+  test('builds independently saveable section payloads', () => {
     expect(
-      dailyCheckinResponseError(true, {
-        tomorrowPlanStatus: 'degraded',
-        tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
-      }),
-    ).toBe('Tomorrow planning is temporarily unavailable.');
-    expect(dailyCheckinResponseError(true, { tomorrowPlanStatus: 'ready' })).toBeNull();
+      dailyCheckinSectionPayload(
+        checkin,
+        'reflection',
+        ' Appointment done. ',
+        new Set(['event:event-1']),
+        'UTC',
+      ),
+    ).toEqual({
+      promptKind: 'reflection',
+      responseText: 'Appointment done.',
+      completed: [{ kind: 'event', id: 'event-1' }],
+      timezone: 'UTC',
+    });
+    expect(dailyCheckinSectionPayload(checkin, 'tomorrow', ' Call the DMV. ', new Set(), 'UTC')).toEqual({
+      promptKind: 'tomorrow',
+      responseText: 'Call the DMV.',
+      timezone: 'UTC',
+    });
+  });
+
+  test('reports only durable-write failures to the form', () => {
+    expect(dailyCheckinResponseError(true, {})).toBeNull();
+    expect(dailyCheckinResponseError(false, { error: 'Try later.' })).toBe('Try later.');
+  });
+});
+
+describe('check-in background work', () => {
+  test('parses only bounded candidate identities from the model envelope', () => {
+    expect(
+      parseCheckinReconciliation('before {"completed":[{"kind":"work","id":"work-1"}]} after'),
+    ).toEqual({ completed: [{ kind: 'work', id: 'work-1' }] });
+    expect(parseCheckinReconciliation('not json')).toEqual({ completed: [] });
+  });
+
+  test('backs retries off without exceeding one hour', () => {
+    expect(checkinRetryDelayMs(1)).toBe(120_000);
+    expect(checkinRetryDelayMs(3)).toBe(480_000);
+    expect(checkinRetryDelayMs(99)).toBe(3_600_000);
   });
 });

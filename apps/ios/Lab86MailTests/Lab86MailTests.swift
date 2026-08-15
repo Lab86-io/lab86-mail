@@ -982,7 +982,7 @@ struct Lab86MailTests {
              "plan":{"_id":"p1","status":"ready","outcome":"A review ready to send","summary":"Evidence assembled.","artifactHtml":"<main><h1>Review</h1></main>","artifactTitle":"Launch brief","assumptions":["Dates are current"],"sourceRefs":[{"kind":"mailThread","id":"t1","label":"Launch thread"}],"digitalActions":[{"key":"draft","kind":"mail_draft","title":"Draft response"}],"physicalActions":[],"appliedSteps":[{"stepKey":"draft","kind":"mail_draft"}]},
              "project":{"_id":"project-1","title":"Launch","status":"active"},
              "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]},
-             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1}}
+             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1,"scheduledStartAt":2000000,"scheduledEndAt":3800000}}
             """#.utf8)
         )
         let detail = try #require(WorkDetail(json: value))
@@ -997,6 +997,8 @@ struct Lab86MailTests {
         #expect(detail.execution.currentStep?.id == "draft")
         #expect(detail.execution.currentStep?.url == "https://example.test/review")
         #expect(detail.execution.remainingSteps == 1)
+        #expect(detail.execution.scheduledStartAt == Date(timeIntervalSince1970: 2_000))
+        #expect(detail.execution.scheduledEndAt == Date(timeIntervalSince1970: 3_800))
     }
 
     @Test @MainActor
@@ -1485,7 +1487,7 @@ struct Lab86MailTests {
     @Test
     func mapsDurableCheckinCandidatesWithoutAssumingWebViewState() throws {
         let data = Data(
-            #"{"_id":"checkin-1","localDate":"2026-07-15","status":"open","responseText":"Shipped the inline reply.","tomorrowIntentText":"Verify production APNs.","candidateItems":[{"kind":"work","id":"work-1","title":"Ship native mail"}]}"#.utf8
+            #"{"_id":"checkin-1","localDate":"2026-07-15","status":"open","responseText":"Shipped the inline reply.","tomorrowIntentText":"Verify production APNs.","reflectionReconcileStatus":"pending","tomorrowPlanStatus":"planning","candidateItems":[{"kind":"work","id":"work-1","title":"Ship native mail"}]}"#.utf8
         )
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
         let checkin = CheckinSummary(json: value)
@@ -1495,10 +1497,12 @@ struct Lab86MailTests {
         #expect(checkin?.candidates.first?.title == "Ship native mail")
         #expect(checkin?.reflectionText == "Shipped the inline reply.")
         #expect(checkin?.tomorrowIntentText == "Verify production APNs.")
+        #expect(checkin?.reflectionReconcileStatus == "pending")
+        #expect(checkin?.tomorrowPlanStatus == "planning")
     }
 
     @Test @MainActor
-    func degradedTomorrowPlanningKeepsTheCheckinAndReturnsItsSafeError() throws {
+    func queuedTomorrowPlanningAcknowledgesTheDurableAnswer() throws {
         let value = try JSONDecoder().decode(
             JSONValue.self,
             from: Data(#"{"_id":"checkin-1","localDate":"2026-08-14","status":"open","candidateItems":[]}"#.utf8)
@@ -1509,19 +1513,13 @@ struct Lab86MailTests {
         )
         store.checkin = try #require(CheckinSummary(json: value))
 
-        do {
-            try store.applyCheckinAnswerResponse(.object([
-                "ok": .bool(true),
-                "status": .string("answered"),
-                "tomorrowPlanStatus": .string("degraded"),
-                "tomorrowPlanError": .string("Tomorrow planning is temporarily unavailable."),
-            ]))
-            Issue.record("Expected degraded tomorrow planning to remain retryable")
-        } catch {
-            #expect(error.localizedDescription == "Tomorrow planning is temporarily unavailable.")
-        }
+        try store.applyCheckinAnswerResponse(.object([
+            "ok": .bool(true),
+            "status": .string("answered"),
+            "tomorrowPlanStatus": .string("pending"),
+        ]))
 
-        #expect(store.checkin?.id == "checkin-1")
+        #expect(store.checkin == nil)
     }
 
     @Test @MainActor

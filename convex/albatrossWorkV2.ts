@@ -5,20 +5,24 @@ import {
 } from '../lib/albatross/area-artifact-storage';
 import { mayCloseAutomatically } from '../lib/albatross/contract';
 import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
+import { isStale } from '../lib/albatross/forgiveness';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import type { MutationCtx, QueryCtx } from './_generated/server';
-import { internalMutation, mutation, query } from './_generated/server';
+import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
+import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { recordCompletionEvent } from './albatrossWork';
-import { now, requireInternalSecret } from './lib';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
   userId: v.optional(v.string()),
 };
+
+const EVIDENCE_RECONCILE_LEASE_MS = 10 * 60_000;
+const MISSED_MOVE_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
 
 const sourceRefValidator = v.object({
   kind: v.string(),
@@ -605,6 +609,59 @@ export const attachProof = mutation({
       );
     }
     return evidenceId;
+  },
+});
+
+/**
+ * Claim newly attached evidence for a single advance pass. The evidence write
+ * is authoritative and quick; this lease keeps plan generation off that write
+ * path while ensuring a deploy cannot strand the follow-up forever.
+ */
+export const beginEvidenceReconcile = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const work = await ctx.db.get(args.workId);
+    if (!work?.lastEvidenceAt) return null;
+    const ts = now();
+    const state = work.workState || work.status;
+    if (['done', 'released', 'archived'].includes(state)) return null;
+    if ((work.lastEvidenceReconcileAt || 0) >= work.lastEvidenceAt) return null;
+    if (work.evidenceReconcileClaimedAt && ts - work.evidenceReconcileClaimedAt < EVIDENCE_RECONCILE_LEASE_MS) {
+      return null;
+    }
+    await ctx.db.patch(work._id, { evidenceReconcileClaimedAt: ts, updatedAt: ts });
+    return {
+      userId: work.userId,
+      workId: String(work._id),
+      evidenceAt: work.lastEvidenceAt,
+    };
+  },
+});
+
+export const completeEvidenceReconcile = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    evidenceAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    await ctx.db.patch(work._id, {
+      lastEvidenceReconcileAt: Math.max(work.lastEvidenceReconcileAt || 0, args.evidenceAt),
+      evidenceReconcileClaimedAt: undefined,
+      updatedAt: now(),
+    });
+  },
+});
+
+export const releaseEvidenceReconcile = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const work = await ctx.db.get(args.workId);
+    if (work?.evidenceReconcileClaimedAt) {
+      await ctx.db.patch(work._id, { evidenceReconcileClaimedAt: undefined, updatedAt: now() });
+    }
   },
 });
 
@@ -1282,6 +1339,122 @@ export const executionSnapshot = query({
   },
 });
 
+async function recentOpenWork(ctx: QueryCtx, limit = 500) {
+  const rows = await ctx.db
+    .query('albatrossIntents')
+    .withIndex('by_updatedAt')
+    .order('desc')
+    .take(limit);
+  return rows.filter((row) => {
+    const state = row.workState || row.status;
+    return !['done', 'released', 'archived'].includes(state);
+  });
+}
+
+/** Passed blocks that still need a human recovery choice. */
+export const missedRecoveryCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const users = [...new Set((await recentOpenWork(ctx)).map((row) => row.userId))].slice(0, 25);
+    const candidates = [];
+    for (const userId of users) {
+      const snapshot = selectExecutionSnapshot(
+        (await projectedWorkRows(ctx, userId, 200)) satisfies ExecutionWorkRow[],
+        ts,
+      );
+      for (const move of snapshot.missedMoves) {
+        if (!move.scheduledStartAt || !move.scheduledEndAt) continue;
+        if (ts - move.scheduledEndAt > MISSED_MOVE_LOOKBACK_MS) continue;
+        const workId = ctx.db.normalizeId('albatrossIntents', move.workId);
+        if (!workId) continue;
+        const lapses = await ctx.db
+          .query('albatrossLapses')
+          .withIndex('by_work', (q) => q.eq('workId', workId))
+          .order('desc')
+          .take(20);
+        if (lapses.some((lapse) => lapse.plannedAt === move.scheduledStartAt)) continue;
+        candidates.push({
+          userId,
+          workId: move.workId,
+          workTitle: move.workTitle,
+          stepKey: move.stepKey,
+          stepTitle: move.stepTitle,
+          scheduledStartAt: move.scheduledStartAt,
+          scheduledEndAt: move.scheduledEndAt,
+        });
+      }
+    }
+    return candidates.slice(0, 50);
+  },
+});
+
+/** Shape-aware reminders for Work that has genuinely stopped moving. */
+export const stalenessReviewCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await recentOpenWork(ctx);
+    return rows
+      .filter((row) => isStale(row, ts))
+      .map((row) => ({
+        userId: row.userId,
+        workId: String(row._id),
+        workTitle: row.title || row.rawText.slice(0, 180),
+        updatedAt: row.updatedAt,
+      }))
+      .slice(0, 100);
+  },
+});
+
+/** Newly attached proof that has not yet changed the plan. */
+export const evidenceReconcileCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await recentOpenWork(ctx);
+    return rows
+      .filter(
+        (row) =>
+          Boolean(row.lastEvidenceAt) &&
+          (row.lastEvidenceReconcileAt || 0) < (row.lastEvidenceAt || 0) &&
+          (!row.evidenceReconcileClaimedAt ||
+            ts - row.evidenceReconcileClaimedAt >= EVIDENCE_RECONCILE_LEASE_MS),
+      )
+      .slice(0, 8);
+  },
+});
+
+export const evidenceReconcileTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[evidence reconcile cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
+      return;
+    }
+    const refs = (internal as any).albatrossWorkV2;
+    const candidates = await ctx.runQuery(refs.evidenceReconcileCandidates, {});
+    let completed = 0;
+    for (const candidate of candidates) {
+      const claim = await ctx.runMutation(refs.beginEvidenceReconcile, { workId: candidate._id });
+      if (!claim) continue;
+      const ok =
+        (await fanOutInternalPost(`${appUrl}/api/cron/evidence-reconcile`, secret, [claim], {
+          label: 'evidence reconcile cron',
+          timeoutMs: 240_000,
+          concurrency: 1,
+        })) === 1;
+      if (ok) completed += 1;
+      else await ctx.runMutation(refs.releaseEvidenceReconcile, { workId: candidate._id });
+    }
+    if (candidates.length) {
+      console.log(`[evidence reconcile cron] completed ${completed}/${candidates.length}`);
+    }
+  },
+});
+
 export const workDetail = query({
   args: {
     ...callerArgs,
@@ -1333,6 +1506,14 @@ export const workDetail = query({
       cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
     );
     const guideSteps = projectedPlanSteps(plan, completedCardIds);
+    const scheduledAction =
+      plan?.status === 'applied'
+        ? ((plan.digitalActions || []) as PlanStepAction[]).find(
+            (action) => action.kind === 'calendar_event' && (action.startIso || action.endIso),
+          )
+        : undefined;
+    const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
+    const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
     return {
       work,
@@ -1346,6 +1527,8 @@ export const workDetail = query({
         guideSteps,
         remainingSteps: guideSteps.filter((step) => !step.done).length,
         totalSteps: guideSteps.length,
+        scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
+        scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
       },
       lapses,
       contract: work.contract ?? null,

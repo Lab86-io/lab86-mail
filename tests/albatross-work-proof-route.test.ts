@@ -24,7 +24,6 @@ function dependencies(state = 'active') {
     attachProof: mock(async () => 'evidence-1'),
     workDetail: mock(async () => ({ work: { workState: state } })),
     mailThread: mock(async () => ({ _id: 'thread-1' })),
-    advanceWork: mock(async () => ({ status: 'ready' as const, workId: 'work-1', planId: 'plan-2' })),
   };
 }
 
@@ -118,11 +117,11 @@ describe('Albatross Work proof route', () => {
       evidenceId: 'evidence-1',
       closed: true,
       replanned: false,
+      replanStatus: 'not_needed',
     });
-    expect(deps.advanceWork).not.toHaveBeenCalled();
   });
 
-  test('open work advances and reports that it replanned', async () => {
+  test('open work queues replanning after the evidence is durable', async () => {
     const deps = dependencies('active');
     const response = await invoke(deps, manualProof);
 
@@ -130,10 +129,8 @@ describe('Albatross Work proof route', () => {
       ok: true,
       evidenceId: 'evidence-1',
       closed: false,
-      replanned: true,
+      replanned: false,
+      replanStatus: 'queued',
     });
-    expect(deps.advanceWork).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: user.userId, workId: 'work-1' }),
-    );
   });
 });

@@ -58,6 +58,7 @@ final class ProductStore {
     var isSearchingMail = false
     var events: [CalendarEventSummary] = []
     var calendarChoices: [CalendarChoice] = []
+    var calendarUnauthorizedAccountIDs: Set<String> = []
     var dueCalendarTasks: [TaskSummary] = []
     var tasks: [TaskSummary] = []
     // Ordered column names of the active board, for grouping and move targets.
@@ -1909,6 +1910,13 @@ final class ProductStore {
         do {
             let result = try await tools.invoke("calendar_list_calendars")
             calendarChoices = (result["calendars"]?.arrayValue ?? []).compactMap(CalendarChoice.init)
+            calendarUnauthorizedAccountIDs = Set(
+                (result["syncStates"]?.arrayValue ?? []).compactMap { state in
+                    state["status"]?.stringValue == "unauthorized"
+                        ? state["accountId"]?.stringValue
+                        : nil
+                }
+            )
         } catch {
             calendarError = error.localizedDescription
         }
@@ -2298,8 +2306,8 @@ final class ProductStore {
     }
 
     func answerCheckin(
+        promptKind: String,
         responseText: String,
-        tomorrowIntentText: String,
         completed: [CheckinCandidateSummary]
     ) async throws {
         guard let checkin else { return }
@@ -2312,8 +2320,8 @@ final class ProductStore {
         let response = try await backend.post(
             path: "/api/albatross/checkin/\(checkin.id)/answer",
             body: .object([
+                "promptKind": .string(promptKind),
                 "responseText": .string(responseText),
-                "tomorrowIntentText": .string(tomorrowIntentText),
                 "completed": .array(completedJSON),
                 "timezone": .string(TimeZone.current.identifier),
             ])
@@ -2323,18 +2331,10 @@ final class ProductStore {
         await refreshToday()
     }
 
-    /// Applies only a fully planned answer. A degraded tomorrow plan remains
-    /// visible and retryable instead of being mistaken for a finished check-in.
+    /// The API acknowledges the durable write, not the slower background work.
     func applyCheckinAnswerResponse(_ response: JSONValue) throws {
         guard response["ok"]?.boolValue == true else {
             throw BackendError.server(status: 500, message: response["error"]?.stringValue ?? "Check-in failed.")
-        }
-        if response["tomorrowPlanStatus"]?.stringValue == "degraded" {
-            throw BackendError.server(
-                status: 503,
-                message: response["tomorrowPlanError"]?.stringValue
-                    ?? "Tomorrow planning is temporarily unavailable."
-            )
         }
         if response["status"]?.stringValue == "answered" {
             self.checkin = nil

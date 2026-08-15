@@ -37,6 +37,36 @@ crons.interval('Work scheduling conductor', { minutes: 15 }, internal.albatrossI
 // safe across deploys, retries, and daylight-saving transitions.
 crons.interval('albatross notifications', { minutes: 15 }, internal.albatrossNotifications.tick, {});
 
+// Check-in writes return as soon as Convex owns the user's words. These two
+// conductors perform the slower interpretation and tomorrow planning without
+// making mobile keep a sheet open for an AI round-trip.
+crons.interval(
+  'check-in reflection reconciliation',
+  { minutes: 2 },
+  internal.albatrossNotifications.reflectionReconcileTick,
+  {},
+);
+crons.interval(
+  'tomorrow planning conductor',
+  { minutes: 2 },
+  internal.albatrossNotifications.tomorrowPlanTick,
+  {},
+);
+
+// Proof can arrive from Mail or chat while no Work surface is open. Advance
+// that Work asynchronously, after the evidence itself is safely stored.
+crons.interval(
+  'evidence reconciliation conductor',
+  { minutes: 5 },
+  internal.albatrossWorkV2.evidenceReconcileTick,
+  {},
+);
+
+// Passed calendar blocks and shape-aware quiet Work are separate signals: one
+// needs a recovery choice now; the other deserves an occasional review.
+crons.interval('passed block recovery', { minutes: 5 }, internal.albatrossNotifications.missedMoveTick, {});
+crons.hourly('shape-aware Work review', { minuteUTC: 23 }, internal.albatrossNotifications.stalenessReviewTick, {});
+
 // Project-scoped routines materialize durable tasks, questions, and in-app
 // notifications. Stable local-date run keys make this safe across retries,
 // deploys, and DST transitions.

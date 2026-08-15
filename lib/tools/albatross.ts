@@ -336,16 +336,40 @@ async function executeToolStep(
   throw new Error(`Unsupported executable Albatross step: ${step.kind}`);
 }
 
+export function selectDefaultExecutionAccount(
+  accounts: Array<{ accountId?: string; status?: string }>,
+  calendars: Array<{ accountId?: string; readOnly?: boolean; isPrimary?: boolean }>,
+  syncStates: Array<{ accountId?: string; status?: string }>,
+): string | undefined {
+  const connected = accounts.filter((account) => account.status === 'connected' && account.accountId);
+  const unauthorized = new Set(
+    syncStates.filter((state) => state.status === 'unauthorized').map((state) => state.accountId),
+  );
+  const writable = calendars.filter(
+    (calendar) => calendar.accountId && !calendar.readOnly && !unauthorized.has(calendar.accountId),
+  );
+  const writableAccounts = new Set(writable.map((calendar) => calendar.accountId));
+  const primary = writable.find((calendar) => calendar.isPrimary)?.accountId;
+  if (primary && connected.some((account) => account.accountId === primary)) return primary;
+  const calendarAccount = connected.find((account) => writableAccounts.has(account.accountId))?.accountId;
+  if (calendarAccount) return calendarAccount;
+  // A newly connected mail account may not have completed its first calendar
+  // sync yet. It remains useful for drafts, but never outranks a known writable
+  // calendar or an account explicitly marked unauthorized.
+  return connected.find((account) => !unauthorized.has(account.accountId))?.accountId;
+}
+
 // Calendar events and email drafts need a provider account; plans rarely name
-// one. Fall back to the user's first connected account so those steps execute
-// instead of silently landing in "unresolved".
+// one. Prefer a connected account whose calendar corpus proves it can accept
+// the write, instead of trusting insertion order or a stale provider grant.
 async function resolveDefaultAccount(userId: string): Promise<string | undefined> {
   try {
-    const accounts = await deps.convexQuery<any[]>((deps.api as any).accounts?.listConnectedAccounts, {
-      userId,
-    });
-    const connected = (accounts || []).find((account) => account.status === 'connected');
-    return connected?.accountId ? String(connected.accountId) : undefined;
+    const [accounts, calendars, syncStates] = await Promise.all([
+      deps.convexQuery<any[]>((deps.api as any).accounts?.listConnectedAccounts, { userId }),
+      deps.convexQuery<any[]>((deps.api as any).calendarData?.listCalendars, { userId }),
+      deps.convexQuery<any[]>((deps.api as any).calendarData?.getSyncStates, { userId }),
+    ]);
+    return selectDefaultExecutionAccount(accounts || [], calendars || [], syncStates || []);
   } catch {
     return undefined;
   }
@@ -622,6 +646,13 @@ export const albatrossReplanWork = defineTool({
       });
       if (!after?.work || !after?.plan) {
         throw new Error('The revised Albatross plan could not be reloaded.');
+      }
+      if (typeof after.work.lastEvidenceAt === 'number') {
+        await deps.convexMutation(workV2Api().completeEvidenceReconcile, {
+          userId,
+          workId: args.workId,
+          evidenceAt: after.work.lastEvidenceAt,
+        });
       }
       const revision = summarizeWorkPlanRevision(before.plan, after.plan);
       const title = String(after.work.title || after.plan.outcome || before.work.rawText || 'Albatross Work');

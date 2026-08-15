@@ -107,9 +107,9 @@ struct EventEditorView: View {
                 }
 
                 Section("Calendar") {
-                    if isCreate, environment.store.accounts.count > 1 {
+                    if isCreate, availableAccounts.count > 1 {
                         Picker("Account", selection: $accountID) {
-                            ForEach(environment.store.accounts) { account in
+                            ForEach(availableAccounts) { account in
                                 Text(account.displayName ?? account.email).tag(account.id)
                             }
                         }
@@ -175,6 +175,20 @@ struct EventEditorView: View {
                 Task {
                     await environment.store.refreshCalendarChoices()
                     await MainActor.run {
+                        if isCreate,
+                           environment.store.calendarUnauthorizedAccountIDs.contains(accountID)
+                            || !availableCalendars.contains(where: { !$0.isReadOnly }) {
+                            accountID = environment.store.calendarChoices.first(where: {
+                                !$0.isReadOnly
+                                    && !environment.store.calendarUnauthorizedAccountIDs.contains($0.accountID)
+                                    && $0.isPrimary
+                            })?.accountID
+                                ?? environment.store.calendarChoices.first(where: {
+                                    !$0.isReadOnly
+                                        && !environment.store.calendarUnauthorizedAccountIDs.contains($0.accountID)
+                                })?.accountID
+                                ?? accountID
+                        }
                         if calendarID.isEmpty {
                             calendarID = availableCalendars.first(where: \.isPrimary)?.calendarID ?? ""
                         }
@@ -216,7 +230,15 @@ struct EventEditorView: View {
 
     private var availableCalendars: [CalendarChoice] {
         environment.store.calendarChoices.filter {
-            $0.accountID == accountID && !$0.isReadOnly
+            $0.accountID == accountID
+                && !$0.isReadOnly
+                && !environment.store.calendarUnauthorizedAccountIDs.contains($0.accountID)
+        }
+    }
+
+    private var availableAccounts: [AccountSummary] {
+        environment.store.accounts.filter {
+            !environment.store.calendarUnauthorizedAccountIDs.contains($0.id)
         }
     }
 

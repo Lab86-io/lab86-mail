@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { existsSync, readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
@@ -101,5 +102,30 @@ describe('the execution loop owns the visible product surfaces', () => {
     expect(html).toBe('');
     expect(html).not.toContain('The plan slipped');
     expect(html).not.toContain('Find another time');
+  });
+
+  test('guided work and recovery are mounted on every execution surface', () => {
+    const detail = readFileSync('components/albatross/WorkDetail.tsx', 'utf8');
+    const today = readFileSync('components/report/TodaySurface.tsx', 'utf8');
+    const calendar = readFileSync('components/calendar/CalendarSurface.tsx', 'utf8');
+    expect(detail).toContain('<GuidedStepPane');
+    expect(detail).toContain('<LapsePrompt');
+    expect(today).toContain('<LapsePrompt');
+    expect(calendar).toContain('<LapsePrompt');
+    expect(existsSync('components/albatross/IntentPip.tsx')).toBe(false);
+  });
+
+  test('continuous execution cron registrations remain visible and separate', () => {
+    const crons = readFileSync('convex/crons.ts', 'utf8');
+    for (const name of [
+      'Work scheduling conductor',
+      'check-in reflection reconciliation',
+      'tomorrow planning conductor',
+      'evidence reconciliation conductor',
+      'passed block recovery',
+      'shape-aware Work review',
+    ]) {
+      expect(crons).toContain(name);
+    }
   });
 });

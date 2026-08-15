@@ -29,6 +29,10 @@ const apiMock = {
   accounts: {
     listConnectedAccounts: 'accounts.listConnectedAccounts',
   },
+  calendarData: {
+    listCalendars: 'calendarData.listCalendars',
+    getSyncStates: 'calendarData.getSyncStates',
+  },
   albatross: {
     getArea: 'albatross.getArea',
   },
@@ -43,6 +47,7 @@ const apiMock = {
     attachProof: 'albatrossWorkV2.attachProof',
     answerQuestion: 'albatrossWorkV2.answerQuestion',
     setAgentState: 'albatrossWorkV2.setAgentState',
+    completeEvidenceReconcile: 'albatrossWorkV2.completeEvidenceReconcile',
     upsertQuestion: 'albatrossWorkV2.upsertQuestion',
   },
   albatrossIntents: {
@@ -123,6 +128,15 @@ async function convexMutationMock(fn: string, args: any) {
 
 async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
+  if (fn === apiMock.calendarData.listCalendars)
+    return connectedAccountsFixture.map((account, index) => ({
+      accountId: account.accountId,
+      providerCalendarId: `calendar-${index}`,
+      isPrimary: index === 0,
+      readOnly: false,
+    }));
+  if (fn === apiMock.calendarData.getSyncStates)
+    return connectedAccountsFixture.map((account) => ({ accountId: account.accountId, status: 'idle' }));
   if (fn === apiMock.albatross.getArea) return areaFixture;
   if (fn === apiMock.albatrossWork.listApprovals)
     return [{ approvalId: 'approval_pending', status: args.status }];
@@ -928,5 +942,24 @@ describe('Albatross tools', () => {
     await expect(
       runTool(albatross.albatrossListProjects.handler, { limit: 1 }, { userId: undefined }),
     ).rejects.toThrow(/Not authenticated/);
+  });
+
+  test('default execution account skips stale grants and prefers a primary writable calendar', () => {
+    expect(
+      albatross.selectDefaultExecutionAccount(
+        [
+          { accountId: 'stale', status: 'connected' },
+          { accountId: 'healthy', status: 'connected' },
+        ],
+        [
+          { accountId: 'stale', isPrimary: true, readOnly: false },
+          { accountId: 'healthy', isPrimary: true, readOnly: false },
+        ],
+        [
+          { accountId: 'stale', status: 'unauthorized' },
+          { accountId: 'healthy', status: 'idle' },
+        ],
+      ),
+    ).toBe('healthy');
   });
 });

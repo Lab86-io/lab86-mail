@@ -2,7 +2,7 @@
 
 import { useConvexAuth, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
-import { ReleaseSheet } from '@/components/albatross/Forgiveness';
+import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
@@ -77,6 +77,8 @@ interface WorkDetailData {
     }>;
     remainingSteps: number;
     totalSteps: number;
+    scheduledStartAt: number | null;
+    scheduledEndAt: number | null;
   };
   contract: OutcomeContract | null;
   evidence: EvidenceLike[];
@@ -121,6 +123,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [completingStep, setCompletingStep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // The stored application keeps its artifacts after an undo; the ledger must
   // not keep offering Undo for a change that is already gone.
   const [undoneOperations, setUndoneOperations] = useState<ReadonlySet<string>>(new Set());
@@ -128,6 +131,11 @@ export function WorkDetail({ workId }: { workId: string }) {
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
   }, [detail?.work.primaryAreaId, setSelectedAreaId]);
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   const advance = async () => {
     setAdvancing(true);
@@ -203,6 +211,12 @@ export function WorkDetail({ workId }: { workId: string }) {
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
+  const blockPassed = Boolean(
+    open &&
+      detail.execution.currentStep?.key &&
+      detail.execution.scheduledEndAt &&
+      detail.execution.scheduledEndAt <= nowMs,
+  );
   const openAttachedChat = () => {
     setChatScope({
       kind: 'work',
@@ -293,6 +307,17 @@ export function WorkDetail({ workId }: { workId: string }) {
                 title={plan?.outcome || work.title || work.rawText}
                 onReleased={() => setReleasing(false)}
                 onCancel={() => setReleasing(false)}
+              />
+            </div>
+          ) : null}
+
+          {blockPassed && detail.execution.currentStep ? (
+            <div className="mt-6">
+              <LapsePrompt
+                workId={workId}
+                stepKey={detail.execution.currentStep.key}
+                stepTitle={detail.execution.currentStep.title}
+                plannedAt={detail.execution.scheduledStartAt || undefined}
               />
             </div>
           ) : null}

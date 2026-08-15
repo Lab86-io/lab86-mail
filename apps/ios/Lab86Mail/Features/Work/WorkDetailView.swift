@@ -104,6 +104,12 @@ struct WorkDetailView: View {
 
                 workLead(detail)
 
+                if let move = passedMove(detail) {
+                    bareSection {
+                        MissedMoveRecoveryView(move: move)
+                    }
+                }
+
                 if let step = detail.execution.currentStep {
                     currentStepSection(step, execution: detail.execution)
                 }
@@ -347,6 +353,28 @@ struct WorkDetailView: View {
                 }
             }
         }
+    }
+
+    private func passedMove(_ detail: WorkDetail) -> WorkExecutionMove? {
+        guard let step = detail.execution.currentStep,
+              let end = detail.execution.scheduledEndAt,
+              end <= .now,
+              !["done", "released", "archived"].contains(detail.work.workState)
+        else { return nil }
+        return WorkExecutionMove(
+            workID: detail.work.id,
+            workTitle: detail.plan?.outcome ?? detail.work.title,
+            stepKey: step.id,
+            stepTitle: step.title,
+            detail: step.detail,
+            url: step.url,
+            phase: "missed",
+            scheduledStartAt: detail.execution.scheduledStartAt,
+            scheduledEndAt: end,
+            remainingSteps: detail.execution.remainingSteps,
+            totalSteps: detail.execution.totalSteps,
+            areaName: nil
+        )
     }
 
     @ViewBuilder
