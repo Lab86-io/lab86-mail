@@ -246,9 +246,7 @@ describe('Xcode Cloud build discovery', () => {
             xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode-27-build' } },
           },
         },
-        included: [
-          { type: 'ciXcodeVersions', id: 'xcode-27-build', attributes: { version: '27A5237l' } },
-        ],
+        included: [{ type: 'ciXcodeVersions', id: 'xcode-27-build', attributes: { version: '27A5237l' } }],
       })),
     ).resolves.toBeUndefined();
   });
