@@ -285,11 +285,10 @@ export function hasExplicitBuildTarget(workflowID, branchRefID) {
 export function matchesExpectedXcodeVersion(actualVersion, expectedVersion) {
   if (actualVersion === expectedVersion) return true;
   const expectedMajor = expectedVersion?.match(/^(\d+)/)?.[1];
-  return Boolean(
-    expectedMajor &&
-      typeof actualVersion === 'string' &&
-      new RegExp(`^${expectedMajor}(?:$|\\.|[A-Z])`).test(actualVersion),
-  );
+  if (!expectedMajor || typeof actualVersion !== 'string') return false;
+  const semanticVersion = `${expectedMajor}(?:\\.\\d+){0,2}`;
+  const buildIdentifier = `${expectedMajor}[A-Z]\\d+[a-z]?`;
+  return new RegExp(`^(?:${semanticVersion}|${buildIdentifier})$`).test(actualVersion);
 }
 
 export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, appStoreConnect) {

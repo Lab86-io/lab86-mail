@@ -245,6 +245,9 @@ describe('Xcode Cloud build discovery', () => {
     expect(matchesExpectedXcodeVersion('27.1', '27.0')).toBe(true);
     expect(matchesExpectedXcodeVersion('26A5237l', '27.0')).toBe(false);
     expect(matchesExpectedXcodeVersion('270A5237l', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27.', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27.foo', '27.0')).toBe(false);
+    expect(matchesExpectedXcodeVersion('27A', '27.0')).toBe(false);
   });
 
   test('requires Xcode Cloud to report the expected immutable source commit', () => {
