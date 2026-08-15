@@ -238,6 +238,19 @@ describe('Xcode Cloud build discovery', () => {
         included: [{ type: 'ciXcodeVersions', id: 'xcode-27', attributes: { version: '27.0' } }],
       })),
     ).resolves.toBeUndefined();
+
+    await expect(
+      validateWorkflowXcodeVersion('production-workflow', '27.0', async () => ({
+        data: {
+          relationships: {
+            xcodeVersion: { data: { type: 'ciXcodeVersions', id: 'xcode-27-build' } },
+          },
+        },
+        included: [
+          { type: 'ciXcodeVersions', id: 'xcode-27-build', attributes: { version: '27A5237l' } },
+        ],
+      })),
+    ).resolves.toBeUndefined();
   });
 
   test('accepts Apple Xcode 27 build identifiers without accepting adjacent major versions', () => {
