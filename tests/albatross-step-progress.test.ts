@@ -118,3 +118,13 @@ describe('Work-level guided-step progress', () => {
     });
   });
 });
+
+describe('identity fallbacks', () => {
+  test('a card id carries identity when action key and title are absent', () => {
+    expect(completedStepIdentity({ cardId: 'card-9' })).toBe('card:card-9');
+  });
+
+  test('nothing usable still forms a stable identity', () => {
+    expect(completedStepIdentity({})).toBe('step:task:untitled');
+  });
+});

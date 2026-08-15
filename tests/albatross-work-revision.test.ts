@@ -72,3 +72,22 @@ describe('Albatross Work plan revisions', () => {
     expect(result.currentStep).toBe('Complete DS-82');
   });
 });
+
+describe('physical steps in revisions', () => {
+  test('physical actions revise by normalized title like any other step', () => {
+    const revision = summarizeWorkPlanRevision(
+      {
+        digitalActions: [],
+        physicalActions: [{ title: 'Visit the county office' }, { title: 'Mail the packet' }],
+      },
+      {
+        digitalActions: [],
+        physicalActions: [{ title: 'Mail the packet' }, { title: 'Get fingerprinted' }],
+      },
+    );
+    expect(revision.changed).toBe(true);
+    expect(revision.keptSteps).toEqual(['Mail the packet']);
+    expect(revision.removedSteps).toEqual(['Visit the county office']);
+    expect(revision.addedSteps).toEqual(['Get fingerprinted']);
+  });
+});

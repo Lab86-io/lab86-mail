@@ -28,6 +28,7 @@ import {
   albatrossReplanWork,
   albatrossRunRoutineNow,
   albatrossSetRoutineConsent,
+  albatrossSplitWork,
   albatrossUndoApproval,
   albatrossUpdateProject,
 } from './albatross';
@@ -341,6 +342,7 @@ const allTools: AnyTool[] = [
   albatrossGetWorkContext,
   albatrossRecordProgress,
   albatrossReplanWork,
+  albatrossSplitWork,
   salvageContext,
   areaList,
   areaHome,

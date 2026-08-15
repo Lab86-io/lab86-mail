@@ -54,6 +54,26 @@ const physicalActionValidator = v.object({
   title: v.string(),
   detail: v.optional(v.string()),
   url: v.optional(v.string()),
+  stepMode: v.optional(
+    v.union(
+      v.literal('agent_does'),
+      v.literal('agent_drafts'),
+      v.literal('you_do_observed'),
+      v.literal('you_do_offline'),
+    ),
+  ),
+  doneWhen: v.optional(v.string()),
+  evidence: v.optional(
+    v.object({
+      kind: v.union(
+        v.literal('mail_confirmation'),
+        v.literal('artifact'),
+        v.literal('observation'),
+        v.literal('attestation'),
+      ),
+      hint: v.optional(v.string()),
+    }),
+  ),
 });
 
 const placeValidator = v.object({
@@ -236,6 +256,39 @@ export const createIntent = mutation({
     });
     await ctx.db.patch(intentId, { conversationId: `work_${String(intentId)}` });
     return args.returnMetadata ? { workId: intentId, changed: true } : intentId;
+  },
+});
+
+/**
+ * External ids form families, for example one check-in's tomorrow siblings.
+ * A prefix scan on the exact-id index finds the whole family so a caller can
+ * reconcile instead of duplicate. Rows report whether work has started; the
+ * caller must never remove started work.
+ */
+export const listByExternalPrefix = query({
+  args: {
+    ...callerArgs,
+    prefix: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const prefix = bounded(args.prefix, 160);
+    if (!prefix) return [];
+    const limit = Math.min(Math.max(Math.trunc(args.limit ?? 24), 1), 40);
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_external', (q) =>
+        q.eq('userId', userId).gte('externalId', prefix).lt('externalId', `${prefix}\uffff`),
+      )
+      .take(limit);
+    return rows.map((row) => ({
+      _id: row._id,
+      externalId: row.externalId ?? null,
+      title: row.title,
+      workState: row.workState ?? 'active',
+      started: (row.stepProgress?.length ?? 0) > 0 || Boolean(row.lastEvidenceAt),
+    }));
   },
 });
 
@@ -565,6 +618,11 @@ export const savePlan = mutation({
         title: bounded(action.title, 200, 'Step')!,
         detail: bounded(action.detail, 1200),
         url: bounded(action.url, 500),
+        stepMode: action.stepMode,
+        doneWhen: bounded(action.doneWhen, 300),
+        evidence: action.evidence
+          ? { kind: action.evidence.kind, hint: bounded(action.evidence.hint, 300) }
+          : undefined,
       })),
       assumptions: args.assumptions.map((assumption) => bounded(assumption, 500)!).filter(Boolean),
       sourceRefs: normalizeSourceRefs(args.sourceRefs),
@@ -587,8 +645,15 @@ export const savePlan = mutation({
       updatedAt: ts,
     });
 
+    // A plan with an expected mail receipt arms the mail watcher; a revision
+    // without one disarms it.
+    const hasMailStep = [...args.digitalActions, ...args.physicalActions].some(
+      (action: any) => action?.evidence?.kind === 'mail_confirmation',
+    );
     await ctx.db.patch(args.intentId, {
       status: planStatus,
+      mailWatchAt: hasMailStep ? (intent.mailWatchAt ?? ts) : undefined,
+      ...(hasMailStep ? {} : { mailWatchClaimedAt: undefined }),
       title: bounded(args.title, 180) ?? intent.title,
       kind: args.kind !== undefined ? bounded(args.kind, 40) : intent.kind,
       // The planner saw research the capture splitter never had, so its

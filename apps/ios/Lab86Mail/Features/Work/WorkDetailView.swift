@@ -38,6 +38,10 @@ struct WorkDetailView: View {
     @State private var isMutating = false
     @State private var showsArchiveConfirmation = false
     @State private var artifactReview: ArtifactReviewRequest?
+    // Drafts key on the step id, so a watcher-driven completion or a reload
+    // never discards text typed for another step.
+    @State private var stepNotes: [String: String] = [:]
+    @State private var browserStep: WorkDetail.ExecutionStep?
 
     var body: some View {
         Group {
@@ -107,6 +111,12 @@ struct WorkDetailView: View {
         }
         .sheet(item: $artifactReview) { request in
             ArtifactActionReviewSheet(request: request) {
+                await load(initial: false)
+            }
+        }
+        .sheet(item: $browserStep) { step in
+            SharedBrowserSheet(workID: route.workID, step: step) {
+                detail = environment.store.cachedWorkDetail(route.workID) ?? detail
                 await load(initial: false)
             }
         }
@@ -220,6 +230,15 @@ struct WorkDetailView: View {
                                             Text(detail)
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
+                                        }
+                                        if step.done, let verification = step.verificationLabel {
+                                            Text(verification)
+                                                .font(.caption2)
+                                                .foregroundStyle(
+                                                    step.verificationLevel == "reported"
+                                                        ? AnyShapeStyle(.tertiary)
+                                                        : AnyShapeStyle(Color.green)
+                                                )
                                         }
                                     }
                                 }
@@ -367,10 +386,42 @@ struct WorkDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if let doneWhen = step.doneWhen {
+                    Text("Done when \(doneWhen)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !step.done, step.evidenceKind == "mail_confirmation" {
+                    Text("The confirmation lands in Mail. Albatross checks this step off when it arrives.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if let rawURL = step.url, let url = URL(string: rawURL) {
-                    Button("Open the relevant site") { openURL(url) }
-                        .buttonStyle(.bordered)
-                        .frame(minHeight: 44)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { stepSiteActions(step, url: url) }
+                        VStack(alignment: .leading, spacing: 10) { stepSiteActions(step, url: url) }
+                    }
+                }
+
+                if step.isOffline, !step.done {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("What came of it? The answer feeds the rest of the plan.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField(
+                            "The fee is $120. The office wants the packet by Friday.",
+                            text: Binding(
+                                get: { stepNotes[step.id] ?? "" },
+                                set: { stepNotes[step.id] = $0 }
+                            ),
+                            axis: .vertical
+                        )
+                        .lineLimit(2...4)
+                        .textFieldStyle(.roundedBorder)
+                    }
                 }
 
                 ViewThatFits(in: .horizontal) {
@@ -379,6 +430,16 @@ struct WorkDetailView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func stepSiteActions(_ step: WorkDetail.ExecutionStep, url: URL) -> some View {
+        Button("Work on this page here") { browserStep = step }
+            .buttonStyle(.borderedProminent)
+            .frame(minHeight: 44)
+        Button("Open the relevant site") { openURL(url) }
+            .buttonStyle(.bordered)
+            .frame(minHeight: 44)
     }
 
     @ViewBuilder
@@ -502,7 +563,10 @@ struct WorkDetailView: View {
         if let previous { detail = previous.completing(stepID: step.id) }
         isMutating = true
         defer { isMutating = false }
-        if await environment.store.completeWorkStep(route.workID, stepKey: step.id) {
+        let note = stepNotes[step.id]
+        if await environment.store.completeWorkStep(route.workID, stepKey: step.id, note: note) {
+            // Only the submitted step's draft clears; failure keeps it for retry.
+            stepNotes.removeValue(forKey: step.id)
             detail = environment.store.cachedWorkDetail(route.workID) ?? detail
         } else {
             detail = previous

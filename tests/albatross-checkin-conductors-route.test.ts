@@ -60,7 +60,7 @@ describe('check-in background conductors', () => {
     );
   });
 
-  test('tomorrow creation is idempotently keyed to the check-in before planning', async () => {
+  test('a split fallback keeps the legacy idempotent key before planning', async () => {
     const convexMutation = mock(async (_fn: any, args: any) =>
       args.externalId ? { workId: 'work-1', changed: true } : { stale: false },
     );
@@ -70,6 +70,10 @@ describe('check-in background conductors', () => {
       convexMutation: convexMutation as any,
       convexQuery: mock(async () => null) as any,
       advanceWork,
+      splitTomorrow: mock(async () => ({
+        items: [{ title: 'Call the DMV.', rawText: 'Call the DMV.', existingWorkId: null }],
+        fallback: true,
+      })) as any,
       reportError: mock(() => undefined),
     });
     const response = await post(
@@ -95,6 +99,195 @@ describe('check-in background conductors', () => {
       workId: 'work-1',
       timezone: 'America/New_York',
     });
+    expect(convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ checkinId: 'checkin-1', workId: 'work-1', workIds: ['work-1'] }),
+    );
+  });
+
+  test('independent outcomes become independent sibling Works', async () => {
+    let created = 0;
+    const convexMutation = mock(async (_fn: any, args: any) => {
+      if (args.externalId) {
+        created += 1;
+        return { workId: `work-${created}`, changed: true };
+      }
+      return { stale: false };
+    });
+    const advanceWork = mock(async () => ({ status: 'ready' })) as any;
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => true,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async () => []) as any,
+      advanceWork,
+      splitTomorrow: mock(async () => ({
+        items: [
+          { title: 'Book a massage for Tree', rawText: 'Book a massage.', existingWorkId: null },
+          { title: 'Order new sheets', rawText: 'Order new sheets.', existingWorkId: null },
+          { title: 'Reserve dinner', rawText: 'Reserve dinner.', existingWorkId: null },
+        ],
+        fallback: false,
+      })) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'Massage, sheets, dinner.',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.workIds).toEqual(['work-1', 'work-2', 'work-3']);
+    expect(convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ externalId: 'checkin:checkin-1:tomorrow:book-a-massage-for-tree' }),
+    );
+    expect(convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ externalId: 'checkin:checkin-1:tomorrow:order-new-sheets' }),
+    );
+    expect(advanceWork).toHaveBeenCalledTimes(3);
+    expect(convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workIds: ['work-1', 'work-2', 'work-3'], status: 'ready' }),
+    );
+  });
+
+  test('an unchanged sibling with a pending question reports needs_input without replanning', async () => {
+    const convexMutation = mock(async (_fn: any, args: any) => {
+      if (args.externalId) return { workId: 'work-1', changed: false };
+      return { stale: false };
+    });
+    const advanceWork = mock(async () => ({ status: 'ready' })) as any;
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => true,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async (_fn: any, args: any) =>
+        args.prefix ? [] : { plan: { status: 'ready' }, questions: [{ status: 'pending' }] },
+      ) as any,
+      advanceWork,
+      splitTomorrow: mock(async () => ({
+        items: [{ title: 'Call the DMV.', rawText: 'Call the DMV.', existingWorkId: null }],
+        fallback: false,
+      })) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'Call the DMV.',
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe('needs_input');
+    expect(advanceWork).not.toHaveBeenCalled();
+  });
+
+  test('a re-save keeps matched siblings and releases only unstarted leftovers', async () => {
+    const released: string[] = [];
+    const convexMutation = mock(async (_fn: any, args: any) => {
+      if (args.reason) {
+        released.push(args.workId);
+        return { released: true };
+      }
+      if (args.externalId) return { workId: 'work-new', changed: true };
+      return { stale: false };
+    });
+    const advanceWork = mock(async () => ({ status: 'ready' })) as any;
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => true,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async () => [
+        {
+          _id: 'work-old-blob',
+          externalId: 'checkin:checkin-1:tomorrow',
+          title: 'Massage, sheets, dinner',
+          workState: 'active',
+          started: false,
+        },
+        {
+          _id: 'work-keep',
+          externalId: 'checkin:checkin-1:tomorrow:order-new-sheets',
+          title: 'Order new sheets',
+          workState: 'active',
+          started: true,
+        },
+      ]) as any,
+      advanceWork,
+      splitTomorrow: mock(async (input: any) => {
+        expect(input.existing).toHaveLength(2);
+        return {
+          items: [
+            { title: 'Order new sheets', rawText: 'Order new sheets.', existingWorkId: 'work-keep' },
+            { title: 'Book a massage', rawText: 'Book a massage.', existingWorkId: null },
+          ],
+          fallback: false,
+        };
+      }) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'Sheets and massage.',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.workIds).toEqual(['work-keep', 'work-new']);
+    expect(released).toEqual(['work-old-blob']);
+    // The matched sibling is not re-created and not re-planned.
+    expect(advanceWork).toHaveBeenCalledTimes(1);
+    expect(advanceWork).toHaveBeenCalledWith(expect.objectContaining({ workId: 'work-new' }));
+  });
+
+  test('planning stops at the time budget and reports the created siblings', async () => {
+    let created = 0;
+    const convexMutation = mock(async (_fn: any, args: any) => {
+      if (args.externalId) {
+        created += 1;
+        return { workId: `work-${created}`, changed: true };
+      }
+      return { stale: false };
+    });
+    const advanceWork = mock(async () => ({ status: 'ready' })) as any;
+    const clock = [0, 0, 500_000_000];
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => true,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async () => []) as any,
+      advanceWork,
+      splitTomorrow: mock(async () => ({
+        items: [
+          { title: 'First', rawText: 'First.', existingWorkId: null },
+          { title: 'Second', rawText: 'Second.', existingWorkId: null },
+        ],
+        fallback: false,
+      })) as any,
+      nowMs: () => clock.shift() ?? 500_000_000,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'First and second.',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(advanceWork).toHaveBeenCalledTimes(1);
+    expect(convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ workIds: ['work-1', 'work-2'] }),
+    );
   });
 
   test('tomorrow planning rejects requests that are not internal cron calls', async () => {

@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
+import {
+  splitTomorrowWork,
+  tomorrowExternalId,
+  tomorrowExternalPrefix,
+} from '@/lib/albatross/tomorrow-split';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -8,12 +13,17 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+/** Planning stops at this budget. The work conductor advances the rest. */
+const PLAN_BUDGET_MS = 230_000;
+
 interface TomorrowDependencies {
   isInternalCronRequest: typeof isInternalCronRequest;
   convexMutation: typeof convexMutation;
   convexQuery: typeof convexQuery;
   advanceWork: typeof advanceWork;
+  splitTomorrow: typeof splitTomorrowWork;
   reportError: typeof console.error;
+  nowMs: () => number;
 }
 
 const defaults: TomorrowDependencies = {
@@ -21,10 +31,13 @@ const defaults: TomorrowDependencies = {
   convexMutation,
   convexQuery,
   advanceWork,
+  splitTomorrow: splitTomorrowWork,
   reportError: console.error,
+  nowMs: () => Date.now(),
 };
 
-export function createCheckinTomorrowPost(deps: TomorrowDependencies = defaults) {
+export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencies> = {}) {
+  const deps: TomorrowDependencies = { ...defaults, ...overrides };
   return async function POST(req: NextRequest) {
     if (!deps.isInternalCronRequest(req)) {
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -41,50 +54,115 @@ export function createCheckinTomorrowPost(deps: TomorrowDependencies = defaults)
       );
     }
 
-    let workId: string | undefined;
+    const workIds: string[] = [];
     try {
-      const upserted = await deps.convexMutation<any>((api as any).albatrossIntents.createIntent, {
+      // One answer holds many independent outcomes. Reconcile the split
+      // against the Works an earlier save of this check-in created.
+      const prefix = tomorrowExternalPrefix(checkinId);
+      const existingRows =
+        (await deps
+          .convexQuery<any[]>((api as any).albatrossIntents.listByExternalPrefix, { userId, prefix })
+          .catch(() => [])) || [];
+      const existing = existingRows.map((row) => ({
+        workId: String(row._id),
+        title: String(row.title || ''),
+        started: Boolean(row.started),
+        workState: String(row.workState || 'active'),
+        externalId: typeof row.externalId === 'string' ? row.externalId : null,
+      }));
+
+      const split = await deps.splitTomorrow({
         userId,
-        externalId: `checkin:${checkinId}:tomorrow`,
-        rawText: tomorrowIntentText,
-        source: 'text',
-        title: tomorrowIntentText.slice(0, 180),
-        replaceRawText: true,
-        returnMetadata: true,
+        tomorrowIntentText,
+        existing: existing.map(({ workId, title, started }) => ({ workId, title, started })),
       });
-      workId = String(upserted?.workId || '');
-      if (!workId) throw new Error('Tomorrow Work could not be created.');
-      const existing = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
-        userId,
-        workId,
-      });
-      const existingStatus = tomorrowWorkPlanStatus(existing);
-      let status: 'ready' | 'needs_input';
-      if (!upserted.changed && existingStatus === 'needs_input') status = 'needs_input';
-      else if (!upserted.changed && existingStatus === 'already_applied') status = 'ready';
-      else {
-        const planned = await deps.advanceWork({ userId, workId, timezone });
-        status = planned.status === 'needs_input' ? 'needs_input' : 'ready';
+
+      // Ids are content-stable, so an unmatched repeat of the same item must
+      // upsert its existing row. Only ids assigned during this run are
+      // reserved; seeding from prior rows would fork duplicates on retry.
+      const taken = new Set<string>();
+      const kept = new Set<string>();
+      const planTargets: string[] = [];
+      let needsInput = false;
+
+      for (const item of split.items) {
+        if (item.existingWorkId) {
+          kept.add(item.existingWorkId);
+          workIds.push(item.existingWorkId);
+          continue;
+        }
+        const externalId = split.fallback ? prefix : tomorrowExternalId(checkinId, item.title, taken);
+        taken.add(externalId);
+        const upserted = await deps.convexMutation<any>((api as any).albatrossIntents.createIntent, {
+          userId,
+          externalId,
+          rawText: item.rawText,
+          source: 'text',
+          title: item.title.slice(0, 180),
+          replaceRawText: true,
+          returnMetadata: true,
+        });
+        const workId = String(upserted?.workId || '');
+        if (!workId) throw new Error('Tomorrow Work could not be created.');
+        kept.add(workId);
+        workIds.push(workId);
+        if (upserted?.changed === false) {
+          const detail = await deps
+            .convexQuery<any>((api as any).albatrossWorkV2.workDetail, { userId, workId })
+            .catch(() => null);
+          const existingStatus = tomorrowWorkPlanStatus(detail);
+          if (existingStatus === 'needs_input') needsInput = true;
+          if (existingStatus !== 'advance') continue;
+        }
+        planTargets.push(workId);
       }
+
+      // A sibling the new answer no longer names is released, and only while
+      // nothing has happened to it. Started work is never removed here.
+      for (const row of existing) {
+        if (kept.has(row.workId) || row.started || row.workState !== 'active') continue;
+        await deps
+          .convexMutation((api as any).albatrossWorkV2.releaseUnstartedWork, {
+            userId,
+            workId: row.workId,
+            reason: 'The revised check-in plan replaced this Work.',
+          })
+          .catch(() => undefined);
+      }
+
+      const deadline = deps.nowMs() + PLAN_BUDGET_MS;
+      for (const workId of planTargets) {
+        if (deps.nowMs() > deadline) break;
+        const planned = await deps.advanceWork({ userId, workId, timezone });
+        if (planned.status === 'needs_input') needsInput = true;
+      }
+
+      const status: 'ready' | 'needs_input' = needsInput ? 'needs_input' : 'ready';
       await deps.convexMutation((api as any).albatrossNotifications.completeTomorrowPlan, {
         userId,
         checkinId,
-        workId,
+        workId: workIds[0],
+        workIds,
         status,
       });
-      return NextResponse.json({ ok: true, checkinId, workId, status });
+      return NextResponse.json({ ok: true, checkinId, workId: workIds[0], workIds, status });
     } catch (error) {
-      deps.reportError('[cron/checkin-tomorrow] planning failed', checkinId, workId, error);
+      deps.reportError('[cron/checkin-tomorrow] planning failed', checkinId, workIds[0], error);
       await deps
         .convexMutation((api as any).albatrossNotifications.failTomorrowPlan, {
           userId,
           checkinId,
-          ...(workId ? { workId } : {}),
+          ...(workIds[0] ? { workId: workIds[0] } : {}),
           error: 'Tomorrow planning is temporarily unavailable.',
         })
         .catch(() => undefined);
       return NextResponse.json(
-        { ok: false, error: 'Tomorrow planning failed.', checkinId, ...(workId ? { workId } : {}) },
+        {
+          ok: false,
+          error: 'Tomorrow planning failed.',
+          checkinId,
+          ...(workIds[0] ? { workId: workIds[0] } : {}),
+        },
         { status: 500 },
       );
     }

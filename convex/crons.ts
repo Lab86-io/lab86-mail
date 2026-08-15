@@ -8,6 +8,7 @@ export const CONTINUOUS_EXECUTION_CRON_NAMES = {
   reflection: 'check-in reflection reconciliation',
   tomorrow: 'tomorrow planning conductor',
   evidence: 'evidence reconciliation conductor',
+  mailWatch: 'step mail watch conductor',
   recovery: 'passed block recovery',
   review: 'shape-aware Work review',
 } as const;
@@ -73,6 +74,16 @@ crons.interval(
   CONTINUOUS_EXECUTION_CRON_NAMES.evidence,
   { minutes: 5 },
   internal.albatrossWorkV2.evidenceReconcileTick,
+  {},
+);
+
+// A step that expects a mail confirmation watches the inbox through a poll:
+// recent confirmable threads meet the evidence gate, and a receipt checks the
+// step off with the thread bound as step evidence.
+crons.interval(
+  CONTINUOUS_EXECUTION_CRON_NAMES.mailWatch,
+  { minutes: 15 },
+  internal.albatrossWorkV2.mailWatchTick,
   {},
 );
 

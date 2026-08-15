@@ -1168,9 +1168,12 @@ final class ProductStore {
         }
     }
 
-    func completeWorkStep(_ workID: String, stepKey: String?) async -> Bool {
+    func completeWorkStep(_ workID: String, stepKey: String?, note: String? = nil) async -> Bool {
         var body: [String: JSONValue] = ["timezone": .string(TimeZone.current.identifier)]
         if let stepKey { body["stepKey"] = .string(stepKey) }
+        if let note = note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty {
+            body["note"] = .string(String(note.prefix(2_000)))
+        }
         let previous = workDetails[workID]
         let optimistic = stepKey.flatMap { previous?.completing(stepID: $0) }
         if let optimistic { workDetails[workID] = optimistic }
@@ -1223,14 +1226,97 @@ final class ProductStore {
         }
     }
 
-    func proofMatches(subject: String, snippet: String, messageID: String?) async -> [WorkProofCandidate] {
+    struct WorkBrowserSession: Sendable {
+        let sessionID: String
+        let liveViewURL: String
+        let replayURL: String
+    }
+
+    /// Open one shared browser for a guided step. The live view is
+    /// interactive: the user acts inside it, and secrets go to the site only.
+    func startWorkSession(_ workID: String, stepKey: String) async -> WorkBrowserSession? {
         do {
             let result = try await backend.post(
-                path: "/api/albatross/proof-matches",
+                path: "/api/albatross/work/\(workID)/session",
+                body: .object(["action": .string("start"), "stepKey": .string(stepKey)])
+            )
+            guard let sessionID = result["sessionId"]?.stringValue,
+                  let liveViewURL = result["liveViewUrl"]?.stringValue else {
+                workError = "The shared browser could not open."
+                return nil
+            }
+            return WorkBrowserSession(
+                sessionID: sessionID,
+                liveViewURL: liveViewURL,
+                replayURL: result["replayUrl"]?.stringValue ?? ""
+            )
+        } catch {
+            workError = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Ask the server to read the page and judge the step's doneWhen. A
+    /// satisfied verdict completes the step server-side with the session
+    /// bound as observed evidence.
+    func verifyWorkSession(
+        _ workID: String,
+        sessionID: String,
+        stepKey: String
+    ) async -> (satisfied: Bool, reason: String)? {
+        do {
+            let result = try await backend.post(
+                path: "/api/albatross/work/\(workID)/session",
                 body: .object([
-                    "subject": .string(subject),
-                    "snippet": .string(String(snippet.prefix(2_000))),
+                    "action": .string("verify"),
+                    "sessionId": .string(sessionID),
+                    "stepKey": .string(stepKey),
                 ])
+            )
+            let satisfied = result["satisfied"]?.boolValue ?? false
+            if satisfied {
+                if let optimistic = workDetails[workID]?.completing(stepID: stepKey) {
+                    workDetails[workID] = optimistic
+                }
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.refreshWork()
+                    _ = try? await self.loadWorkDetail(workID)
+                }
+            }
+            return (satisfied, result["reason"]?.stringValue ?? "")
+        } catch {
+            workError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func endWorkSession(_ workID: String, sessionID: String) async {
+        _ = try? await backend.post(
+            path: "/api/albatross/work/\(workID)/session",
+            body: .object(["action": .string("end"), "sessionId": .string(sessionID)])
+        )
+    }
+
+    func proofMatches(
+        subject: String,
+        snippet: String,
+        messageID: String?,
+        accountID: String? = nil,
+        providerThreadID: String? = nil
+    ) async -> [WorkProofCandidate] {
+        do {
+            var body: [String: JSONValue] = [
+                "subject": .string(subject),
+                "snippet": .string(String(snippet.prefix(2_000))),
+            ]
+            // The thread identity lets the server block marketing and code
+            // mail by class before any candidate is even ranked.
+            if let accountID { body["accountId"] = .string(accountID) }
+            if let providerThreadID { body["providerThreadId"] = .string(providerThreadID) }
+            let result = try await backend.post(
+                path: "/api/albatross/proof-matches",
+                body: .object(body)
             )
             return (result["candidates"]?.arrayValue ?? []).compactMap {
                 WorkProofCandidate(

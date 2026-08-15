@@ -3,9 +3,10 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
-import { GuidedStepPane } from '@/components/albatross/GuidedStep';
+import { type GuidedSession, GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
+import { SplitSheet } from '@/components/albatross/SplitSheet';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
@@ -17,6 +18,48 @@ import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { cn } from '@/lib/utils';
+
+export interface ExecutionStepRow {
+  key: string;
+  identity?: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  done: boolean;
+  cardId: string | null;
+  stepMode?: 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline' | null;
+  doneWhen?: string | null;
+  evidenceKind?: string | null;
+  evidenceHint?: string | null;
+  verification?: {
+    level: 'reported' | 'artifact' | 'observed' | 'confirmed';
+    evidenceTitle: string | null;
+    evidenceUrl: string | null;
+  } | null;
+}
+
+/**
+ * The honest briefing for one step. The stored mode wins; the legacy guesses
+ * (physical means offline, a url means review) only fill silence, and nothing
+ * claims "only you" for work an agent can carry.
+ */
+export function guidedNeedsYou(step: ExecutionStepRow): string[] {
+  switch (step.stepMode) {
+    case 'agent_does':
+      return [];
+    case 'agent_drafts':
+      return ['Approve the draft before it goes anywhere.'];
+    case 'you_do_observed':
+      return ['Act on the page yourself. Review before anything is submitted.'];
+    case 'you_do_offline':
+      return ['Complete the real-world part and return here to record it.'];
+    default:
+      if (step.kind === 'physical') return ['Complete the real-world part and return here to record it.'];
+      if (step.url) return ['Review the page before anything is submitted.'];
+      return [];
+  }
+}
 
 interface WorkQuestion {
   _id: string;
@@ -57,24 +100,8 @@ export interface WorkDetailData {
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
   execution: {
-    currentStep: null | {
-      key: string;
-      kind: string;
-      title: string;
-      detail: string | null;
-      url: string | null;
-      done: boolean;
-      cardId: string | null;
-    };
-    guideSteps: Array<{
-      key: string;
-      kind: string;
-      title: string;
-      detail: string | null;
-      url: string | null;
-      done: boolean;
-      cardId: string | null;
-    }>;
+    currentStep: null | ExecutionStepRow;
+    guideSteps: ExecutionStepRow[];
     remainingSteps: number;
     totalSteps: number;
     scheduledStartAt: number | null;
@@ -152,8 +179,13 @@ export function WorkDetail({ workId }: { workId: string }) {
     api.albatrossWorkV2.workDetail,
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
   ) as WorkDetailData | null | undefined;
+  const session = useQuery(
+    (api as any).albatrossBrowserSessions.activeSessionForWork,
+    isAuthenticated ? { workId } : 'skip',
+  ) as GuidedSession | null | undefined;
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [splitting, setSplitting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [guided, setGuided] = useState(false);
   const [activeGuideId, setActiveGuideId] = useState<string>();
@@ -161,6 +193,7 @@ export function WorkDetail({ workId }: { workId: string }) {
     () => new Set(),
   );
   const [savingStepIds, setSavingStepIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [sessionBusy, setSessionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -223,7 +256,48 @@ export function WorkDetail({ workId }: { workId: string }) {
     }
   };
 
-  const completeGuidedStep = async (stepKey: string) => {
+  const sessionAction = async (body: Record<string, unknown>, fallback: string) => {
+    setSessionBusy(true);
+    setError(null);
+    try {
+      return await postJson(`/api/albatross/work/${encodeURIComponent(workId)}/session`, body, fallback);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : fallback);
+      return null;
+    } finally {
+      setSessionBusy(false);
+    }
+  };
+
+  const startSession = (stepKey: string) =>
+    void sessionAction({ action: 'start', stepKey }, 'The shared browser could not open.');
+
+  const endSession = () => {
+    if (!session) return;
+    void sessionAction({ action: 'end', sessionId: session.sessionId }, 'The shared browser did not close.');
+  };
+
+  const verifySession = async (stepKey: string) => {
+    if (!session) return;
+    const result = await sessionAction(
+      { action: 'verify', sessionId: session.sessionId, stepKey },
+      'The page could not be checked.',
+    );
+    // A satisfied verdict already completed the step server-side with the
+    // session bound as evidence; mirror it optimistically like a manual check.
+    if (result?.satisfied) {
+      setOptimisticCompletedSteps((current) => new Set([...current, stepKey]));
+      const visibleSteps = guideStepsWithOptimisticCompletion(
+        detail?.execution.guideSteps || [],
+        new Set([...optimisticCompletedSteps, stepKey]),
+      );
+      const selectedIndex = visibleSteps.findIndex((step) => step.key === stepKey);
+      const nextStep = visibleSteps.slice(selectedIndex + 1).find((step) => !step.done);
+      if (nextStep) setActiveGuideId(nextStep.key);
+    }
+  };
+
+  const completeGuidedStep = async (stepKey: string, note?: string): Promise<boolean> => {
     const visibleSteps = guideStepsWithOptimisticCompletion(
       detail?.execution.guideSteps || [],
       optimisticCompletedSteps,
@@ -237,9 +311,14 @@ export function WorkDetail({ workId }: { workId: string }) {
     try {
       await postJson(
         `/api/albatross/work/${encodeURIComponent(workId)}/step`,
-        { stepKey, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        {
+          stepKey,
+          ...(note ? { note } : {}),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
         'Could not complete this step.',
       );
+      return true;
     } catch (cause) {
       setOptimisticCompletedSteps((current) => {
         const next = new Set(current);
@@ -248,6 +327,7 @@ export function WorkDetail({ workId }: { workId: string }) {
       });
       setActiveGuideId(stepKey);
       setError(cause instanceof Error ? cause.message : 'Could not complete this step.');
+      return false;
     } finally {
       setSavingStepIds((current) => {
         const next = new Set(current);
@@ -305,21 +385,25 @@ export function WorkDetail({ workId }: { workId: string }) {
           detail: step.detail,
           url: step.url,
           knows: [],
-          needsYou:
-            step.kind === 'physical'
-              ? ['Complete the real-world part and return here to record it.']
-              : step.url
-                ? ['Review the page before anything is submitted.']
-                : [],
+          needsYou: guidedNeedsYou(step),
           done: step.done,
+          mode: step.stepMode ?? null,
+          doneWhen: step.doneWhen ?? null,
+          evidenceKind: step.evidenceKind ?? null,
+          verification: step.verification ?? null,
         }))}
         activeId={activeGuideId || visibleCurrentStep?.key}
         onSelect={setActiveGuideId}
         onExit={() => setGuided(false)}
-        onComplete={(stepKey) => void completeGuidedStep(stepKey)}
+        onComplete={(stepKey, note) => completeGuidedStep(stepKey, note)}
         onDiscuss={openAttachedChat}
         savingIds={savingStepIds}
         error={error}
+        session={session ?? null}
+        sessionBusy={sessionBusy}
+        onStartSession={startSession}
+        onVerifySession={(stepKey) => void verifySession(stepKey)}
+        onEndSession={endSession}
       />
     );
   }
@@ -357,18 +441,45 @@ export function WorkDetail({ workId }: { workId: string }) {
                   </Button>
                 )}
                 {open ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setReleasing((value) => !value)}
-                  >
-                    Put it down
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSplitting((value) => !value);
+                        setReleasing(false);
+                      }}
+                    >
+                      Split this work
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setReleasing((value) => !value);
+                        setSplitting(false);
+                      }}
+                    >
+                      Put it down
+                    </Button>
+                  </>
                 ) : null}
               </>
             }
           />
+
+          {splitting ? (
+            <SplitSheet
+              workId={workId}
+              onDone={(workIds) => {
+                setSplitting(false);
+                if (workIds[0]) setSelectedWorkId(workIds[0]);
+              }}
+              onCancel={() => setSplitting(false)}
+            />
+          ) : null}
 
           {releasing ? (
             <div className="mt-6">

@@ -669,6 +669,33 @@ export default defineSchema({
   // Source-normalized evidence is the substrate for the personal index. The
   // target is optional: unassigned evidence remains searchable until the user
   // or classifier links it to an Area, Project, Work item, or Routine.
+  // One row per shared browser session opened from guided work. The live-view
+  // URL is interactive; the replay URL becomes the evidence url when a step
+  // verifies inside the session.
+  albatrossBrowserSessions: defineTable({
+    userId: v.string(),
+    workId: v.string(),
+    stepKey: v.optional(v.string()),
+    stepIdentity: v.optional(v.string()),
+    sessionId: v.string(),
+    liveViewUrl: v.string(),
+    replayUrl: v.string(),
+    status: v.union(
+      v.literal('starting'),
+      v.literal('agent'),
+      v.literal('user'),
+      v.literal('verifying'),
+      v.literal('ended'),
+      v.literal('failed'),
+    ),
+    statusDetail: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId', 'workId'])
+    .index('by_user_session', ['userId', 'sessionId']),
+
   albatrossEvidence: defineTable({
     userId: v.string(),
     targetKind: v.optional(
@@ -689,10 +716,17 @@ export default defineSchema({
       v.literal('github_commit'),
       v.literal('mcp_item'),
       v.literal('manual'),
+      // Evidence an agent observed inside a shared browser session: the page
+      // reached its confirmation state, with the session replay as the url.
+      v.literal('browser_session'),
     ),
     sourceId: v.string(),
     connectionId: v.optional(v.string()),
     accountId: v.optional(v.string()),
+    // Evidence can bind to one plan step. The identity survives plan
+    // regeneration (lib/albatross/step-progress.ts), so a step keeps its
+    // receipts across revisions.
+    stepIdentity: v.optional(v.string()),
     title: v.string(),
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
@@ -1003,6 +1037,10 @@ export default defineSchema({
     // Final-step proof is an outbox entry, written atomically with completion.
     // The evidence conductor materializes it and clears it idempotently.
     pendingStepEvidenceAt: v.optional(v.number()),
+    // Armed while the applied plan holds an unfinished step whose evidence is
+    // an expected mail confirmation. The watcher conductor polls these.
+    mailWatchAt: v.optional(v.number()),
+    mailWatchClaimedAt: v.optional(v.number()),
     pendingStepEvidence: v.optional(
       v.object({
         planId: v.string(),
@@ -1093,6 +1131,9 @@ export default defineSchema({
           cardId: v.optional(v.string()),
           completedAt: v.number(),
           source: v.union(v.literal('user'), v.literal('task'), v.literal('evidence')),
+          // What came of an offline step, in the user's words. The note is
+          // also written as step-bound evidence and feeds the next replan.
+          note: v.optional(v.string()),
         }),
       ),
     ),
@@ -1112,6 +1153,7 @@ export default defineSchema({
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
+    .index('by_mail_watch', ['mailWatchAt'])
     .index('by_capture', ['captureId']),
 
   // A generated plan for one intent. digitalActions match the work-model
@@ -1195,6 +1237,28 @@ export default defineSchema({
         title: v.string(),
         detail: v.optional(v.string()),
         url: v.optional(v.string()),
+        // The honest taxonomy, written at plan time: who can carry the step,
+        // what observable state means done, and what proof looks like.
+        stepMode: v.optional(
+          v.union(
+            v.literal('agent_does'),
+            v.literal('agent_drafts'),
+            v.literal('you_do_observed'),
+            v.literal('you_do_offline'),
+          ),
+        ),
+        doneWhen: v.optional(v.string()),
+        evidence: v.optional(
+          v.object({
+            kind: v.union(
+              v.literal('mail_confirmation'),
+              v.literal('artifact'),
+              v.literal('observation'),
+              v.literal('attestation'),
+            ),
+            hint: v.optional(v.string()),
+          }),
+        ),
       }),
     ),
     assumptions: v.array(v.string()),
@@ -2173,6 +2237,9 @@ export default defineSchema({
     tomorrowPlanNextAt: v.optional(v.number()),
     tomorrowPlanError: v.optional(v.string()),
     tomorrowWorkId: v.optional(v.id('albatrossIntents')),
+    // The split writes one Work per independent outcome in the answer. The
+    // first id mirrors tomorrowWorkId for older clients.
+    tomorrowWorkIds: v.optional(v.array(v.string())),
     reconciledChanges: v.optional(
       v.array(
         v.object({

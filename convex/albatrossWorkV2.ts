@@ -20,6 +20,11 @@ import {
   progressFromPlanCompletions,
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
+import {
+  type StepEvidenceLike,
+  type StepVerification,
+  stepVerification,
+} from '../lib/albatross/step-verification';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -95,6 +100,9 @@ type PlanStepAction = {
   startIso?: string;
   endIso?: string;
   sourceRefs?: Array<{ url?: string }>;
+  stepMode?: 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline';
+  doneWhen?: string;
+  evidence?: { kind: string; hint?: string };
 };
 
 function keyedPlanActions(plan: Doc<'albatrossIntentPlans'>) {
@@ -262,6 +270,35 @@ export const releaseWork = mutation({
   },
 });
 
+/**
+ * A revised check-in or a split can supersede a sibling. Automatic release is
+ * legal only while nothing has happened: no step progress, no evidence, and an
+ * open state. Machinery never removes started work.
+ */
+export const releaseUnstartedWork = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const started = (work.stepProgress?.length ?? 0) > 0 || Boolean(work.lastEvidenceAt);
+    if (started || (work.workState ?? 'active') !== 'active') return { released: false };
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'released',
+      status: 'archived',
+      releaseReason: bounded(args.reason, 400) || 'Superseded by a newer plan.',
+      releaseProposedBy: 'system',
+      releasedAt: ts,
+      updatedAt: ts,
+    });
+    return { released: true };
+  },
+});
+
 /** Picking something back up is always allowed, and costs nothing to say. */
 export const reopenWork = mutation({
   args: { ...callerArgs, workId: v.id('albatrossIntents') },
@@ -378,6 +415,9 @@ export const completeStep = mutation({
     workId: v.id('albatrossIntents'),
     stepKey: v.string(),
     source: v.optional(v.union(v.literal('user'), v.literal('task'), v.literal('evidence'))),
+    // What came of the step, in the user's words. Recorded on the ledger and
+    // written as step-bound evidence so the next replan can use the facts.
+    note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -406,6 +446,7 @@ export const completeStep = mutation({
             cardId: selected.cardId,
             completedAt: ts,
             source,
+            note: bounded(args.note, 2_000),
           },
         ])
       : baselineProgress;
@@ -434,6 +475,39 @@ export const completeStep = mutation({
       if (!cardId) throw new Error('Plan card not found.');
       await completeCardForWork(ctx, userId, cardId, ts);
     }
+    const note = bounded(args.note, 2_000);
+    if (note) {
+      const dedupeKey = `stepnote:${String(args.workId)}:${selected.identity}`;
+      const existingNote = await ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
+        .first();
+      const noteRow = {
+        userId,
+        targetKind: 'work' as const,
+        targetId: String(args.workId),
+        sourceKind: 'manual' as const,
+        sourceId: dedupeKey,
+        stepIdentity: bounded(selected.identity, 420),
+        title: `Noted on: ${selected.action.title!.trim()}`.slice(0, 300),
+        claim: note.slice(0, 400),
+        summary: note.slice(0, 600),
+        // The user's own words about their own step. That is honest evidence
+        // of the step, but it is not an external receipt, so it must not read
+        // as one when the contract weighs closure.
+        limits: 'A user note about the step, not an external receipt or reply.',
+        occurredAt: ts,
+        weight: 1,
+        confidence: 0.95,
+        trust: 'observed' as const,
+        dedupeKey,
+        searchText: [note, selected.action.title].filter(Boolean).join(' ').slice(0, 4000),
+        updatedAt: ts,
+      };
+      if (existingNote) await ctx.db.patch(existingNote._id, noteRow);
+      else await ctx.db.insert('albatrossEvidence', { ...noteRow, createdAt: ts });
+      await ctx.db.patch(args.workId, { lastEvidenceAt: ts, updatedAt: ts });
+    }
     const completedIdentities = new Set(nextProgress.map((row) => row.identity));
     const cardSteps = plan.appliedSteps?.filter((step) => step.cardId) || [];
     const cards = await Promise.all(
@@ -451,6 +525,21 @@ export const completeStep = mutation({
         (step) =>
           completedIdentities.has(step.identity) || Boolean(step.cardId && completedCardIds.has(step.cardId)),
       );
+    // The mail watcher only stays armed while an unfinished step still expects
+    // a mail confirmation.
+    const outstandingMailStep = planSteps.some(
+      (step) =>
+        step.action.evidence?.kind === 'mail_confirmation' &&
+        !completedIdentities.has(step.identity) &&
+        !(step.cardId && completedCardIds.has(step.cardId)),
+    );
+    if (Boolean(work.mailWatchAt) !== outstandingMailStep) {
+      await ctx.db.patch(args.workId, {
+        mailWatchAt: outstandingMailStep ? ts : undefined,
+        ...(outstandingMailStep ? {} : { mailWatchClaimedAt: undefined }),
+        updatedAt: ts,
+      });
+    }
     if (
       transitioned &&
       allStepsComplete &&
@@ -567,10 +656,13 @@ export const attachProof = mutation({
       v.literal('github_commit'),
       v.literal('mcp_item'),
       v.literal('manual'),
+      v.literal('browser_session'),
     ),
     sourceId: v.string(),
     connectionId: v.optional(v.string()),
     accountId: v.optional(v.string()),
+    // Binds this evidence to one plan step by its stable identity.
+    stepIdentity: v.optional(v.string()),
     occurredAt: v.optional(v.number()),
     trust: v.union(v.literal('observed'), v.literal('inferred'), v.literal('confirmed')),
     proofId: v.optional(v.string()),
@@ -610,6 +702,7 @@ export const attachProof = mutation({
       sourceId: args.sourceId,
       connectionId: bounded(args.connectionId, 180),
       accountId: bounded(args.accountId, 320),
+      stepIdentity: bounded(args.stepIdentity, 420),
       title: bounded(args.title, 300) || 'Untitled',
       summary: bounded(args.summary, 600),
       claim: bounded(args.claim, 400),
@@ -1251,18 +1344,25 @@ export const areaWork = query({
 
 type ProjectedPlanStep = {
   key: string;
+  identity: string;
   kind: string;
   title: string;
   detail: string | null;
   url: string | null;
   done: boolean;
   cardId: string | null;
+  stepMode: 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline' | null;
+  doneWhen: string | null;
+  evidenceKind: string | null;
+  evidenceHint: string | null;
+  verification: StepVerification | null;
 };
 
 function projectedPlanSteps(
   plan: Doc<'albatrossIntentPlans'> | null | undefined,
   completedCardIds: Set<string>,
   workProgress?: readonly StepProgressEntry[],
+  stepEvidence?: readonly StepEvidenceLike[],
 ): ProjectedPlanStep[] {
   if (!plan) return [];
   const appliedByKey = new Map((plan.appliedSteps || []).map((step) => [step.stepKey, step] as const));
@@ -1270,33 +1370,50 @@ function projectedPlanSteps(
     mergeStepProgress(workProgress, progressFromPlanCompletions(plan)).map((row) => row.identity),
   );
   const planSteps = keyedPlanActions(plan);
+  // Verification is computed only where the caller supplies evidence; a null
+  // verification renders as nothing, never as an understated level.
+  const verificationFor = (identity: string, done: boolean) =>
+    stepEvidence ? stepVerification(identity, done, stepEvidence) : null;
+  const contractFields = (action: PlanStepAction) => ({
+    stepMode: action.stepMode || null,
+    doneWhen: bounded(action.doneWhen, 300) || null,
+    evidenceKind: action.evidence?.kind || null,
+    evidenceHint: bounded(action.evidence?.hint, 300) || null,
+  });
   const digital = planSteps
     .filter((step) => step.kind === 'digital')
     .map(({ action, key, identity }) => {
       const applied = appliedByKey.get(key);
+      const done =
+        completedIdentities.has(identity) || Boolean(applied?.cardId && completedCardIds.has(applied.cardId));
       return {
         key,
+        identity,
         kind: action.kind || 'task',
         title: action.title!.trim(),
         detail: bounded(action.description || action.detail, 1_200) || null,
         url: bounded(action.url || action.sourceRefs?.find((ref) => ref.url)?.url, 2_000) || null,
-        done:
-          completedIdentities.has(identity) ||
-          Boolean(applied?.cardId && completedCardIds.has(applied.cardId)),
+        done,
         cardId: applied?.cardId || null,
+        ...contractFields(action),
+        verification: verificationFor(identity, done),
       };
     });
   const physical = planSteps
     .filter((step) => step.kind === 'physical')
     .map(({ action, key, identity }) => {
+      const done = completedIdentities.has(identity);
       return {
         key,
+        identity,
         kind: 'physical',
         title: action.title!.trim(),
         detail: bounded(action.detail, 1_200) || null,
         url: bounded(action.url, 2_000) || null,
-        done: completedIdentities.has(identity),
+        done,
         cardId: null,
+        ...contractFields(action),
+        verification: verificationFor(identity, done),
       };
     });
   return [...digital, ...physical];
@@ -1576,6 +1693,101 @@ export const clearPendingStepEvidence = internalMutation({
   },
 });
 
+const MAIL_WATCH_LEASE_MS = 10 * 60 * 1000;
+
+/** Works whose applied plan still expects a mail confirmation for a step. */
+export const mailWatchCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_mail_watch', (q) => q.gt('mailWatchAt', 0))
+      .take(25);
+    return rows
+      .filter(
+        (row) =>
+          ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
+          (!row.mailWatchClaimedAt || ts - row.mailWatchClaimedAt >= MAIL_WATCH_LEASE_MS),
+      )
+      .slice(0, 4)
+      .map((row) => ({ userId: row.userId, workId: String(row._id) }));
+  },
+});
+
+export const beginMailWatch = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const ts = now();
+    const work = await ctx.db.get(args.workId);
+    if (!work?.mailWatchAt) return null;
+    if (work.mailWatchClaimedAt && ts - work.mailWatchClaimedAt < MAIL_WATCH_LEASE_MS) return null;
+    await ctx.db.patch(args.workId, { mailWatchClaimedAt: ts });
+    return { userId: work.userId, workId: String(args.workId) };
+  },
+});
+
+/** The watch pass finished: either keep polling later or stand down. */
+export const completeMailWatch = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), stillWatching: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      mailWatchAt: args.stillWatching ? ts : undefined,
+      mailWatchClaimedAt: undefined,
+      updatedAt: ts,
+    });
+    return { stillWatching: args.stillWatching };
+  },
+});
+
+export const releaseMailWatch = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.workId, { mailWatchClaimedAt: undefined });
+  },
+});
+
+export const mailWatchTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!secret) {
+      console.error('[mail watch cron] missing internal secret');
+      return;
+    }
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    if (!appUrl) {
+      console.error('[mail watch cron] missing LAB86_MAIL_PUBLIC_URL');
+      return;
+    }
+    const refs = (internal as any).albatrossWorkV2;
+    const candidates = await ctx.runQuery(refs.mailWatchCandidates, {});
+    let completed = 0;
+    for (const candidate of candidates) {
+      const claim = await ctx.runMutation(refs.beginMailWatch, { workId: candidate.workId });
+      if (!claim) continue;
+      let ok = false;
+      try {
+        ok =
+          (await fanOutInternalPost(`${appUrl}/api/cron/step-watch`, secret, [claim], {
+            label: 'mail watch cron',
+            timeoutMs: 90_000,
+            concurrency: 1,
+          })) === 1;
+        if (ok) completed += 1;
+      } finally {
+        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId: candidate.workId });
+      }
+    }
+    if (candidates.length) {
+      console.log(`[mail watch cron] completed ${completed}/${candidates.length}`);
+    }
+  },
+});
+
 async function materializePendingStepEvidence(ctx: ActionCtx, secret: string, refs: any) {
   const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
   for (const entry of pending) {
@@ -1714,6 +1926,7 @@ export const workDetail = query({
       plan,
       completedCardIds,
       work.stepProgress as StepProgressEntry[] | undefined,
+      evidence as StepEvidenceLike[],
     );
     const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;

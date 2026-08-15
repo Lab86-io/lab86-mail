@@ -18,6 +18,8 @@ export interface CompleteWorkStepInput {
   stepKey?: string;
   timezone?: string;
   source?: 'user' | 'task' | 'evidence';
+  /** What came of the step, in the user's words. Becomes step-bound evidence. */
+  note?: string;
 }
 
 export class StepExecutionError extends Error {
@@ -65,6 +67,7 @@ export async function completeWorkStep(
       workId: input.workId,
       stepKey,
       source: input.source || 'user',
+      ...(input.note?.trim() ? { note: input.note.trim().slice(0, 2_000) } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

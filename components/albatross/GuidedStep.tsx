@@ -1,8 +1,13 @@
 'use client';
 
 import { ExternalLink } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import type { StepVerification } from '@/lib/albatross/step-verification';
+import { STEP_VERIFICATION_LABEL } from '@/lib/albatross/step-verification';
 import { cn } from '@/lib/utils';
+
+export type GuidedStepMode = 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline';
 
 export interface GuidedStep {
   id: string;
@@ -12,6 +17,31 @@ export interface GuidedStep {
   knows: string[];
   needsYou: string[];
   done?: boolean;
+  mode?: GuidedStepMode | null;
+  doneWhen?: string | null;
+  evidenceKind?: string | null;
+  verification?: StepVerification | null;
+}
+
+export interface GuidedSession {
+  sessionId: string;
+  status: 'starting' | 'agent' | 'user' | 'verifying' | 'ended' | 'failed' | string;
+  statusDetail?: string | null;
+  liveViewUrl: string;
+}
+
+/** The one status line above the shared browser. It never overstates. */
+export function guidedSessionStatusLine(session: GuidedSession): string {
+  switch (session.status) {
+    case 'starting':
+      return 'Opening a shared browser…';
+    case 'agent':
+      return 'Albatross is working on the page.';
+    case 'verifying':
+      return 'Checking the page…';
+    default:
+      return session.statusDetail || 'Your turn on the page. Albatross follows along.';
+  }
 }
 
 /**
@@ -23,7 +53,8 @@ export interface GuidedStep {
  *
  * The left rail is its own object, closer to a lesson panel than to the app's
  * list rows: a numbered ledger where the current step is raised and the rest
- * recede, so at a glance you can see where you are in something long.
+ * recede. Done rows carry how they were verified — a check is never dressed up
+ * as more than it earned.
  */
 export function GuidedStepPane({
   steps,
@@ -34,18 +65,47 @@ export function GuidedStepPane({
   onDiscuss,
   savingIds,
   error,
+  session,
+  sessionBusy,
+  onStartSession,
+  onVerifySession,
+  onEndSession,
 }: {
   steps: GuidedStep[];
   activeId?: string;
   onSelect?: (id: string) => void;
   onExit?: () => void;
-  onComplete?: (id: string) => void;
+  onComplete?: (id: string, note?: string) => void | Promise<boolean>;
   onDiscuss?: () => void;
   savingIds?: ReadonlySet<string>;
   error?: string | null;
+  session?: GuidedSession | null;
+  sessionBusy?: boolean;
+  onStartSession?: (id: string) => void;
+  onVerifySession?: (id: string) => void;
+  onEndSession?: () => void;
 }) {
   const active = steps.find((step) => step.id === (activeId || steps[0]?.id)) || steps[0];
+  const [note, setNote] = useState('');
+  const [noteStepId, setNoteStepId] = useState<string | undefined>(active?.id);
+  // A note typed for one step must never ride along to the next one.
+  if (active && noteStepId !== active.id) {
+    setNoteStepId(active.id);
+    setNote('');
+  }
   if (!active) return null;
+  const offline = active.mode === 'you_do_offline' || (!active.mode && !active.url);
+  const saving = savingIds?.has(active.id);
+
+  const complete = () => {
+    const stepId = active.id;
+    // The note survives a failed save so the user can retry without retyping.
+    void Promise.resolve(onComplete?.(stepId, note.trim() || undefined)).then((ok) => {
+      if (ok !== false) {
+        setNote((current) => (noteStepId === stepId ? '' : current));
+      }
+    });
+  };
 
   return (
     <section className="flex h-full min-h-0">
@@ -91,13 +151,27 @@ export function GuidedStepPane({
                   >
                     {step.done ? '✓' : index + 1}
                   </span>
-                  <span
-                    className={cn(
-                      'min-w-0 flex-1 text-[12.5px] leading-snug',
-                      current ? 'font-medium' : 'text-[var(--color-text-muted)]',
-                    )}
-                  >
-                    {step.title}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        'block text-[12.5px] leading-snug',
+                        current ? 'font-medium' : 'text-[var(--color-text-muted)]',
+                      )}
+                    >
+                      {step.title}
+                    </span>
+                    {step.done && step.verification ? (
+                      <span
+                        className={cn(
+                          'mt-0.5 block text-[10.5px]',
+                          step.verification.level === 'reported'
+                            ? 'text-[var(--color-text-faint)]'
+                            : 'text-[var(--color-success)]',
+                        )}
+                      >
+                        {STEP_VERIFICATION_LABEL[step.verification.level]}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               </li>
@@ -119,6 +193,17 @@ export function GuidedStepPane({
           {active.detail ? (
             <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
               {active.detail}
+            </p>
+          ) : null}
+          {active.doneWhen ? (
+            <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed">
+              <span className="text-[var(--color-text-faint)]">Done when</span>{' '}
+              <span className="text-[var(--color-text-muted)]">{active.doneWhen}</span>
+            </p>
+          ) : null}
+          {!active.done && active.evidenceKind === 'mail_confirmation' ? (
+            <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+              The confirmation lands in Mail. Albatross checks this step off when it arrives.
             </p>
           ) : null}
           {/* The pane is narrower than the viewport, so the columns follow the
@@ -151,18 +236,34 @@ export function GuidedStepPane({
               ) : null}
             </div>
           </div>
+          {!active.done && offline && onComplete ? (
+            <div className="mt-3">
+              <label htmlFor="guided-step-note" className="text-[11.5px] text-[var(--color-text-faint)]">
+                What came of it? The answer feeds the rest of the plan.
+              </label>
+              <textarea
+                id="guided-step-note"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                rows={2}
+                placeholder="The fee is $120. The office wants the packet by Friday."
+                className="mt-1 w-full resize-y rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 text-[12.5px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+              />
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)]/70 pt-3">
             {!active.done && onComplete ? (
-              <Button
-                type="button"
-                size="sm"
-                disabled={savingIds?.has(active.id)}
-                onClick={() => onComplete(active.id)}
-              >
-                {savingIds?.has(active.id) ? 'Saving…' : 'Mark this step done'}
+              <Button type="button" size="sm" disabled={saving} onClick={complete}>
+                {saving ? 'Saving…' : 'Mark this step done'}
               </Button>
             ) : (
-              <span className="text-[12px] text-[var(--color-text-muted)]">This step is complete.</span>
+              <span className="text-[12px] text-[var(--color-text-muted)]">
+                {active.verification
+                  ? `This step is complete. ${STEP_VERIFICATION_LABEL[active.verification.level]}${
+                      active.verification.evidenceTitle ? ` — ${active.verification.evidenceTitle}` : ''
+                    }.`
+                  : 'This step is complete.'}
+              </span>
             )}
             {onDiscuss ? (
               <Button type="button" size="sm" variant="outline" onClick={onDiscuss}>
@@ -174,7 +275,56 @@ export function GuidedStepPane({
         </div>
 
         <div className="min-h-0 flex-1 bg-[var(--color-bg-subtle)] p-3">
-          {active.url ? (
+          {session && session.status !== 'ended' && session.status !== 'failed' ? (
+            <div className="flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+              <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+                <span
+                  aria-hidden
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    session.status === 'user'
+                      ? 'bg-[var(--color-success)]'
+                      : 'bg-[var(--color-accent)] animate-pulse',
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate text-[12px]">
+                  {guidedSessionStatusLine(session)}
+                </span>
+                {!active.done && onVerifySession ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={sessionBusy || session.status === 'verifying' || session.status === 'starting'}
+                    onClick={() => onVerifySession(active.id)}
+                  >
+                    {session.status === 'verifying' ? 'Checking…' : 'Check the page'}
+                  </Button>
+                ) : null}
+                {onEndSession ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={sessionBusy}
+                    onClick={onEndSession}
+                  >
+                    Stop the shared browser
+                  </Button>
+                ) : null}
+              </div>
+              {/* The live view is the real browser, interactive. The user acts
+                  here — logins and payments included — and Albatross only ever
+                  reads the page state to verify doneWhen. */}
+              <iframe
+                title="Shared browser"
+                src={session.liveViewUrl}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                allow="clipboard-read; clipboard-write"
+                className="min-h-0 w-full flex-1 border-0"
+              />
+            </div>
+          ) : active.url ? (
             <div className="flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
               <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
                 <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[var(--color-text-muted)]">
@@ -189,15 +339,40 @@ export function GuidedStepPane({
                   Open it myself <ExternalLink className="size-3" aria-hidden />
                 </a>
               </div>
-              {/* Sites almost always refuse to be framed. Saying so beats an
-                  empty box the user cannot explain. */}
               <div className="grid flex-1 place-items-center px-6 text-center">
                 <div className="max-w-sm">
-                  <p className="text-[13px] font-medium">Open the site in another tab.</p>
-                  <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                    Most sites refuse to be embedded. Keep this guide beside the page, then return to record
-                    the step when it is done.
-                  </p>
+                  {onStartSession ? (
+                    <>
+                      <p className="text-[13px] font-medium">Work on this page here.</p>
+                      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                        Albatross opens a shared browser at this page, follows along, and checks the step off
+                        when the page shows it is done. Anything private — passwords, payments — you type
+                        yourself, straight into the site.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3"
+                        disabled={sessionBusy || active.done}
+                        onClick={() => onStartSession(active.id)}
+                      >
+                        {sessionBusy ? 'Opening…' : 'Open the shared browser'}
+                      </Button>
+                      <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--color-text-faint)]">
+                        Or open the site in another tab and return to record the step when it is done.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      {/* Sites almost always refuse to be framed. Saying so beats
+                          an empty box the user cannot explain. */}
+                      <p className="text-[13px] font-medium">Open the site in another tab.</p>
+                      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                        Most sites refuse to be embedded. Keep this guide beside the page, then return to
+                        record the step when it is done.
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

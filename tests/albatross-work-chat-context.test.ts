@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatWorkChatContext } from '../lib/albatross/work-chat-context';
+import { formatWorkChatContext, WorkContextNotFoundError } from '../lib/albatross/work-chat-context';
 
 describe('Albatross Work chat context', () => {
   test('carries the current plan, questions, and provenance into the main chat', () => {
@@ -50,5 +50,14 @@ describe('Albatross Work chat context', () => {
       work: { _id: 'work_1', rawText: 'x'.repeat(5_000) },
     });
     expect(context.length).toBeLessThan(4_000);
+  });
+});
+
+describe('work chat context errors', () => {
+  test('a missing Work raises a named, user-safe error', () => {
+    const error = new WorkContextNotFoundError('work-9');
+    expect(error.name).toBe('WorkContextNotFoundError');
+    expect(error.message).toContain('work-9');
+    expect(error.message).toContain('not found or is not available');
   });
 });

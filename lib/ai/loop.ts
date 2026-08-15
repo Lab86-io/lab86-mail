@@ -103,6 +103,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'albatross_get_work_context',
   'albatross_record_progress',
   'albatross_replan_work',
+  'albatross_split_work',
   'area_list',
   'area_create',
   'area_update_identity',

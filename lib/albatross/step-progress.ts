@@ -8,6 +8,8 @@ export interface StepProgressEntry {
   cardId?: string;
   completedAt: number;
   source: StepProgressSource;
+  /** What came of the step, in the user's words. */
+  note?: string;
 }
 
 interface PlanActionLike {
