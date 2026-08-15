@@ -1,5 +1,30 @@
 import type { ContractProof } from './contract';
 
+/**
+ * Mail classes that never ask to become proof. Marketing mail shares words
+ * with everything; verification codes prove only that a robot sent a code.
+ */
+export const PROOF_BLOCKED_CATEGORIES: ReadonlySet<string> = new Set(['noise', 'codes']);
+
+export function proofOfferAllowed(category: string | null | undefined): boolean {
+  return !category || !PROOF_BLOCKED_CATEGORIES.has(category);
+}
+
+/** The strongest available classification verdict for a corpus thread row. */
+export function threadPrimaryCategory(
+  row:
+    | { llmCategory?: { primary?: unknown } | null; smartPrimary?: unknown; smartCategory?: { primary?: unknown } | null }
+    | null
+    | undefined,
+): string | null {
+  const llm = row?.llmCategory?.primary;
+  if (typeof llm === 'string' && llm) return llm;
+  const smartPrimary = row?.smartPrimary;
+  if (typeof smartPrimary === 'string' && smartPrimary) return smartPrimary;
+  const smart = row?.smartCategory?.primary;
+  return typeof smart === 'string' && smart ? smart : null;
+}
+
 const STOP_WORDS = new Set([
   'a',
   'an',

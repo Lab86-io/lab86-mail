@@ -1,20 +1,23 @@
 'use client';
 
-import { useConvexAuth, useQuery } from 'convex/react';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { api } from '@/convex/_generated/api';
-import { type MailProofCandidate, proofCandidatesForMail } from '@/lib/albatross/proof-match';
 import { cn } from '@/lib/utils';
 
-export interface OpenWork {
-  _id: string;
-  title: string;
-  contract: { outcome: string; proofs: Array<{ id: string; what: string; satisfiedAt?: number }> } | null;
+/** One candidate returned by /api/albatross/proof-matches. */
+export interface ProofMatchCandidate {
+  workId: string;
+  workTitle: string;
+  outcome?: string | null;
+  proofId: string | null;
+  proofWhat: string | null;
+  gate: 'confirmed' | 'unchecked';
+  outstanding: Array<{ id: string; what: string }>;
 }
 
 interface MailProofRequest {
-  work: OpenWork;
+  workId: string;
+  workTitle: string;
   threadId: string;
   accountId: string;
   subject: string;
@@ -29,11 +32,11 @@ export async function submitMailProof(
   input: MailProofRequest,
   fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ) {
-  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(input.work._id)}/proof`, {
+  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(input.workId)}/proof`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      claim: input.proofWhat || `Something about "${input.work.title}" happened.`,
+      claim: input.proofWhat || `Something about "${input.workTitle}" happened.`,
       title: input.subject,
       summary: input.snippet || 'You pointed at this message as proof.',
       sourceKind: 'mail_thread',
@@ -48,13 +51,28 @@ export async function submitMailProof(
   return result;
 }
 
+/** Ask the server for gated candidates. The offer stays silent on any failure. */
+export async function loadProofMatches(
+  input: { subject: string; snippet?: string | null; accountId: string; providerThreadId: string },
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<ProofMatchCandidate[]> {
+  const response = await fetcher('/api/albatross/proof-matches', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body?.ok || !Array.isArray(body.candidates)) return [];
+  return body.candidates as ProofMatchCandidate[];
+}
+
 /** The exact tentative claim shown before the user confirms a mail match. */
-export function ProofOfferMatchSummary({ match }: { match: MailProofCandidate<OpenWork> }) {
+export function ProofOfferMatchSummary({ match }: { match: ProofMatchCandidate }) {
   return (
     <>
       Does this settle something you are carrying? Albatross matched it to{' '}
       {match.proofWhat ? `“${match.proofWhat}”` : 'the outcome'} for{' '}
-      <span className="font-medium">{match.work.title}</span>.
+      <span className="font-medium">{match.workTitle}</span>.
       <span className="ml-1 text-[var(--color-text-muted)]">
         Albatross can file it as proof and close the thing when it is done.
       </span>
@@ -69,6 +87,10 @@ export function ProofOfferMatchSummary({ match }: { match: MailProofCandidate<Op
  * copy without a real mail client: most confirmations that a real-life thing
  * actually happened arrive by email. "Your policy is active." "Your refund has
  * been issued." "Thanks, got it."
+ *
+ * The server decides which matches are worth asking about: the thread's mail
+ * class blocks marketing and code mail outright, and a model check refutes
+ * word-overlap coincidences before anything renders here.
  *
  * Visually it is its own object — an inset band with a dashed leading edge,
  * clearly an offer from Albatross rather than part of the message. It never
@@ -85,38 +107,40 @@ export function ProofOffer({
   subject: string;
   snippet?: string | null;
 }) {
-  const { isAuthenticated } = useConvexAuth();
+  const [matches, setMatches] = useState<ProofMatchCandidate[]>([]);
   const [dismissed, setDismissed] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attached, setAttached] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const open = useQuery(api.albatrossWorkV2.openWorkForProof, isAuthenticated ? { limit: 8 } : 'skip') as
-    | OpenWork[]
-    | undefined;
-  const matches = useMemo(
-    () =>
-      proofCandidatesForMail(
-        (open || []).map((work) => ({
-          ...work,
-          outcome: work.contract?.outcome,
-          proofs: work.contract?.proofs,
-        })),
-        `${subject} ${snippet || ''}`,
-      ),
-    [open, snippet, subject],
-  );
+  useEffect(() => {
+    let cancelled = false;
+    setMatches([]);
+    setAttached(null);
+    setDismissed(false);
+    setPicking(false);
+    if (!subject.trim() && !snippet?.trim()) return;
+    void loadProofMatches({ subject, snippet, accountId, providerThreadId: threadId })
+      .then((candidates) => {
+        if (!cancelled) setMatches(candidates);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, accountId, subject, snippet]);
 
   if (dismissed || !matches.length) return null;
 
-  const use = async (work: OpenWork, proofId?: string, what?: string) => {
+  const use = async (match: ProofMatchCandidate, proofId?: string, what?: string) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       await submitMailProof({
-        work,
+        workId: match.workId,
+        workTitle: match.workTitle,
         threadId,
         accountId,
         subject,
@@ -125,7 +149,7 @@ export function ProofOffer({
         proofWhat: what,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
-      setAttached(work.title);
+      setAttached(match.workTitle);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not attach this proof.');
     } finally {
@@ -133,7 +157,6 @@ export function ProofOffer({
     }
   };
   const suggestedMatch = matches[0];
-  const suggested = suggestedMatch.work;
 
   if (attached) {
     return (
@@ -168,7 +191,7 @@ export function ProofOffer({
             size="xs"
             disabled={busy}
             onClick={() =>
-              void use(suggested, suggestedMatch.proofId || undefined, suggestedMatch.proofWhat || undefined)
+              void use(suggestedMatch, suggestedMatch.proofId || undefined, suggestedMatch.proofWhat || undefined)
             }
           >
             {busy ? 'Filing proof…' : 'Yes, use as proof'}
@@ -192,38 +215,35 @@ export function ProofOffer({
 
       {picking ? (
         <ul className="mt-2.5 space-y-1 border-t border-dashed border-[var(--color-border)] pt-2.5">
-          {matches.map(({ work }) => {
-            const outstanding = (work.contract?.proofs || []).filter((proof) => !proof.satisfiedAt);
-            return (
-              <li key={work._id}>
-                <p className="text-[12px] font-medium">{work.title}</p>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {outstanding.length ? (
-                    outstanding.map((proof) => (
-                      <button
-                        key={proof.id}
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void use(work, proof.id, proof.what)}
-                        className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
-                      >
-                        {proof.what}
-                      </button>
-                    ))
-                  ) : (
+          {matches.map((match) => (
+            <li key={match.workId}>
+              <p className="text-[12px] font-medium">{match.workTitle}</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {match.outstanding.length ? (
+                  match.outstanding.map((proof) => (
                     <button
+                      key={proof.id}
                       type="button"
                       disabled={busy}
-                      onClick={() => void use(work)}
+                      onClick={() => void use(match, proof.id, proof.what)}
                       className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
                     >
-                      File it against this
+                      {proof.what}
                     </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
+                  ))
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void use(match)}
+                    className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                  >
+                    File it against this
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
         </ul>
       ) : null}
     </div>
