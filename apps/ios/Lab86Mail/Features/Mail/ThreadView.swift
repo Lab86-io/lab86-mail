@@ -22,6 +22,7 @@ struct ThreadView: View {
     @State private var proofCandidates: [WorkProofCandidate] = []
     @State private var attachedProofTitle: String?
     @State private var isAttachingProof = false
+    @State private var proofError: String?
     @State private var showsProofChoices = false
     @State private var dismissedProofOffer = false
 
@@ -231,6 +232,12 @@ struct ThreadView: View {
                     }
                 }
             }
+            if let proofError {
+                Text(proofError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -244,7 +251,7 @@ struct ThreadView: View {
 
     @ViewBuilder
     private func proofOfferActions(_ candidate: WorkProofCandidate, detail: MailThreadDetail) -> some View {
-        Button(isAttachingProof ? "Checking…" : "Yes, use as proof") {
+        Button(isAttachingProof ? "Filing proof…" : "Yes, use as proof") {
             Task { await attachProof(candidate, detail: detail) }
         }
         .buttonStyle(.borderedProminent)
@@ -353,18 +360,15 @@ struct ThreadView: View {
 
     private func load() async {
         isLoading = true
+        proofError = nil
+        proofCandidates = []
         defer { isLoading = false }
         do {
             detail = try await environment.store.loadThread(route)
             if expandedMessageID == nil { expandedMessageID = detail?.messages.last?.id }
             if let summary, summary.unread { await environment.store.markRead(summary) }
             linkedTasks = await environment.store.tasksForThread(route.threadID)
-            if let detail {
-                proofCandidates = await environment.store.proofMatches(
-                    subject: detail.subject,
-                    snippet: detail.messages.last?.body ?? ""
-                )
-            }
+            if let detail { await refreshProofCandidates(for: detail) }
             await resolveSenderPhotos()
         } catch {
             errorMessage = error.localizedDescription
@@ -395,8 +399,15 @@ struct ThreadView: View {
                 guard !Task.isCancelled else { return }
                 if let payload {
                     let updated = MailThreadDetail(payload: payload)
+                    let previousLatest = detail?.messages.last
                     detail = updated
                     if expandedMessageID == nil { expandedMessageID = updated.messages.last?.id }
+                    let latest = updated.messages.last
+                    if previousLatest?.id != latest?.id || previousLatest?.body != latest?.body {
+                        proofCandidates = []
+                        proofError = nil
+                        await refreshProofCandidates(for: updated)
+                    }
                 }
             }
         } catch is CancellationError {
@@ -422,19 +433,32 @@ struct ThreadView: View {
 
     private func attachProof(_ candidate: WorkProofCandidate, detail: MailThreadDetail) async {
         isAttachingProof = true
+        proofError = nil
         defer { isAttachingProof = false }
         let attached = await environment.store.attachMailProof(
             candidate,
             route: route,
             subject: detail.subject,
-            snippet: detail.messages.last?.body ?? ""
+            snippet: candidate.matchedContent ?? ""
         )
         if attached {
             attachedProofTitle = candidate.workTitle
             proofCandidates = []
         } else {
-            errorMessage = environment.store.workError ?? "This proof could not be attached."
+            proofError = environment.store.workError ?? "This proof could not be attached."
         }
+    }
+
+    private func refreshProofCandidates(for detail: MailThreadDetail) async {
+        guard let latest = detail.messages.last else {
+            proofCandidates = []
+            return
+        }
+        proofCandidates = await environment.store.proofMatches(
+            subject: detail.subject,
+            snippet: latest.body,
+            messageID: latest.id
+        )
     }
 
     private func openComposer(mode: String, replyAll: Bool = false) {

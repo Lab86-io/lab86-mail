@@ -118,6 +118,8 @@ final class ProductStore {
     private var mailSearchGeneration = 0
     private var projectPaneLoadGeneration: [String: Int] = [:]
     private var projectPaneSessionGeneration = 0
+    private var workProjectionGeneration = 0
+    private var workProjectionLoads = 0
 
     init(
         tools: any ToolInvoking,
@@ -1058,8 +1060,6 @@ final class ProductStore {
     }
 
     func refreshWork() async {
-        isLoadingWork = true
-        defer { isLoadingWork = false }
         do {
             let result = try await tools.invoke("area_list", arguments: ["status": .string("active")])
             areas = (result["areas"]?.arrayValue ?? []).compactMap(AreaSummary.init)
@@ -1087,8 +1087,6 @@ final class ProductStore {
     /// Today polls this lightly so a block that just passed can enter recovery
     /// without waiting for an app relaunch.
     func refreshExecution() async {
-        isLoadingWork = true
-        defer { isLoadingWork = false }
         do {
             try await loadWorkProjection()
             await persistCache()
@@ -1098,7 +1096,25 @@ final class ProductStore {
     }
 
     private func loadWorkProjection() async throws {
-        let listed = try await tools.invoke("work_list", arguments: [:])
+        workProjectionGeneration += 1
+        let generation = workProjectionGeneration
+        workProjectionLoads += 1
+        isLoadingWork = true
+        defer {
+            workProjectionLoads = max(0, workProjectionLoads - 1)
+            isLoadingWork = workProjectionLoads > 0
+        }
+
+        let listed: JSONValue
+        do {
+            listed = try await tools.invoke("work_list", arguments: [:])
+        } catch {
+            // A newer request owns the visible state and its own error. An
+            // older request finishing late must not overwrite either one.
+            guard generation == workProjectionGeneration else { return }
+            throw error
+        }
+        guard generation == workProjectionGeneration else { return }
         allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
         workExecution = WorkExecutionSnapshot(json: listed["execution"])
         workDidLoad = true
@@ -1179,7 +1195,7 @@ final class ProductStore {
         }
     }
 
-    func proofMatches(subject: String, snippet: String) async -> [WorkProofCandidate] {
+    func proofMatches(subject: String, snippet: String, messageID: String?) async -> [WorkProofCandidate] {
         do {
             let result = try await backend.post(
                 path: "/api/albatross/proof-matches",
@@ -1188,7 +1204,13 @@ final class ProductStore {
                     "snippet": .string(String(snippet.prefix(2_000))),
                 ])
             )
-            return (result["candidates"]?.arrayValue ?? []).compactMap(WorkProofCandidate.init)
+            return (result["candidates"]?.arrayValue ?? []).compactMap {
+                WorkProofCandidate(
+                    json: $0,
+                    matchedMessageID: messageID,
+                    matchedContent: String(snippet.prefix(2_000))
+                )
+            }
         } catch {
             // Proof suggestions are opportunistic. Mail remains fully readable
             // when matching is unavailable, so this does not raise a global error.
@@ -1205,11 +1227,10 @@ final class ProductStore {
         var body: [String: JSONValue] = [
             "claim": .string(candidate.proofWhat ?? "Something about \(candidate.workTitle) happened."),
             "title": .string(subject),
-            "summary": .string(String(snippet.prefix(2_000))),
+            "summary": .string(String((candidate.matchedContent ?? snippet).prefix(2_000))),
             "sourceKind": .string("mail_thread"),
             "sourceId": .string(route.threadID),
             "accountId": .string(route.accountID),
-            "trust": .string("confirmed"),
             "timezone": .string(TimeZone.current.identifier),
         ]
         if let proofID = candidate.proofID { body["proofId"] = .string(proofID) }

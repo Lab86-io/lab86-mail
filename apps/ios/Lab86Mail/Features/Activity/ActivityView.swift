@@ -85,7 +85,7 @@ struct ActivityView: View {
                                                     completedCandidateIDs.contains(candidate.id)
                                                         ? Color.accentColor : .secondary
                                                 )
-                                                .frame(width: 68, alignment: .leading)
+                                                .frame(minWidth: 68, alignment: .leading)
                                             VStack(alignment: .leading) {
                                                 Text(candidate.title).foregroundStyle(.primary)
                                                 Text(candidate.kind)

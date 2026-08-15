@@ -541,7 +541,12 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
 
           {/* Most proof that a real-life thing happened arrives by email. The
               offer sits directly under the thread that might be it. */}
-          <ProofOffer threadId={threadId || ''} subject={data.subject} snippet={lastMessage?.snippet} />
+          <ProofOffer
+            threadId={threadId || ''}
+            accountId={account}
+            subject={data.subject}
+            snippet={lastMessage?.snippet}
+          />
           {canSummarizeThread ? (
             <SummaryCard
               data={summary.data?.summary || cachedSummary}

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { dailyCheckinAnswerPayload } from '@/components/albatross/DailyCheckin';
 import { checkinCallerArgs, tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
 
 describe('Albatross check-in server caller', () => {
@@ -17,5 +18,51 @@ describe('Albatross check-in server caller', () => {
         questions: [{ status: 'pending' }],
       }),
     ).toBe('needs_input');
+  });
+});
+
+describe('daily check-in answer payload', () => {
+  const checkin = {
+    _id: 'checkin-1',
+    localDate: '2026-08-14',
+    status: 'open',
+    candidateItems: [
+      { kind: 'work' as const, id: 'work-1', title: 'Renew passport' },
+      { kind: 'event' as const, id: 'event-1', title: 'Passport appointment' },
+    ],
+  };
+
+  test('submits a tomorrow-only check-in without inventing completed work', () => {
+    expect(
+      dailyCheckinAnswerPayload(
+        checkin,
+        new Set(),
+        '   ',
+        '  Submit the passport renewal before lunch.  ',
+        'America/New_York',
+      ),
+    ).toEqual({
+      responseText: '',
+      tomorrowIntentText: 'Submit the passport renewal before lunch.',
+      completed: [],
+      timezone: 'America/New_York',
+    });
+  });
+
+  test('includes only explicitly selected candidate evidence', () => {
+    expect(
+      dailyCheckinAnswerPayload(
+        checkin,
+        new Set(['event:event-1']),
+        ' Appointment done. ',
+        '',
+        'UTC',
+      ),
+    ).toEqual({
+      responseText: 'Appointment done.',
+      tomorrowIntentText: '',
+      completed: [{ kind: 'event', id: 'event-1' }],
+      timezone: 'UTC',
+    });
   });
 });

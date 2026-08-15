@@ -9,7 +9,7 @@ import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/r
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 90;
+export const maxDuration = 300;
 
 const reconciliationSchema = z.object({
   completed: z
@@ -98,32 +98,43 @@ Mark an item completed only when the user's words explicitly say it was done, fi
         ...result,
         status: tomorrow.status,
       };
-      const tomorrowWorkId = await convexMutation<string>((api as any).albatrossIntents.createIntent, {
-        ...caller,
-        externalId: `checkin:${checkinId}:tomorrow`,
-        rawText: tomorrowIntentText,
-        source: 'text',
-        title: tomorrowIntentText.slice(0, 180),
-      });
-      const existing = await convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
-        userId: user.userId,
-        workId: tomorrowWorkId,
-      });
-      const planStatus = tomorrowWorkPlanStatus(existing);
-      if (planStatus === 'advance') {
-        const planned = await advanceWork({
-          userId: user.userId,
-          userEmail: user.email,
-          userName: user.name,
-          workId: tomorrowWorkId,
-          timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+      let tomorrowWorkId: string | undefined;
+      try {
+        tomorrowWorkId = await convexMutation<string>((api as any).albatrossIntents.createIntent, {
+          ...caller,
+          externalId: `checkin:${checkinId}:tomorrow`,
+          rawText: tomorrowIntentText,
+          source: 'text',
+          title: tomorrowIntentText.slice(0, 180),
         });
-        result = { ...result, tomorrowWorkId, tomorrowPlanStatus: planned.status };
-      } else {
+        const existing = await convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+          userId: user.userId,
+          workId: tomorrowWorkId,
+        });
+        const planStatus = tomorrowWorkPlanStatus(existing);
+        if (planStatus === 'advance') {
+          const planned = await advanceWork({
+            userId: user.userId,
+            userEmail: user.email,
+            userName: user.name,
+            workId: tomorrowWorkId,
+            timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+          });
+          result = { ...result, tomorrowWorkId, tomorrowPlanStatus: planned.status };
+        } else {
+          result = {
+            ...result,
+            tomorrowWorkId,
+            tomorrowPlanStatus: planStatus,
+          };
+        }
+      } catch (planningError) {
         result = {
           ...result,
-          tomorrowWorkId,
-          tomorrowPlanStatus: planStatus,
+          ...(tomorrowWorkId ? { tomorrowWorkId } : {}),
+          tomorrowPlanStatus: 'degraded',
+          tomorrowPlanError:
+            planningError instanceof Error ? planningError.message : 'Tomorrow planning is temporarily unavailable.',
         };
       }
     }

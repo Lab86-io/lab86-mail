@@ -95,6 +95,16 @@ export function resolveCapturePieces(rawText: string, decision: 'split' | 'keep'
   return decision === 'split' ? splitIntentText(trimmed) : [trimmed];
 }
 
+/** Request document PiP synchronously inside the click gesture, then begin persistence. */
+export function requestPipBeforePersist<T>(requestPip: () => unknown, persist: () => T): T {
+  try {
+    void Promise.resolve(requestPip()).catch(() => undefined);
+  } catch {
+    // PiP is an enhancement. A browser denial must never lose the capture.
+  }
+  return persist();
+}
+
 /* ------------------------------------------------------------------ */
 /* Voice (SpeechRecognition, same approach as the old capture dialog)  */
 /* ------------------------------------------------------------------ */
@@ -433,16 +443,14 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     if (!trimmed) return;
     // Document PiP requires the original click gesture. Open it before the
     // request so planning and questions may continue outside the app window.
-    void openPipWindow();
     setSaveError(null);
     send({ type: 'submit', multi: false });
-    void persist(trimmed, source);
+    void requestPipBeforePersist(openPipWindow, () => persist(trimmed, source));
   };
 
   const decide = (decision: 'split' | 'keep') => {
-    void openPipWindow();
     send({ type: decision });
-    void persist(text.trim(), source);
+    void requestPipBeforePersist(openPipWindow, () => persist(text.trim(), source));
   };
 
   const pieces = state === 'split' ? splitIntentText(text.trim()) : [];

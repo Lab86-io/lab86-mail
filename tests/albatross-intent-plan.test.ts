@@ -138,6 +138,27 @@ describe('parsePlanGeneration', () => {
       contradictions: ['The application was rejected'],
     });
   });
+
+  test('deterministically resolves supplied and generated proof id collisions', () => {
+    const plan = parsePlanGeneration(
+      JSON.stringify({
+        ...validPlan,
+        contract: {
+          proofs: [
+            { id: 'proof-2', what: 'The first confirmation arrived' },
+            { what: 'The second confirmation arrived' },
+            { id: 'proof-2', what: 'The third confirmation arrived' },
+          ],
+          closeWhen: 'outcome_confirmed',
+        },
+      }),
+    );
+    expect(outcomeContractForPlan(plan).proofs.map((proof) => proof.id)).toEqual([
+      'proof-2',
+      'proof-2-2',
+      'proof-2-3',
+    ]);
+  });
 });
 
 describe('resolveSourceRefs', () => {
@@ -641,6 +662,13 @@ describe('generateIntentPlan orchestration', () => {
             revisedStep: 'Open the upload page',
             createdAt: 400,
           },
+          {
+            stepTitle: 'Download the NYS PDF',
+            recovery: 'move',
+            reasonKind: 'bad_time',
+            revisedStep: 'Try after lunch',
+            createdAt: 200,
+          },
         ],
         evidence: [
           {
@@ -676,6 +704,7 @@ describe('generateIntentPlan orchestration', () => {
     expect(prompt).toContain('[still needed] The return was accepted');
     expect(prompt).toContain('Recent plan recoveries (newest first):');
     expect(prompt).toContain('because too large; replacement: Open the upload page');
+    expect(prompt.indexOf('Upload the NYS PDF')).toBeLessThan(prompt.indexOf('Try after lunch'));
     expect(prompt.indexOf('already downloaded')).toBeLessThan(prompt.indexOf('A middle note'));
     expect(prompt.indexOf('A middle note')).toBeLessThan(prompt.indexOf('An older note'));
   });

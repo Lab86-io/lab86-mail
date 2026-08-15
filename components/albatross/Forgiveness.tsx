@@ -20,6 +20,38 @@ import {
 } from '@/lib/albatross/forgiveness';
 import { cn } from '@/lib/utils';
 
+interface LapseRecoveryRequest {
+  workId: string;
+  stepKey: string;
+  recovery: Recovery;
+  timezone: string;
+  stepTitle?: string | null;
+  plannedAt?: number;
+  reasonKind?: LapseReason | null;
+}
+
+/** Persist one keyed recovery and surface non-JSON gateway failures as a stable product error. */
+export async function submitLapseRecovery(
+  input: LapseRecoveryRequest,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+) {
+  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(input.workId)}/recover`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      recovery: input.recovery,
+      stepKey: input.stepKey,
+      timezone: input.timezone,
+      stepTitle: input.stepTitle || undefined,
+      plannedAt: input.plannedAt,
+      reasonKind: input.reasonKind || 'other',
+    }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error || 'Could not save that.');
+  return result;
+}
+
 /**
  * A step did not happen.
  *
@@ -29,11 +61,13 @@ import { cn } from '@/lib/utils';
  */
 export function LapsePrompt({
   workId,
+  stepKey,
   stepTitle,
   plannedAt,
   onDone,
 }: {
   workId: string;
+  stepKey: string;
   stepTitle?: string | null;
   plannedAt?: number;
   onDone?: () => void;
@@ -48,20 +82,15 @@ export function LapsePrompt({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/recover`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          recovery,
-          stepKey: undefined,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          stepTitle: stepTitle || undefined,
-          plannedAt,
-          reasonKind: reason || 'other',
-        }),
+      await submitLapseRecovery({
+        workId,
+        stepKey,
+        recovery,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        stepTitle,
+        plannedAt,
+        reasonKind: reason,
       });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || 'Could not save that.');
       setDone(recovery);
       onDone?.();
     } catch (cause) {

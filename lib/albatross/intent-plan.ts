@@ -171,13 +171,30 @@ export const planGenerationSchema = z.object({
 
 export type PlanGeneration = z.infer<typeof planGenerationSchema>;
 
+function uniqueProofId(preferred: string | undefined, index: number, used: Set<string>) {
+  const base = (preferred?.trim() || `proof-${index + 1}`).slice(0, 120) || `proof-${index + 1}`;
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  for (let suffix = 2; ; suffix += 1) {
+    const marker = `-${suffix}`;
+    const candidate = `${base.slice(0, 120 - marker.length)}${marker}`;
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+}
+
 /** Every ordinary plan writes down what would settle it, even when the model omits that field. */
 export function outcomeContractForPlan(generation: PlanGeneration): OutcomeContract {
   if (generation.contract) {
+    const proofIds = new Set<string>();
     return {
       outcome: generation.outcome,
       proofs: generation.contract.proofs.map((proof, index) => ({
-        id: proof.id || `proof-${index + 1}`,
+        id: uniqueProofId(proof.id, index, proofIds),
         what: proof.what,
       })),
       closeWhen: generation.contract.closeWhen,

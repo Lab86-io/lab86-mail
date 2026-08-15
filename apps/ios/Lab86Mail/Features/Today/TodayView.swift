@@ -189,9 +189,7 @@ struct TodayView: View {
                         }
                         Divider()
                         HStack {
-                            Text(move.remainingSteps == 1
-                                ? "Last planned step"
-                                : "\(move.remainingSteps) of \(move.totalSteps) steps remain")
+                            Text(currentMoveProgress(move))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -321,6 +319,12 @@ struct TodayView: View {
             return "Protected for \(start.formatted(date: .abbreviated, time: .shortened))."
         }
         return "The clearest concrete move."
+    }
+
+    private func currentMoveProgress(_ move: WorkExecutionMove) -> String {
+        if move.totalSteps == 0 || move.remainingSteps == 0 { return "This is the step to do." }
+        if move.remainingSteps == 1 { return "Last planned step" }
+        return "\(move.remainingSteps) of \(move.totalSteps) steps remain"
     }
 
     /// A section rule in the editorial voice: a hairline, a serif heading, a
@@ -573,6 +577,7 @@ private struct MissedMoveRecoveryView: View {
     let move: WorkExecutionMove
 
     @State private var isRecovering = false
+    @State private var recoveryError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -593,6 +598,12 @@ private struct MissedMoveRecoveryView: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { recoveryButtons }
                 VStack(alignment: .leading, spacing: 8) { recoveryButtons }
+            }
+            if let recoveryError {
+                Text(recoveryError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(14)
@@ -622,8 +633,12 @@ private struct MissedMoveRecoveryView: View {
     private func recoveryButton(_ title: String, recovery: String) -> some View {
         Button(title) {
             isRecovering = true
+            recoveryError = nil
             Task {
-                _ = await environment.store.recoverWork(move, recovery: recovery)
+                let recovered = await environment.store.recoverWork(move, recovery: recovery)
+                if !recovered {
+                    recoveryError = environment.store.workError ?? "The plan could not be updated."
+                }
                 isRecovering = false
             }
         }

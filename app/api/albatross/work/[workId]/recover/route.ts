@@ -39,6 +39,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ workId
       userId: user.userId,
       workId,
     });
+    if (!detail?.work) {
+      return Response.json({ ok: false, error: 'Albatross Work not found.' }, { status: 404 });
+    }
     const step = (detail?.execution?.guideSteps || []).find(
       (row: any) => row.key === (body.stepKey || detail?.execution?.currentStep?.key),
     );
@@ -84,17 +87,16 @@ export async function POST(req: NextRequest, context: { params: Promise<{ workId
       });
       return Response.json({ ok: true, recovery, state: 'released', replanned: false, revisedStep });
     }
-    const shouldReplan = ['move', 'shrink', 'delegate', 'rebuild'].includes(recovery);
-    if (shouldReplan) {
-      await advanceWork({
-        userId: user.userId,
-        userEmail: user.email,
-        userName: user.name,
-        workId,
-        timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-      });
-    }
-    return Response.json({ ok: true, recovery, replanned: shouldReplan, revisedStep });
+    // `done`, waiting, paused, and released return above. Every remaining
+    // accepted recovery keeps the Work active and therefore needs a new plan.
+    await advanceWork({
+      userId: user.userId,
+      userEmail: user.email,
+      userName: user.name,
+      workId,
+      timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+    });
+    return Response.json({ ok: true, recovery, replanned: true, revisedStep });
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitResponse(error);
     const status = error instanceof AuthRequiredError ? 401 : 500;

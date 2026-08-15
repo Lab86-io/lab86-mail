@@ -693,7 +693,9 @@ export const conductorCandidates = internalQuery({
         if (plan && plan.userId !== row.userId) return false;
         return planNeedsConductor(plan);
       })
-      .slice(0, 20)
+      // Each advance may use the full four-minute app timeout. Keep one tick
+      // bounded to four concurrent requests so it always fits the cron cadence.
+      .slice(0, 4)
       .map(({ row }) => ({ workId: row._id, userId: row.userId }));
   },
 });
@@ -711,6 +713,17 @@ export const beginConductor = internalMutation({
   },
 });
 
+/** Release failed conductor claims immediately instead of hiding them for six hours. */
+export const releaseConductor = internalMutation({
+  args: { workIds: v.array(v.id('albatrossIntents')) },
+  handler: async (ctx, args) => {
+    for (const workId of args.workIds.slice(0, 4)) {
+      const work = await ctx.db.get(workId);
+      if (work) await ctx.db.patch(workId, { lastConductorAt: undefined });
+    }
+  },
+});
+
 export const conductorTick = internalAction({
   args: {},
   handler: async (ctx) => {
@@ -720,20 +733,34 @@ export const conductorTick = internalAction({
       console.error('[work-conductor cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
       return;
     }
+    // Backfill the first legacy page before relying on the workState index;
+    // the mutation schedules the remaining pages until the migration is done.
+    await ctx.runMutation(internal.albatrossWorkV2.migrateLegacyBatch, { limit: 100 });
     const candidates = await ctx.runQuery(internal.albatrossIntents.conductorCandidates, {});
-    const claimed: Array<{ userId: string; workId: string }> = [];
+    const claimed: Array<{ userId: string; workId: Id<'albatrossIntents'> }> = [];
     for (const candidate of candidates) {
       const ok = await ctx.runMutation(internal.albatrossIntents.beginConductor, {
         workId: candidate.workId,
       });
-      if (ok) claimed.push({ userId: candidate.userId, workId: String(candidate.workId) });
+      if (ok) claimed.push({ userId: candidate.userId, workId: candidate.workId });
     }
     if (!claimed.length) return;
-    const completed = await fanOutInternalPost(`${appUrl}/api/cron/work-conductor`, secret, claimed, {
-      label: 'work-conductor cron',
-      timeoutMs: 240_000,
-      concurrency: 2,
-    });
+    const results = await Promise.all(
+      claimed.map(async (candidate) =>
+        (await fanOutInternalPost(`${appUrl}/api/cron/work-conductor`, secret, [candidate], {
+          label: 'work-conductor cron',
+          timeoutMs: 240_000,
+          concurrency: 1,
+        })) === 1,
+      ),
+    );
+    const failed = claimed.filter((_, index) => !results[index]);
+    if (failed.length) {
+      await ctx.runMutation(internal.albatrossIntents.releaseConductor, {
+        workIds: failed.map((row) => row.workId),
+      });
+    }
+    const completed = results.filter(Boolean).length;
     console.log(`[work-conductor cron] advanced ${completed}/${claimed.length} Work items`);
   },
 });

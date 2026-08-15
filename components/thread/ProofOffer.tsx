@@ -4,13 +4,65 @@ import { useConvexAuth, useQuery } from 'convex/react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
-import { matchingProofId, rankWorkForProof } from '@/lib/albatross/proof-match';
+import { type MailProofCandidate, proofCandidatesForMail } from '@/lib/albatross/proof-match';
 import { cn } from '@/lib/utils';
 
-interface OpenWork {
+export interface OpenWork {
   _id: string;
   title: string;
   contract: { outcome: string; proofs: Array<{ id: string; what: string; satisfiedAt?: number }> } | null;
+}
+
+interface MailProofRequest {
+  work: OpenWork;
+  threadId: string;
+  accountId: string;
+  subject: string;
+  snippet?: string | null;
+  proofId?: string;
+  proofWhat?: string;
+  timezone: string;
+}
+
+/** File user-selected mail evidence without accepting client-authored trust. */
+export async function submitMailProof(
+  input: MailProofRequest,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+) {
+  const response = await fetcher(
+    `/api/albatross/work/${encodeURIComponent(input.work._id)}/proof`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        claim: input.proofWhat || `Something about "${input.work.title}" happened.`,
+        title: input.subject,
+        summary: input.snippet || 'You pointed at this message as proof.',
+        sourceKind: 'mail_thread',
+        sourceId: input.threadId,
+        accountId: input.accountId,
+        proofId: input.proofId,
+        timezone: input.timezone,
+      }),
+    },
+  );
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(result?.error || 'Could not attach this proof.');
+  return result;
+}
+
+/** The exact tentative claim shown before the user confirms a mail match. */
+export function ProofOfferMatchSummary({ match }: { match: MailProofCandidate<OpenWork> }) {
+  return (
+    <>
+      Does this settle something you are carrying? Albatross matched it to{' '}
+      {match.proofWhat ? `“${match.proofWhat}”` : 'the outcome'} for{' '}
+      <span className="font-medium">{match.work.title}</span>.
+      <span className="ml-1 text-[var(--color-text-muted)]">
+        Albatross can file it as proof and close the thing when it is done.
+      </span>
+    </>
+  );
 }
 
 /**
@@ -27,10 +79,12 @@ interface OpenWork {
  */
 export function ProofOffer({
   threadId,
+  accountId,
   subject,
   snippet,
 }: {
   threadId: string;
+  accountId: string;
   subject: string;
   snippet?: string | null;
 }) {
@@ -39,13 +93,14 @@ export function ProofOffer({
   const [picking, setPicking] = useState(false);
   const [attached, setAttached] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const open = useQuery(api.albatrossWorkV2.openWorkForProof, isAuthenticated ? { limit: 8 } : 'skip') as
     | OpenWork[]
     | undefined;
-  const ranked = useMemo(
+  const matches = useMemo(
     () =>
-      rankWorkForProof(
+      proofCandidatesForMail(
         (open || []).map((work) => ({
           ...work,
           outcome: work.contract?.outcome,
@@ -56,37 +111,32 @@ export function ProofOffer({
     [open, snippet, subject],
   );
 
-  if (dismissed || !ranked.length) return null;
+  if (dismissed || !matches.length) return null;
 
   const use = async (work: OpenWork, proofId?: string, what?: string) => {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
-      const response = await fetch(`/api/albatross/work/${encodeURIComponent(work._id)}/proof`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          claim: what || `Something about "${work.title}" happened.`,
-          title: subject,
-          summary: snippet || 'You pointed at this message as proof.',
-          sourceKind: 'mail_thread',
-          sourceId: threadId,
-          trust: 'confirmed',
-          proofId,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
+      await submitMailProof({
+        work,
+        threadId,
+        accountId,
+        subject,
+        snippet,
+        proofId,
+        proofWhat: what,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || 'Could not attach this proof.');
       setAttached(work.title);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not attach this proof.');
     } finally {
       setBusy(false);
     }
   };
-  const suggested = ranked[0];
-  const outstanding = (suggested.contract?.proofs || []).filter((proof) => !proof.satisfiedAt);
-  const suggestedProofId = matchingProofId(outstanding, `${subject} ${snippet || ''}`);
-  const suggestedProof = outstanding.find((proof) => proof.id === suggestedProofId);
+  const suggestedMatch = matches[0];
+  const suggested = suggestedMatch.work;
 
   if (attached) {
     return (
@@ -110,12 +160,7 @@ export function ProofOffer({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="min-w-0 text-[12.5px]">
-          Does this settle something you are carrying? Albatross matched it to{' '}
-          {suggestedProof ? `“${suggestedProof.what}”` : 'the outcome'} for{' '}
-          <span className="font-medium">{suggested.title}</span>.
-          <span className="ml-1 text-[var(--color-text-muted)]">
-            Albatross can file it as proof and close the thing when it is done.
-          </span>
+          <ProofOfferMatchSummary match={suggestedMatch} />
         </p>
         <div className="flex shrink-0 gap-1.5">
           <Button type="button" size="xs" variant="outline" onClick={() => setPicking((value) => !value)}>
@@ -125,9 +170,15 @@ export function ProofOffer({
             type="button"
             size="xs"
             disabled={busy}
-            onClick={() => void use(suggested, suggestedProof?.id, suggestedProof?.what)}
+            onClick={() =>
+              void use(
+                suggested,
+                suggestedMatch.proofId || undefined,
+                suggestedMatch.proofWhat || undefined,
+              )
+            }
           >
-            {busy ? 'Checking…' : 'Yes, use as proof'}
+            {busy ? 'Filing proof…' : 'Yes, use as proof'}
           </Button>
           <Button
             type="button"
@@ -144,9 +195,11 @@ export function ProofOffer({
         </div>
       </div>
 
+      {error ? <p className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">{error}</p> : null}
+
       {picking ? (
         <ul className="mt-2.5 space-y-1 border-t border-dashed border-[var(--color-border)] pt-2.5">
-          {ranked.map((work) => {
+          {matches.map(({ work }) => {
             const outstanding = (work.contract?.proofs || []).filter((proof) => !proof.satisfiedAt);
             return (
               <li key={work._id}>

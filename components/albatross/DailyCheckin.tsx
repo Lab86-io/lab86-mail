@@ -18,6 +18,24 @@ export interface DailyCheckinData {
   }>;
 }
 
+/** Build the durable answer payload from either prose, tomorrow's intent, or selected evidence. */
+export function dailyCheckinAnswerPayload(
+  checkin: DailyCheckinData,
+  selected: ReadonlySet<string>,
+  responseText: string,
+  tomorrowIntentText: string,
+  timezone: string,
+) {
+  return {
+    responseText: responseText.trim(),
+    tomorrowIntentText: tomorrowIntentText.trim(),
+    completed: checkin.candidateItems
+      .filter((item) => selected.has(`${item.kind}:${item.id}`))
+      .map((item) => ({ kind: item.kind, id: item.id })),
+    timezone,
+  };
+}
+
 export function DailyCheckin({
   checkin,
   open,
@@ -47,18 +65,18 @@ export function DailyCheckin({
     setBusy(true);
     setError(null);
     try {
-      const completed = checkin.candidateItems
-        .filter((item) => selected.has(`${item.kind}:${item.id}`))
-        .map((item) => ({ kind: item.kind, id: item.id }));
       const response = await fetch(`/api/albatross/checkin/${encodeURIComponent(checkin._id)}/answer`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          responseText: text.trim(),
-          tomorrowIntentText: tomorrowText.trim(),
-          completed,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
+        body: JSON.stringify(
+          dailyCheckinAnswerPayload(
+            checkin,
+            selected,
+            text,
+            tomorrowText,
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ),
+        ),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Could not save the check-in.');

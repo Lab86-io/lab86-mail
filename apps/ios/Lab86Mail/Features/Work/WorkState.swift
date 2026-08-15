@@ -58,15 +58,17 @@ struct WorkExecutionMove: Identifiable, Hashable, Codable, Sendable {
     let totalSteps: Int
     let areaName: String?
 
-    var id: String { "\(workID):\(stepKey ?? stepTitle)" }
+    var id: String {
+        let scheduled = scheduledStartAt.map { String(Int($0.timeIntervalSince1970 * 1_000)) } ?? "unscheduled"
+        return "\(workID):\(stepKey ?? stepTitle):\(scheduled)"
+    }
 
     init?(json: JSONValue) {
-        guard let workID = json["workId"]?.stringValue,
-              let stepTitle = json["stepTitle"]?.stringValue?.nilIfBlank else { return nil }
+        guard let workID = json["workId"]?.stringValue else { return nil }
         self.workID = workID
         workTitle = json["workTitle"]?.stringValue?.nilIfBlank ?? "Albatross"
         stepKey = json["stepKey"]?.stringValue?.nilIfBlank
-        self.stepTitle = stepTitle
+        stepTitle = json["stepTitle"]?.stringValue?.nilIfBlank ?? "Open the current step"
         detail = json["detail"]?.stringValue?.nilIfBlank
         url = json["url"]?.stringValue?.nilIfBlank
         phase = json["phase"]?.stringValue ?? "unscheduled"
@@ -95,16 +97,20 @@ struct WorkProofCandidate: Identifiable, Hashable, Codable, Sendable {
     let workTitle: String
     let proofID: String?
     let proofWhat: String?
+    let matchedMessageID: String?
+    let matchedContent: String?
 
     var id: String { "\(workID):\(proofID ?? "outcome")" }
 
-    init?(json: JSONValue) {
+    init?(json: JSONValue, matchedMessageID: String? = nil, matchedContent: String? = nil) {
         guard let workID = json["workId"]?.stringValue,
               let workTitle = json["workTitle"]?.stringValue?.nilIfBlank else { return nil }
         self.workID = workID
         self.workTitle = workTitle
         proofID = json["proofId"]?.stringValue?.nilIfBlank
         proofWhat = json["proofWhat"]?.stringValue?.nilIfBlank
+        self.matchedMessageID = matchedMessageID
+        self.matchedContent = matchedContent
     }
 }
 

@@ -323,10 +323,11 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               {execution?.missedMoves.length ? (
                 <Section title="The plan slipped" note="Choose what should happen now.">
                   <div className="space-y-3">
-                    {execution.missedMoves.map((move) => (
+                    {execution.missedMoves.filter((move) => Boolean(move.stepKey)).map((move) => (
                       <LapsePrompt
                         key={`${move.workId}:${move.stepKey || move.stepTitle}`}
                         workId={move.workId}
+                        stepKey={move.stepKey!}
                         stepTitle={move.stepTitle}
                         plannedAt={move.scheduledStartAt || undefined}
                       />

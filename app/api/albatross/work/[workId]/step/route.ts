@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { completeWorkStep } from '@/lib/albatross/step-execution';
+import { completeWorkStep, StepExecutionError } from '@/lib/albatross/step-execution';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
@@ -29,7 +29,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ workId
     return Response.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitResponse(error);
-    const status = error instanceof AuthRequiredError ? 401 : 500;
+    const status =
+      error instanceof AuthRequiredError
+        ? 401
+        : error instanceof StepExecutionError
+          ? error.status
+          : 500;
     return Response.json(
       { ok: false, error: error instanceof Error ? error.message : 'Step update failed.' },
       { status },

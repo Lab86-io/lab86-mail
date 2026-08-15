@@ -378,7 +378,12 @@ export const workList = defineTool({
     const queryArgs = { userId, ...(args.limit ? { limit: args.limit } : {}) };
     const [work, execution] = await Promise.all([
       deps.convexQuery<any[]>(workApi().allWork, queryArgs),
-      deps.convexQuery<any>(workApi().executionSnapshot, queryArgs),
+      deps
+        .convexQuery<any>(workApi().executionSnapshot, {
+          userId,
+          limit: Math.min(args.limit ?? 60, 100),
+        })
+        .catch(() => null),
     ]);
     return { work, execution };
   },

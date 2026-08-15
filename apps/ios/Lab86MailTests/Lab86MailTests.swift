@@ -866,6 +866,11 @@ struct Lab86MailTests {
         #expect(PrimaryTab.work.title == "Albatrosses")
         #expect(PrimaryTab.files.title == "Files")
 
+        let legacyTasks = NavigationModel()
+        legacyTasks.openPrimaryView("tasks")
+        #expect(legacyTasks.selectedTab == .tasks)
+        #expect(!PrimaryTab.sourceList.contains(legacyTasks.selectedTab))
+
         let navigation = NavigationModel()
         navigation.openEvent(
             CalendarEventSummary(
