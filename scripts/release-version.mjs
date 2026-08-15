@@ -13,7 +13,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 export const BUMP_LEVELS = ['major', 'minor', 'patch'];
 
 export function detectBump(text) {
@@ -41,7 +41,7 @@ export function nextVersion(version, bump) {
 
 export function resolveVersion({ current, text = '', bump = null, set = null }) {
   const explicit = set ?? detectExplicitVersion(text);
-  if (explicit) {
+  if (explicit !== null) {
     if (!VERSION_PATTERN.test(explicit)) {
       throw new Error(`Not a release version: ${explicit}`);
     }
@@ -57,6 +57,19 @@ export function resolveVersion({ current, text = '', bump = null, set = null }) 
     throw new Error(`Not a bump level: ${level}. Expected one of ${BUMP_LEVELS.join(', ')}.`);
   }
   return nextVersion(current, level);
+}
+
+export function parseArguments(argv) {
+  const args = new Map();
+  for (let i = 2; i < argv.length; i += 2) {
+    const option = argv[i];
+    const value = argv[i + 1];
+    if (value === undefined) {
+      throw new Error(`Missing value for ${option}.`);
+    }
+    args.set(option, value);
+  }
+  return args;
 }
 
 export function compareVersions(left, right) {
@@ -90,8 +103,7 @@ function readPrText(path) {
 }
 
 function main(argv) {
-  const args = new Map();
-  for (let i = 2; i < argv.length; i += 2) args.set(argv[i], argv[i + 1]);
+  const args = parseArguments(argv);
 
   const pkgPath = args.get('--package') || 'package.json';
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
