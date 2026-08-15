@@ -1000,6 +1000,18 @@ export default defineSchema({
     // overlapping ticks from running the same Work twice.
     lastEvidenceReconcileAt: v.optional(v.number()),
     evidenceReconcileClaimedAt: v.optional(v.number()),
+    // Final-step proof is an outbox entry, written atomically with completion.
+    // The evidence conductor materializes it and clears it idempotently.
+    pendingStepEvidenceAt: v.optional(v.number()),
+    pendingStepEvidence: v.optional(
+      v.object({
+        planId: v.string(),
+        stepIdentity: v.string(),
+        stepTitle: v.string(),
+        cardId: v.optional(v.string()),
+        requestedAt: v.number(),
+      }),
+    ),
     priority: v.optional(v.number()),
     questions: v.optional(
       v.array(
@@ -1099,6 +1111,7 @@ export default defineSchema({
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
     .index('by_user_project', ['userId', 'primaryProjectId'])
+    .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_capture', ['captureId']),
 
   // A generated plan for one intent. digitalActions match the work-model

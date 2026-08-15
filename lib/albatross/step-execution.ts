@@ -77,42 +77,15 @@ export async function completeWorkStep(
     throw error;
   }
 
-  if (!completed.transitioned) {
-    return {
-      ...completed,
-      closed: completed.workState === 'done',
-      replanned: false,
-      followUp: 'not_needed' as const,
-    };
-  }
-
-  let closed = completed.workState === 'done';
-  if (completed.allStepsComplete) {
-    await deps.convexMutation((api as any).albatrossWorkV2.attachProof, {
-      userId: input.userId,
-      workId: input.workId,
-      claim: `Every planned step is complete: ${completed.stepTitle}`,
-      title: `Completed ${completed.stepTitle}`,
-      summary: 'The user marked the final remaining plan step complete.',
-      limits:
-        'This confirms the plan actions, but an external outcome may still need its own reply or receipt.',
-      sourceKind: completed.cardId ? 'task' : 'manual',
-      sourceId: completed.cardId || `plan:${completed.planId}:steps-complete`,
-      trust: 'confirmed',
-      settleContract: false,
-    });
-    const after = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
-      userId: input.userId,
-      workId: input.workId,
-    });
-    closed = after?.work?.workState === 'done';
-  }
   return {
     ...completed,
-    closed,
+    closed: completed.workState === 'done',
     replanned: false,
-    // Final-step evidence sets lastEvidenceAt. The existing evidence conductor
-    // handles any plan/outcome follow-up after this response has returned.
-    followUp: completed.allStepsComplete && !closed ? ('queued' as const) : ('not_needed' as const),
+    // Final-step evidence is an atomic outbox write in completeStep. The
+    // conductor materializes proof and handles planning after this returns.
+    followUp:
+      completed.transitioned && completed.allStepsComplete && completed.workState !== 'done'
+        ? ('queued' as const)
+        : ('not_needed' as const),
   };
 }

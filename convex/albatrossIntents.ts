@@ -830,6 +830,9 @@ export const markPlanApplied = mutation({
     if (intent.pendingPlanId && intent.pendingPlanId !== plan._id) {
       throw new Error('A newer plan revision is waiting to be applied.');
     }
+    if (plan.status === 'superseded') {
+      throw new Error('This plan revision was replaced by a newer one.');
+    }
     const ts = now();
     // Apply turned plan steps into real cards. Bind the document's keyed
     // checklist items to them so every checkbox is the live task record.

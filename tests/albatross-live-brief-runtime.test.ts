@@ -289,6 +289,30 @@ describe('shape rides capture and planning', () => {
       expect.objectContaining({ key: 'receipt', done: false }),
     ]);
   });
+
+  test('a superseded initial plan cannot overwrite its replacement', async () => {
+    const t = newHarness();
+    const workId = await seedWork(t);
+    const supersededPlanId = await seedPlan(t, workId, gateDocument('q1'));
+    const currentPlanId = await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId: workId,
+      outcome: 'The replacement plan is ready.',
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+    });
+
+    await expect(
+      t.mutation(api.albatrossIntents.markPlanApplied, {
+        ...caller,
+        planId: supersededPlanId,
+        appliedSteps: [],
+      }),
+    ).rejects.toThrow('replaced by a newer one');
+    expect((await t.run((ctx) => ctx.db.get(workId)))?.latestPlanId).toBe(currentPlanId);
+  });
 });
 
 describe('the document binds to live records', () => {

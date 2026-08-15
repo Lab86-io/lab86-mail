@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -325,6 +325,62 @@ describe('Albatross Work v2 Area Brief reads', () => {
         source: 'evidence',
       }),
     ).toMatchObject({ stepKey: 'save', allStepsComplete: false, transitioned: true });
+    const finalCompletion = await t.mutation(api.albatrossWorkV2.completeStep, {
+      ...caller,
+      workId,
+      stepKey: 'physical-1',
+      source: 'user',
+    });
+    expect(finalCompletion).toMatchObject({
+      stepKey: 'physical-1',
+      allStepsComplete: true,
+      transitioned: true,
+    });
+
+    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+    expect(detail.plan?._id).toBe(planId);
+    expect(detail.execution).toMatchObject({ currentStep: null, remainingSteps: 0, totalSteps: 3 });
+    expect(detail.execution.guideSteps.every((step) => step.done)).toBe(true);
+
+    const pending = await t.query(internal.albatrossWorkV2.pendingStepEvidenceCandidates, {});
+    expect(pending).toEqual([
+      expect.objectContaining({
+        workId,
+        planId: String(planId),
+        stepIdentity: 'step:physical:mail the original document',
+        stepTitle: 'Mail the original document',
+      }),
+    ]);
+    expect(
+      await t.mutation(internal.albatrossWorkV2.clearPendingStepEvidence, {
+        workId,
+        requestedAt: pending[0].requestedAt + 1,
+      }),
+    ).toBe(false);
+    const previousAppUrl = process.env.LAB86_MAIL_PUBLIC_URL;
+    process.env.LAB86_MAIL_PUBLIC_URL = '';
+    try {
+      await t.action(internal.albatrossWorkV2.evidenceReconcileTick, {});
+    } finally {
+      if (previousAppUrl === undefined) delete process.env.LAB86_MAIL_PUBLIC_URL;
+      else process.env.LAB86_MAIL_PUBLIC_URL = previousAppUrl;
+    }
+    expect(await t.query(internal.albatrossWorkV2.pendingStepEvidenceCandidates, {})).toEqual([]);
+    const afterEvidence = await t.run((ctx) =>
+      ctx.db
+        .query('albatrossEvidence')
+        .withIndex('by_user_target', (q) =>
+          q.eq('userId', userId).eq('targetKind', 'work').eq('targetId', String(workId)),
+        )
+        .collect(),
+    );
+    expect(afterEvidence).toEqual([
+      expect.objectContaining({
+        sourceKind: 'manual',
+        sourceId: `plan:${String(planId)}:steps-complete`,
+        trust: 'confirmed',
+      }),
+    ]);
     expect(
       await t.mutation(api.albatrossWorkV2.completeStep, {
         ...caller,
@@ -332,12 +388,8 @@ describe('Albatross Work v2 Area Brief reads', () => {
         stepKey: 'physical-1',
         source: 'user',
       }),
-    ).toMatchObject({ stepKey: 'physical-1', allStepsComplete: true, transitioned: true });
-
-    const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
-    expect(detail.plan?._id).toBe(planId);
-    expect(detail.execution).toMatchObject({ currentStep: null, remainingSteps: 0, totalSteps: 3 });
-    expect(detail.execution.guideSteps.every((step) => step.done)).toBe(true);
+    ).toMatchObject({ allStepsComplete: true, transitioned: false });
+    expect(await t.query(internal.albatrossWorkV2.pendingStepEvidenceCandidates, {})).toEqual([]);
   });
 
   test('step completion atomically checks the bound task and moves it to Done', async () => {
@@ -409,6 +461,23 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(work?.stepProgress).toEqual([
       expect.objectContaining({ identity: 'action:book_appointment', cardId: String(seeded.cardId) }),
     ]);
+    const firstCompletedAt = card?.completedAt;
+    const firstProgress = work?.stepProgress;
+
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'book',
+        source: 'user',
+      }),
+    ).toMatchObject({ transitioned: false, allStepsComplete: true });
+    const [retriedCard, retriedWork] = await t.run((ctx) =>
+      Promise.all([ctx.db.get(seeded.cardId), ctx.db.get(workId)]),
+    );
+    expect(retriedCard?.completedAt).toBe(firstCompletedAt);
+    expect(retriedWork?.stepProgress).toEqual(firstProgress);
+    expect(retriedWork?.stepProgress).toHaveLength(1);
   });
 
   test('execution projection keeps completion after more than one thousand applied card ids', async () => {

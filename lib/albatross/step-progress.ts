@@ -49,14 +49,16 @@ function bounded(value: unknown, max: number) {
     .slice(0, max);
 }
 
+/** Normalize exact step identity fields without introducing fuzzy matching. */
 export function normalizeStepIdentityPart(value: unknown) {
   return bounded(value, 400).toLowerCase().replace(/\s+/g, ' ');
 }
 
 /**
  * A plan may change its local step keys on every generation. This identity is
- * deliberately exact and conservative: a stable action key wins, then a bound
- * card, then normalized kind + title. We never fuzzy-match completed work.
+ * deliberately exact and conservative: a stable action key wins, then a
+ * normalized kind + title. A card is only the fallback for an untitled step,
+ * so applying a plan cannot change the identity. We never fuzzy-match.
  */
 export function completedStepIdentity(input: {
   actionKey?: string;
@@ -66,11 +68,14 @@ export function completedStepIdentity(input: {
 }) {
   const actionKey = normalizeStepIdentityPart(input.actionKey);
   if (actionKey) return `action:${actionKey}`;
+  const title = normalizeStepIdentityPart(input.title);
+  if (title) return `step:${normalizeStepIdentityPart(input.kind || 'task')}:${title}`;
   const cardId = bounded(input.cardId, 160);
   if (cardId) return `card:${cardId}`;
-  return `step:${normalizeStepIdentityPart(input.kind || 'task')}:${normalizeStepIdentityPart(input.title)}`;
+  return `step:${normalizeStepIdentityPart(input.kind || 'task')}:untitled`;
 }
 
+/** Project a generated plan into stable Work-level progress identities. */
 export function planStepsForProgress(plan: PlanLike): ProgressPlanStep[] {
   const appliedByKey = new Map((plan.appliedSteps || []).map((step) => [step.stepKey, step] as const));
   const digital = (plan.digitalActions || [])
@@ -109,6 +114,7 @@ export function planStepsForProgress(plan: PlanLike): ProgressPlanStep[] {
   return [...digital, ...physical];
 }
 
+/** Migrate legacy plan-scoped completion rows into stable progress entries. */
 export function progressFromPlanCompletions(plan: PlanLike): StepProgressEntry[] {
   const completed = new Map((plan.completedSteps || []).map((row) => [row.stepKey, row] as const));
   return planStepsForProgress(plan).flatMap((step) => {
@@ -128,11 +134,14 @@ export function progressFromPlanCompletions(plan: PlanLike): StepProgressEntry[]
   });
 }
 
+/** Merge idempotently, preserving the first recorded completion per identity. */
 export function mergeStepProgress(
   existing: readonly StepProgressEntry[] | undefined,
   additions: readonly StepProgressEntry[],
   limit = 120,
 ) {
+  // First wins: an existing completion keeps its original timestamp/source
+  // when a legacy plan or later projection offers the same stable identity.
   const byIdentity = new Map<string, StepProgressEntry>();
   for (const row of [...(existing || []), ...additions]) {
     if (!row.identity || byIdentity.has(row.identity)) continue;

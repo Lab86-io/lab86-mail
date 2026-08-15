@@ -43,30 +43,28 @@ describe('completeWorkStep', () => {
     });
   });
 
-  test('the final step records proof and queues follow-up without plan generation', async () => {
+  test('the final step queues durable follow-up in the same completion mutation', async () => {
     const mutations: any[] = [];
+    let queryCount = 0;
     const result = await completeWorkStep({ userId: 'user-1', workId: 'work-1', stepKey: 'physical-1' }, {
-      convexQuery: async () => ({ work: { workState: 'active' } }),
+      convexQuery: async () => {
+        queryCount += 1;
+        return null;
+      },
       convexMutation: async (_fn: unknown, args: any) => {
         mutations.push(args);
-        return mutations.length === 1
-          ? completion({
-              stepKey: 'physical-1',
-              stepIdentity: 'step:physical:mail the packet',
-              stepTitle: 'Mail the packet',
-              cardId: null,
-              allStepsComplete: true,
-            })
-          : 'evidence-1';
+        return completion({
+          stepKey: 'physical-1',
+          stepIdentity: 'step:physical:mail the packet',
+          stepTitle: 'Mail the packet',
+          cardId: null,
+          allStepsComplete: true,
+        });
       },
     } as any);
 
-    expect(mutations[1]).toMatchObject({
-      sourceKind: 'manual',
-      sourceId: 'plan:plan-1:steps-complete',
-      trust: 'confirmed',
-      settleContract: false,
-    });
+    expect(mutations).toHaveLength(1);
+    expect(queryCount).toBe(0);
     expect(result).toMatchObject({
       closed: false,
       replanned: false,
@@ -74,11 +72,11 @@ describe('completeWorkStep', () => {
     });
   });
 
-  test('a final proof closure returns done without a queued replan', async () => {
+  test('an already closed final completion needs no queued follow-up', async () => {
     const result = await completeWorkStep({ userId: 'user-1', workId: 'work-1', stepKey: 'step-1' }, {
-      convexQuery: async () => ({ work: { workState: 'done' } }),
-      convexMutation: async (_fn: unknown, args: any) =>
-        args.stepKey ? completion({ allStepsComplete: true, cardId: null }) : 'evidence-1',
+      convexQuery: async () => null,
+      convexMutation: async () =>
+        completion({ allStepsComplete: true, cardId: null, workState: 'done' }),
     } as any);
 
     expect(result).toMatchObject({

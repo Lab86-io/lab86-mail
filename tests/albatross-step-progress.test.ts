@@ -67,11 +67,53 @@ describe('Work-level guided-step progress', () => {
     ]);
   });
 
-  test('a bound card is stable when no action key exists', () => {
-    const step = planStepsForProgress({
+  test('binding a card does not change a titled step identity', () => {
+    const before = planStepsForProgress({
+      digitalActions: [{ key: 'book', kind: 'task', title: 'Book the appointment' }],
+    })[0];
+    const after = planStepsForProgress({
       digitalActions: [{ key: 'book', kind: 'task', title: 'Book the appointment' }],
       appliedSteps: [{ stepKey: 'book', cardId: 'card-123' }],
     })[0];
-    expect(step.identity).toBe('card:card-123');
+    expect(before.identity).toBe('step:task:book the appointment');
+    expect(after.identity).toBe(before.identity);
+    expect(
+      mergeStepProgress(
+        [
+          {
+            identity: before.identity,
+            kind: 'task',
+            title: 'Book the appointment',
+            completedAt: 1,
+            source: 'user',
+          },
+        ],
+        progressFromPlanCompletions({
+          digitalActions: [{ key: 'book', kind: 'task', title: 'Book the appointment' }],
+          appliedSteps: [{ stepKey: 'book', cardId: 'card-123' }],
+        }),
+      ),
+    ).toHaveLength(1);
+  });
+
+  test('merge preserves the first completion and retains the newest 120 identities', () => {
+    const entries = Array.from({ length: 125 }, (_, index) => ({
+      identity: `step:task:${index}`,
+      kind: 'task',
+      title: `Step ${index}`,
+      completedAt: index,
+      source: 'user' as const,
+    }));
+    const merged = mergeStepProgress(entries, [
+      { ...entries[124], completedAt: 999, source: 'evidence' },
+    ]);
+
+    expect(merged).toHaveLength(120);
+    expect(merged[0].identity).toBe('step:task:5');
+    expect(merged.at(-1)).toMatchObject({
+      identity: 'step:task:124',
+      completedAt: 124,
+      source: 'user',
+    });
   });
 });
