@@ -99,6 +99,15 @@ test('the CLI updates a package from release metadata and rejects a repeated ver
   assert.equal(released.stdout, '0.10.0');
   assert.equal(JSON.parse(readFileSync(packagePath, 'utf8')).version, '0.10.0');
 
+  const bumpPackagePath = join(directory, 'bump-package.json');
+  writeFileSync(bumpPackagePath, '{"name":"bump-fixture","version":"2.3.4"}\n');
+  const bumped = spawnSync(process.execPath, [script, '--package', bumpPackagePath, '--bump', 'minor'], {
+    encoding: 'utf8',
+  });
+  assert.equal(bumped.status, 0, bumped.stderr);
+  assert.equal(bumped.stdout, '2.4.0');
+  assert.equal(JSON.parse(readFileSync(bumpPackagePath, 'utf8')).version, '2.4.0');
+
   const repeated = spawnSync(process.execPath, [script, '--package', packagePath, '--set', '0.10.0'], {
     encoding: 'utf8',
   });
