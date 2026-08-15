@@ -1143,6 +1143,7 @@ export const completeTomorrowPlan = mutation({
     ...notificationCallerArgs,
     checkinId: v.id('albatrossDailyCheckins'),
     workId: v.id('albatrossIntents'),
+    workIds: v.optional(v.array(v.string())),
     status: v.union(v.literal('ready'), v.literal('needs_input')),
   },
   handler: async (ctx, args) => {
@@ -1153,9 +1154,18 @@ export const completeTomorrowPlan = mutation({
       throw new Error('Check-in plan not found.');
     }
     if (row.tomorrowPlanStatus !== 'planning') return { stale: true };
+    // Every reported sibling must belong to the caller before it is recorded.
+    const workIds: string[] = [];
+    for (const rawId of (args.workIds ?? []).slice(0, 12)) {
+      const docId = ctx.db.normalizeId('albatrossIntents', rawId);
+      if (!docId) continue;
+      const sibling = await ctx.db.get(docId);
+      if (sibling && sibling.userId === userId) workIds.push(String(sibling._id));
+    }
     const ts = now();
     await ctx.db.patch(row._id, {
       tomorrowWorkId: args.workId,
+      tomorrowWorkIds: workIds.length ? workIds : [String(args.workId)],
       tomorrowPlanStatus: args.status,
       tomorrowPlanClaimedAt: undefined,
       tomorrowPlanNextAt: undefined,

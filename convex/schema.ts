@@ -2173,6 +2173,9 @@ export default defineSchema({
     tomorrowPlanNextAt: v.optional(v.number()),
     tomorrowPlanError: v.optional(v.string()),
     tomorrowWorkId: v.optional(v.id('albatrossIntents')),
+    // The split writes one Work per independent outcome in the answer. The
+    // first id mirrors tomorrowWorkId for older clients.
+    tomorrowWorkIds: v.optional(v.array(v.string())),
     reconciledChanges: v.optional(
       v.array(
         v.object({

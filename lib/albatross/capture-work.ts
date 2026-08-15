@@ -101,6 +101,7 @@ Rules:
 - Preserve the user's meaning and important detail. Never invent a goal.
 - Split automatically when two parts can be completed, paused, or abandoned independently.
 - Keep one outcome together when its steps serve the same definition of done.
+- A shared person, day, or theme is not one outcome. Split errands that different places, merchants, or offices can finish independently.
 - A title is short, concrete, and sentence case.
 - Choose primaryAreaName only from the supplied active Areas when there is strong evidence. Otherwise null.
 - relatedAreaNames may contain other supplied Areas that materially participate. Never invent an Area.

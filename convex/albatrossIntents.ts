@@ -239,6 +239,39 @@ export const createIntent = mutation({
   },
 });
 
+/**
+ * External ids form families, for example one check-in's tomorrow siblings.
+ * A prefix scan on the exact-id index finds the whole family so a caller can
+ * reconcile instead of duplicate. Rows report whether work has started; the
+ * caller must never remove started work.
+ */
+export const listByExternalPrefix = query({
+  args: {
+    ...callerArgs,
+    prefix: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const prefix = bounded(args.prefix, 160);
+    if (!prefix) return [];
+    const limit = Math.min(Math.max(Math.trunc(args.limit ?? 24), 1), 40);
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_external', (q) =>
+        q.eq('userId', userId).gte('externalId', prefix).lt('externalId', `${prefix}\uffff`),
+      )
+      .take(limit);
+    return rows.map((row) => ({
+      _id: row._id,
+      externalId: row.externalId ?? null,
+      title: row.title,
+      workState: row.workState ?? 'active',
+      started: (row.stepProgress?.length ?? 0) > 0 || Boolean(row.lastEvidenceAt),
+    }));
+  },
+});
+
 export const listIntents = query({
   args: {
     ...callerArgs,

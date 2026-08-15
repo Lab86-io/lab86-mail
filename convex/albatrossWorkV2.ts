@@ -262,6 +262,35 @@ export const releaseWork = mutation({
   },
 });
 
+/**
+ * A revised check-in or a split can supersede a sibling. Automatic release is
+ * legal only while nothing has happened: no step progress, no evidence, and an
+ * open state. Machinery never removes started work.
+ */
+export const releaseUnstartedWork = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const started = (work.stepProgress?.length ?? 0) > 0 || Boolean(work.lastEvidenceAt);
+    if (started || (work.workState ?? 'active') !== 'active') return { released: false };
+    const ts = now();
+    await ctx.db.patch(args.workId, {
+      workState: 'released',
+      status: 'archived',
+      releaseReason: bounded(args.reason, 400) || 'Superseded by a newer plan.',
+      releaseProposedBy: 'system',
+      releasedAt: ts,
+      updatedAt: ts,
+    });
+    return { released: true };
+  },
+});
+
 /** Picking something back up is always allowed, and costs nothing to say. */
 export const reopenWork = mutation({
   args: { ...callerArgs, workId: v.id('albatrossIntents') },
