@@ -455,6 +455,7 @@ export const deleteUserCascade = mutation({
       'mobileSyncHeads',
       'notificationDeliveries',
       'albatrossDailyCheckins',
+      'albatrossBrowserSessions',
       'areas',
       'mcpConnections',
       'mcpCredentials',

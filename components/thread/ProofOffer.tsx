@@ -191,7 +191,11 @@ export function ProofOffer({
             size="xs"
             disabled={busy}
             onClick={() =>
-              void use(suggestedMatch, suggestedMatch.proofId || undefined, suggestedMatch.proofWhat || undefined)
+              void use(
+                suggestedMatch,
+                suggestedMatch.proofId || undefined,
+                suggestedMatch.proofWhat || undefined,
+              )
             }
           >
             {busy ? 'Filing proof…' : 'Yes, use as proof'}

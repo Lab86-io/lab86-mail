@@ -13,7 +13,11 @@ export function proofOfferAllowed(category: string | null | undefined): boolean 
 /** The strongest available classification verdict for a corpus thread row. */
 export function threadPrimaryCategory(
   row:
-    | { llmCategory?: { primary?: unknown } | null; smartPrimary?: unknown; smartCategory?: { primary?: unknown } | null }
+    | {
+        llmCategory?: { primary?: unknown } | null;
+        smartPrimary?: unknown;
+        smartCategory?: { primary?: unknown } | null;
+      }
     | null
     | undefined,
 ): string | null {

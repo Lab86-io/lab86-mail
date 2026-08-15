@@ -20,7 +20,11 @@ import {
   progressFromPlanCompletions,
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
-import { type StepEvidenceLike, type StepVerification, stepVerification } from '../lib/albatross/step-verification';
+import {
+  type StepEvidenceLike,
+  type StepVerification,
+  stepVerification,
+} from '../lib/albatross/step-verification';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -1377,8 +1381,7 @@ function projectedPlanSteps(
     .map(({ action, key, identity }) => {
       const applied = appliedByKey.get(key);
       const done =
-        completedIdentities.has(identity) ||
-        Boolean(applied?.cardId && completedCardIds.has(applied.cardId));
+        completedIdentities.has(identity) || Boolean(applied?.cardId && completedCardIds.has(applied.cardId));
       return {
         key,
         identity,

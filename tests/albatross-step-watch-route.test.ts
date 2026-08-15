@@ -94,9 +94,7 @@ describe('step watch conductor route', () => {
     const mutations: any[] = [];
     const post = createStepWatchPost({
       isInternalCronRequest: () => true,
-      convexQuery: mock(async (_fn: any, args: any) =>
-        args.workId ? detail : [confirmationThread],
-      ) as any,
+      convexQuery: mock(async (_fn: any, args: any) => (args.workId ? detail : [confirmationThread])) as any,
       convexMutation: mock(async (_fn: any, args: any) => {
         mutations.push(args);
         return undefined;
@@ -116,9 +114,7 @@ describe('step watch conductor route', () => {
     const completeWorkStep = mock(async () => ({ ok: true }));
     const post = createStepWatchPost({
       isInternalCronRequest: () => true,
-      convexQuery: mock(async (_fn: any, args: any) =>
-        args.workId ? detail : [confirmationThread],
-      ) as any,
+      convexQuery: mock(async (_fn: any, args: any) => (args.workId ? detail : [confirmationThread])) as any,
       convexMutation: mock(async () => undefined) as any,
       completeWorkStep: completeWorkStep as any,
       evidenceSatisfies: mock(async () => ({
@@ -138,9 +134,7 @@ describe('step watch conductor route', () => {
     const evidenceGate = mock(async () => ({ satisfies: true, reason: 'x' }));
     const post = createStepWatchPost({
       isInternalCronRequest: () => true,
-      convexQuery: mock(async (_fn: any, args: any) =>
-        args.workId ? detail : [marketingThread],
-      ) as any,
+      convexQuery: mock(async (_fn: any, args: any) => (args.workId ? detail : [marketingThread])) as any,
       convexMutation: mock(async () => undefined) as any,
       completeWorkStep: mock(async () => ({ ok: true })) as any,
       evidenceSatisfies: evidenceGate as any,

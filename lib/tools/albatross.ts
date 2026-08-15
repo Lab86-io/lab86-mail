@@ -741,8 +741,8 @@ export const albatrossSplitWork = defineTool({
     if (!args.items) {
       const proposal = await deps.proposeWorkSplit({
         userId,
-        userEmail: ctx.userEmail,
-        userName: ctx.userName,
+        userEmail: ctx.userEmail ?? undefined,
+        userName: ctx.userName ?? undefined,
         workId: args.workId,
         focus: args.focus,
       });
@@ -758,8 +758,8 @@ export const albatrossSplitWork = defineTool({
     }
     const committed = await deps.commitWorkSplit({
       userId,
-      userEmail: ctx.userEmail,
-      userName: ctx.userName,
+      userEmail: ctx.userEmail ?? undefined,
+      userName: ctx.userName ?? undefined,
       workId: args.workId,
       items: args.items,
       timezone: ctx.userTimezone,

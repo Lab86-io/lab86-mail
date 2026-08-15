@@ -669,6 +669,33 @@ export default defineSchema({
   // Source-normalized evidence is the substrate for the personal index. The
   // target is optional: unassigned evidence remains searchable until the user
   // or classifier links it to an Area, Project, Work item, or Routine.
+  // One row per shared browser session opened from guided work. The live-view
+  // URL is interactive; the replay URL becomes the evidence url when a step
+  // verifies inside the session.
+  albatrossBrowserSessions: defineTable({
+    userId: v.string(),
+    workId: v.string(),
+    stepKey: v.optional(v.string()),
+    stepIdentity: v.optional(v.string()),
+    sessionId: v.string(),
+    liveViewUrl: v.string(),
+    replayUrl: v.string(),
+    status: v.union(
+      v.literal('starting'),
+      v.literal('agent'),
+      v.literal('user'),
+      v.literal('verifying'),
+      v.literal('ended'),
+      v.literal('failed'),
+    ),
+    statusDetail: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId', 'workId'])
+    .index('by_user_session', ['userId', 'sessionId']),
+
   albatrossEvidence: defineTable({
     userId: v.string(),
     targetKind: v.optional(

@@ -3,10 +3,10 @@
 import { useConvexAuth, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
-import { GuidedStepPane } from '@/components/albatross/GuidedStep';
-import { SplitSheet } from '@/components/albatross/SplitSheet';
+import { type GuidedSession, GuidedStepPane } from '@/components/albatross/GuidedStep';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
+import { SplitSheet } from '@/components/albatross/SplitSheet';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
@@ -179,6 +179,10 @@ export function WorkDetail({ workId }: { workId: string }) {
     api.albatrossWorkV2.workDetail,
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
   ) as WorkDetailData | null | undefined;
+  const session = useQuery(
+    (api as any).albatrossBrowserSessions.activeSessionForWork,
+    isAuthenticated ? { workId } : 'skip',
+  ) as GuidedSession | null | undefined;
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [splitting, setSplitting] = useState(false);
@@ -189,6 +193,7 @@ export function WorkDetail({ workId }: { workId: string }) {
     () => new Set(),
   );
   const [savingStepIds, setSavingStepIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [sessionBusy, setSessionBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -248,6 +253,47 @@ export function WorkDetail({ workId }: { workId: string }) {
       setError(cause instanceof Error ? cause.message : 'Could not update this Albatross.');
     } finally {
       setCompleting(false);
+    }
+  };
+
+  const sessionAction = async (body: Record<string, unknown>, fallback: string) => {
+    setSessionBusy(true);
+    setError(null);
+    try {
+      return await postJson(`/api/albatross/work/${encodeURIComponent(workId)}/session`, body, fallback);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : fallback);
+      return null;
+    } finally {
+      setSessionBusy(false);
+    }
+  };
+
+  const startSession = (stepKey: string) =>
+    void sessionAction({ action: 'start', stepKey }, 'The shared browser could not open.');
+
+  const endSession = () => {
+    if (!session) return;
+    void sessionAction({ action: 'end', sessionId: session.sessionId }, 'The shared browser did not close.');
+  };
+
+  const verifySession = async (stepKey: string) => {
+    if (!session) return;
+    const result = await sessionAction(
+      { action: 'verify', sessionId: session.sessionId, stepKey },
+      'The page could not be checked.',
+    );
+    // A satisfied verdict already completed the step server-side with the
+    // session bound as evidence; mirror it optimistically like a manual check.
+    if (result?.satisfied) {
+      setOptimisticCompletedSteps((current) => new Set([...current, stepKey]));
+      const visibleSteps = guideStepsWithOptimisticCompletion(
+        detail?.execution.guideSteps || [],
+        new Set([...optimisticCompletedSteps, stepKey]),
+      );
+      const selectedIndex = visibleSteps.findIndex((step) => step.key === stepKey);
+      const nextStep = visibleSteps.slice(selectedIndex + 1).find((step) => !step.done);
+      if (nextStep) setActiveGuideId(nextStep.key);
     }
   };
 
@@ -351,6 +397,11 @@ export function WorkDetail({ workId }: { workId: string }) {
         onDiscuss={openAttachedChat}
         savingIds={savingStepIds}
         error={error}
+        session={session ?? null}
+        sessionBusy={sessionBusy}
+        onStartSession={startSession}
+        onVerifySession={(stepKey) => void verifySession(stepKey)}
+        onEndSession={endSession}
       />
     );
   }

@@ -77,9 +77,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
         existing: existing.map(({ workId, title, started }) => ({ workId, title, started })),
       });
 
-      const taken = new Set(
-        existing.map((row) => row.externalId).filter((id): id is string => Boolean(id)),
-      );
+      const taken = new Set(existing.map((row) => row.externalId).filter((id): id is string => Boolean(id)));
       const kept = new Set<string>();
       const planTargets: string[] = [];
       let needsInput = false;

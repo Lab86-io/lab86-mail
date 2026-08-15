@@ -1,9 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import {
-  commitWorkSplit,
-  parseWorkSplitProposal,
-  proposeWorkSplit,
-} from '../lib/albatross/split-work';
+import { commitWorkSplit, parseWorkSplitProposal, proposeWorkSplit } from '../lib/albatross/split-work';
 
 const detail = {
   work: {
@@ -29,9 +25,9 @@ describe('parseWorkSplitProposal', () => {
   });
 
   test('refuses a proposal with one child', () => {
-    expect(() =>
-      parseWorkSplitProposal('{"work":[{"title":"Only one","rawText":"One."}]}'),
-    ).toThrow('A split could not be proposed.');
+    expect(() => parseWorkSplitProposal('{"work":[{"title":"Only one","rawText":"One."}]}')).toThrow(
+      'A split could not be proposed.',
+    );
   });
 
   test('refuses garbage', () => {

@@ -224,6 +224,7 @@ describe('the execution loop owns the visible product surfaces', () => {
       'check-in reflection reconciliation',
       'tomorrow planning conductor',
       'evidence reconciliation conductor',
+      'step mail watch conductor',
       'passed block recovery',
       'shape-aware Work review',
     ]);

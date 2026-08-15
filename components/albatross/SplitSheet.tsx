@@ -79,8 +79,8 @@ export function SplitSheet({
     <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
       <h2 className="text-[13.5px] font-medium">Split this work</h2>
       <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
-        Each part becomes its own Albatross with its own plan and its own proof. This one is released
-        with a record of the split.
+        Each part becomes its own Albatross with its own plan and its own proof. This one is released with a
+        record of the split.
       </p>
 
       {error ? (

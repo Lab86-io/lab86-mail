@@ -27,8 +27,8 @@ import {
   albatrossRejectAction,
   albatrossReplanWork,
   albatrossRunRoutineNow,
-  albatrossSplitWork,
   albatrossSetRoutineConsent,
+  albatrossSplitWork,
   albatrossUndoApproval,
   albatrossUpdateProject,
 } from './albatross';
