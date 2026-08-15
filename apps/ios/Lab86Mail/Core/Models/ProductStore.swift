@@ -2318,14 +2318,27 @@ final class ProductStore {
                 "timezone": .string(TimeZone.current.identifier),
             ])
         )
+        try applyCheckinAnswerResponse(response)
+        await persistCache()
+        await refreshToday()
+    }
+
+    /// Applies only a fully planned answer. A degraded tomorrow plan remains
+    /// visible and retryable instead of being mistaken for a finished check-in.
+    func applyCheckinAnswerResponse(_ response: JSONValue) throws {
         guard response["ok"]?.boolValue == true else {
             throw BackendError.server(status: 500, message: response["error"]?.stringValue ?? "Check-in failed.")
+        }
+        if response["tomorrowPlanStatus"]?.stringValue == "degraded" {
+            throw BackendError.server(
+                status: 503,
+                message: response["tomorrowPlanError"]?.stringValue
+                    ?? "Tomorrow planning is temporarily unavailable."
+            )
         }
         if response["status"]?.stringValue == "answered" {
             self.checkin = nil
         }
-        await persistCache()
-        await refreshToday()
     }
 
     func clearError() { errorMessage = nil }

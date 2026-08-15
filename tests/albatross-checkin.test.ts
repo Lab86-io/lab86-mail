@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dailyCheckinAnswerPayload } from '@/components/albatross/DailyCheckin';
+import { dailyCheckinAnswerPayload, dailyCheckinResponseError } from '@/components/albatross/DailyCheckin';
 import { checkinCallerArgs, tomorrowWorkPlanStatus } from '@/lib/albatross/checkin';
 
 describe('Albatross check-in server caller', () => {
@@ -58,5 +58,15 @@ describe('daily check-in answer payload', () => {
       completed: [{ kind: 'event', id: 'event-1' }],
       timezone: 'UTC',
     });
+  });
+
+  test('keeps a degraded tomorrow plan visible with its retryable error', () => {
+    expect(
+      dailyCheckinResponseError(true, {
+        tomorrowPlanStatus: 'degraded',
+        tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
+      }),
+    ).toBe('Tomorrow planning is temporarily unavailable.');
+    expect(dailyCheckinResponseError(true, { tomorrowPlanStatus: 'ready' })).toBeNull();
   });
 });

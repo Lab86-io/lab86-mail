@@ -1498,6 +1498,33 @@ struct Lab86MailTests {
     }
 
     @Test @MainActor
+    func degradedTomorrowPlanningKeepsTheCheckinAndReturnsItsSafeError() throws {
+        let value = try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(#"{"_id":"checkin-1","localDate":"2026-08-14","status":"open","candidateItems":[]}"#.utf8)
+        )
+        let store = ProductStore(
+            tools: ScriptedTools(responses: [:]),
+            backend: BackendClient(baseURL: nil)
+        )
+        store.checkin = try #require(CheckinSummary(json: value))
+
+        do {
+            try store.applyCheckinAnswerResponse(.object([
+                "ok": .bool(true),
+                "status": .string("answered"),
+                "tomorrowPlanStatus": .string("degraded"),
+                "tomorrowPlanError": .string("Tomorrow planning is temporarily unavailable."),
+            ]))
+            Issue.record("Expected degraded tomorrow planning to remain retryable")
+        } catch {
+            #expect(error.localizedDescription == "Tomorrow planning is temporarily unavailable.")
+        }
+
+        #expect(store.checkin?.id == "checkin-1")
+    }
+
+    @Test @MainActor
     func routesNotificationToThread() {
         let navigation = NavigationModel()
         navigation.open(route: "lab86://mail/thread?account=acct&id=thr")

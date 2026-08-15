@@ -36,6 +36,21 @@ export function dailyCheckinAnswerPayload(
   };
 }
 
+export function dailyCheckinResponseError(
+  responseOK: boolean,
+  body: { error?: unknown; tomorrowPlanStatus?: unknown; tomorrowPlanError?: unknown },
+): string | null {
+  if (!responseOK) {
+    return typeof body.error === 'string' && body.error ? body.error : 'Could not save the check-in.';
+  }
+  if (body.tomorrowPlanStatus === 'degraded') {
+    return typeof body.tomorrowPlanError === 'string' && body.tomorrowPlanError
+      ? body.tomorrowPlanError
+      : 'Tomorrow planning is temporarily unavailable.';
+  }
+  return null;
+}
+
 export function DailyCheckin({
   checkin,
   open,
@@ -79,7 +94,8 @@ export function DailyCheckin({
         ),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Could not save the check-in.');
+      const responseError = dailyCheckinResponseError(response.ok, body);
+      if (responseError) throw new Error(responseError);
       setText('');
       setTomorrowText('');
       setSelected(new Set());

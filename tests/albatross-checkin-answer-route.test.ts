@@ -51,6 +51,7 @@ function dependencies() {
       workId: 'work-tomorrow',
       planId: 'plan-tomorrow',
     })),
+    reportUnexpectedError: mock(() => undefined),
   };
 }
 
@@ -103,9 +104,10 @@ describe('Albatross check-in answer route', () => {
       ok: true,
       status: 'answered',
       tomorrowPlanStatus: 'degraded',
-      tomorrowPlanError: 'intent service unavailable',
+      tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
     });
     expect(deps.advanceWork).not.toHaveBeenCalled();
+    expect(deps.reportUnexpectedError).toHaveBeenCalledTimes(1);
   });
 
   test('returns the durable Work id when planning fails after idempotent creation', async () => {
@@ -132,7 +134,7 @@ describe('Albatross check-in answer route', () => {
       status: 'answered',
       tomorrowWorkId: 'work-tomorrow',
       tomorrowPlanStatus: 'degraded',
-      tomorrowPlanError: 'planner unavailable',
+      tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
     });
     expect(deps.advanceWork).toHaveBeenCalledWith({
       userId: user.userId,
@@ -141,5 +143,19 @@ describe('Albatross check-in answer route', () => {
       workId: 'work-tomorrow',
       timezone: 'America/New_York',
     });
+    expect(deps.reportUnexpectedError).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not expose unexpected server failures', async () => {
+    const deps = dependencies();
+    deps.convexQuery.mockImplementation(async () => {
+      throw new Error('private Convex failure');
+    });
+
+    const response = await invoke(deps);
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false, error: 'Check-in answer failed.' });
+    expect(deps.reportUnexpectedError).toHaveBeenCalledTimes(1);
   });
 });

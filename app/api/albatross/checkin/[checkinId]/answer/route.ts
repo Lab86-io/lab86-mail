@@ -25,6 +25,7 @@ interface CheckinAnswerDependencies {
   convexMutation: typeof convexMutation;
   convexQuery: typeof convexQuery;
   advanceWork: typeof advanceWork;
+  reportUnexpectedError: typeof console.error;
 }
 
 const defaults: CheckinAnswerDependencies = {
@@ -34,6 +35,7 @@ const defaults: CheckinAnswerDependencies = {
   convexMutation,
   convexQuery,
   advanceWork,
+  reportUnexpectedError: console.error,
 };
 
 function parseReconciliation(text: string) {
@@ -150,25 +152,27 @@ Mark an item completed only when the user's words explicitly say it was done, fi
             };
           }
         } catch (planningError) {
+          deps.reportUnexpectedError(
+            '[albatross/checkin/answer] tomorrow planning failed',
+            { userId: user.userId, checkinId, workId: tomorrowWorkId },
+            planningError,
+          );
           result = {
             ...result,
             ...(tomorrowWorkId ? { tomorrowWorkId } : {}),
             tomorrowPlanStatus: 'degraded',
-            tomorrowPlanError:
-              planningError instanceof Error
-                ? planningError.message
-                : 'Tomorrow planning is temporarily unavailable.',
+            tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
           };
         }
       }
       return Response.json({ ok: true, ...result });
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
-      const status = error instanceof AuthRequiredError ? 401 : 500;
-      return Response.json(
-        { ok: false, error: error instanceof Error ? error.message : 'check-in answer failed' },
-        { status },
-      );
+      if (error instanceof AuthRequiredError) {
+        return Response.json({ ok: false, error: error.message }, { status: 401 });
+      }
+      deps.reportUnexpectedError('[albatross/checkin/answer] request failed', error);
+      return Response.json({ ok: false, error: 'Check-in answer failed.' }, { status: 500 });
     }
   };
 }
