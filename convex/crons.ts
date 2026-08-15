@@ -65,7 +65,12 @@ crons.interval(
 // Passed calendar blocks and shape-aware quiet Work are separate signals: one
 // needs a recovery choice now; the other deserves an occasional review.
 crons.interval('passed block recovery', { minutes: 5 }, internal.albatrossNotifications.missedMoveTick, {});
-crons.hourly('shape-aware Work review', { minuteUTC: 23 }, internal.albatrossNotifications.stalenessReviewTick, {});
+crons.hourly(
+  'shape-aware Work review',
+  { minuteUTC: 23 },
+  internal.albatrossNotifications.stalenessReviewTick,
+  {},
+);
 
 // Project-scoped routines materialize durable tasks, questions, and in-app
 // notifications. Stable local-date run keys make this safe across retries,

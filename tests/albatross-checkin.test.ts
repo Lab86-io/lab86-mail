@@ -99,9 +99,9 @@ describe('daily check-in answer payload', () => {
 
 describe('check-in background work', () => {
   test('parses only bounded candidate identities from the model envelope', () => {
-    expect(
-      parseCheckinReconciliation('before {"completed":[{"kind":"work","id":"work-1"}]} after'),
-    ).toEqual({ completed: [{ kind: 'work', id: 'work-1' }] });
+    expect(parseCheckinReconciliation('before {"completed":[{"kind":"work","id":"work-1"}]} after')).toEqual({
+      completed: [{ kind: 'work', id: 'work-1' }],
+    });
     expect(parseCheckinReconciliation('not json')).toEqual({ completed: [] });
   });
 

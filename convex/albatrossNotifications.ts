@@ -981,11 +981,7 @@ function backgroundRetryDelayMs(attempts: number) {
   return Math.min(60 * 60_000, 2 ** exponent * 2 * 60_000);
 }
 
-async function queuedCheckins(
-  ctx: QueryCtx,
-  kind: 'reflection' | 'tomorrow',
-  limit: number,
-) {
+async function queuedCheckins(ctx: QueryCtx, kind: 'reflection' | 'tomorrow', limit: number) {
   const ts = now();
   const index = kind === 'reflection' ? 'by_reflection_reconcile' : 'by_tomorrow_plan';
   const statusField = kind === 'reflection' ? 'reflectionReconcileStatus' : 'tomorrowPlanStatus';
@@ -1008,8 +1004,10 @@ async function queuedCheckins(
   return [...new Map(rows.map((row) => [String(row._id), row] as const)).values()]
     .filter((row) =>
       kind === 'reflection'
-        ? Boolean(row.responseText?.trim()) && (row.reflectionReconcileAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS
-        : Boolean(row.tomorrowIntentText?.trim()) && (row.tomorrowPlanAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS,
+        ? Boolean(row.responseText?.trim()) &&
+          (row.reflectionReconcileAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS
+        : Boolean(row.tomorrowIntentText?.trim()) &&
+          (row.tomorrowPlanAttempts ?? 0) < CHECKIN_BACKGROUND_MAX_ATTEMPTS,
     )
     .sort((a, b) => {
       const aNext = kind === 'reflection' ? a.reflectionReconcileNextAt : a.tomorrowPlanNextAt;
@@ -1235,10 +1233,7 @@ export const releaseTomorrowPlan = internalMutation({
   },
 });
 
-async function runCheckinBackgroundTick(
-  ctx: ActionCtx,
-  kind: 'reflection' | 'tomorrow',
-) {
+async function runCheckinBackgroundTick(ctx: ActionCtx, kind: 'reflection' | 'tomorrow') {
   const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
   const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
   if (!appUrl || !secret) {
@@ -1258,12 +1253,11 @@ async function runCheckinBackgroundTick(
     );
     if (!claim) continue;
     const ok =
-      (await fanOutInternalPost(
-        `${appUrl}/api/cron/checkin-${kind}`,
-        secret,
-        [claim],
-        { label: `checkin-${kind} cron`, timeoutMs: 240_000, concurrency: 1 },
-      )) === 1;
+      (await fanOutInternalPost(`${appUrl}/api/cron/checkin-${kind}`, secret, [claim], {
+        label: `checkin-${kind} cron`,
+        timeoutMs: 240_000,
+        concurrency: 1,
+      })) === 1;
     if (ok) completed += 1;
     else {
       await ctx.runMutation(

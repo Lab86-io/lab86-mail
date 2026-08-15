@@ -626,7 +626,10 @@ export const beginEvidenceReconcile = internalMutation({
     const state = work.workState || work.status;
     if (['done', 'released', 'archived'].includes(state)) return null;
     if ((work.lastEvidenceReconcileAt || 0) >= work.lastEvidenceAt) return null;
-    if (work.evidenceReconcileClaimedAt && ts - work.evidenceReconcileClaimedAt < EVIDENCE_RECONCILE_LEASE_MS) {
+    if (
+      work.evidenceReconcileClaimedAt &&
+      ts - work.evidenceReconcileClaimedAt < EVIDENCE_RECONCILE_LEASE_MS
+    ) {
       return null;
     }
     await ctx.db.patch(work._id, { evidenceReconcileClaimedAt: ts, updatedAt: ts });
@@ -1340,11 +1343,7 @@ export const executionSnapshot = query({
 });
 
 async function recentOpenWork(ctx: QueryCtx, limit = 500) {
-  const rows = await ctx.db
-    .query('albatrossIntents')
-    .withIndex('by_updatedAt')
-    .order('desc')
-    .take(limit);
+  const rows = await ctx.db.query('albatrossIntents').withIndex('by_updatedAt').order('desc').take(limit);
   return rows.filter((row) => {
     const state = row.workState || row.status;
     return !['done', 'released', 'archived'].includes(state);

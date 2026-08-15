@@ -180,7 +180,8 @@ export const createIntent = mutation({
             ? {
                 rawText,
                 title: bounded(args.title, 180) || existing.title,
-                status: existing.status === 'done' || existing.status === 'archived' ? 'ready' : existing.status,
+                status:
+                  existing.status === 'done' || existing.status === 'archived' ? 'ready' : existing.status,
                 workState:
                   existing.workState === 'done' || existing.workState === 'released'
                     ? ('active' as const)

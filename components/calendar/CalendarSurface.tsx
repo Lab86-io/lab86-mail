@@ -3,8 +3,8 @@
 import {
   useConvexAuth,
   useMutation as useConvexMutation,
-  useQuery,
   useQuery_experimental as useConvexQuery,
+  useQuery,
 } from 'convex/react';
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -64,10 +64,7 @@ export function CalendarSurface() {
     args: window,
   });
   const updateCard = useConvexMutation((api as any).boards.updateCard);
-  const execution = useQuery(
-    api.albatrossWorkV2.executionSnapshot,
-    isAuthenticated ? { nowMs } : 'skip',
-  ) as
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
     | {
         missedMoves: Array<{
           workId: string;
@@ -169,7 +166,8 @@ export function CalendarSurface() {
   }, [eventRows, users, calendars, colorByCalendar, dueCards]);
 
   const unauthorizedAccountIDs = useMemo(
-    () => new Set(syncStates.filter((state) => state.status === 'unauthorized').map((state) => state.accountId)),
+    () =>
+      new Set(syncStates.filter((state) => state.status === 'unauthorized').map((state) => state.accountId)),
     [syncStates],
   );
 

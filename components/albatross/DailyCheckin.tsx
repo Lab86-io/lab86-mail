@@ -60,10 +60,7 @@ export function dailyCheckinAnswerPayload(
   };
 }
 
-export function dailyCheckinResponseError(
-  responseOK: boolean,
-  body: { error?: unknown },
-): string | null {
+export function dailyCheckinResponseError(responseOK: boolean, body: { error?: unknown }): string | null {
   if (responseOK) return null;
   return typeof body.error === 'string' && body.error ? body.error : 'Could not save this answer.';
 }
@@ -86,17 +83,20 @@ export function DailyCheckin({
   const [tomorrowState, setTomorrowState] = useState<SaveState>('idle');
   const [reflectionError, setReflectionError] = useState<string | null>(null);
   const [tomorrowError, setTomorrowError] = useState<string | null>(null);
+  const checkinId = checkin?._id;
+  const savedReflection = checkin?.responseText;
+  const savedTomorrow = checkin?.tomorrowIntentText;
 
   useEffect(() => {
-    if (!checkin) return;
-    setText(checkin.responseText || '');
-    setTomorrowText(checkin.tomorrowIntentText || '');
-    setReflectionState(checkin.responseText?.trim() ? 'saved' : 'idle');
-    setTomorrowState(checkin.tomorrowIntentText?.trim() ? 'saved' : 'idle');
+    if (!checkinId) return;
+    setText(savedReflection || '');
+    setTomorrowText(savedTomorrow || '');
+    setReflectionState(savedReflection?.trim() ? 'saved' : 'idle');
+    setTomorrowState(savedTomorrow?.trim() ? 'saved' : 'idle');
     setReflectionError(null);
     setTomorrowError(null);
     setSelected(new Set());
-  }, [checkin?._id, checkin?.responseText, checkin?.tomorrowIntentText]);
+  }, [checkinId, savedReflection, savedTomorrow]);
 
   const toggle = (key: string) => {
     setSelected((current) => {
@@ -196,7 +196,9 @@ export function DailyCheckin({
                           {active ? '✓' : ''}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-[12.5px]">{item.title}</span>
-                        <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">{item.kind}</span>
+                        <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
+                          {item.kind}
+                        </span>
                       </button>
                     );
                   })}

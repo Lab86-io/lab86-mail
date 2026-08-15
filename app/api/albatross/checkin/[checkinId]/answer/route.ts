@@ -59,7 +59,8 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
           : ''
         : String((body as any).tomorrowIntentText || '').trim();
       const selected = completedEntries((body as any).completed);
-      const savesReflection = requestedKind === 'reflection' || (!requestedKind && Boolean(reflectionText || selected.length));
+      const savesReflection =
+        requestedKind === 'reflection' || (!requestedKind && Boolean(reflectionText || selected.length));
       const savesTomorrow = requestedKind === 'tomorrow' || (!requestedKind && Boolean(tomorrowText));
       if (!savesReflection && !savesTomorrow) {
         return Response.json({ ok: false, error: 'Tell Albatross what happened.' }, { status: 400 });
