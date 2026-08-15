@@ -92,12 +92,14 @@ describe('browser session REST client', () => {
   });
 });
 
-function fakeConnector(page: {
-  goto?: (url: string) => Promise<unknown>;
-  url: () => string;
-  title: () => Promise<string>;
-  innerText: () => Promise<string>;
-} | null) {
+function fakeConnector(
+  page: {
+    goto?: (url: string) => Promise<unknown>;
+    url: () => string;
+    title: () => Promise<string>;
+    innerText: () => Promise<string>;
+  } | null,
+) {
   const close = mock(async () => undefined);
   const connector = mock(async () => ({
     page: async () => page,

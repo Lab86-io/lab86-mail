@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import {
-  __setAlbatrossToolDepsForTest,
-  albatrossSplitWork,
-} from '../lib/tools/albatross';
+import { __setAlbatrossToolDepsForTest, albatrossSplitWork } from '../lib/tools/albatross';
 
 const ctx = {
   userId: 'user-1',
