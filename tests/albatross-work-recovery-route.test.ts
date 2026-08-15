@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createWorkRecoveryPost } from '../app/api/albatross/work/[workId]/recover/route';
+import { StepExecutionError } from '../lib/albatross/step-execution';
 
 const user = {
   userId: 'recovery-user',
@@ -89,5 +90,50 @@ describe('Albatross Work recovery route', () => {
       expect(deps.advanceWork).not.toHaveBeenCalled();
       expect(deps.completeWorkStep).not.toHaveBeenCalled();
     }
+  });
+
+  test('done completes the selected step without directly advancing again', async () => {
+    const deps = dependencies();
+    deps.completeWorkStep.mockImplementation(async () => ({
+      transitioned: true,
+      closed: true,
+      replanned: false,
+    }));
+
+    const response = await invoke(deps, 'done');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      recovery: 'done',
+      transitioned: true,
+      closed: true,
+      replanned: false,
+    });
+    expect(deps.completeWorkStep).toHaveBeenCalledWith({
+      userId: user.userId,
+      userEmail: user.email,
+      userName: user.name,
+      workId: 'work-1',
+      stepKey: 'step-1',
+      timezone: 'America/New_York',
+    });
+    expect(deps.advanceWork).not.toHaveBeenCalled();
+  });
+
+  test('done preserves typed step execution errors', async () => {
+    const deps = dependencies();
+    deps.completeWorkStep.mockImplementation(async () => {
+      throw new StepExecutionError('There is no current step to complete.', 409);
+    });
+
+    const response = await invoke(deps, 'done');
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: 'There is no current step to complete.',
+    });
+    expect(deps.advanceWork).not.toHaveBeenCalled();
   });
 });

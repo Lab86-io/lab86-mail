@@ -257,8 +257,9 @@ struct Lab86MailTests {
     }
 
     private actor SuspendedWorkProjectionTools: ToolInvoking {
-        private var workContinuation: CheckedContinuation<JSONValue, any Error>?
-        private var workRequestWaiters: [CheckedContinuation<Void, Never>] = []
+        private var workContinuations: [Int: CheckedContinuation<JSONValue, any Error>] = [:]
+        private var workRequestCount = 0
+        private var workRequestWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
         func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
             if name == "area_list" {
@@ -269,29 +270,31 @@ struct Lab86MailTests {
                 ])
             }
             if name == "work_list" {
+                let call = workRequestCount
+                workRequestCount += 1
                 return try await withCheckedThrowingContinuation { continuation in
-                    workContinuation = continuation
-                    for waiter in workRequestWaiters { waiter.resume() }
-                    workRequestWaiters = []
+                    workContinuations[call] = continuation
+                    let ready = workRequestWaiters.filter { workRequestCount >= $0.count }
+                    workRequestWaiters.removeAll { workRequestCount >= $0.count }
+                    for waiter in ready { waiter.continuation.resume() }
                 }
             }
             return .object([:])
         }
 
-        func waitForWorkRequest() async {
-            if workContinuation != nil { return }
+        func waitForWorkRequests(_ count: Int) async {
+            if workRequestCount >= count { return }
             await withCheckedContinuation { continuation in
-                if workContinuation != nil {
+                if workRequestCount >= count {
                     continuation.resume()
                 } else {
-                    workRequestWaiters.append(continuation)
+                    workRequestWaiters.append((count, continuation))
                 }
             }
         }
 
-        func resolveWork(_ value: JSONValue) {
-            workContinuation?.resume(returning: value)
-            workContinuation = nil
+        func resolveWork(call: Int, with value: JSONValue) {
+            workContinuations.removeValue(forKey: call)?.resume(returning: value)
         }
     }
 
@@ -1305,11 +1308,11 @@ struct Lab86MailTests {
         let tools = SuspendedWorkProjectionTools()
         let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
         let refresh = Task { await store.refreshWork() }
-        await tools.waitForWorkRequest()
+        await tools.waitForWorkRequests(1)
         #expect(store.areas.map(\.id) == ["area-1"])
 
         await store.clearForSignOut()
-        await tools.resolveWork(.object([
+        await tools.resolveWork(call: 0, with: .object([
             "work": .array([
                 .object([
                     "_id": .string("work-1"), "title": .string("Renew passport"),
@@ -1331,6 +1334,32 @@ struct Lab86MailTests {
         #expect(store.workExecution.currentMove == nil)
         #expect(store.workError == nil)
         #expect(!store.workDidLoad)
+    }
+
+    @Test @MainActor
+    func staleSessionCleanupCannotHideANewWorkRefresh() async {
+        let tools = SuspendedWorkProjectionTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        let oldRefresh = Task { await store.refreshExecution() }
+        await tools.waitForWorkRequests(1)
+
+        await store.clearForSignOut()
+        let newRefresh = Task { await store.refreshExecution() }
+        await tools.waitForWorkRequests(2)
+        #expect(store.isLoadingWork)
+
+        await tools.resolveWork(call: 0, with: .object(["work": .array([])]))
+        await oldRefresh.value
+        #expect(store.isLoadingWork)
+
+        await tools.resolveWork(call: 1, with: .object([
+            "work": .array([]),
+            "execution": .object(["missedMoves": .array([]), "needsYou": .array([])]),
+        ]))
+        await newRefresh.value
+
+        #expect(!store.isLoadingWork)
+        #expect(store.workDidLoad)
     }
 
     @Test @MainActor

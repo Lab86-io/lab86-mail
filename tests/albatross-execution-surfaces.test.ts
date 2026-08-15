@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
 import { GuidedStepPane } from '../components/albatross/GuidedStep';
-import { keyedMissedMoves } from '../components/report/TodaySurface';
+import { keyedMissedMoves, MissedMovesRecoverySection } from '../components/report/TodaySurface';
 import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
 
 describe('the execution loop owns the visible product surfaces', () => {
@@ -69,12 +69,37 @@ describe('the execution loop owns the visible product surfaces', () => {
     ).toEqual(['work', 'checkin']);
   });
 
-  test('an all-unkeyed missed list does not render a recovery section', () => {
+  test('the keyed missed-move projection rejects legacy and blank keys', () => {
     expect(
       keyedMissedMoves([
         { workId: 'legacy', stepKey: null },
         { workId: 'blank', stepKey: '' },
       ]),
     ).toEqual([]);
+  });
+
+  test('an all-unkeyed missed list renders no recovery section or controls', () => {
+    const html = renderToStaticMarkup(
+      createElement(MissedMovesRecoverySection, {
+        moves: [
+          {
+            workId: 'legacy',
+            stepKey: null,
+            stepTitle: 'Legacy move',
+            scheduledStartAt: null,
+          },
+          {
+            workId: 'blank',
+            stepKey: '',
+            stepTitle: 'Blank move',
+            scheduledStartAt: null,
+          },
+        ],
+      }),
+    );
+
+    expect(html).toBe('');
+    expect(html).not.toContain('The plan slipped');
+    expect(html).not.toContain('Find another time');
   });
 });

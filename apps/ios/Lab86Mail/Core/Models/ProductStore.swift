@@ -1110,8 +1110,10 @@ final class ProductStore {
         workProjectionLoads += 1
         isLoadingWork = true
         defer {
-            workProjectionLoads = max(0, workProjectionLoads - 1)
-            isLoadingWork = workProjectionLoads > 0
+            if sessionGeneration == accountSessionGeneration {
+                workProjectionLoads = max(0, workProjectionLoads - 1)
+                isLoadingWork = workProjectionLoads > 0
+            }
         }
 
         let listed: JSONValue
@@ -2371,6 +2373,7 @@ final class ProductStore {
         calendarDidLoad = false
         briefError = nil
         workError = nil
+        workProjectionLoads = 0
         isLoadingWork = false
         workDidLoad = false
         tasksDidLoad = false

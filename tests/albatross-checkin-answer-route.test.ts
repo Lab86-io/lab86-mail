@@ -20,6 +20,14 @@ function request() {
   });
 }
 
+function malformedRequest() {
+  return new NextRequest('http://localhost/api/albatross/checkin/checkin-1/answer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{not-json',
+  });
+}
+
 function dependencies() {
   return {
     requireCurrentUser: mock(async () => user),
@@ -45,6 +53,18 @@ async function invoke(deps: ReturnType<typeof dependencies>) {
 }
 
 describe('Albatross check-in answer route', () => {
+  test('treats malformed JSON as an invalid empty answer', async () => {
+    const deps = dependencies();
+
+    const response = await createCheckinAnswerPost(deps as any)(malformedRequest(), {
+      params: Promise.resolve({ checkinId: 'checkin-1' }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ ok: false, error: 'Tell Albatross what happened.' });
+    expect(deps.convexQuery).not.toHaveBeenCalled();
+  });
+
   test('keeps the answered check-in when intent creation is temporarily unavailable', async () => {
     const deps = dependencies();
     let mutationCount = 0;

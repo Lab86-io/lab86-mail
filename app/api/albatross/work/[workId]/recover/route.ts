@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { type Recovery, recoveryWorkState, shrinkSuggestion } from '@/lib/albatross/forgiveness';
-import { completeWorkStep } from '@/lib/albatross/step-execution';
+import { completeWorkStep, StepExecutionError } from '@/lib/albatross/step-execution';
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -118,7 +118,8 @@ export function createWorkRecoveryPost(deps: WorkRecoveryDependencies = defaults
       return Response.json({ ok: true, recovery, replanned: true, revisedStep });
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);
-      const status = error instanceof AuthRequiredError ? 401 : 500;
+      const status =
+        error instanceof AuthRequiredError ? 401 : error instanceof StepExecutionError ? error.status : 500;
       return Response.json(
         { ok: false, error: error instanceof Error ? error.message : 'Recovery failed.' },
         { status },
