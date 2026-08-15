@@ -18,7 +18,7 @@ const CLI_OPTIONS = new Set(['--package', '--commits', '--prs', '--bump', '--set
 export const BUMP_LEVELS = ['major', 'minor', 'patch'];
 
 export function detectBump(text) {
-  const trailer = /^\s*Release-Bump:\s*(major|minor|patch)\s*$/im.exec(text ?? '');
+  const trailer = /^\s*Release-Bump:\s*(\S+)\s*$/im.exec(text ?? '');
   if (trailer) return trailer[1].toLowerCase();
   if (/\[MAJOR\]/i.test(text ?? '')) return 'major';
   if (/\[MINOR\]/i.test(text ?? '')) return 'minor';

@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   compareVersions,
@@ -48,6 +53,10 @@ test('refuses input that is not a version or a level', () => {
   assert.throws(() => resolveVersion({ current: '0.9.1', set: '01.2.3' }), /Not a release version/);
   assert.throws(() => resolveVersion({ current: '0.9.1', set: '' }), /Not a release version/);
   assert.throws(() => resolveVersion({ current: '0.9.1', bump: 'huge' }), /Not a bump level/);
+  assert.throws(
+    () => resolveVersion({ current: '0.9.1', text: 'Release-Bump: huge' }),
+    /Not a bump level/,
+  );
 });
 
 test('refuses CLI options without values', () => {
@@ -70,4 +79,32 @@ test('bumps reset the lower components', () => {
 test('compares versions numerically rather than as text', () => {
   assert.ok(compareVersions('0.10.0', '0.9.9') > 0);
   assert.equal(compareVersions('v1.2.3', '1.2.3'), 0);
+});
+
+test('the CLI updates a package from release metadata and rejects a repeated version', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'release-version-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+
+  const script = fileURLToPath(new URL('./release-version.mjs', import.meta.url));
+  const packagePath = join(directory, 'package.json');
+  const commitsPath = join(directory, 'commits.txt');
+  const prsPath = join(directory, 'prs.json');
+  writeFileSync(packagePath, '{"name":"release-fixture","version":"0.9.22"}\n');
+  writeFileSync(commitsPath, 'Release Albatross continuous execution loop\n');
+  writeFileSync(prsPath, JSON.stringify([{ title: 'Release v0.10.0', body: 'Release-As: 0.10.0' }]));
+
+  const released = spawnSync(
+    process.execPath,
+    [script, '--package', packagePath, '--commits', commitsPath, '--prs', prsPath],
+    { encoding: 'utf8' },
+  );
+  assert.equal(released.status, 0, released.stderr);
+  assert.equal(released.stdout, '0.10.0');
+  assert.equal(JSON.parse(readFileSync(packagePath, 'utf8')).version, '0.10.0');
+
+  const repeated = spawnSync(process.execPath, [script, '--package', packagePath, '--set', '0.10.0'], {
+    encoding: 'utf8',
+  });
+  assert.equal(repeated.status, 1);
+  assert.match(repeated.stderr, /does not advance/);
 });
