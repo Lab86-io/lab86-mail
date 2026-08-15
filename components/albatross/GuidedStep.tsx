@@ -1,8 +1,13 @@
 'use client';
 
 import { ExternalLink } from 'lucide-react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import type { StepVerification } from '@/lib/albatross/step-verification';
+import { STEP_VERIFICATION_LABEL } from '@/lib/albatross/step-verification';
 import { cn } from '@/lib/utils';
+
+export type GuidedStepMode = 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline';
 
 export interface GuidedStep {
   id: string;
@@ -12,6 +17,10 @@ export interface GuidedStep {
   knows: string[];
   needsYou: string[];
   done?: boolean;
+  mode?: GuidedStepMode | null;
+  doneWhen?: string | null;
+  evidenceKind?: string | null;
+  verification?: StepVerification | null;
 }
 
 /**
@@ -23,7 +32,8 @@ export interface GuidedStep {
  *
  * The left rail is its own object, closer to a lesson panel than to the app's
  * list rows: a numbered ledger where the current step is raised and the rest
- * recede, so at a glance you can see where you are in something long.
+ * recede. Done rows carry how they were verified — a check is never dressed up
+ * as more than it earned.
  */
 export function GuidedStepPane({
   steps,
@@ -39,13 +49,27 @@ export function GuidedStepPane({
   activeId?: string;
   onSelect?: (id: string) => void;
   onExit?: () => void;
-  onComplete?: (id: string) => void;
+  onComplete?: (id: string, note?: string) => void;
   onDiscuss?: () => void;
   savingIds?: ReadonlySet<string>;
   error?: string | null;
 }) {
   const active = steps.find((step) => step.id === (activeId || steps[0]?.id)) || steps[0];
+  const [note, setNote] = useState('');
+  const [noteStepId, setNoteStepId] = useState<string | undefined>(active?.id);
+  // A note typed for one step must never ride along to the next one.
+  if (active && noteStepId !== active.id) {
+    setNoteStepId(active.id);
+    setNote('');
+  }
   if (!active) return null;
+  const offline = active.mode === 'you_do_offline' || (!active.mode && !active.url);
+  const saving = savingIds?.has(active.id);
+
+  const complete = () => {
+    onComplete?.(active.id, note.trim() || undefined);
+    setNote('');
+  };
 
   return (
     <section className="flex h-full min-h-0">
@@ -91,13 +115,27 @@ export function GuidedStepPane({
                   >
                     {step.done ? '✓' : index + 1}
                   </span>
-                  <span
-                    className={cn(
-                      'min-w-0 flex-1 text-[12.5px] leading-snug',
-                      current ? 'font-medium' : 'text-[var(--color-text-muted)]',
-                    )}
-                  >
-                    {step.title}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        'block text-[12.5px] leading-snug',
+                        current ? 'font-medium' : 'text-[var(--color-text-muted)]',
+                      )}
+                    >
+                      {step.title}
+                    </span>
+                    {step.done && step.verification ? (
+                      <span
+                        className={cn(
+                          'mt-0.5 block text-[10.5px]',
+                          step.verification.level === 'reported'
+                            ? 'text-[var(--color-text-faint)]'
+                            : 'text-[var(--color-success)]',
+                        )}
+                      >
+                        {STEP_VERIFICATION_LABEL[step.verification.level]}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               </li>
@@ -119,6 +157,17 @@ export function GuidedStepPane({
           {active.detail ? (
             <p className="mt-1 max-w-2xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
               {active.detail}
+            </p>
+          ) : null}
+          {active.doneWhen ? (
+            <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed">
+              <span className="text-[var(--color-text-faint)]">Done when</span>{' '}
+              <span className="text-[var(--color-text-muted)]">{active.doneWhen}</span>
+            </p>
+          ) : null}
+          {!active.done && active.evidenceKind === 'mail_confirmation' ? (
+            <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+              The confirmation lands in Mail. Albatross checks this step off when it arrives.
             </p>
           ) : null}
           {/* The pane is narrower than the viewport, so the columns follow the
@@ -151,18 +200,37 @@ export function GuidedStepPane({
               ) : null}
             </div>
           </div>
+          {!active.done && offline && onComplete ? (
+            <div className="mt-3">
+              <label
+                htmlFor="guided-step-note"
+                className="text-[11.5px] text-[var(--color-text-faint)]"
+              >
+                What came of it? The answer feeds the rest of the plan.
+              </label>
+              <textarea
+                id="guided-step-note"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                rows={2}
+                placeholder="The fee is $120. The office wants the packet by Friday."
+                className="mt-1 w-full resize-y rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 text-[12.5px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+              />
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)]/70 pt-3">
             {!active.done && onComplete ? (
-              <Button
-                type="button"
-                size="sm"
-                disabled={savingIds?.has(active.id)}
-                onClick={() => onComplete(active.id)}
-              >
-                {savingIds?.has(active.id) ? 'Saving…' : 'Mark this step done'}
+              <Button type="button" size="sm" disabled={saving} onClick={complete}>
+                {saving ? 'Saving…' : 'Mark this step done'}
               </Button>
             ) : (
-              <span className="text-[12px] text-[var(--color-text-muted)]">This step is complete.</span>
+              <span className="text-[12px] text-[var(--color-text-muted)]">
+                {active.verification
+                  ? `This step is complete. ${STEP_VERIFICATION_LABEL[active.verification.level]}${
+                      active.verification.evidenceTitle ? ` — ${active.verification.evidenceTitle}` : ''
+                    }.`
+                  : 'This step is complete.'}
+              </span>
             )}
             {onDiscuss ? (
               <Button type="button" size="sm" variant="outline" onClick={onDiscuss}>

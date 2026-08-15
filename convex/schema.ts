@@ -689,10 +689,17 @@ export default defineSchema({
       v.literal('github_commit'),
       v.literal('mcp_item'),
       v.literal('manual'),
+      // Evidence an agent observed inside a shared browser session: the page
+      // reached its confirmation state, with the session replay as the url.
+      v.literal('browser_session'),
     ),
     sourceId: v.string(),
     connectionId: v.optional(v.string()),
     accountId: v.optional(v.string()),
+    // Evidence can bind to one plan step. The identity survives plan
+    // regeneration (lib/albatross/step-progress.ts), so a step keeps its
+    // receipts across revisions.
+    stepIdentity: v.optional(v.string()),
     title: v.string(),
     summary: v.optional(v.string()),
     url: v.optional(v.string()),
@@ -1093,6 +1100,9 @@ export default defineSchema({
           cardId: v.optional(v.string()),
           completedAt: v.number(),
           source: v.union(v.literal('user'), v.literal('task'), v.literal('evidence')),
+          // What came of an offline step, in the user's words. The note is
+          // also written as step-bound evidence and feeds the next replan.
+          note: v.optional(v.string()),
         }),
       ),
     ),
@@ -1195,6 +1205,28 @@ export default defineSchema({
         title: v.string(),
         detail: v.optional(v.string()),
         url: v.optional(v.string()),
+        // The honest taxonomy, written at plan time: who can carry the step,
+        // what observable state means done, and what proof looks like.
+        stepMode: v.optional(
+          v.union(
+            v.literal('agent_does'),
+            v.literal('agent_drafts'),
+            v.literal('you_do_observed'),
+            v.literal('you_do_offline'),
+          ),
+        ),
+        doneWhen: v.optional(v.string()),
+        evidence: v.optional(
+          v.object({
+            kind: v.union(
+              v.literal('mail_confirmation'),
+              v.literal('artifact'),
+              v.literal('observation'),
+              v.literal('attestation'),
+            ),
+            hint: v.optional(v.string()),
+          }),
+        ),
       }),
     ),
     assumptions: v.array(v.string()),

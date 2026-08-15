@@ -19,6 +19,48 @@ import { useClientStore } from '@/lib/client-state';
 import type { BriefDocumentV2 } from '@/lib/shared/brief-document';
 import { cn } from '@/lib/utils';
 
+export interface ExecutionStepRow {
+  key: string;
+  identity?: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  done: boolean;
+  cardId: string | null;
+  stepMode?: 'agent_does' | 'agent_drafts' | 'you_do_observed' | 'you_do_offline' | null;
+  doneWhen?: string | null;
+  evidenceKind?: string | null;
+  evidenceHint?: string | null;
+  verification?: {
+    level: 'reported' | 'artifact' | 'observed' | 'confirmed';
+    evidenceTitle: string | null;
+    evidenceUrl: string | null;
+  } | null;
+}
+
+/**
+ * The honest briefing for one step. The stored mode wins; the legacy guesses
+ * (physical means offline, a url means review) only fill silence, and nothing
+ * claims "only you" for work an agent can carry.
+ */
+export function guidedNeedsYou(step: ExecutionStepRow): string[] {
+  switch (step.stepMode) {
+    case 'agent_does':
+      return [];
+    case 'agent_drafts':
+      return ['Approve the draft before it goes anywhere.'];
+    case 'you_do_observed':
+      return ['Act on the page yourself. Review before anything is submitted.'];
+    case 'you_do_offline':
+      return ['Complete the real-world part and return here to record it.'];
+    default:
+      if (step.kind === 'physical') return ['Complete the real-world part and return here to record it.'];
+      if (step.url) return ['Review the page before anything is submitted.'];
+      return [];
+  }
+}
+
 interface WorkQuestion {
   _id: string;
   status: string;
@@ -58,24 +100,8 @@ export interface WorkDetailData {
   questions: WorkQuestion[];
   areaLinks: Array<{ areaId: string; role: string; status: string; reason?: string }>;
   execution: {
-    currentStep: null | {
-      key: string;
-      kind: string;
-      title: string;
-      detail: string | null;
-      url: string | null;
-      done: boolean;
-      cardId: string | null;
-    };
-    guideSteps: Array<{
-      key: string;
-      kind: string;
-      title: string;
-      detail: string | null;
-      url: string | null;
-      done: boolean;
-      cardId: string | null;
-    }>;
+    currentStep: null | ExecutionStepRow;
+    guideSteps: ExecutionStepRow[];
     remainingSteps: number;
     totalSteps: number;
     scheduledStartAt: number | null;
@@ -225,7 +251,7 @@ export function WorkDetail({ workId }: { workId: string }) {
     }
   };
 
-  const completeGuidedStep = async (stepKey: string) => {
+  const completeGuidedStep = async (stepKey: string, note?: string) => {
     const visibleSteps = guideStepsWithOptimisticCompletion(
       detail?.execution.guideSteps || [],
       optimisticCompletedSteps,
@@ -239,7 +265,11 @@ export function WorkDetail({ workId }: { workId: string }) {
     try {
       await postJson(
         `/api/albatross/work/${encodeURIComponent(workId)}/step`,
-        { stepKey, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        {
+          stepKey,
+          ...(note ? { note } : {}),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
         'Could not complete this step.',
       );
     } catch (cause) {
@@ -307,18 +337,17 @@ export function WorkDetail({ workId }: { workId: string }) {
           detail: step.detail,
           url: step.url,
           knows: [],
-          needsYou:
-            step.kind === 'physical'
-              ? ['Complete the real-world part and return here to record it.']
-              : step.url
-                ? ['Review the page before anything is submitted.']
-                : [],
+          needsYou: guidedNeedsYou(step),
           done: step.done,
+          mode: step.stepMode ?? null,
+          doneWhen: step.doneWhen ?? null,
+          evidenceKind: step.evidenceKind ?? null,
+          verification: step.verification ?? null,
         }))}
         activeId={activeGuideId || visibleCurrentStep?.key}
         onSelect={setActiveGuideId}
         onExit={() => setGuided(false)}
-        onComplete={(stepKey) => void completeGuidedStep(stepKey)}
+        onComplete={(stepKey, note) => void completeGuidedStep(stepKey, note)}
         onDiscuss={openAttachedChat}
         savingIds={savingStepIds}
         error={error}

@@ -38,6 +38,7 @@ export function createWorkStepPost(deps: WorkStepDependencies = defaults) {
         workId,
         stepKey: typeof body.stepKey === 'string' ? body.stepKey : undefined,
         timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+        note: typeof body.note === 'string' ? body.note.slice(0, 2_000) : undefined,
       });
       return Response.json({ ok: true, ...result });
     } catch (error) {

@@ -54,6 +54,26 @@ const physicalActionValidator = v.object({
   title: v.string(),
   detail: v.optional(v.string()),
   url: v.optional(v.string()),
+  stepMode: v.optional(
+    v.union(
+      v.literal('agent_does'),
+      v.literal('agent_drafts'),
+      v.literal('you_do_observed'),
+      v.literal('you_do_offline'),
+    ),
+  ),
+  doneWhen: v.optional(v.string()),
+  evidence: v.optional(
+    v.object({
+      kind: v.union(
+        v.literal('mail_confirmation'),
+        v.literal('artifact'),
+        v.literal('observation'),
+        v.literal('attestation'),
+      ),
+      hint: v.optional(v.string()),
+    }),
+  ),
 });
 
 const placeValidator = v.object({

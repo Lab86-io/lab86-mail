@@ -79,6 +79,28 @@ const digitalActionSchema = z
     documentKind: z.enum(['doc', 'sheet', 'deck']).optional(),
     instructions: z.string().max(20_000).optional(),
     sourceRefIds: z.array(z.string()).optional(),
+    stepMode: z
+      .enum(['agent_does', 'agent_drafts', 'you_do_observed', 'you_do_offline'])
+      .nullish()
+      .catch(undefined)
+      .transform((value) => value ?? undefined),
+    doneWhen: z
+      .string()
+      .max(300)
+      .nullish()
+      .transform((value) => value ?? undefined),
+    evidence: z
+      .object({
+        kind: z.enum(['mail_confirmation', 'artifact', 'observation', 'attestation']),
+        hint: z
+          .string()
+          .max(300)
+          .nullish()
+          .transform((value) => value ?? undefined),
+      })
+      .nullish()
+      .catch(undefined)
+      .transform((value) => value ?? undefined),
   })
   .superRefine((action, ctx) => {
     if (action.kind !== 'document') return;
@@ -133,10 +155,30 @@ const placeSchema = z.object({
   mapsQuery: groundedField(200),
 });
 
+// The honest step taxonomy, written at plan time. A model that cannot decide
+// drops the field; the projection then falls back to conservative defaults.
+const stepModeSchema = z
+  .enum(['agent_does', 'agent_drafts', 'you_do_observed', 'you_do_offline'])
+  .nullish()
+  .catch(undefined)
+  .transform((value) => value ?? undefined);
+
+const stepEvidenceSchema = z
+  .object({
+    kind: z.enum(['mail_confirmation', 'artifact', 'observation', 'attestation']),
+    hint: groundedField(300),
+  })
+  .nullish()
+  .catch(undefined)
+  .transform((value) => value ?? undefined);
+
 const physicalActionSchema = z.object({
   title: z.string().min(1).max(200),
   detail: z.string().max(1200).optional(),
   url: z.string().max(500).optional(),
+  stepMode: stepModeSchema,
+  doneWhen: groundedField(300),
+  evidence: stepEvidenceSchema,
 });
 
 const generatedContractSchema = z.object({
@@ -384,6 +426,9 @@ Non-negotiables:
 - Digital actions must be immediately executable: tasks always work; calendar_event needs startIso+endIso (only propose one when timing is known or clearly proposable — no attendees unless the user named them); email_draft needs to+subject+body and is a DRAFT, never a send; document needs documentKind plus instructions grounded in the supplied evidence and creates a private editable draft.
 - Carry the next step onto the calendar when it can be done as a private focus block. For actionable Work that needs 15-120 minutes online, call calendar_suggest_times across the next seven days and add ONE calendar_event at the earliest realistic suggestion, alongside the underlying task. Title the hold with the concrete action, never “work on goal”, and never put another appointment's target time or relative words such as “today” or “tomorrow” in the hold title. Do not invent appointments, book a real-world visit without known office/appointment availability, add attendees, or time-block passive waiting/monitoring. Do not create a focus block when calendar_suggest_times returns no suggestion.
 - Physical actions are real-world steps the user does themselves (go somewhere, sign something, gather documents). Include official URLs when you are confident they are canonical (government sites, well-known services). Never invent deep links.
+- Every action carries the honest step contract when you can ground it: stepMode names who can carry the step (agent_does: research, lookups, downloads, and drafts an agent completes alone; agent_drafts: an agent prepares and the user approves; you_do_observed: the user acts on a website with the agent alongside; you_do_offline: calls, visits, signatures, and other real-world moves). Never mark a step you_do_offline or you_do_observed when an agent can complete it alone.
+- doneWhen is one short sentence that names the observable completion state of the step ("The confirmation page shows a reference number.").
+- evidence names what proof of the step looks like: mail_confirmation when a receipt or confirmation email will arrive (add a hint with the expected sender or subject words), artifact for a file or number the user can paste, observation for a page state an agent can see, attestation when only the user's word can carry it.
 - Bias small: 2-6 concrete actions beat a 15-step program. The user is lazy, impatient, and smart — respect all three.
 - Projects are epics that contain multiple tasks. When the plan is genuinely multi-step — 3 or more task actions, or work stretching beyond a week — declare "projectTitle" (a short name for the whole effort); every digitalAction then belongs to that project. A single errand or one-off task keeps "projectTitle": null.
 - If answers to earlier questions are provided, honor them exactly.
@@ -401,8 +446,8 @@ Respond with ONE JSON object, no prose, matching:
   "outcome": string,                  // one sentence: what done looks like
   "summary": string,                  // 2-4 sentences, user-facing. Plain and factual. NEVER first person ("I've set...", "I'll...") — describe the plan, not yourself: "A task and a reminder cover the deadline." No exclamation marks, no filler.
   "questions": [{"id": string, "prompt": string, "options"?: [{"id": string, "title": string, "detail"?: string, "address"?: string, "hoursText"?: string, "website"?: string}]}],
-  "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft"|"document", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "documentKind"?: "doc"|"sheet"|"deck", "instructions"?: string, "sourceRefIds"?: string[]}],
-  "physicalActions": [{"title": string, "detail"?: string, "url"?: string}],
+  "digitalActions": [{"kind": "task"|"calendar_event"|"email_draft"|"document", "title": string, "description"?: string, "priority"?: 1|2|3, "startIso"?: string, "endIso"?: string, "to"?: string, "subject"?: string, "body"?: string, "documentKind"?: "doc"|"sheet"|"deck", "instructions"?: string, "sourceRefIds"?: string[], "stepMode"?: "agent_does"|"agent_drafts"|"you_do_observed"|"you_do_offline", "doneWhen"?: string, "evidence"?: {"kind": "mail_confirmation"|"artifact"|"observation"|"attestation", "hint"?: string}}],
+  "physicalActions": [{"title": string, "detail"?: string, "url"?: string, "stepMode"?: "you_do_observed"|"you_do_offline", "doneWhen"?: string, "evidence"?: {"kind": "mail_confirmation"|"artifact"|"observation"|"attestation", "hint"?: string}}],
   "contract": {"proofs": [{"id"?: string, "what": string}], "closeWhen": "action_succeeded"|"outcome_likely"|"outcome_confirmed"|"never_automatically", "contradictions"?: [string]}, // name the concrete receipts, confirmations, replies, or observations that would settle the outcome; use never_automatically when closing it would be risky
   "assumptions": [string],
   "sourceRefIds": [string],           // refIds from the provided evidence you actually used
