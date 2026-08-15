@@ -53,7 +53,7 @@ describe('the execution loop owns the visible product surfaces', () => {
 
     expect(html).toContain('Complete the passport form');
     expect(html).toContain('Nothing is lost');
-    expect(html).toContain('Move it');
+    expect(html).toContain('Find another time');
     expect(html).toContain('Make it smaller');
   });
 
