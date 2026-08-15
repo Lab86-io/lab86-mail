@@ -7,6 +7,7 @@ import {
   undoOperation,
 } from '@/lib/ai/operations';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
+import { commitWorkSplit, proposeWorkSplit } from '@/lib/albatross/split-work';
 import {
   type AlbatrossApplicationStep,
   appliedStepsFromApplyResult,
@@ -31,6 +32,8 @@ const defaultDeps = {
   undoOperation,
   invokeTool,
   generateIntentPlan,
+  proposeWorkSplit,
+  commitWorkSplit,
   tools: {
     tasksCreateCard,
     calendarCreateEvent,
@@ -704,6 +707,72 @@ function approvalToolFor(name: string): AnyTool {
   if (name === 'calendar_rsvp_event') return deps.tools.calendarRsvpEvent;
   throw new Error(`Approval tool not allowed: ${name}`);
 }
+
+export const albatrossSplitWork = defineTool({
+  name: 'albatross_split_work',
+  description:
+    'Split one Albatross Work that bundles several independent outcomes into sibling Works. Call without items to get a proposal to show the user. Call again with the confirmed items to commit: children are created, the parent is released with provenance, and the children are planned.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    workId: z.string().min(1),
+    focus: z.string().max(300).optional(),
+    items: z
+      .array(
+        z.object({
+          title: z.string().min(1).max(180),
+          rawText: z.string().min(1).max(20_000),
+        }),
+      )
+      .min(2)
+      .max(6)
+      .optional(),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    workId: z.string(),
+    committed: z.boolean(),
+    proposed: z.array(z.object({ title: z.string(), rawText: z.string() })).optional(),
+    workIds: z.array(z.string()).optional(),
+    summary: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    if (!args.items) {
+      const proposal = await deps.proposeWorkSplit({
+        userId,
+        userEmail: ctx.userEmail,
+        userName: ctx.userName,
+        workId: args.workId,
+        focus: args.focus,
+      });
+      return {
+        ok: true,
+        workId: args.workId,
+        committed: false,
+        proposed: proposal.items.map((item) => ({ title: item.title, rawText: item.rawText })),
+        summary: `Proposed ${proposal.items.length} Works: ${proposal.items
+          .map((item) => item.title)
+          .join('; ')}. Show the proposal and commit only after the user confirms.`,
+      };
+    }
+    const committed = await deps.commitWorkSplit({
+      userId,
+      userEmail: ctx.userEmail,
+      userName: ctx.userName,
+      workId: args.workId,
+      items: args.items,
+      timezone: ctx.userTimezone,
+    });
+    return {
+      ok: true,
+      workId: args.workId,
+      committed: true,
+      workIds: committed.workIds,
+      summary: `Split into ${committed.workIds.length} Works. The parent is released with provenance.`,
+    };
+  },
+});
 
 export const albatrossApplyIntentPlan = defineTool({
   name: 'albatross_apply_intent_plan',

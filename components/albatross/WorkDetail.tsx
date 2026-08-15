@@ -4,6 +4,7 @@ import { useConvexAuth, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { GuidedStepPane } from '@/components/albatross/GuidedStep';
+import { SplitSheet } from '@/components/albatross/SplitSheet';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
@@ -154,6 +155,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   ) as WorkDetailData | null | undefined;
   const [advancing, setAdvancing] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [splitting, setSplitting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [guided, setGuided] = useState(false);
   const [activeGuideId, setActiveGuideId] = useState<string>();
@@ -357,18 +359,45 @@ export function WorkDetail({ workId }: { workId: string }) {
                   </Button>
                 )}
                 {open ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setReleasing((value) => !value)}
-                  >
-                    Put it down
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSplitting((value) => !value);
+                        setReleasing(false);
+                      }}
+                    >
+                      Split this work
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setReleasing((value) => !value);
+                        setSplitting(false);
+                      }}
+                    >
+                      Put it down
+                    </Button>
+                  </>
                 ) : null}
               </>
             }
           />
+
+          {splitting ? (
+            <SplitSheet
+              workId={workId}
+              onDone={(workIds) => {
+                setSplitting(false);
+                if (workIds[0]) setSelectedWorkId(workIds[0]);
+              }}
+              onCancel={() => setSplitting(false)}
+            />
+          ) : null}
 
           {releasing ? (
             <div className="mt-6">

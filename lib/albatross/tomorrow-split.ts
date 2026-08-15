@@ -153,23 +153,32 @@ export function tomorrowExternalPrefix(checkinId: string) {
   return `checkin:${checkinId}:tomorrow`;
 }
 
-/**
- * External ids key on content, not position, so a retry of the same run
- * upserts instead of duplicating. The legacy single-work id equals the bare
- * prefix and stays valid.
- */
-export function tomorrowExternalId(checkinId: string, title: string, taken: ReadonlySet<string>) {
-  const slug =
+/** A content-stable slug for external ids: same title, same id, every run. */
+export function contentSlug(title: string) {
+  return (
     title
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
-      .slice(0, 48) || 'work';
-  const base = `${tomorrowExternalPrefix(checkinId)}:${slug}`;
+      .slice(0, 48) || 'work'
+  );
+}
+
+/** Base plus a numeric suffix keeps sibling ids unique inside one family. */
+export function uniqueExternalId(base: string, taken: ReadonlySet<string>) {
   if (!taken.has(base)) return base;
   for (let suffix = 2; suffix < 20; suffix += 1) {
     const candidate = `${base}-${suffix}`;
     if (!taken.has(candidate)) return candidate;
   }
   return `${base}-${taken.size + 1}`;
+}
+
+/**
+ * External ids key on content, not position, so a retry of the same run
+ * upserts instead of duplicating. The legacy single-work id equals the bare
+ * prefix and stays valid.
+ */
+export function tomorrowExternalId(checkinId: string, title: string, taken: ReadonlySet<string>) {
+  return uniqueExternalId(`${tomorrowExternalPrefix(checkinId)}:${contentSlug(title)}`, taken);
 }
