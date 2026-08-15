@@ -256,6 +256,45 @@ struct Lab86MailTests {
         }
     }
 
+    private actor SuspendedWorkProjectionTools: ToolInvoking {
+        private var workContinuation: CheckedContinuation<JSONValue, any Error>?
+        private var workRequestWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
+            if name == "area_list" {
+                return .object([
+                    "areas": .array([
+                        .object(["_id": .string("area-1"), "name": .string("Home"), "kind": .string("area")]),
+                    ]),
+                ])
+            }
+            if name == "work_list" {
+                return try await withCheckedThrowingContinuation { continuation in
+                    workContinuation = continuation
+                    for waiter in workRequestWaiters { waiter.resume() }
+                    workRequestWaiters = []
+                }
+            }
+            return .object([:])
+        }
+
+        func waitForWorkRequest() async {
+            if workContinuation != nil { return }
+            await withCheckedContinuation { continuation in
+                if workContinuation != nil {
+                    continuation.resume()
+                } else {
+                    workRequestWaiters.append(continuation)
+                }
+            }
+        }
+
+        func resolveWork(_ value: JSONValue) {
+            workContinuation?.resume(returning: value)
+            workContinuation = nil
+        }
+    }
+
     private actor StubCommandSubmitter: MobileCommandSubmitting {
         enum Behavior: Sendable {
             case receipt(OutboxCommandReceipt)
@@ -739,6 +778,25 @@ struct Lab86MailTests {
         #expect(restoredLegacy.events.first?.accountID == "")
         #expect(restoredLegacy.events.first?.allDay == false)
         #expect(restoredLegacy.events.first?.calendarID == nil)
+    }
+
+    @Test
+    func legacyWorkDetailCacheWithoutExecutionStillDecodes() throws {
+        let legacy = Data(#"""
+        {"accounts":[],"threads":[],"events":[],"tasks":[],"areas":[],"approvals":[],"suggestions":[],
+         "workDetails":{"work-1":{"work":{"id":"work-1","title":"Renew passport","rawText":"Renew passport",
+         "status":"ready","workState":"active","agentState":"idle"},
+         "plan":{"id":"plan-1","status":"applied","outcome":"Passport renewed","summary":"Follow the official flow.",
+         "assumptions":[],"sources":[],"actions":[],"appliedStepKeys":[]}}},"savedAt":1000}
+        """#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+
+        let restored = try decoder.decode(ProductSnapshot.self, from: legacy)
+
+        #expect(restored.workDetails?["work-1"]?.work.title == "Renew passport")
+        #expect(restored.workDetails?["work-1"]?.execution.currentStep == nil)
+        #expect(restored.workExecution == nil)
     }
 
     @Test
@@ -1240,6 +1298,39 @@ struct Lab86MailTests {
         #expect(!store.isLoadingWork)
         #expect(!store.workDidLoad)
         #expect(store.areas.isEmpty)
+    }
+
+    @Test @MainActor
+    func workRefreshFinishingAfterSignOutCannotRestoreAccountState() async {
+        let tools = SuspendedWorkProjectionTools()
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        let refresh = Task { await store.refreshWork() }
+        await tools.waitForWorkRequest()
+        #expect(store.areas.map(\.id) == ["area-1"])
+
+        await store.clearForSignOut()
+        await tools.resolveWork(.object([
+            "work": .array([
+                .object([
+                    "_id": .string("work-1"), "title": .string("Renew passport"),
+                    "rawText": .string("Renew passport"), "status": .string("ready"),
+                ]),
+            ]),
+            "execution": .object([
+                "currentMove": .object([
+                    "workId": .string("work-1"), "workTitle": .string("Renew passport"),
+                    "stepTitle": .string("Submit the form"), "phase": .string("unscheduled"),
+                ]),
+                "missedMoves": .array([]), "needsYou": .array([]),
+            ]),
+        ]))
+        await refresh.value
+
+        #expect(store.areas.isEmpty)
+        #expect(store.allWork.isEmpty)
+        #expect(store.workExecution.currentMove == nil)
+        #expect(store.workError == nil)
+        #expect(!store.workDidLoad)
     }
 
     @Test @MainActor

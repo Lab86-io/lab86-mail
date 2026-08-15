@@ -49,6 +49,7 @@ describe('mail proof offer', () => {
     expect(request?.url).toBe('/api/albatross/work/passport%2Fwork/proof');
     expect(request?.body).toMatchObject({
       claim: 'The application confirmation arrived',
+      title: 'Application received',
       sourceKind: 'mail_thread',
       sourceId: 'thread-7',
       accountId: 'personal-mail',

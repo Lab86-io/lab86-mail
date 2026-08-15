@@ -138,4 +138,16 @@ describe('capture persistence ordering', () => {
     );
     expect(persisted).toBe(true);
   });
+
+  test('an asynchronous PiP denial never drops the capture', async () => {
+    let persisted = false;
+    requestPipBeforePersist(
+      () => Promise.reject(new Error('denied later')),
+      () => {
+        persisted = true;
+      },
+    );
+    await Promise.resolve();
+    expect(persisted).toBe(true);
+  });
 });

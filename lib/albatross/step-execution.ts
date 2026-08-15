@@ -67,7 +67,7 @@ export async function completeWorkStep(
     source: input.source || (step.cardId ? 'task' : 'user'),
   });
 
-  if (completed.transitioned && completed.cardId) {
+  if (completed.cardId) {
     await deps.invokeTool(
       tasksUpdateCard,
       { cardId: completed.cardId, completed: true },

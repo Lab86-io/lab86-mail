@@ -111,7 +111,7 @@ describe('completeWorkStep', () => {
     expect(result).toMatchObject({ closed: true, replanned: false });
   });
 
-  test('a duplicate completion does not attach proof or replan again', async () => {
+  test('a duplicate completion resyncs its task without attaching proof or replanning', async () => {
     const mutations: any[] = [];
     const advances: any[] = [];
     const toolCalls: any[] = [];
@@ -138,9 +138,41 @@ describe('completeWorkStep', () => {
     } as any);
 
     expect(mutations).toHaveLength(1);
-    expect(toolCalls).toHaveLength(0);
+    expect(toolCalls).toHaveLength(1);
     expect(advances).toHaveLength(0);
     expect(result).toMatchObject({ transitioned: false, replanned: false });
+  });
+
+  test('a retry repairs task sync after the first provider update fails', async () => {
+    let mutationCount = 0;
+    let toolCount = 0;
+    const dependencies = {
+      convexQuery: async () => detail(),
+      convexMutation: async () => {
+        mutationCount += 1;
+        return {
+          stepKey: 'step-1',
+          cardId: 'card-1',
+          allStepsComplete: false,
+          transitioned: mutationCount === 1,
+        };
+      },
+      invokeTool: async () => {
+        toolCount += 1;
+        if (toolCount === 1) throw new Error('task provider unavailable');
+        return {};
+      },
+      advanceWork: async () => ({ status: 'ready' as const, workId: 'work-1', planId: 'plan-2' }),
+      newOperationBatchId: () => `batch-${toolCount}`,
+    } as any;
+
+    await expect(completeWorkStep({ userId: 'user-1', workId: 'work-1' }, dependencies)).rejects.toThrow(
+      'task provider unavailable',
+    );
+    const retry = await completeWorkStep({ userId: 'user-1', workId: 'work-1' }, dependencies);
+
+    expect(toolCount).toBe(2);
+    expect(retry).toMatchObject({ transitioned: false, replanned: false });
   });
 
   test('classifies missing Work and missing current steps for the route', async () => {

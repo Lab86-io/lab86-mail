@@ -120,6 +120,7 @@ final class ProductStore {
     private var projectPaneSessionGeneration = 0
     private var workProjectionGeneration = 0
     private var workProjectionLoads = 0
+    private var accountSessionGeneration = 0
 
     init(
         tools: any ToolInvoking,
@@ -1060,22 +1061,27 @@ final class ProductStore {
     }
 
     func refreshWork() async {
+        let sessionGeneration = accountSessionGeneration
         do {
             let result = try await tools.invoke("area_list", arguments: ["status": .string("active")])
+            guard sessionGeneration == accountSessionGeneration else { return }
             areas = (result["areas"]?.arrayValue ?? []).compactMap(AreaSummary.init)
             // The Albatrosses page lists work, not areas. A failure here keeps
             // the last-good list rather than blanking the page — but it must not
             // report an empty list as "you are carrying nothing", so with no
             // cache to fall back on the failure is recorded.
             do {
-                try await loadWorkProjection()
+                try await loadWorkProjection(sessionGeneration: sessionGeneration)
             } catch {
+                guard sessionGeneration == accountSessionGeneration else { return }
                 if allWork.isEmpty { throw error }
                 workError = error.localizedDescription
                 workDidLoad = true
             }
+            guard sessionGeneration == accountSessionGeneration else { return }
             await persistCache()
         } catch {
+            guard sessionGeneration == accountSessionGeneration else { return }
             // Keep the last-good cached areas visible and record the failure only
             // on the Work surface. A Work failure must never blank Mail or raise
             // the app-wide `errorMessage`.
@@ -1087,15 +1093,18 @@ final class ProductStore {
     /// Today polls this lightly so a block that just passed can enter recovery
     /// without waiting for an app relaunch.
     func refreshExecution() async {
+        let sessionGeneration = accountSessionGeneration
         do {
-            try await loadWorkProjection()
+            try await loadWorkProjection(sessionGeneration: sessionGeneration)
+            guard sessionGeneration == accountSessionGeneration else { return }
             await persistCache()
         } catch {
+            guard sessionGeneration == accountSessionGeneration else { return }
             workError = error.localizedDescription
         }
     }
 
-    private func loadWorkProjection() async throws {
+    private func loadWorkProjection(sessionGeneration: Int) async throws {
         workProjectionGeneration += 1
         let generation = workProjectionGeneration
         workProjectionLoads += 1
@@ -1111,10 +1120,12 @@ final class ProductStore {
         } catch {
             // A newer request owns the visible state and its own error. An
             // older request finishing late must not overwrite either one.
-            guard generation == workProjectionGeneration else { return }
+            guard generation == workProjectionGeneration,
+                  sessionGeneration == accountSessionGeneration else { return }
             throw error
         }
-        guard generation == workProjectionGeneration else { return }
+        guard generation == workProjectionGeneration,
+              sessionGeneration == accountSessionGeneration else { return }
         allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
         workExecution = WorkExecutionSnapshot(json: listed["execution"])
         workDidLoad = true
@@ -1171,7 +1182,8 @@ final class ProductStore {
         }
     }
 
-    func recoverWork(_ move: WorkExecutionMove, recovery: String) async -> Bool {
+    /// Returns the request-scoped failure message, or nil when recovery was accepted.
+    func recoverWork(_ move: WorkExecutionMove, recovery: String) async -> String? {
         var body: [String: JSONValue] = [
             "recovery": .string(recovery),
             "reasonKind": .string("other"),
@@ -1188,10 +1200,10 @@ final class ProductStore {
             )
             workDetails.removeValue(forKey: move.workID)
             await refreshWork()
-            return true
+            return nil
         } catch {
-            workError = error.localizedDescription
-            return false
+            let message = error.localizedDescription
+            return message
         }
     }
 
@@ -2318,6 +2330,9 @@ final class ProductStore {
     func clearMailError() { mailErrorMessage = nil }
 
     func clearForSignOut() async {
+        // Invalidate every suspended account-owned request before the first await.
+        accountSessionGeneration += 1
+        workProjectionGeneration += 1
         liveMailTask?.cancel()
         liveMailTask = nil
         for task in areaBriefMonitoringTasks.values { task.cancel() }

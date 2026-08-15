@@ -635,10 +635,7 @@ private struct MissedMoveRecoveryView: View {
             isRecovering = true
             recoveryError = nil
             Task {
-                let recovered = await environment.store.recoverWork(move, recovery: recovery)
-                if !recovered {
-                    recoveryError = environment.store.workError ?? "The plan could not be updated."
-                }
+                recoveryError = await environment.store.recoverWork(move, recovery: recovery)
                 isRecovering = false
             }
         }

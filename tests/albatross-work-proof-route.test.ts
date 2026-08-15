@@ -80,7 +80,7 @@ describe('Albatross Work proof route', () => {
       ...manualProof,
       sourceKind: 'mail_thread',
       sourceId: 'thread-1',
-      accountId: 'person@example.test',
+      accountId: '  person@example.test  ',
       trust: 'confirmed',
     });
 
@@ -91,6 +91,9 @@ describe('Albatross Work proof route', () => {
       providerThreadId: 'thread-1',
     });
     expect(deps.attachProof).toHaveBeenCalledWith(expect.objectContaining({ trust: 'observed' }));
+    expect(deps.attachProof).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 'person@example.test' }),
+    );
 
     const missing = dependencies();
     missing.mailThread.mockImplementation(async () => null);

@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
 import { GuidedStepPane } from '../components/albatross/GuidedStep';
+import { keyedMissedMoves } from '../components/report/TodaySurface';
 import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
 
 describe('the execution loop owns the visible product surfaces', () => {
@@ -66,5 +67,14 @@ describe('the execution loop owns the visible product surfaces', () => {
         { type: 'daily_checkin', id: 'checkin' },
       ]).map((row) => row.id),
     ).toEqual(['work', 'checkin']);
+  });
+
+  test('an all-unkeyed missed list does not render a recovery section', () => {
+    expect(
+      keyedMissedMoves([
+        { workId: 'legacy', stepKey: null },
+        { workId: 'blank', stepKey: '' },
+      ]),
+    ).toEqual([]);
   });
 });

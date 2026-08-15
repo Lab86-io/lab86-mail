@@ -454,11 +454,17 @@ struct ThreadView: View {
             proofCandidates = []
             return
         }
-        proofCandidates = await environment.store.proofMatches(
+        let messageID = latest.id
+        let messageBody = latest.body
+        let matches = await environment.store.proofMatches(
             subject: detail.subject,
-            snippet: latest.body,
-            messageID: latest.id
+            snippet: messageBody,
+            messageID: messageID
         )
+        guard let current = self.detail?.messages.last,
+              current.id == messageID,
+              current.body == messageBody else { return }
+        proofCandidates = matches
     }
 
     private func openComposer(mode: String, replyAll: Bool = false) {

@@ -50,6 +50,13 @@ interface ExecutionSnapshot {
   needsYou: TodayWork[];
 }
 
+/** Recovery requires the stable server step key used by the recovery mutation. */
+export function keyedMissedMoves<T extends { stepKey: string | null }>(
+  moves: T[],
+): Array<T & { stepKey: string }> {
+  return moves.filter((move): move is T & { stepKey: string } => Boolean(move.stepKey));
+}
+
 /**
  * Today. What deserves attention today, given the life this person actually
  * has today — not a magazine about it.
@@ -109,6 +116,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const [dayChangedOpen, setDayChangedOpen] = useState(false);
   const waiting = waitingOnSomebody(rows);
   const loading = work === undefined || execution === undefined;
+  const missedMoves = keyedMissedMoves(execution?.missedMoves || []);
 
   const checkin = useQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
     | DailyCheckinData
@@ -320,20 +328,18 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 </Section>
               ) : null}
 
-              {execution?.missedMoves.length ? (
+              {missedMoves.length ? (
                 <Section title="The plan slipped" note="Choose what should happen now.">
                   <div className="space-y-3">
-                    {execution.missedMoves
-                      .filter((move) => Boolean(move.stepKey))
-                      .map((move) => (
-                        <LapsePrompt
-                          key={`${move.workId}:${move.stepKey || move.stepTitle}`}
-                          workId={move.workId}
-                          stepKey={move.stepKey!}
-                          stepTitle={move.stepTitle}
-                          plannedAt={move.scheduledStartAt || undefined}
-                        />
-                      ))}
+                    {missedMoves.map((move) => (
+                      <LapsePrompt
+                        key={`${move.workId}:${move.stepKey || move.stepTitle}`}
+                        workId={move.workId}
+                        stepKey={move.stepKey}
+                        stepTitle={move.stepTitle}
+                        plannedAt={move.scheduledStartAt || undefined}
+                      />
+                    ))}
                   </div>
                 </Section>
               ) : null}

@@ -71,6 +71,7 @@ export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
       }
 
       let trust: Trust;
+      let verifiedMailAccountId: string | undefined;
       if (body.sourceKind === 'mail_thread') {
         const accountId = typeof body.accountId === 'string' ? body.accountId.trim() : '';
         if (!accountId) {
@@ -84,6 +85,7 @@ export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
         if (!thread) {
           return Response.json({ ok: false, error: 'Mail proof could not be verified.' }, { status: 400 });
         }
+        verifiedMailAccountId = accountId;
         // A thread visible in the signed-in user's corpus is observed evidence.
         // It can satisfy a named requirement, but cannot by itself claim the
         // confirmed trust needed to auto-close high-stakes outcomes.
@@ -105,7 +107,7 @@ export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
         sourceKind: body.sourceKind,
         sourceId: String(body.sourceId),
         connectionId: typeof body.connectionId === 'string' ? body.connectionId : undefined,
-        accountId: typeof body.accountId === 'string' ? body.accountId : undefined,
+        accountId: verifiedMailAccountId ?? (typeof body.accountId === 'string' ? body.accountId : undefined),
         occurredAt: typeof body.occurredAt === 'number' ? body.occurredAt : undefined,
         trust,
         proofId: typeof body.proofId === 'string' ? body.proofId : undefined,
