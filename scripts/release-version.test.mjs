@@ -54,6 +54,13 @@ test('refuses CLI options without values', () => {
   assert.throws(() => parseArguments(['node', 'release-version.mjs', '--set']), /Missing value for --set/);
 });
 
+test('refuses unknown CLI options', () => {
+  assert.throws(
+    () => parseArguments(['node', 'release-version.mjs', '--bumpp', 'minor']),
+    /Unknown option: --bumpp/,
+  );
+});
+
 test('bumps reset the lower components', () => {
   assert.equal(nextVersion('0.9.7', 'minor'), '0.10.0');
   assert.equal(nextVersion('0.9.7', 'major'), '1.0.0');

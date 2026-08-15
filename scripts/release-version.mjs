@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const CLI_OPTIONS = new Set(['--package', '--commits', '--prs', '--bump', '--set']);
 export const BUMP_LEVELS = ['major', 'minor', 'patch'];
 
 export function detectBump(text) {
@@ -64,6 +65,9 @@ export function parseArguments(argv) {
   for (let i = 2; i < argv.length; i += 2) {
     const option = argv[i];
     const value = argv[i + 1];
+    if (!CLI_OPTIONS.has(option)) {
+      throw new Error(`Unknown option: ${option}.`);
+    }
     if (value === undefined) {
       throw new Error(`Missing value for ${option}.`);
     }
