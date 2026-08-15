@@ -53,10 +53,7 @@ test('refuses input that is not a version or a level', () => {
   assert.throws(() => resolveVersion({ current: '0.9.1', set: '01.2.3' }), /Not a release version/);
   assert.throws(() => resolveVersion({ current: '0.9.1', set: '' }), /Not a release version/);
   assert.throws(() => resolveVersion({ current: '0.9.1', bump: 'huge' }), /Not a bump level/);
-  assert.throws(
-    () => resolveVersion({ current: '0.9.1', text: 'Release-Bump: huge' }),
-    /Not a bump level/,
-  );
+  assert.throws(() => resolveVersion({ current: '0.9.1', text: 'Release-Bump: huge' }), /Not a bump level/);
 });
 
 test('refuses CLI options without values', () => {
