@@ -1495,6 +1495,24 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let done: Bool
         let cardID: String?
 
+        private init(
+            id: String,
+            kind: String,
+            title: String,
+            detail: String?,
+            url: String?,
+            done: Bool,
+            cardID: String?
+        ) {
+            self.id = id
+            self.kind = kind
+            self.title = title
+            self.detail = detail
+            self.url = url
+            self.done = done
+            self.cardID = cardID
+        }
+
         init?(json: JSONValue) {
             guard let id = json["key"]?.stringValue,
                   let title = json["title"]?.stringValue?.nilIfBlank else { return nil }
@@ -1506,6 +1524,18 @@ struct WorkDetail: Hashable, Codable, Sendable {
             done = json["done"]?.boolValue ?? false
             cardID = json["cardId"]?.stringValue?.nilIfBlank
         }
+
+        func completing() -> ExecutionStep {
+            ExecutionStep(
+                id: id,
+                kind: kind,
+                title: title,
+                detail: detail,
+                url: url,
+                done: true,
+                cardID: cardID
+            )
+        }
     }
 
     struct Execution: Hashable, Codable, Sendable {
@@ -1516,6 +1546,22 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let scheduledStartAt: Date?
         let scheduledEndAt: Date?
 
+        private init(
+            currentStep: ExecutionStep?,
+            guideSteps: [ExecutionStep],
+            remainingSteps: Int,
+            totalSteps: Int,
+            scheduledStartAt: Date?,
+            scheduledEndAt: Date?
+        ) {
+            self.currentStep = currentStep
+            self.guideSteps = guideSteps
+            self.remainingSteps = remainingSteps
+            self.totalSteps = totalSteps
+            self.scheduledStartAt = scheduledStartAt
+            self.scheduledEndAt = scheduledEndAt
+        }
+
         init(json: JSONValue?) {
             currentStep = json?["currentStep"].flatMap(ExecutionStep.init)
             guideSteps = (json?["guideSteps"]?.arrayValue ?? []).compactMap(ExecutionStep.init)
@@ -1523,6 +1569,20 @@ struct WorkDetail: Hashable, Codable, Sendable {
             totalSteps = max(0, Int(json?["totalSteps"]?.doubleValue ?? 0))
             scheduledStartAt = CalendarDateParser.date(json?["scheduledStartAt"])
             scheduledEndAt = CalendarDateParser.date(json?["scheduledEndAt"])
+        }
+
+        func completing(stepID: String) -> Execution {
+            let nextSteps = guideSteps.map { step in
+                step.id == stepID ? step.completing() : step
+            }
+            return Execution(
+                currentStep: nextSteps.first { !$0.done },
+                guideSteps: nextSteps,
+                remainingSteps: nextSteps.filter { !$0.done }.count,
+                totalSteps: totalSteps,
+                scheduledStartAt: scheduledStartAt,
+                scheduledEndAt: scheduledEndAt
+            )
         }
     }
 
@@ -1647,6 +1707,39 @@ struct WorkDetail: Hashable, Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case work, plan, project, questions, application, execution, contract, evidence
+    }
+
+    private init(
+        work: Work,
+        plan: Plan?,
+        project: Project?,
+        questions: [Question],
+        application: Application?,
+        execution: Execution,
+        contract: Contract?,
+        evidence: [Evidence]
+    ) {
+        self.work = work
+        self.plan = plan
+        self.project = project
+        self.questions = questions
+        self.application = application
+        self.execution = execution
+        self.contract = contract
+        self.evidence = evidence
+    }
+
+    func completing(stepID: String) -> WorkDetail {
+        WorkDetail(
+            work: work,
+            plan: plan,
+            project: project,
+            questions: questions,
+            application: application,
+            execution: execution.completing(stepID: stepID),
+            contract: contract,
+            evidence: evidence
+        )
     }
 
     // Snapshots written before guided execution carry no `execution` key.

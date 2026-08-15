@@ -498,10 +498,14 @@ struct WorkDetailView: View {
     }
 
     private func completeCurrentStep(_ step: WorkDetail.ExecutionStep) async {
+        let previous = detail
+        if let previous { detail = previous.completing(stepID: step.id) }
         isMutating = true
         defer { isMutating = false }
         if await environment.store.completeWorkStep(route.workID, stepKey: step.id) {
-            await load(initial: false)
+            detail = environment.store.cachedWorkDetail(route.workID) ?? detail
+        } else {
+            detail = previous
         }
     }
 }

@@ -130,6 +130,52 @@ struct WorkStateTests {
         }
     }
 
+    @Test func guidedCompletionAdvancesLocallyWithoutReplacingTheDetail() throws {
+        let detail = try #require(WorkDetail(json: .object([
+            "work": .object([
+                "_id": .string("work-1"),
+                "title": .string("Renew passport"),
+                "rawText": .string("Renew my passport"),
+                "status": .string("ready"),
+                "workState": .string("active"),
+            ]),
+            "plan": .object([
+                "_id": .string("plan-1"),
+                "status": .string("applied"),
+            ]),
+            "execution": .object([
+                "currentStep": .object([
+                    "key": .string("one"),
+                    "kind": .string("task"),
+                    "title": .string("First step"),
+                ]),
+                "guideSteps": .array([
+                    .object([
+                        "key": .string("one"),
+                        "kind": .string("task"),
+                        "title": .string("First step"),
+                        "done": .bool(false),
+                    ]),
+                    .object([
+                        "key": .string("two"),
+                        "kind": .string("task"),
+                        "title": .string("Second step"),
+                        "done": .bool(false),
+                    ]),
+                ]),
+                "remainingSteps": .number(2),
+                "totalSteps": .number(2),
+            ]),
+        ])))
+
+        let optimistic = detail.completing(stepID: "one")
+        #expect(optimistic.work.id == detail.work.id)
+        #expect(optimistic.plan?.id == detail.plan?.id)
+        #expect(optimistic.execution.guideSteps.map(\.done) == [true, false])
+        #expect(optimistic.execution.currentStep?.id == "two")
+        #expect(optimistic.execution.remainingSteps == 1)
+    }
+
     @Test func successfulRecoveryRefreshesTheOwningSurface() {
         var refreshCount = 0
         #expect(
