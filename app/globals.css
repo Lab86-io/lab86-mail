@@ -61,6 +61,7 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: var(--font-fraunces), ui-serif, Georgia, "Times New Roman", serif;
+  --font-hanken: "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
   /* Editorial display layer: wordmark, pane titles, sender names, subjects,
      section/date headers. Body copy and controls stay sans. The theme panel
      swaps this between Fraunces (Editorial), Averia (News), and sans. */
