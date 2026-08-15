@@ -3,11 +3,13 @@ import { GeistMono } from 'geist/font/mono';
 import { GeistSans } from 'geist/font/sans';
 import type { Metadata, Viewport } from 'next';
 import { Averia_Serif_Libre, Fraunces, Instrument_Serif } from 'next/font/google';
+import type { CSSProperties } from 'react';
 import { Toaster } from 'sonner';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { ThemeProvider } from '@/components/shell/ThemeProvider';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { isClerkConfigured } from '@/lib/hosted/env';
+import { GROTESK_FONT_FAMILY } from '@/lib/theme/font-families';
 import './globals.css';
 
 // Warm editorial display serif — used for the Daily Report masthead, datelines,
@@ -80,6 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable} ${fraunces.variable} ${averia.variable} ${instrument.variable}`}
+      style={{ '--font-hanken': GROTESK_FONT_FAMILY } as CSSProperties}
     >
       <body>
         {clerkEnabled ? (

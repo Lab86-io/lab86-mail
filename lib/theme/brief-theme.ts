@@ -1,5 +1,7 @@
 'use client';
 
+import { GROTESK_FONT_FAMILY } from './font-families';
+
 /* The shared artifact theme contract. AI-composed documents (the Daily Brief,
  * plan briefs) are theme-agnostic HTML built on --brief-* tokens with light
  * fallbacks; the host mirrors the app's resolved CSS variables into those
@@ -8,7 +10,7 @@
 
 export const BRIEF_FONT_FAMILIES: Record<string, string> = {
   sans: "'Geist', system-ui, sans-serif",
-  grotesk: "'Hanken Grotesk', system-ui, sans-serif",
+  grotesk: GROTESK_FONT_FAMILY,
   serif: "'Fraunces', Georgia, serif",
   instrument: "'Instrument Serif', Georgia, serif",
   news: "'Averia Serif Libre', Georgia, serif",

@@ -1,13 +1,25 @@
 import SwiftUI
 
+@discardableResult
+func completeMissedMoveRecovery(error: String?, onSuccess: () -> Void) -> String? {
+    if error == nil { onSuccess() }
+    return error
+}
+
 /// Shared passed-block recovery. Today, Calendar, and Work detail all render
 /// the same authoritative move and write through the same recovery endpoint.
 struct MissedMoveRecoveryView: View {
     @Environment(AppEnvironment.self) private var environment
     let move: WorkExecutionMove
+    let onSuccess: () -> Void
 
     @State private var isRecovering = false
     @State private var recoveryError: String?
+
+    init(move: WorkExecutionMove, onSuccess: @escaping () -> Void = {}) {
+        self.move = move
+        self.onSuccess = onSuccess
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -65,7 +77,8 @@ struct MissedMoveRecoveryView: View {
             isRecovering = true
             recoveryError = nil
             Task {
-                recoveryError = await environment.store.recoverWork(move, recovery: recovery)
+                let error = await environment.store.recoverWork(move, recovery: recovery)
+                recoveryError = completeMissedMoveRecovery(error: error, onSuccess: onSuccess)
                 isRecovering = false
             }
         }

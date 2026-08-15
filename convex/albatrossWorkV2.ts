@@ -1264,21 +1264,26 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
   );
   const cardIds = [
     ...new Set(
-      plans.flatMap((plan) =>
-        plan?.userId === userId
-          ? (plan.appliedSteps || []).flatMap((step) => (step.cardId ? [step.cardId] : []))
-          : [],
-      ),
+      plans.flatMap((plan) => {
+        if (!plan || plan.userId !== userId) return [];
+        const projectedKeys = new Set(keyedPlanActions(plan).map((step) => step.key));
+        return (plan.appliedSteps || []).flatMap((step) =>
+          step.cardId && projectedKeys.has(step.stepKey) ? [step.cardId] : [],
+        );
+      }),
     ),
-  ].slice(0, 1_000);
-  const cards = cardIds.length
-    ? await Promise.all(
-        cardIds.map(async (rawId) => {
+  ];
+  const cards: Array<Doc<'cards'> | null> = [];
+  for (let index = 0; index < cardIds.length; index += 250) {
+    cards.push(
+      ...(await Promise.all(
+        cardIds.slice(index, index + 250).map(async (rawId) => {
           const cardId = ctx.db.normalizeId('cards', rawId);
           return cardId ? ctx.db.get(cardId) : null;
         }),
-      )
-    : [];
+      )),
+    );
+  }
   const completedCardIds = new Set(
     cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
   );

@@ -129,7 +129,9 @@ struct WorkDetailView: View {
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if let move = passedWorkExecutionMove(detail, at: context.date) {
                         bareSection {
-                            MissedMoveRecoveryView(move: move)
+                            MissedMoveRecoveryView(move: move) {
+                                Task { await load(initial: false) }
+                            }
                         }
                     }
                 }

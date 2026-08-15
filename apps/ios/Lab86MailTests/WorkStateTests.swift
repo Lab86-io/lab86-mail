@@ -130,6 +130,23 @@ struct WorkStateTests {
         }
     }
 
+    @Test func successfulRecoveryRefreshesTheOwningSurface() {
+        var refreshCount = 0
+        #expect(
+            completeMissedMoveRecovery(error: nil) {
+                refreshCount += 1
+            } == nil
+        )
+        #expect(refreshCount == 1)
+
+        #expect(
+            completeMissedMoveRecovery(error: "Try again.") {
+                refreshCount += 1
+            } == "Try again."
+        )
+        #expect(refreshCount == 1)
+    }
+
     // MARK: What the row says out loud
 
     @Test func theStandingLineCountsInWordsWhereItCan() {
