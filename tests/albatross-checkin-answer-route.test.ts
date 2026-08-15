@@ -28,6 +28,14 @@ function malformedRequest() {
   });
 }
 
+function rawRequest(body: string) {
+  return new NextRequest('http://localhost/api/albatross/checkin/checkin-1/answer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  });
+}
+
 function dependencies() {
   return {
     requireCurrentUser: mock(async () => user),
@@ -63,6 +71,20 @@ describe('Albatross check-in answer route', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ ok: false, error: 'Tell Albatross what happened.' });
     expect(deps.convexQuery).not.toHaveBeenCalled();
+  });
+
+  test('treats valid non-object JSON as an invalid empty answer', async () => {
+    for (const body of ['null', '[]', '"answer"']) {
+      const deps = dependencies();
+
+      const response = await createCheckinAnswerPost(deps as any)(rawRequest(body), {
+        params: Promise.resolve({ checkinId: 'checkin-1' }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ ok: false, error: 'Tell Albatross what happened.' });
+      expect(deps.convexQuery).not.toHaveBeenCalled();
+    }
   });
 
   test('keeps the answered check-in when intent creation is temporarily unavailable', async () => {

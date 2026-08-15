@@ -59,7 +59,9 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
         windowMs: 60_000,
       });
       const { checkinId } = await context.params;
-      const body = await req.json().catch(() => ({}));
+      const parsedBody = await req.json().catch(() => ({}));
+      const body =
+        parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody) ? parsedBody : {};
       const responseText = String(body.responseText || '').trim();
       const tomorrowIntentText = String(body.tomorrowIntentText || '').trim();
       const selected = Array.isArray(body.completed)
