@@ -29,8 +29,8 @@ export function createEvidenceReconcilePost(deps: EvidenceReconcileDependencies 
     const body = await req.json().catch(() => ({}));
     const userId = String(body?.userId || '').trim();
     const workId = String(body?.workId || '').trim();
-    const evidenceAt = Number(body?.evidenceAt);
-    if (!userId || !workId || !Number.isFinite(evidenceAt)) {
+    const evidenceAt = body?.evidenceAt;
+    if (!userId || !workId || typeof evidenceAt !== 'number' || !Number.isFinite(evidenceAt)) {
       return NextResponse.json(
         { ok: false, error: 'userId, workId, and evidenceAt are required.' },
         { status: 400 },

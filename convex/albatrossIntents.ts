@@ -175,6 +175,9 @@ export const createIntent = mutation({
         .unique();
       if (existing) {
         const changed = args.replaceRawText === true && existing.rawText !== rawText;
+        const revivingArchivedWork =
+          args.replaceRawText === true &&
+          (existing.status === 'archived' || existing.workState === 'archived');
         await ctx.db.patch(existing._id, {
           ...(args.replaceRawText
             ? {
@@ -183,9 +186,19 @@ export const createIntent = mutation({
                 status:
                   existing.status === 'done' || existing.status === 'archived' ? 'ready' : existing.status,
                 workState:
-                  existing.workState === 'done' || existing.workState === 'released'
+                  existing.workState === 'done' ||
+                  existing.workState === 'released' ||
+                  existing.workState === 'archived'
                     ? ('active' as const)
                     : existing.workState || ('active' as const),
+                ...(revivingArchivedWork
+                  ? {
+                      releaseReason: undefined,
+                      releaseProposedBy: undefined,
+                      releasedAt: undefined,
+                      reviewAt: undefined,
+                    }
+                  : {}),
               }
             : {}),
           ...(!existing.areaId ? { areaId: await normalizeIntentAreaId(ctx, userId, args.areaId) } : {}),

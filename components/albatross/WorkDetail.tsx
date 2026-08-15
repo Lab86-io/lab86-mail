@@ -26,7 +26,7 @@ interface WorkQuestion {
   options?: Array<{ id: string; label: string; description?: string }>;
 }
 
-interface WorkDetailData {
+export interface WorkDetailData {
   work: {
     _id: string;
     title?: string;
@@ -88,6 +88,36 @@ interface WorkDetailData {
     operationIds: string[];
     artifacts: Array<{ kind: string; id: string; title?: string; operationId?: string }>;
   };
+}
+
+export function workDetailRecoveryPrompt(detail: WorkDetailData, workId: string, nowMs: number) {
+  const step = detail.execution.currentStep;
+  const endAt = detail.execution.scheduledEndAt;
+  const open = !['done', 'released', 'archived'].includes(detail.work.workState || 'active');
+  if (!open || !step?.key || !endAt || endAt > nowMs) return null;
+  return {
+    workId,
+    stepKey: step.key,
+    stepTitle: step.title,
+    plannedAt: detail.execution.scheduledStartAt || undefined,
+  };
+}
+
+export function WorkDetailRecovery({
+  detail,
+  workId,
+  nowMs,
+}: {
+  detail: WorkDetailData;
+  workId: string;
+  nowMs: number;
+}) {
+  const prompt = workDetailRecoveryPrompt(detail, workId, nowMs);
+  return prompt ? (
+    <div className="mt-6">
+      <LapsePrompt {...prompt} />
+    </div>
+  ) : null;
 }
 
 /**
@@ -211,12 +241,6 @@ export function WorkDetail({ workId }: { workId: string }) {
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
-  const blockPassed = Boolean(
-    open &&
-      detail.execution.currentStep?.key &&
-      detail.execution.scheduledEndAt &&
-      detail.execution.scheduledEndAt <= nowMs,
-  );
   const openAttachedChat = () => {
     setChatScope({
       kind: 'work',
@@ -311,16 +335,7 @@ export function WorkDetail({ workId }: { workId: string }) {
             </div>
           ) : null}
 
-          {blockPassed && detail.execution.currentStep ? (
-            <div className="mt-6">
-              <LapsePrompt
-                workId={workId}
-                stepKey={detail.execution.currentStep.key}
-                stepTitle={detail.execution.currentStep.title}
-                plannedAt={detail.execution.scheduledStartAt || undefined}
-              />
-            </div>
-          ) : null}
+          <WorkDetailRecovery detail={detail} workId={workId} nowMs={nowMs} />
 
           {pendingQuestions.length ? (
             <section className="mt-6 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-soft)] p-4">

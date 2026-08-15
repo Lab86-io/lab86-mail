@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
+import { checkinRetryDelayMs } from '../lib/albatross/retry';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -905,7 +906,7 @@ export const answerCheckin = mutation({
       ...(promptKind === 'reflection'
         ? {
             responseText: reflectionText,
-            reconciledChanges: [...(row.reconciledChanges ?? []), ...changes],
+            reconciledChanges: [...(row.reconciledChanges ?? []).slice(-120), ...changes].slice(-120),
             reflectionAnsweredAt: ts,
             ...(reflectionShouldReconcile
               ? {
@@ -975,11 +976,6 @@ export const answerCheckin = mutation({
     };
   },
 });
-
-function backgroundRetryDelayMs(attempts: number) {
-  const exponent = Math.min(Math.max(attempts - 1, 0), 5);
-  return Math.min(60 * 60_000, 2 ** exponent * 2 * 60_000);
-}
 
 async function queuedCheckins(ctx: QueryCtx, kind: 'reflection' | 'tomorrow', limit: number) {
   const ts = now();
@@ -1134,7 +1130,7 @@ export const failReflectionReconcile = mutation({
     await ctx.db.patch(row._id, {
       reflectionReconcileStatus: 'failed',
       reflectionReconcileClaimedAt: undefined,
-      reflectionReconcileNextAt: retrying ? ts + backgroundRetryDelayMs(attempts) : undefined,
+      reflectionReconcileNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
       reflectionReconcileError: args.error.trim().slice(0, 500),
       updatedAt: ts,
     });
@@ -1189,7 +1185,7 @@ export const failTomorrowPlan = mutation({
       ...(args.workId ? { tomorrowWorkId: args.workId } : {}),
       tomorrowPlanStatus: 'failed',
       tomorrowPlanClaimedAt: undefined,
-      tomorrowPlanNextAt: retrying ? ts + backgroundRetryDelayMs(attempts) : undefined,
+      tomorrowPlanNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
       tomorrowPlanError: args.error.trim().slice(0, 500),
       updatedAt: ts,
     });
@@ -1208,7 +1204,7 @@ export const releaseReflectionReconcile = internalMutation({
       reflectionReconcileStatus: 'failed',
       reflectionReconcileClaimedAt: undefined,
       reflectionReconcileNextAt:
-        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + backgroundRetryDelayMs(attempts) : undefined,
+        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + checkinRetryDelayMs(attempts) : undefined,
       reflectionReconcileError: 'The background check did not answer.',
       updatedAt: ts,
     });
@@ -1226,7 +1222,7 @@ export const releaseTomorrowPlan = internalMutation({
       tomorrowPlanStatus: 'failed',
       tomorrowPlanClaimedAt: undefined,
       tomorrowPlanNextAt:
-        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + backgroundRetryDelayMs(attempts) : undefined,
+        attempts < CHECKIN_BACKGROUND_MAX_ATTEMPTS ? ts + checkinRetryDelayMs(attempts) : undefined,
       tomorrowPlanError: 'Tomorrow planning did not answer.',
       updatedAt: ts,
     });

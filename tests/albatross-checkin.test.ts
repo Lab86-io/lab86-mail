@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   dailyCheckinAnswerPayload,
+  dailyCheckinDraftHydration,
   dailyCheckinResponseError,
   dailyCheckinSectionPayload,
 } from '@/components/albatross/DailyCheckin';
@@ -95,6 +96,29 @@ describe('daily check-in answer payload', () => {
     expect(dailyCheckinResponseError(true, {})).toBeNull();
     expect(dailyCheckinResponseError(false, { error: 'Try later.' })).toBe('Try later.');
   });
+
+  test('a saved reflection never overwrites an unsaved tomorrow draft', () => {
+    const next = dailyCheckinDraftHydration({
+      previousCheckinId: 'checkin-1',
+      checkinId: 'checkin-1',
+      previousSavedReflection: 'Started the form.',
+      savedReflection: 'Submitted the form.',
+      previousSavedTomorrow: null,
+      savedTomorrow: null,
+      currentReflection: 'Submitted the form.',
+      currentTomorrow: 'Call the county clerk before lunch.',
+      reflectionDirty: false,
+      tomorrowDirty: true,
+    });
+
+    expect(next).toMatchObject({
+      checkinChanged: false,
+      hydrateReflection: true,
+      hydrateTomorrow: false,
+      reflection: 'Submitted the form.',
+      tomorrow: 'Call the county clerk before lunch.',
+    });
+  });
 });
 
 describe('check-in background work', () => {
@@ -104,6 +128,15 @@ describe('check-in background work', () => {
     });
     expect(parseCheckinReconciliation('not json')).toEqual({ completed: [] });
     expect(parseCheckinReconciliation('{not json}')).toEqual({ completed: [] });
+    const rows = Array.from({ length: 65 }, (_, index) => ({ kind: 'work', id: `work-${index}` }));
+    const bounded = parseCheckinReconciliation(JSON.stringify({ completed: rows }));
+    expect(bounded.completed).toHaveLength(60);
+    expect(bounded.completed.at(-1)).toEqual({ kind: 'work', id: 'work-59' });
+    expect(
+      parseCheckinReconciliation(
+        JSON.stringify({ completed: [{ kind: 'k'.repeat(80), id: 'i'.repeat(300) }] }),
+      ).completed[0],
+    ).toEqual({ kind: 'k'.repeat(40), id: 'i'.repeat(160) });
   });
 
   test('backs retries off without exceeding one hour', () => {

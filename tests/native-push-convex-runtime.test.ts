@@ -719,6 +719,25 @@ describe('native push Convex receipts', () => {
         responseText: 'I finished the application.',
         completed: [],
       });
+      await t.run((ctx) =>
+        ctx.db.patch(created.checkin._id, {
+          reconciledChanges: Array.from({ length: 125 }, (_, index) => ({
+            kind: 'work',
+            id: `history-${index}`,
+          })),
+        }),
+      );
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: 'I finished the application.',
+        completed: [],
+      });
+      const boundedHistory = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      expect(boundedHistory?.reconciledChanges).toHaveLength(120);
+      expect(boundedHistory?.reconciledChanges?.[0]?.id).toBe('history-5');
       await t.mutation(api.albatrossNotifications.answerCheckin, {
         internalSecret: 'native-push-secret',
         userId: 'background_checkin_user',
@@ -763,6 +782,8 @@ describe('native push Convex receipts', () => {
         error: 'Planner unavailable.',
       });
       expect(failed.retrying).toBe(true);
+      const failedTomorrow = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      expect(Number(failedTomorrow?.tomorrowPlanNextAt) - Number(failedTomorrow?.updatedAt)).toBe(120_000);
 
       const workId = await t.run((ctx) =>
         ctx.db.insert('albatrossIntents', {
@@ -925,6 +946,52 @@ describe('native push Convex receipts', () => {
       expect(changed).toMatchObject({ workId: first.workId, changed: true });
       const work = await t.run((ctx) => ctx.db.get(first.workId));
       expect(work?.rawText).toBe('Call the county clerk.');
+
+      await t.run((ctx) =>
+        ctx.db.patch(first.workId, {
+          status: 'archived',
+          workState: 'active',
+          releaseReason: 'No longer needed.',
+          releaseProposedBy: 'user',
+          releasedAt: 10,
+          reviewAt: 20,
+        }),
+      );
+      await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Revive the archived status.',
+        source: 'text',
+        replaceRawText: true,
+      });
+      let revived = await t.run((ctx) => ctx.db.get(first.workId));
+      expect(revived).toMatchObject({ status: 'ready', workState: 'active' });
+      expect(revived?.releaseReason).toBeUndefined();
+      expect(revived?.releasedAt).toBeUndefined();
+
+      await t.run((ctx) =>
+        ctx.db.patch(first.workId, {
+          status: 'ready',
+          workState: 'archived',
+          releaseReason: 'Archived separately.',
+          releaseProposedBy: 'system',
+          releasedAt: 30,
+          reviewAt: 40,
+        }),
+      );
+      await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Revive the archived Work state.',
+        source: 'text',
+        replaceRawText: true,
+      });
+      revived = await t.run((ctx) => ctx.db.get(first.workId));
+      expect(revived).toMatchObject({ status: 'ready', workState: 'active' });
+      expect(revived?.releaseProposedBy).toBeUndefined();
+      expect(revived?.reviewAt).toBeUndefined();
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

@@ -1,11 +1,57 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LapsePrompt } from '../components/albatross/Forgiveness';
 import { GuidedStepPane } from '../components/albatross/GuidedStep';
+import {
+  type WorkDetailData,
+  WorkDetailRecovery,
+  workDetailRecoveryPrompt,
+} from '../components/albatross/WorkDetail';
 import { keyedMissedMoves, MissedMovesRecoverySection } from '../components/report/TodaySurface';
 import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
+import { CONTINUOUS_EXECUTION_CRON_NAMES } from '../convex/crons';
+
+const repoRoot = join(import.meta.dir, '..');
+const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
+
+function workDetail(endAt: number, workState = 'active'): WorkDetailData {
+  return {
+    work: {
+      _id: 'passport',
+      title: 'Renew passport',
+      rawText: 'Renew my passport',
+      status: 'ready',
+      workState,
+      updatedAt: 1,
+    },
+    plan: null,
+    project: null,
+    questions: [],
+    areaLinks: [],
+    execution: {
+      currentStep: {
+        key: 'official-form',
+        kind: 'task',
+        title: 'Complete the passport form',
+        detail: null,
+        url: null,
+        done: false,
+        cardId: null,
+      },
+      guideSteps: [],
+      remainingSteps: 1,
+      totalSteps: 4,
+      scheduledStartAt: 1_786_700_000_000,
+      scheduledEndAt: endAt,
+    },
+    contract: null,
+    evidence: [],
+    application: null,
+  };
+}
 
 describe('the execution loop owns the visible product surfaces', () => {
   test('guided execution renders the current step, progress, context, and official URL', () => {
@@ -59,6 +105,32 @@ describe('the execution loop owns the visible product surfaces', () => {
     expect(html).toContain('Make it smaller');
   });
 
+  test('Work Detail surfaces recovery only after an open block has passed', () => {
+    const nowMs = 1_786_700_100_000;
+    const elapsed = workDetail(nowMs - 1);
+    expect(workDetailRecoveryPrompt(elapsed, 'passport', nowMs)).toEqual({
+      workId: 'passport',
+      stepKey: 'official-form',
+      stepTitle: 'Complete the passport form',
+      plannedAt: 1_786_700_000_000,
+    });
+    expect(
+      renderToStaticMarkup(createElement(WorkDetailRecovery, { detail: elapsed, workId: 'passport', nowMs })),
+    ).toContain('Complete the passport form');
+
+    expect(workDetailRecoveryPrompt(workDetail(nowMs + 1), 'passport', nowMs)).toBeNull();
+    expect(workDetailRecoveryPrompt(workDetail(nowMs - 1, 'done'), 'passport', nowMs)).toBeNull();
+    expect(
+      renderToStaticMarkup(
+        createElement(WorkDetailRecovery, {
+          detail: workDetail(nowMs - 1, 'archived'),
+          workId: 'passport',
+          nowMs,
+        }),
+      ),
+    ).toBe('');
+  });
+
   test('the notification projection leaves mail in Mail', () => {
     expect(
       visibleExecutionNotifications([
@@ -105,27 +177,21 @@ describe('the execution loop owns the visible product surfaces', () => {
   });
 
   test('guided work and recovery are mounted on every execution surface', () => {
-    const detail = readFileSync('components/albatross/WorkDetail.tsx', 'utf8');
-    const today = readFileSync('components/report/TodaySurface.tsx', 'utf8');
-    const calendar = readFileSync('components/calendar/CalendarSurface.tsx', 'utf8');
-    expect(detail).toContain('<GuidedStepPane');
-    expect(detail).toContain('<LapsePrompt');
+    const today = read('components/report/TodaySurface.tsx');
+    const calendar = read('components/calendar/CalendarSurface.tsx');
     expect(today).toContain('<LapsePrompt');
     expect(calendar).toContain('<LapsePrompt');
-    expect(existsSync('components/albatross/IntentPip.tsx')).toBe(false);
+    expect(existsSync(join(repoRoot, 'components/albatross/IntentPip.tsx'))).toBe(false);
   });
 
   test('continuous execution cron registrations remain visible and separate', () => {
-    const crons = readFileSync('convex/crons.ts', 'utf8');
-    for (const name of [
+    expect(Object.values(CONTINUOUS_EXECUTION_CRON_NAMES)).toEqual([
       'Work scheduling conductor',
       'check-in reflection reconciliation',
       'tomorrow planning conductor',
       'evidence reconciliation conductor',
       'passed block recovery',
       'shape-aware Work review',
-    ]) {
-      expect(crons).toContain(name);
-    }
+    ]);
   });
 });

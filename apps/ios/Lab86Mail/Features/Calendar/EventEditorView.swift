@@ -83,6 +83,18 @@ struct EventEditorView: View {
         return false
     }
 
+    static func canCreateEvent(
+        accountID: String,
+        calendarID: String,
+        calendars: [CalendarChoice],
+        unauthorizedAccountIDs: Set<String>
+    ) -> Bool {
+        guard !accountID.isEmpty, !unauthorizedAccountIDs.contains(accountID) else { return false }
+        let writable = calendars.filter { $0.accountID == accountID && !$0.isReadOnly }
+        if calendarID.isEmpty { return !writable.isEmpty }
+        return writable.contains { $0.calendarID == calendarID }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -163,7 +175,11 @@ struct EventEditorView: View {
                             showsInviteConfirmation = true
                         }
                     }
-                        .disabled(isSaving || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(
+                            isSaving
+                                || title.trimmingCharacters(in: .whitespaces).isEmpty
+                                || (isCreate && !canCreateOnSelectedAccount)
+                        )
                 }
             }
             .onChange(of: start) { oldValue, newValue in
@@ -242,6 +258,15 @@ struct EventEditorView: View {
         }
     }
 
+    private var canCreateOnSelectedAccount: Bool {
+        Self.canCreateEvent(
+            accountID: accountID,
+            calendarID: calendarID,
+            calendars: environment.store.calendarChoices,
+            unauthorizedAccountIDs: environment.store.calendarUnauthorizedAccountIDs
+        )
+    }
+
     private var attendeeEmails: [String] {
         attendeeText
             .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
@@ -273,8 +298,11 @@ struct EventEditorView: View {
         do {
             switch mode {
             case .create:
-                guard !accountID.isEmpty else {
-                    throw BackendError.server(status: 400, message: "Connect a mail account first.")
+                guard canCreateOnSelectedAccount else {
+                    throw BackendError.server(
+                        status: 400,
+                        message: "Select an authorized writable calendar."
+                    )
                 }
                 try await environment.store.createEvent(
                     accountID: accountID,

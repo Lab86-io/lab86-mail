@@ -69,6 +69,7 @@ let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
 let workDetailFixture: any = null;
 let generatedPlanIdFixture = 'plan_revised';
+let evidenceAtDuringPlanFixture: number | undefined;
 let sequence = 0;
 
 async function convexMutationMock(fn: string, args: any) {
@@ -222,6 +223,7 @@ beforeEach(() => {
   areaFixture = null;
   workDetailFixture = null;
   generatedPlanIdFixture = 'plan_revised';
+  evidenceAtDuringPlanFixture = undefined;
   sequence = 0;
   albatross.__setAlbatrossToolDepsForTest({
     api: apiMock as any,
@@ -239,6 +241,12 @@ beforeEach(() => {
         if (!(workDetailFixture.questions || []).some((row: any) => row.status === 'answered')) {
           throw new Error('Planner did not receive the persisted question answer.');
         }
+      }
+      if (evidenceAtDuringPlanFixture !== undefined && workDetailFixture?.work) {
+        workDetailFixture = {
+          ...workDetailFixture,
+          work: { ...workDetailFixture.work, lastEvidenceAt: evidenceAtDuringPlanFixture },
+        };
       }
       workDetailFixture = {
         ...workDetailFixture,
@@ -597,7 +605,33 @@ describe('Albatross tools', () => {
     });
 
     expect(result.unresolved).toHaveLength(0);
-    expect(toolInvocations.find((call) => call.tool === 'tasks_create_card')?.args.boardId).toBeUndefined();
+    const taskInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
+    expect(taskInvocation).toBeDefined();
+    expect(taskInvocation?.args.boardId).toBeUndefined();
+  });
+
+  test('account resolution keeps a connected fallback when calendar lookup fails', async () => {
+    connectedAccountsFixture = [{ accountId: 'healthy', status: 'connected' }];
+    queryFailures.add(apiMock.calendarData.listCalendars);
+
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_mail_fallback',
+      projectMode: 'task_only',
+      plan: {
+        digitalActions: [
+          {
+            kind: 'email_draft',
+            key: 'draft-1',
+            title: 'Draft the inquiry',
+            to: 'office@example.test',
+            body: 'Are appointments available?',
+          },
+        ],
+      },
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(toolInvocations.find((call) => call.tool === 'save_draft')?.args.account).toBe('healthy');
   });
 
   test('apply_intent_plan records queued status when nothing can be executed yet', async () => {
@@ -956,6 +990,32 @@ describe('Albatross tools', () => {
       ),
     ).toBe(true);
     expect(toolInvocations.some((call) => call.tool === 'albatross_apply_intent_plan')).toBe(false);
+  });
+
+  test('explicit replanning acknowledges only the evidence watermark it started with', async () => {
+    workDetailFixture = {
+      work: {
+        _id: 'work_evidence_race',
+        title: 'Renew passport',
+        rawText: 'Renew my passport',
+        lastEvidenceAt: 100,
+      },
+      plan: { _id: 'plan_old', outcome: 'Passport renewed', digitalActions: [] },
+      questions: [],
+      evidence: [],
+    };
+    evidenceAtDuringPlanFixture = 200;
+
+    await runTool(albatross.albatrossReplanWork.handler, {
+      workId: 'work_evidence_race',
+      reason: 'A receipt was attached.',
+    });
+
+    expect(workDetailFixture.work.lastEvidenceAt).toBe(200);
+    expect(mutationCalls).toContainEqual({
+      fn: apiMock.albatrossWorkV2.completeEvidenceReconcile,
+      args: { userId: 'test_user_tools', workId: 'work_evidence_race', evidenceAt: 100 },
+    });
   });
 
   test('replan rejects a generated revision that cannot be loaded', async () => {

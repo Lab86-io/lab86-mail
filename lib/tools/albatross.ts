@@ -366,8 +366,8 @@ async function resolveDefaultAccount(userId: string): Promise<string | undefined
   try {
     const [accounts, calendars, syncStates] = await Promise.all([
       deps.convexQuery<any[]>((deps.api as any).accounts?.listConnectedAccounts, { userId }),
-      deps.convexQuery<any[]>((deps.api as any).calendarData?.listCalendars, { userId }),
-      deps.convexQuery<any[]>((deps.api as any).calendarData?.getSyncStates, { userId }),
+      deps.convexQuery<any[]>((deps.api as any).calendarData?.listCalendars, { userId }).catch(() => []),
+      deps.convexQuery<any[]>((deps.api as any).calendarData?.getSyncStates, { userId }).catch(() => []),
     ]);
     return selectDefaultExecutionAccount(accounts || [], calendars || [], syncStates || []);
   } catch {
@@ -647,11 +647,12 @@ export const albatrossReplanWork = defineTool({
       if (!after?.work || !after?.plan) {
         throw new Error('The revised Albatross plan could not be reloaded.');
       }
-      if (typeof after.work.lastEvidenceAt === 'number') {
+      const reconciledEvidenceAt = before.work.lastEvidenceAt;
+      if (typeof reconciledEvidenceAt === 'number') {
         await deps.convexMutation(workV2Api().completeEvidenceReconcile, {
           userId,
           workId: args.workId,
-          evidenceAt: after.work.lastEvidenceAt,
+          evidenceAt: reconciledEvidenceAt,
         });
       }
       const revision = summarizeWorkPlanRevision(before.plan, after.plan);

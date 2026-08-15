@@ -73,9 +73,10 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
       }
 
       const caller = checkinCallerArgs(user.userId);
-      let result: any = { status: 'open' };
+      let reflectionResult: any = null;
+      let tomorrowResult: any = null;
       if (savesReflection) {
-        result = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        reflectionResult = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
           ...caller,
           checkinId,
           promptKind: 'reflection',
@@ -84,7 +85,7 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
         });
       }
       if (savesTomorrow) {
-        result = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
+        tomorrowResult = await deps.convexMutation<any>((api as any).albatrossNotifications.answerCheckin, {
           ...caller,
           checkinId,
           promptKind: 'tomorrow',
@@ -92,15 +93,16 @@ export function createCheckinAnswerPost(deps: CheckinAnswerDependencies = defaul
           completed: [],
         });
       }
+      const result = { status: 'open', ...reflectionResult, ...tomorrowResult };
 
       return Response.json({
         ok: true,
         ...result,
         saved: { reflection: savesReflection, tomorrow: savesTomorrow },
         ...(savesReflection
-          ? { reflectionReconcileStatus: result.reflectionReconcileStatus || 'pending' }
+          ? { reflectionReconcileStatus: reflectionResult?.reflectionReconcileStatus || 'pending' }
           : {}),
-        ...(savesTomorrow ? { tomorrowPlanStatus: result.tomorrowPlanStatus || 'pending' } : {}),
+        ...(savesTomorrow ? { tomorrowPlanStatus: tomorrowResult?.tomorrowPlanStatus || 'pending' } : {}),
       });
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitResponse(error);

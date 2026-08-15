@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
@@ -67,6 +67,32 @@ export function dailyCheckinResponseError(responseOK: boolean, body: { error?: u
 
 type SaveState = 'idle' | 'saving' | 'saved';
 
+export function dailyCheckinDraftHydration(input: {
+  previousCheckinId?: string;
+  checkinId: string;
+  previousSavedReflection?: string | null;
+  savedReflection?: string | null;
+  previousSavedTomorrow?: string | null;
+  savedTomorrow?: string | null;
+  currentReflection: string;
+  currentTomorrow: string;
+  reflectionDirty: boolean;
+  tomorrowDirty: boolean;
+}) {
+  const checkinChanged = input.previousCheckinId !== input.checkinId;
+  const hydrateReflection =
+    checkinChanged || (!input.reflectionDirty && input.previousSavedReflection !== input.savedReflection);
+  const hydrateTomorrow =
+    checkinChanged || (!input.tomorrowDirty && input.previousSavedTomorrow !== input.savedTomorrow);
+  return {
+    checkinChanged,
+    hydrateReflection,
+    hydrateTomorrow,
+    reflection: hydrateReflection ? input.savedReflection || '' : input.currentReflection,
+    tomorrow: hydrateTomorrow ? input.savedTomorrow || '' : input.currentTomorrow,
+  };
+}
+
 export function DailyCheckin({
   checkin,
   open,
@@ -83,20 +109,48 @@ export function DailyCheckin({
   const [tomorrowState, setTomorrowState] = useState<SaveState>('idle');
   const [reflectionError, setReflectionError] = useState<string | null>(null);
   const [tomorrowError, setTomorrowError] = useState<string | null>(null);
+  const reflectionDirty = useRef(false);
+  const tomorrowDirty = useRef(false);
+  const hydration = useRef<{
+    checkinId?: string;
+    savedReflection?: string | null;
+    savedTomorrow?: string | null;
+  }>({});
   const checkinId = checkin?._id;
   const savedReflection = checkin?.responseText;
   const savedTomorrow = checkin?.tomorrowIntentText;
 
   useEffect(() => {
     if (!checkinId) return;
-    setText(savedReflection || '');
-    setTomorrowText(savedTomorrow || '');
-    setReflectionState(savedReflection?.trim() ? 'saved' : 'idle');
-    setTomorrowState(savedTomorrow?.trim() ? 'saved' : 'idle');
-    setReflectionError(null);
-    setTomorrowError(null);
-    setSelected(new Set());
-  }, [checkinId, savedReflection, savedTomorrow]);
+    const next = dailyCheckinDraftHydration({
+      previousCheckinId: hydration.current.checkinId,
+      checkinId,
+      previousSavedReflection: hydration.current.savedReflection,
+      savedReflection,
+      previousSavedTomorrow: hydration.current.savedTomorrow,
+      savedTomorrow,
+      currentReflection: text,
+      currentTomorrow: tomorrowText,
+      reflectionDirty: reflectionDirty.current,
+      tomorrowDirty: tomorrowDirty.current,
+    });
+    if (next.hydrateReflection) {
+      setText(next.reflection);
+      setReflectionState(savedReflection?.trim() ? 'saved' : 'idle');
+    }
+    if (next.hydrateTomorrow) {
+      setTomorrowText(next.tomorrow);
+      setTomorrowState(savedTomorrow?.trim() ? 'saved' : 'idle');
+    }
+    if (next.checkinChanged) {
+      reflectionDirty.current = false;
+      tomorrowDirty.current = false;
+      setReflectionError(null);
+      setTomorrowError(null);
+      setSelected(new Set());
+    }
+    hydration.current = { checkinId, savedReflection, savedTomorrow };
+  }, [checkinId, savedReflection, savedTomorrow, text, tomorrowText]);
 
   const toggle = (key: string) => {
     setSelected((current) => {
@@ -105,6 +159,7 @@ export function DailyCheckin({
       else next.add(key);
       return next;
     });
+    reflectionDirty.current = true;
     setReflectionState('idle');
   };
 
@@ -135,7 +190,12 @@ export function DailyCheckin({
       const responseError = dailyCheckinResponseError(response.ok, body);
       if (responseError) throw new Error(responseError);
       setState('saved');
-      if (isReflection) setSelected(new Set());
+      if (isReflection) {
+        reflectionDirty.current = false;
+        setSelected(new Set());
+      } else {
+        tomorrowDirty.current = false;
+      }
     } catch (cause) {
       setState('idle');
       setError(cause instanceof Error ? cause.message : 'Could not save this answer.');
@@ -165,6 +225,7 @@ export function DailyCheckin({
                 value={text}
                 onChange={(event) => {
                   setText(event.target.value);
+                  reflectionDirty.current = true;
                   setReflectionState('idle');
                 }}
                 rows={4}
@@ -228,6 +289,7 @@ export function DailyCheckin({
                 value={tomorrowText}
                 onChange={(event) => {
                   setTomorrowText(event.target.value);
+                  tomorrowDirty.current = true;
                   setTomorrowState('idle');
                 }}
                 rows={3}

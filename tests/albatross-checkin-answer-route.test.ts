@@ -90,6 +90,16 @@ describe('Albatross check-in answer route', () => {
 
   test('keeps the combined request shape compatible while saving each section separately', async () => {
     const deps = dependencies();
+    deps.convexMutation.mockImplementation(async (_fn: any, args: any) =>
+      args.promptKind === 'reflection'
+        ? {
+            status: 'open',
+            changes: [{ kind: 'work', id: 'work-1' }],
+            matchedByReflection: [{ kind: 'work', id: 'work-1' }],
+            reflectionReconcileStatus: 'ready',
+          }
+        : { status: 'answered', tomorrowPlanStatus: 'needs_input' },
+    );
     const response = await invoke(deps, {
       responseText: 'Finished the filing.',
       tomorrowIntentText: 'Call the DMV.',
@@ -101,6 +111,10 @@ describe('Albatross check-in answer route', () => {
     expect(await response.json()).toMatchObject({
       ok: true,
       saved: { reflection: true, tomorrow: true },
+      changes: [{ kind: 'work', id: 'work-1' }],
+      matchedByReflection: [{ kind: 'work', id: 'work-1' }],
+      reflectionReconcileStatus: 'ready',
+      tomorrowPlanStatus: 'needs_input',
     });
   });
 

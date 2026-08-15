@@ -33,6 +33,34 @@ struct WorkStateTests {
         return WorkListItem(json: .object(row))!
     }
 
+    private func detail(workState: String = "active", scheduledEndAt: Date) -> WorkDetail {
+        WorkDetail(json: .object([
+            "work": .object([
+                "_id": .string("work-1"),
+                "title": .string("Renew passport"),
+                "rawText": .string("Renew my passport"),
+                "status": .string("ready"),
+                "workState": .string(workState),
+            ]),
+            "plan": .object([
+                "_id": .string("plan-1"),
+                "status": .string("applied"),
+                "outcome": .string("Passport renewed"),
+            ]),
+            "execution": .object([
+                "currentStep": .object([
+                    "key": .string("official-form"),
+                    "kind": .string("task"),
+                    "title": .string("Complete the official form"),
+                ]),
+                "remainingSteps": .number(1),
+                "totalSteps": .number(4),
+                "scheduledStartAt": .number(1_999_000),
+                "scheduledEndAt": .number(scheduledEndAt.timeIntervalSince1970 * 1_000),
+            ]),
+        ]))!
+    }
+
     // MARK: What needs you
 
     @Test func anOpenQuestionAlwaysNeedsYou() {
@@ -79,6 +107,27 @@ struct WorkStateTests {
         let work = item(scheduledEndAt: end)
         #expect(work.hasUpcomingBooking(at: end.addingTimeInterval(-1)))
         #expect(!work.hasUpcomingBooking(at: end))
+    }
+
+    @Test func workDetailRecoveryAppearsAsTheClockPassesTheDeadline() throws {
+        let now = Date(timeIntervalSince1970: 2_000)
+        #expect(passedWorkExecutionMove(detail(scheduledEndAt: now.addingTimeInterval(1)), at: now) == nil)
+
+        let passed = try #require(
+            passedWorkExecutionMove(detail(scheduledEndAt: now.addingTimeInterval(-1)), at: now)
+        )
+        #expect(passed.workID == "work-1")
+        #expect(passed.stepKey == "official-form")
+        #expect(passed.scheduledStartAt == Date(timeIntervalSince1970: 1_999))
+
+        for state in ["done", "released", "archived"] {
+            #expect(
+                passedWorkExecutionMove(
+                    detail(workState: state, scheduledEndAt: now.addingTimeInterval(-1)),
+                    at: now
+                ) == nil
+            )
+        }
     }
 
     // MARK: What the row says out loud
@@ -230,5 +279,57 @@ struct WorkStateTests {
         #expect(candidate?.proofWhat == "The application confirmation arrived")
         #expect(candidate?.matchedMessageID == "message-7")
         #expect(candidate?.matchedContent == "Your application was received.")
+    }
+}
+
+struct CalendarAuthorizationTests {
+    private func calendar(
+        accountID: String = "account-1",
+        calendarID: String = "calendar-1",
+        readOnly: Bool = false
+    ) -> CalendarChoice {
+        CalendarChoice(json: .object([
+            "accountId": .string(accountID),
+            "calendarId": .string(calendarID),
+            "name": .string("Primary"),
+            "isPrimary": .bool(true),
+            "readOnly": .bool(readOnly),
+        ]))!
+    }
+
+    @Test func eventCreationRequiresTheSelectedAuthorizedWritableCalendar() {
+        let writable = calendar()
+        #expect(
+            EventEditorView.canCreateEvent(
+                accountID: "account-1",
+                calendarID: "calendar-1",
+                calendars: [writable],
+                unauthorizedAccountIDs: []
+            )
+        )
+        #expect(
+            !EventEditorView.canCreateEvent(
+                accountID: "account-1",
+                calendarID: "calendar-1",
+                calendars: [writable],
+                unauthorizedAccountIDs: ["account-1"]
+            )
+        )
+        #expect(
+            !EventEditorView.canCreateEvent(
+                accountID: "account-1",
+                calendarID: "calendar-1",
+                calendars: [calendar(readOnly: true)],
+                unauthorizedAccountIDs: []
+            )
+        )
+        #expect(
+            !EventEditorView.canCreateEvent(
+                accountID: "account-1",
+                calendarID: "different-calendar",
+                calendars: [writable],
+                unauthorizedAccountIDs: []
+            )
+        )
     }
 }

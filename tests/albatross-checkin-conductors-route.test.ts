@@ -13,6 +13,27 @@ function cronRequest(path: string, body: unknown) {
 }
 
 describe('check-in background conductors', () => {
+  test('reflection rejects requests that are not internal cron calls', async () => {
+    const convexMutation = mock(async () => undefined);
+    const post = createCheckinReflectionPost({
+      isInternalCronRequest: () => false,
+      generateTextForCurrentUser: mock(async () => ({ text: '{"completed":[]}' })) as any,
+      convexMutation: convexMutation as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-reflection', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        responseText: 'Finished it.',
+        candidateItems: [],
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(convexMutation).not.toHaveBeenCalled();
+  });
+
   test('reflection applies only parsed candidate identities', async () => {
     const convexMutation = mock(async () => ({ applied: 1, stale: false }));
     const post = createCheckinReflectionPost({
@@ -75,9 +96,72 @@ describe('check-in background conductors', () => {
       timezone: 'America/New_York',
     });
   });
+
+  test('tomorrow planning rejects requests that are not internal cron calls', async () => {
+    const convexMutation = mock(async () => undefined);
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => false,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async () => null) as any,
+      advanceWork: mock(async () => ({ status: 'ready' })) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'Call the DMV.',
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(convexMutation).not.toHaveBeenCalled();
+  });
 });
 
 describe('evidence reconciliation conductor', () => {
+  test('rejects requests that are not internal cron calls', async () => {
+    const convexMutation = mock(async () => undefined);
+    const post = createEvidenceReconcilePost({
+      isInternalCronRequest: () => false,
+      advanceWork: mock(async () => ({ status: 'ready' })) as any,
+      convexMutation: convexMutation as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/evidence-reconcile', {
+        userId: 'user-1',
+        workId: 'work-1',
+        evidenceAt: 1,
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(convexMutation).not.toHaveBeenCalled();
+  });
+
+  test('rejects coercible non-number evidence watermarks', async () => {
+    for (const evidenceAt of [null, false, '', '1786700000000']) {
+      const convexMutation = mock(async () => undefined);
+      const post = createEvidenceReconcilePost({
+        isInternalCronRequest: () => true,
+        advanceWork: mock(async () => ({ status: 'ready' })) as any,
+        convexMutation: convexMutation as any,
+        reportError: mock(() => undefined),
+      });
+      const response = await post(
+        cronRequest('/api/cron/evidence-reconcile', {
+          userId: 'user-1',
+          workId: 'work-1',
+          evidenceAt,
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(convexMutation).not.toHaveBeenCalled();
+    }
+  });
+
   test('advances once and acknowledges the exact evidence watermark', async () => {
     const convexMutation = mock(async () => undefined);
     const advanceWork = mock(async () => ({ status: 'ready', workId: 'work-1', planId: 'plan-2' })) as any;

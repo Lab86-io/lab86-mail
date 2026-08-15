@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export { checkinRetryDelayMs } from './retry';
+
 /** Server-to-Convex caller identity for authenticated check-in routes. */
 export function checkinCallerArgs(userId: string) {
   const normalized = userId.trim();
@@ -7,11 +9,21 @@ export function checkinCallerArgs(userId: string) {
   return { userId: normalized };
 }
 
+const completionSchema = z.object({
+  kind: z.string().transform((value) => value.trim().slice(0, 40)),
+  id: z.string().transform((value) => value.trim().slice(0, 160)),
+});
+
 const reconciliationSchema = z.object({
   completed: z
-    .array(z.object({ kind: z.string(), id: z.string() }))
-    .max(60)
-    .default([]),
+    .array(z.unknown())
+    .default([])
+    .transform((rows) =>
+      rows.slice(0, 60).flatMap((row) => {
+        const parsed = completionSchema.safeParse(row);
+        return parsed.success && parsed.data.kind && parsed.data.id ? [parsed.data] : [];
+      }),
+    ),
 });
 
 /** Parse the bounded JSON envelope returned by the background reflection pass. */
@@ -25,12 +37,6 @@ export function parseCheckinReconciliation(text: string) {
   } catch {
     return { completed: [] };
   }
-}
-
-/** Back off quickly enough to help tomorrow, but never hot-loop a broken dependency. */
-export function checkinRetryDelayMs(attempts: number) {
-  const exponent = Math.min(Math.max(Math.floor(attempts) - 1, 0), 5);
-  return Math.min(60 * 60_000, 2 ** exponent * 2 * 60_000);
 }
 
 export function tomorrowWorkPlanStatus(

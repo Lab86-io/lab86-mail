@@ -1224,6 +1224,21 @@ function projectedPlanSteps(
   return [...digital, ...physical];
 }
 
+function scheduledWindow(plan: Doc<'albatrossIntentPlans'> | null | undefined) {
+  const action =
+    plan?.status === 'applied'
+      ? ((plan.digitalActions || []) as PlanStepAction[]).find(
+          (candidate) => candidate.kind === 'calendar_event' && (candidate.startIso || candidate.endIso),
+        )
+      : undefined;
+  const startAt = Date.parse(action?.startIso || '');
+  const endAt = Date.parse(action?.endIso || '');
+  return {
+    scheduledStartAt: Number.isFinite(startAt) ? startAt : null,
+    scheduledEndAt: Number.isFinite(endAt) ? endAt : null,
+  };
+}
+
 async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
   const rows = await ctx.db
     .query('albatrossIntents')
@@ -1234,7 +1249,7 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
     ctx.db
       .query('areas')
       .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect(),
+      .take(500),
     ctx.db
       .query('albatrossWorkQuestions')
       .withIndex('by_user_status_created', (q) => q.eq('userId', userId).eq('status', 'pending'))
@@ -1255,7 +1270,7 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
           : [],
       ),
     ),
-  ].slice(0, 1_500);
+  ].slice(0, 1_000);
   const cards = cardIds.length
     ? await Promise.all(
         cardIds.map(async (rawId) => {
@@ -1276,17 +1291,9 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
 
   return rows.map((row) => {
     const plan = planByWork.get(String(row._id));
-    const digitalActions = (plan?.digitalActions || []) as PlanStepAction[];
     const steps = projectedPlanSteps(plan, completedCardIds);
     const nextStep = steps.find((step) => !step.done);
-    const scheduledAction =
-      plan?.status === 'applied'
-        ? digitalActions.find(
-            (action) => action.kind === 'calendar_event' && (action.startIso || action.endIso),
-          )
-        : undefined;
-    const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
-    const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
+    const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     return {
       _id: String(row._id),
       title: row.title || null,
@@ -1310,8 +1317,8 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
       remainingSteps: steps.filter((step) => !step.done).length,
       totalSteps: steps.length,
       guideSteps: steps,
-      scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
-      scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
+      scheduledStartAt,
+      scheduledEndAt,
     };
   });
 }
@@ -1355,14 +1362,14 @@ export const missedRecoveryCandidates = internalQuery({
   args: {},
   handler: async (ctx) => {
     const ts = now();
-    const users = [...new Set((await recentOpenWork(ctx)).map((row) => row.userId))].slice(0, 25);
+    const users = [...new Set((await recentOpenWork(ctx, 240)).map((row) => row.userId))].slice(0, 12);
     const candidates = [];
     for (const userId of users) {
       const snapshot = selectExecutionSnapshot(
-        (await projectedWorkRows(ctx, userId, 200)) satisfies ExecutionWorkRow[],
+        (await projectedWorkRows(ctx, userId, 60)) satisfies ExecutionWorkRow[],
         ts,
       );
-      for (const move of snapshot.missedMoves) {
+      for (const move of snapshot.missedMoves.slice(0, 8)) {
         if (!move.scheduledStartAt || !move.scheduledEndAt) continue;
         if (ts - move.scheduledEndAt > MISSED_MOVE_LOOKBACK_MS) continue;
         const workId = ctx.db.normalizeId('albatrossIntents', move.workId);
@@ -1420,7 +1427,7 @@ export const evidenceReconcileCandidates = internalQuery({
           (!row.evidenceReconcileClaimedAt ||
             ts - row.evidenceReconcileClaimedAt >= EVIDENCE_RECONCILE_LEASE_MS),
       )
-      .slice(0, 8);
+      .slice(0, 4);
   },
 });
 
@@ -1439,14 +1446,18 @@ export const evidenceReconcileTick = internalAction({
     for (const candidate of candidates) {
       const claim = await ctx.runMutation(refs.beginEvidenceReconcile, { workId: candidate._id });
       if (!claim) continue;
-      const ok =
-        (await fanOutInternalPost(`${appUrl}/api/cron/evidence-reconcile`, secret, [claim], {
-          label: 'evidence reconcile cron',
-          timeoutMs: 240_000,
-          concurrency: 1,
-        })) === 1;
-      if (ok) completed += 1;
-      else await ctx.runMutation(refs.releaseEvidenceReconcile, { workId: candidate._id });
+      let ok = false;
+      try {
+        ok =
+          (await fanOutInternalPost(`${appUrl}/api/cron/evidence-reconcile`, secret, [claim], {
+            label: 'evidence reconcile cron',
+            timeoutMs: 90_000,
+            concurrency: 1,
+          })) === 1;
+        if (ok) completed += 1;
+      } finally {
+        if (!ok) await ctx.runMutation(refs.releaseEvidenceReconcile, { workId: candidate._id });
+      }
     }
     if (candidates.length) {
       console.log(`[evidence reconcile cron] completed ${completed}/${candidates.length}`);
@@ -1505,14 +1516,7 @@ export const workDetail = query({
       cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
     );
     const guideSteps = projectedPlanSteps(plan, completedCardIds);
-    const scheduledAction =
-      plan?.status === 'applied'
-        ? ((plan.digitalActions || []) as PlanStepAction[]).find(
-            (action) => action.kind === 'calendar_event' && (action.startIso || action.endIso),
-          )
-        : undefined;
-    const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');
-    const scheduledEndAt = Date.parse(scheduledAction?.endIso || '');
+    const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
     return {
       work,
@@ -1526,8 +1530,8 @@ export const workDetail = query({
         guideSteps,
         remainingSteps: guideSteps.filter((step) => !step.done).length,
         totalSteps: guideSteps.length,
-        scheduledStartAt: Number.isFinite(scheduledStartAt) ? scheduledStartAt : null,
-        scheduledEndAt: Number.isFinite(scheduledEndAt) ? scheduledEndAt : null,
+        scheduledStartAt,
+        scheduledEndAt,
       },
       lapses,
       contract: work.contract ?? null,
