@@ -62,6 +62,7 @@ describe('provider-faithful file editing contracts', () => {
   test('all distributed iOS builds use production services', () => {
     const postClone = source('apps/ios/ci_scripts/ci_post_clone.sh');
     const verifier = source('apps/ios/ci_scripts/verify_built_configuration.sh');
+    const exportVerifier = source('.github/scripts/verify-ios-export.sh');
 
     expect(postClone).toContain('refs/heads/main|refs/heads/staging)');
     expect(postClone).toContain('refs/tags/ios-staging-*');
@@ -70,6 +71,8 @@ describe('provider-faithful file editing contracts', () => {
     expect(verifier).toContain('refs/heads/main|refs/heads/staging)');
     expect(verifier).toContain('refs/tags/ios-staging-*');
     expect(verifier).not.toContain('mail-staging.lab86.io');
+    expect(exportVerifier).not.toContain('mail-staging.lab86.io');
+    expect(exportVerifier).not.toContain('pk_test_');
   });
 
   test('turns a brief-required deliverable into a reviewable reply attachment', () => {
