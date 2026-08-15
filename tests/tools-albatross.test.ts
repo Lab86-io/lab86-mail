@@ -63,6 +63,7 @@ const operationCalls: any[] = [];
 const undoCalls: any[] = [];
 const approvalOrder: string[] = [];
 const toolInvocations: Array<{ tool: string; args: any }> = [];
+const queryFailures = new Set<string>();
 let approvalFixture: any = null;
 let connectedAccountsFixture: any[] = [];
 let areaFixture: any = null;
@@ -127,6 +128,7 @@ async function convexMutationMock(fn: string, args: any) {
 }
 
 async function convexQueryMock(fn: string, args: any) {
+  if (queryFailures.has(fn)) throw new Error(`Query failed: ${fn}`);
   if (fn === apiMock.accounts.listConnectedAccounts) return connectedAccountsFixture;
   if (fn === apiMock.calendarData.listCalendars)
     return connectedAccountsFixture.map((account, index) => ({
@@ -213,6 +215,7 @@ beforeEach(() => {
   undoCalls.length = 0;
   approvalOrder.length = 0;
   toolInvocations.length = 0;
+  queryFailures.clear();
   approvalFixture = null;
   connectedAccountsFixture = [];
   areaFixture = null;
@@ -578,6 +581,21 @@ describe('Albatross tools', () => {
     });
     const cardInvocation = toolInvocations.find((call) => call.tool === 'tasks_create_card');
     expect(cardInvocation?.args.boardId).toBeUndefined();
+  });
+
+  test('apply_intent_plan keeps safe task execution available when account and area lookups fail', async () => {
+    queryFailures.add(apiMock.accounts.listConnectedAccounts);
+    queryFailures.add(apiMock.albatross.getArea);
+
+    const result = await runTool(albatross.albatrossApplyIntentPlan.handler, {
+      intentId: 'intent_resilient',
+      areaId: 'area_unavailable',
+      projectMode: 'task_only',
+      plan: { digitalActions: [{ kind: 'task', key: 'step-1', title: 'Keep moving' }] },
+    });
+
+    expect(result.unresolved).toHaveLength(0);
+    expect(toolInvocations.find((call) => call.tool === 'tasks_create_card')?.args.boardId).toBeUndefined();
   });
 
   test('apply_intent_plan records queued status when nothing can be executed yet', async () => {
