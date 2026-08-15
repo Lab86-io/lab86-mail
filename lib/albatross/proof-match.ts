@@ -48,7 +48,6 @@ export function proofMatchScore(needle: string, haystack: string): number {
 /** Choose a named requirement only when the evidence text gives us a real lexical reason. */
 export function matchingProofId(proofs: ContractProof[], evidenceText: string): string | null {
   const outstanding = proofs.filter((proof) => !proof.satisfiedAt);
-  if (outstanding.length === 1) return outstanding[0].id;
   const ranked = outstanding
     .map((proof) => ({ id: proof.id, score: proofMatchScore(proof.what, evidenceText) }))
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
@@ -81,4 +80,30 @@ export function rankWorkForProof<T extends ProofMatchWork>(rows: T[], mailText: 
       .sort((a, b) => b.score - a.score || a.row.title.localeCompare(b.row.title))
       .map(({ row }) => row)
   );
+}
+
+export interface MailProofCandidate<T extends ProofMatchWork> {
+  work: T;
+  proofId: string | null;
+  proofWhat: string | null;
+}
+
+/** Rank plausible Work and choose only a lexically supported outstanding proof. */
+export function proofCandidatesForMail<T extends ProofMatchWork>(
+  rows: T[],
+  mailText: string,
+  limit = 5,
+): Array<MailProofCandidate<T>> {
+  return rankWorkForProof(rows, mailText)
+    .slice(0, Math.max(0, limit))
+    .map((work) => {
+      const outstanding = (work.proofs || []).filter((proof) => !proof.satisfiedAt);
+      const proofId = matchingProofId(outstanding, mailText);
+      const proof = outstanding.find((row) => row.id === proofId);
+      return {
+        work,
+        proofId: proof?.id || null,
+        proofWhat: proof?.what || null,
+      };
+    });
 }

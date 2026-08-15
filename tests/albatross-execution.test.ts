@@ -102,6 +102,21 @@ describe('the authoritative current move', () => {
     expect(snapshot.currentMove?.workId).toBe('available-now');
   });
 
+  test('a partial schedule remains eligible as unscheduled work', () => {
+    const startOnly = selectExecutionSnapshot(
+      [work({ _id: 'start-only', scheduledStartAt: NOW + 60_000, scheduledEndAt: null })],
+      NOW,
+    );
+    expect(startOnly.currentMove).toMatchObject({ workId: 'start-only', phase: 'unscheduled' });
+
+    const endOnly = selectExecutionSnapshot(
+      [work({ _id: 'end-only', scheduledStartAt: null, scheduledEndAt: NOW - 60_000 })],
+      NOW,
+    );
+    expect(endOnly.currentMove).toMatchObject({ workId: 'end-only', phase: 'unscheduled' });
+    expect(endOnly.missedMoves).toEqual([]);
+  });
+
   test('keeps questions separate and never offers work without a concrete step', () => {
     const snapshot = selectExecutionSnapshot(
       [work({ _id: 'asks', openQuestions: 1 }), work({ _id: 'vague', nextStep: null })],

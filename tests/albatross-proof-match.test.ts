@@ -1,11 +1,26 @@
 import { describe, expect, test } from 'bun:test';
-import { matchingProofId, rankWorkForProof } from '../lib/albatross/proof-match';
+import { matchingProofId, proofCandidatesForMail, rankWorkForProof } from '../lib/albatross/proof-match';
 
 describe('proof matching', () => {
-  test('uses the only outstanding requirement without inventing a second choice', () => {
-    expect(matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Confirmation')).toBe(
-      'receipt',
-    );
+  test('requires a lexical reason even when only one requirement is outstanding', () => {
+    expect(
+      matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Payment receipt attached'),
+    ).toBe('receipt');
+    expect(
+      matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Confirmation'),
+    ).toBeNull();
+  });
+
+  test('ignores settled proofs and selects the supported outstanding requirement', () => {
+    expect(
+      matchingProofId(
+        [
+          { id: 'receipt', what: 'The payment receipt arrived', satisfiedAt: 100 },
+          { id: 'delivery', what: 'The package delivery was confirmed' },
+        ],
+        'Your package delivery was confirmed',
+      ),
+    ).toBe('delivery');
   });
 
   test('chooses the named requirement supported by the message', () => {
@@ -42,5 +57,30 @@ describe('proof matching', () => {
         'Your grocery delivery is outside',
       ),
     ).toEqual([]);
+  });
+
+  test('uses the shared ranking and proof-selection pipeline for mail candidates', () => {
+    expect(
+      proofCandidatesForMail(
+        [
+          {
+            _id: 'passport',
+            title: 'Renew passport',
+            proofs: [{ id: 'confirmation', what: 'Passport application confirmation arrived' }],
+          },
+        ],
+        'Your passport application confirmation arrived',
+      ),
+    ).toEqual([
+      {
+        work: {
+          _id: 'passport',
+          title: 'Renew passport',
+          proofs: [{ id: 'confirmation', what: 'Passport application confirmation arrived' }],
+        },
+        proofId: 'confirmation',
+        proofWhat: 'Passport application confirmation arrived',
+      },
+    ]);
   });
 });

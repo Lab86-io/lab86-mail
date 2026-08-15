@@ -213,6 +213,7 @@ describe('shape rides capture and planning', () => {
       },
     });
     work = await t.run((ctx) => ctx.db.get(workId));
+    expect(work?.contract?.proofs[0]?.satisfiedBy).toBeUndefined();
     expect(work?.contract?.proofs[0]?.satisfiedAt).toBeUndefined();
   });
 });

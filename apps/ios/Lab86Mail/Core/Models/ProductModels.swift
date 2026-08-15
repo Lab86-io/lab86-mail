@@ -1641,6 +1641,24 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let contract: Contract?
     let evidence: [Evidence]
 
+    private enum CodingKeys: String, CodingKey {
+        case work, plan, project, questions, application, execution, contract, evidence
+    }
+
+    // Snapshots written before guided execution carry no `execution` key.
+    // Keep the in-memory model non-optional while decoding that older cache.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        work = try container.decode(Work.self, forKey: .work)
+        plan = try container.decodeIfPresent(Plan.self, forKey: .plan)
+        project = try container.decodeIfPresent(Project.self, forKey: .project)
+        questions = try container.decodeIfPresent([Question].self, forKey: .questions) ?? []
+        application = try container.decodeIfPresent(Application.self, forKey: .application)
+        execution = try container.decodeIfPresent(Execution.self, forKey: .execution) ?? Execution(json: nil)
+        contract = try container.decodeIfPresent(Contract.self, forKey: .contract)
+        evidence = try container.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
+    }
+
     /// Where the outcome stands. This is a state, not a sentence: the views test
     /// it to decide colour, weight and whether the contract may close, so a copy
     /// edit must not be able to change behaviour without the compiler noticing.

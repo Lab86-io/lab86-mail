@@ -68,6 +68,28 @@ function bounded(value: string | undefined | null, max: number) {
   return clean ? clean.slice(0, max) : undefined;
 }
 
+type PlanStepAction = {
+  key?: string;
+  kind?: string;
+  title?: string;
+  description?: string;
+  detail?: string;
+  url?: string;
+  startIso?: string;
+  endIso?: string;
+  sourceRefs?: Array<{ url?: string }>;
+};
+
+function keyedPlanActions(plan: Doc<'albatrossIntentPlans'>) {
+  const digital = ((plan.digitalActions || []) as PlanStepAction[])
+    .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
+    .map((action, index) => ({ action, key: action.key || `step-${index + 1}`, kind: 'digital' as const }));
+  const physical = ((plan.physicalActions || []) as PlanStepAction[])
+    .filter((action) => action.title?.trim())
+    .map((action, index) => ({ action, key: `physical-${index + 1}`, kind: 'physical' as const }));
+  return [...digital, ...physical];
+}
+
 function preserveRaw(value: string, max = 20_000) {
   return String(value || '')
     .replace(/^\s+|\s+$/g, '')
@@ -349,15 +371,12 @@ export const completeStep = mutation({
     if (!work.latestPlanId) throw new Error('This Albatross does not have a plan yet.');
     const plan = await ctx.db.get(work.latestPlanId);
     if (!plan || plan.userId !== userId) throw new Error('Plan not found.');
-    const digitalKeys = ((plan.digitalActions || []) as PlanStepAction[])
-      .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
-      .map((action, index) => action.key || `step-${index + 1}`);
-    const physicalKeys = (plan.physicalActions || []).map((_, index) => `physical-${index + 1}`);
-    const stepKeys = [...digitalKeys, ...physicalKeys];
+    const stepKeys = keyedPlanActions(plan).map((step) => step.key);
     if (!stepKeys.includes(args.stepKey)) throw new Error('Plan step not found.');
     const ts = now();
     const completedSteps = plan.completedSteps || [];
-    if (!completedSteps.some((step) => step.stepKey === args.stepKey)) {
+    const transitioned = !completedSteps.some((step) => step.stepKey === args.stepKey);
+    if (transitioned) {
       await ctx.db.patch(plan._id, {
         completedSteps: [
           ...completedSteps,
@@ -382,6 +401,7 @@ export const completeStep = mutation({
       stepKey: args.stepKey,
       cardId: applied?.cardId || null,
       allStepsComplete: stepKeys.length > 0 && stepKeys.every((key) => completedKeys.has(key)),
+      transitioned,
     };
   },
 });
@@ -477,6 +497,19 @@ export const attachProof = mutation({
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
+    let trust = args.trust;
+    if (args.sourceKind === 'mail_thread') {
+      const accountId = bounded(args.accountId, 320);
+      if (!accountId) throw new Error('Mail proof requires an account.');
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q.eq('userId', userId).eq('accountId', accountId).eq('providerThreadId', args.sourceId),
+        )
+        .unique();
+      if (!thread) throw new Error('Mail proof could not be verified.');
+      trust = 'observed';
+    }
     const sourceScope = [bounded(args.accountId, 320), bounded(args.connectionId, 180)]
       .filter(Boolean)
       .map((value) => encodeURIComponent(value as string))
@@ -504,7 +537,7 @@ export const attachProof = mutation({
       // The user pointing at something is the strongest signal there is, so it
       // does not need a model's opinion attached to it.
       confidence: 0.95,
-      trust: args.trust,
+      trust,
       dedupeKey,
       searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
       updatedAt: ts,
@@ -552,8 +585,10 @@ export const attachProof = mutation({
       )
       .order('desc')
       .take(100);
+    const currentState =
+      work.workState || (['done', 'archived'].includes(work.status) ? work.status : 'active');
     if (
-      work.workState !== 'done' &&
+      !['done', 'released', 'archived', 'paused', 'waiting'].includes(currentState) &&
       mayCloseAutomatically(updatedContract, evidence) &&
       !evidence.some((item) => item.trust === 'rejected')
     ) {
@@ -563,7 +598,11 @@ export const attachProof = mutation({
         agentState: 'idle',
         updatedAt: ts,
       });
-      await recordWorkCompletion(ctx, work, ts);
+      await recordWorkCompletion(
+        ctx,
+        { ...work, workState: 'done', status: 'done', agentState: 'idle', updatedAt: ts },
+        ts,
+      );
     }
     return evidenceId;
   },
@@ -1070,18 +1109,6 @@ export const areaWork = query({
   },
 });
 
-type PlanStepAction = {
-  key?: string;
-  kind?: string;
-  title?: string;
-  description?: string;
-  detail?: string;
-  url?: string;
-  startIso?: string;
-  endIso?: string;
-  sourceRefs?: Array<{ url?: string }>;
-};
-
 type ProjectedPlanStep = {
   key: string;
   kind: string;
@@ -1107,10 +1134,9 @@ function projectedPlanSteps(
       ).completedSteps || []
     ).map((step) => step.stepKey),
   );
-  const digital = ((plan.digitalActions || []) as PlanStepAction[])
-    .filter((action) => action.kind !== 'calendar_event' && action.title?.trim())
-    .map((action, index) => {
-      const key = action.key || `step-${index + 1}`;
+  const digital = keyedPlanActions(plan)
+    .filter((step) => step.kind === 'digital')
+    .map(({ action, key }) => {
       const applied = appliedByKey.get(key);
       return {
         key,
@@ -1122,10 +1148,9 @@ function projectedPlanSteps(
         cardId: applied?.cardId || null,
       };
     });
-  const physical = ((plan.physicalActions || []) as PlanStepAction[])
-    .filter((action) => action.title?.trim())
-    .map((action, index) => {
-      const key = `physical-${index + 1}`;
+  const physical = keyedPlanActions(plan)
+    .filter((step) => step.kind === 'physical')
+    .map(({ action, key }) => {
       return {
         key,
         kind: 'physical',
@@ -1171,12 +1196,14 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
       ),
     ),
   ].slice(0, 1_500);
-  const cards = await Promise.all(
-    cardIds.map(async (rawId) => {
-      const cardId = ctx.db.normalizeId('cards', rawId);
-      return cardId ? ctx.db.get(cardId) : null;
-    }),
-  );
+  const cards = cardIds.length
+    ? await Promise.all(
+        cardIds.map(async (rawId) => {
+          const cardId = ctx.db.normalizeId('cards', rawId);
+          return cardId ? ctx.db.get(cardId) : null;
+        }),
+      )
+    : [];
   const completedCardIds = new Set(
     cards.filter((card) => Boolean(card?.completedAt)).map((card) => String(card!._id)),
   );
@@ -1195,7 +1222,7 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
     const scheduledAction =
       plan?.status === 'applied'
         ? digitalActions.find(
-            (action) => action.kind === 'calendar_event' && action.startIso && action.endIso,
+            (action) => action.kind === 'calendar_event' && (action.startIso || action.endIso),
           )
         : undefined;
     const scheduledStartAt = Date.parse(scheduledAction?.startIso || '');

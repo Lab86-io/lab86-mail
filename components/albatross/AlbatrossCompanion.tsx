@@ -48,6 +48,7 @@ export function AlbatrossCompanion() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const pipWindow = useSyncExternalStore(subscribePipWindow, getPipWindow, () => null);
   const row = rows?.[0] || null;
   const companionWork =
@@ -55,10 +56,15 @@ export function AlbatrossCompanion() {
     work?.find(
       (item) =>
         ['captured', 'planning', 'ready', 'applied'].includes(item.status) &&
-        Date.now() - item.updatedAt < 5 * 60_000,
+        nowMs - item.updatedAt < 5 * 60_000,
     ) ||
     null;
   const questionId = row?.question._id;
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!questionId) return;

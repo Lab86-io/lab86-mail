@@ -51,6 +51,28 @@ async function seedAreaWork() {
   return { t, ...seeded };
 }
 
+async function seedMailThread(t: any, accountId: string, providerThreadId: string) {
+  await t.run((ctx) => {
+    const ts = Date.now();
+    return ctx.db.insert('mailCorpusThreads', {
+      userId,
+      accountId,
+      grantId: `grant:${accountId}`,
+      provider: 'google',
+      providerThreadId,
+      subject: 'Confirmation',
+      fromAddress: 'service@example.test',
+      lastDate: ts,
+      snippet: 'Confirmed',
+      labels: ['INBOX'],
+      unread: false,
+      yearMonth: '2026-08',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  });
+}
+
 describe('Albatross Work v2 Area Brief reads', () => {
   test('Railway internal caller can load area Work and Work detail', async () => {
     const { t, areaId, workId } = await seedAreaWork();
@@ -106,7 +128,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
         workId,
         claim: 'The application was purchased.',
         title,
-        sourceKind: 'mail_thread' as const,
+        sourceKind: 'mcp_item' as const,
         sourceId: 'provider-thread-1',
         accountId,
         connectionId,
@@ -126,7 +148,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
     expect(detail.evidence.find((evidence) => evidence._id === first)?.title).toBe('Updated receipt');
   });
 
-  test('confirmed mail proof satisfies the named contract and closes Work once', async () => {
+  test('validated mail proof is observed and cannot auto-close a confirmed outcome', async () => {
     const { t, workId } = await seedAreaWork();
     const caller = { internalSecret: SECRET, userId };
     await t.run((ctx) =>
@@ -139,6 +161,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
         },
       }),
     );
+    await seedMailThread(t, 'personal-mail', 'passport-confirmation-thread');
 
     await t.mutation(api.albatrossWorkV2.attachProof, {
       ...caller,
@@ -153,19 +176,46 @@ describe('Albatross Work v2 Area Brief reads', () => {
     });
 
     const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
-    expect(detail.work).toMatchObject({ workState: 'done', status: 'done' });
+    expect(detail.work).toMatchObject({ workState: 'active', status: 'ready' });
     expect(detail.contract?.proofs[0]).toMatchObject({
       id: 'confirmation',
       satisfiedBy: 'Passport application confirmation',
     });
     expect(detail.contract?.proofs[0]?.satisfiedAt).toBeNumber();
-    const completions = await t.run((ctx) =>
-      ctx.db
-        .query('completionEvents')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .collect(),
-    );
-    expect(completions.filter((row) => row.artifactId === String(workId))).toHaveLength(1);
+    expect(detail.evidence[0]?.trust).toBe('observed');
+  });
+
+  test('proof never auto-closes Work the user paused or left waiting', async () => {
+    for (const workState of ['paused', 'waiting'] as const) {
+      const { t, workId } = await seedAreaWork();
+      const caller = { internalSecret: SECRET, userId };
+      await t.run((ctx) =>
+        ctx.db.patch(workId, {
+          workState,
+          contract: {
+            outcome: 'The passport application is accepted.',
+            proofs: [{ id: 'confirmation', what: 'The acceptance was confirmed' }],
+            closeWhen: 'outcome_confirmed',
+            updatedAt: Date.now(),
+          },
+        }),
+      );
+
+      await t.mutation(api.albatrossWorkV2.attachProof, {
+        ...caller,
+        workId,
+        claim: 'The acceptance was confirmed.',
+        title: 'Acceptance confirmation',
+        sourceKind: 'manual',
+        sourceId: `manual-${workState}`,
+        trust: 'confirmed',
+        proofId: 'confirmation',
+      });
+
+      const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
+      expect(detail.work.workState).toBe(workState);
+      expect(detail.contract?.proofs[0]?.satisfiedAt).toBeNumber();
+    }
   });
 
   test('finishing a plan step records progress without impersonating outcome proof', async () => {
@@ -258,7 +308,15 @@ describe('Albatross Work v2 Area Brief reads', () => {
         stepKey: 'submit',
         source: 'user',
       }),
-    ).toMatchObject({ stepKey: 'submit', allStepsComplete: false });
+    ).toMatchObject({ stepKey: 'submit', allStepsComplete: false, transitioned: true });
+    expect(
+      await t.mutation(api.albatrossWorkV2.completeStep, {
+        ...caller,
+        workId,
+        stepKey: 'submit',
+        source: 'user',
+      }),
+    ).toMatchObject({ stepKey: 'submit', allStepsComplete: false, transitioned: false });
     expect(
       await t.mutation(api.albatrossWorkV2.completeStep, {
         ...caller,
@@ -266,7 +324,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
         stepKey: 'save',
         source: 'evidence',
       }),
-    ).toMatchObject({ stepKey: 'save', allStepsComplete: false });
+    ).toMatchObject({ stepKey: 'save', allStepsComplete: false, transitioned: true });
     expect(
       await t.mutation(api.albatrossWorkV2.completeStep, {
         ...caller,
@@ -274,7 +332,7 @@ describe('Albatross Work v2 Area Brief reads', () => {
         stepKey: 'physical-1',
         source: 'user',
       }),
-    ).toMatchObject({ stepKey: 'physical-1', allStepsComplete: true });
+    ).toMatchObject({ stepKey: 'physical-1', allStepsComplete: true, transitioned: true });
 
     const detail = await t.query(api.albatrossWorkV2.workDetail, { ...caller, workId });
     expect(detail.plan?._id).toBe(planId);

@@ -174,16 +174,61 @@ struct WorkStateTests {
         #expect(snapshot.needsYou.map(\.id) == ["asking"])
     }
 
+    @Test func executionMoveKeepsSeparateScheduledBlocksAndRepairsBlankTitles() throws {
+        let first = try #require(WorkExecutionMove(json: .object([
+            "workId": .string("passport"),
+            "workTitle": .string("Renew passport"),
+            "stepKey": .string("submit"),
+            "stepTitle": .string(" "),
+            "scheduledStartAt": .number(2_000_000),
+        ])))
+        let second = try #require(WorkExecutionMove(json: .object([
+            "workId": .string("passport"),
+            "workTitle": .string("Renew passport"),
+            "stepKey": .string("submit"),
+            "stepTitle": .string("Submit the form"),
+            "scheduledStartAt": .number(3_000_000),
+        ])))
+
+        #expect(first.stepTitle == "Open the current step")
+        #expect(first.id != second.id)
+    }
+
+    @Test func oldWorkDetailSnapshotDecodesWithoutExecution() throws {
+        let detail = try JSONDecoder().decode(
+            WorkDetail.self,
+            from: Data(
+                #"""
+                {
+                  "work": {
+                    "id":"w1", "title":"Renew passport", "rawText":"Renew passport",
+                    "status":"ready", "workState":"active", "agentState":"idle"
+                  },
+                  "plan":null, "project":null, "questions":[], "application":null,
+                  "contract":null, "evidence":[]
+                }
+                """#.utf8
+            )
+        )
+
+        #expect(detail.execution.currentStep == nil)
+        #expect(detail.execution.guideSteps.isEmpty)
+        #expect(detail.execution.remainingSteps == 0)
+        #expect(detail.execution.totalSteps == 0)
+    }
+
     @Test func mailProofCandidateNamesTheExactRequirementBeforeConfirmation() {
         let candidate = WorkProofCandidate(json: .object([
             "workId": .string("passport"),
             "workTitle": .string("Renew passport"),
             "proofId": .string("confirmation"),
             "proofWhat": .string("The application confirmation arrived"),
-        ]))
+        ]), matchedMessageID: "message-7", matchedContent: "Your application was received.")
 
         #expect(candidate?.workID == "passport")
         #expect(candidate?.proofID == "confirmation")
         #expect(candidate?.proofWhat == "The application confirmation arrived")
+        #expect(candidate?.matchedMessageID == "message-7")
+        #expect(candidate?.matchedContent == "Your application was received.")
     }
 }

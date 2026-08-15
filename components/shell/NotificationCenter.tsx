@@ -2,7 +2,7 @@
 
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { Bell, Check, X } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -24,6 +24,11 @@ interface NotificationRow {
   createdAt: number;
 }
 
+/** Mail has its own primary surface; the bell is reserved for execution and decisions. */
+export function visibleExecutionNotifications<T extends Pick<NotificationRow, 'type'>>(rows: T[]): T[] {
+  return rows.filter((row) => row.type !== 'mail_message' && row.type !== 'urgent_mail');
+}
+
 interface CenterData {
   unread: number;
   notifications: NotificationRow[];
@@ -38,6 +43,7 @@ interface CurrentMove {
 
 export function NotificationCenter({ className }: { className?: string } = {}) {
   const { isAuthenticated } = useConvexAuth();
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const center = useQuery(api.albatrossNotifications.liveCenter, isAuthenticated ? { limit: 50 } : 'skip') as
     | CenterData
     | undefined;
@@ -45,7 +51,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
     | DailyCheckinData
     | null
     | undefined;
-  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? {} : 'skip') as
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
     | { currentMove: CurrentMove | null }
     | undefined;
   const questions = useQuery(
@@ -70,6 +76,11 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
   const [open, setOpen] = useState(false);
   const [checkinOpen, setCheckinOpen] = useState(false);
 
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+
   const act = async (row: NotificationRow) => {
     await mark({ notificationId: row._id as Id<'albatrossNotifications'>, status: 'acted' });
     if (row.entityKind === 'work' && row.entityId) {
@@ -93,9 +104,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
   // Mail already has a first-class home. Keeping routine and urgent messages
   // out of this panel lets the bell represent execution: the current move,
   // questions, approvals, check-ins, and actual Work updates.
-  const rows = (center?.notifications || []).filter(
-    (row) => row.type !== 'mail_message' && row.type !== 'urgent_mail',
-  );
+  const rows = visibleExecutionNotifications(center?.notifications || []);
   // Live questions first: an Albatross the user put down must not outrank one
   // that is actually waiting on them.
   const orderedQuestions = [...(questions || [])].sort((a, b) => {

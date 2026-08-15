@@ -133,7 +133,7 @@ export function selectExecutionSnapshot(rows: ExecutionWorkRow[], nowMs: number)
     .sort((a, b) => b.openQuestions - a.openQuestions || b.updatedAt - a.updatedAt);
   const candidates = rows.filter(movable);
   const missed = candidates
-    .filter((row) => Boolean(row.scheduledEndAt && row.scheduledEndAt <= nowMs))
+    .filter((row) => Boolean(row.scheduledStartAt && row.scheduledEndAt && row.scheduledEndAt <= nowMs))
     .sort((a, b) => Number(b.scheduledEndAt || 0) - Number(a.scheduledEndAt || 0));
   const missedIds = new Set(missed.map((row) => row._id));
   const active = candidates
@@ -154,13 +154,14 @@ export function selectExecutionSnapshot(rows: ExecutionWorkRow[], nowMs: number)
         !missedIds.has(row._id) &&
         Boolean(
           row.scheduledStartAt &&
+            row.scheduledEndAt &&
             row.scheduledStartAt > nowMs &&
             row.scheduledStartAt <= nowMs + UPCOMING_WINDOW_MS,
         ),
     )
     .sort((a, b) => Number(a.scheduledStartAt) - Number(b.scheduledStartAt));
   const unscheduled = candidates
-    .filter((row) => !row.scheduledStartAt && !row.scheduledEndAt)
+    .filter((row) => !row.scheduledStartAt || !row.scheduledEndAt)
     .sort(
       (a, b) =>
         Number(a.priority || 2) - Number(b.priority || 2) ||

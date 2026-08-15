@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { matchingProofId, rankWorkForProof } from '@/lib/albatross/proof-match';
+import { proofCandidatesForMail } from '@/lib/albatross/proof-match';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -36,23 +36,20 @@ export async function POST(req: NextRequest) {
       userId: user.userId,
       limit: 12,
     });
-    const ranked = rankWorkForProof(
-      open.map((work) => ({
+    const matches = proofCandidatesForMail(
+      (open || []).map((work) => ({
         ...work,
         outcome: work.contract?.outcome,
         proofs: work.contract?.proofs,
       })),
       `${subject} ${snippet}`,
     );
-    const candidates = ranked.slice(0, 5).map((work) => {
-      const outstanding = (work.contract?.proofs || []).filter((proof) => !proof.satisfiedAt);
-      const proofId = matchingProofId(outstanding, `${subject} ${snippet}`);
-      const proof = outstanding.find((row) => row.id === proofId);
+    const candidates = matches.map(({ work, proofId, proofWhat }) => {
       return {
         workId: work._id,
         workTitle: work.title,
-        proofId: proof?.id || null,
-        proofWhat: proof?.what || null,
+        proofId,
+        proofWhat,
       };
     });
 

@@ -43,10 +43,12 @@ const apiMock = {
 const NOW = 1_760_000_000_000;
 let mutationCalls: Array<{ fn: string; args: any }> = [];
 let queryCalls: Array<{ fn: string; args: any }> = [];
+let failExecution = false;
 
 beforeEach(() => {
   mutationCalls = [];
   queryCalls = [];
+  failExecution = false;
   __setAreaToolDepsForTest({
     api: apiMock as any,
     now: () => NOW,
@@ -81,6 +83,7 @@ beforeEach(() => {
         ];
       }
       if (fn === apiMock.albatrossWorkV2.executionSnapshot) {
+        if (failExecution) throw new Error('execution projection unavailable');
         return {
           currentMove: {
             workId: 'work_2',
@@ -515,7 +518,7 @@ describe('work_list', () => {
     });
     expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)).toMatchObject({
       fn: apiMock.albatrossWorkV2.executionSnapshot,
-      args: { userId: TEST_USER.userId },
+      args: { userId: TEST_USER.userId, limit: 60 },
     });
     expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
     expect(result.execution.currentMove.stepTitle).toBe('Book the passport appointment');
@@ -531,8 +534,23 @@ describe('work_list', () => {
     queryCalls.length = 0;
     await runTool(workList.handler, {});
     // Absent, not undefined: the query applies its own default, and sending an
-    // explicit undefined would override it in some transports.
-    expect(queryCalls.every((call) => !('limit' in call.args))).toBe(true);
+    // explicit undefined would override it in some transports. The heavier
+    // execution projection has its own bounded default.
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.allWork)?.args).toEqual({
+      userId: TEST_USER.userId,
+    });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)?.args).toEqual({
+      userId: TEST_USER.userId,
+      limit: 60,
+    });
+  });
+
+  test('keeps the Work list when the optional execution projection fails', async () => {
+    failExecution = true;
+    const result: any = await runTool(workList.handler, {});
+
+    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(result.execution).toBeNull();
   });
 
   test('refuses a limit outside what the query will honour', () => {

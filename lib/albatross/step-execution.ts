@@ -30,6 +30,16 @@ export interface CompleteWorkStepInput {
   source?: 'user' | 'task' | 'evidence';
 }
 
+export class StepExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly status: 404 | 409,
+  ) {
+    super(message);
+    this.name = 'StepExecutionError';
+  }
+}
+
 /** Complete the current named step, keep its task artifact in sync, then close or replan. */
 export async function completeWorkStep(
   input: CompleteWorkStepInput,
@@ -39,16 +49,28 @@ export async function completeWorkStep(
     userId: input.userId,
     workId: input.workId,
   });
-  if (!detail?.work || !detail?.plan) throw new Error('Albatross Work not found.');
+  if (!detail?.work || !detail?.plan) throw new StepExecutionError('Albatross Work not found.', 404);
   const step = (detail.execution?.guideSteps || []).find(
     (row: any) => row.key === (input.stepKey || detail.execution?.currentStep?.key),
   );
-  if (!step) throw new Error('There is no current step to complete.');
+  if (!step) throw new StepExecutionError('There is no current step to complete.', 409);
 
-  if (step.cardId) {
+  const completed = await deps.convexMutation<{
+    stepKey: string;
+    cardId: string | null;
+    allStepsComplete: boolean;
+    transitioned: boolean;
+  }>((api as any).albatrossWorkV2.completeStep, {
+    userId: input.userId,
+    workId: input.workId,
+    stepKey: step.key,
+    source: input.source || (step.cardId ? 'task' : 'user'),
+  });
+
+  if (completed.cardId) {
     await deps.invokeTool(
       tasksUpdateCard,
-      { cardId: step.cardId, completed: true },
+      { cardId: completed.cardId, completed: true },
       {
         agent: 'user',
         userId: input.userId,
@@ -59,16 +81,14 @@ export async function completeWorkStep(
       },
     );
   }
-  const completed = await deps.convexMutation<{
-    stepKey: string;
-    cardId: string | null;
-    allStepsComplete: boolean;
-  }>((api as any).albatrossWorkV2.completeStep, {
-    userId: input.userId,
-    workId: input.workId,
-    stepKey: step.key,
-    source: input.source || (step.cardId ? 'task' : 'user'),
-  });
+
+  if (!completed.transitioned) {
+    return {
+      ...completed,
+      closed: detail.work.workState === 'done',
+      replanned: false,
+    };
+  }
 
   let closed = false;
   let replanned = false;

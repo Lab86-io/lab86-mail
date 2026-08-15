@@ -4,6 +4,7 @@ import {
   type CaptureState,
   looksLikeMultipleIntents,
   nextCaptureState,
+  requestPipBeforePersist,
   resolveCapturePieces,
   splitIntentText,
 } from '../components/albatross/IntentCapture';
@@ -109,5 +110,44 @@ describe('resolveCapturePieces', () => {
   test('empty and whitespace-only dumps produce nothing to save', () => {
     expect(resolveCapturePieces('', 'keep')).toEqual([]);
     expect(resolveCapturePieces('   \n  ', 'split')).toEqual([]);
+  });
+});
+
+describe('capture persistence ordering', () => {
+  test('requests PiP before beginning persistence', () => {
+    const order: string[] = [];
+    requestPipBeforePersist(
+      () => {
+        order.push('pip');
+        return Promise.resolve();
+      },
+      () => order.push('persist'),
+    );
+    expect(order).toEqual(['pip', 'persist']);
+  });
+
+  test('a synchronous PiP denial never drops the capture', () => {
+    let persisted = false;
+    requestPipBeforePersist(
+      () => {
+        throw new Error('denied');
+      },
+      () => {
+        persisted = true;
+      },
+    );
+    expect(persisted).toBe(true);
+  });
+
+  test('an asynchronous PiP denial never drops the capture', async () => {
+    let persisted = false;
+    requestPipBeforePersist(
+      () => Promise.reject(new Error('denied later')),
+      () => {
+        persisted = true;
+      },
+    );
+    await Promise.resolve();
+    expect(persisted).toBe(true);
   });
 });

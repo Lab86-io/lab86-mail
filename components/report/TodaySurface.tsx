@@ -50,6 +50,37 @@ interface ExecutionSnapshot {
   needsYou: TodayWork[];
 }
 
+/** Recovery requires the stable server step key used by the recovery mutation. */
+export function keyedMissedMoves<T extends { stepKey: string | null }>(
+  moves: T[],
+): Array<T & { stepKey: string }> {
+  return moves.filter((move): move is T & { stepKey: string } => Boolean(move.stepKey));
+}
+
+export function MissedMovesRecoverySection({
+  moves,
+}: {
+  moves: Array<Pick<ExecutionMove, 'workId' | 'stepKey' | 'stepTitle' | 'scheduledStartAt'>>;
+}) {
+  const keyedMoves = keyedMissedMoves(moves);
+  if (!keyedMoves.length) return null;
+  return (
+    <Section title="The plan slipped" note="Choose what should happen now.">
+      <div className="space-y-3">
+        {keyedMoves.map((move) => (
+          <LapsePrompt
+            key={`${move.workId}:${move.stepKey || move.stepTitle}`}
+            workId={move.workId}
+            stepKey={move.stepKey}
+            stepTitle={move.stepTitle}
+            plannedAt={move.scheduledStartAt || undefined}
+          />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 /**
  * Today. What deserves attention today, given the life this person actually
  * has today — not a magazine about it.
@@ -320,20 +351,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 </Section>
               ) : null}
 
-              {execution?.missedMoves.length ? (
-                <Section title="The plan slipped" note="Choose what should happen now.">
-                  <div className="space-y-3">
-                    {execution.missedMoves.map((move) => (
-                      <LapsePrompt
-                        key={`${move.workId}:${move.stepKey || move.stepTitle}`}
-                        workId={move.workId}
-                        stepTitle={move.stepTitle}
-                        plannedAt={move.scheduledStartAt || undefined}
-                      />
-                    ))}
-                  </div>
-                </Section>
-              ) : null}
+              <MissedMovesRecoverySection moves={execution?.missedMoves || []} />
 
               {attention.work.length || attention.approvals.length ? (
                 <Section title="Needs you" note="Albatross cannot move these without you.">
