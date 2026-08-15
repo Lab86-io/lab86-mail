@@ -4,6 +4,10 @@ import {
   planNeedsConductor,
   selectExecutionSnapshot,
 } from '../lib/albatross/execution';
+import {
+  INTERACTIVE_CARD_READ_BUDGET,
+  selectCardCompleteProjection,
+} from '../lib/albatross/projection-budget';
 
 const NOW = Date.parse('2026-08-14T14:00:00Z');
 
@@ -149,5 +153,24 @@ describe('the authoritative current move', () => {
     );
     expect(snapshot.currentMove).toBeNull();
     expect(snapshot.missedMoves).toEqual([]);
+  });
+});
+
+describe('the execution projection read budget', () => {
+  test('keeps every returned step complete at the maximum plans and applied steps', () => {
+    const plans = Array.from({ length: 500 }, (_, planIndex) => ({
+      planIndex,
+      cardIds: Array.from({ length: 60 }, (_, stepIndex) => `card-${planIndex}-${stepIndex}`),
+    }));
+
+    const projection = selectCardCompleteProjection(plans, (plan) => plan.cardIds);
+    const selectedCardIds = new Set(projection.cardIds);
+
+    expect(projection.cardIds.length).toBeLessThanOrEqual(INTERACTIVE_CARD_READ_BUDGET);
+    expect(projection.items.length).toBeGreaterThan(0);
+    expect(projection.items.length).toBeLessThan(plans.length);
+    for (const plan of projection.items) {
+      expect(plan.cardIds.every((cardId) => selectedCardIds.has(cardId))).toBe(true);
+    }
   });
 });

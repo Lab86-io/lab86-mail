@@ -7,6 +7,11 @@ import { mayCloseAutomatically } from '../lib/albatross/contract';
 import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
 import { isStale } from '../lib/albatross/forgiveness';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
+import {
+  INTERACTIVE_CARD_READ_BUDGET,
+  RECOVERY_CARD_READ_BUDGET_PER_USER,
+  selectCardCompleteProjection,
+} from '../lib/albatross/projection-budget';
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
 import { internal } from './_generated/api';
@@ -1239,7 +1244,20 @@ function scheduledWindow(plan: Doc<'albatrossIntentPlans'> | null | undefined) {
   };
 }
 
-async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
+function projectionPriority(row: Doc<'albatrossIntents'>) {
+  const state = row.workState || 'active';
+  if (state === 'active') return 0;
+  if (state === 'waiting' || state === 'blocked') return 1;
+  if (state === 'paused') return 2;
+  return 3;
+}
+
+async function projectedWorkRows(
+  ctx: QueryCtx,
+  userId: string,
+  limit: number,
+  cardReadBudget = INTERACTIVE_CARD_READ_BUDGET,
+) {
   const rows = await ctx.db
     .query('albatrossIntents')
     .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
@@ -1256,23 +1274,32 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
       .take(200),
     Promise.all(rows.map((row) => (row.latestPlanId ? ctx.db.get(row.latestPlanId) : null))),
   ]);
+  const rowPlans = rows.map((row, index) => ({ row, plan: plans[index] }));
+  const prioritized = [...rowPlans].sort(
+    (left, right) => projectionPriority(left.row) - projectionPriority(right.row),
+  );
+  const boundedProjection = selectCardCompleteProjection(
+    prioritized,
+    ({ plan }) => {
+      if (!plan || plan.userId !== userId) return [];
+      const projectedKeys = new Set(keyedPlanActions(plan).map((step) => step.key));
+      return (plan.appliedSteps || []).flatMap((step) =>
+        step.cardId && projectedKeys.has(step.stepKey) ? [step.cardId] : [],
+      );
+    },
+    cardReadBudget,
+  );
+  const selectedWorkIds = new Set(boundedProjection.items.map(({ row }) => String(row._id)));
+  const projectedEntries = rowPlans.filter(({ row }) => selectedWorkIds.has(String(row._id)));
+
   const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
   const planByWork = new Map(
-    plans
-      .filter((plan): plan is NonNullable<typeof plan> => plan !== null && plan.userId === userId)
+    projectedEntries
+      .map(({ plan }) => plan)
+      .filter((plan): plan is NonNullable<typeof plan> => Boolean(plan && plan.userId === userId))
       .map((plan) => [String(plan.intentId), plan] as const),
   );
-  const cardIds = [
-    ...new Set(
-      plans.flatMap((plan) => {
-        if (!plan || plan.userId !== userId) return [];
-        const projectedKeys = new Set(keyedPlanActions(plan).map((step) => step.key));
-        return (plan.appliedSteps || []).flatMap((step) =>
-          step.cardId && projectedKeys.has(step.stepKey) ? [step.cardId] : [],
-        );
-      }),
-    ),
-  ];
+  const cardIds = boundedProjection.cardIds;
   const cards: Array<Doc<'cards'> | null> = [];
   for (let index = 0; index < cardIds.length; index += 250) {
     cards.push(
@@ -1294,7 +1321,7 @@ async function projectedWorkRows(ctx: QueryCtx, userId: string, limit: number) {
     questionCounts.set(key, (questionCounts.get(key) || 0) + 1);
   }
 
-  return rows.map((row) => {
+  return projectedEntries.map(({ row }) => {
     const plan = planByWork.get(String(row._id));
     const steps = projectedPlanSteps(plan, completedCardIds);
     const nextStep = steps.find((step) => !step.done);
@@ -1371,7 +1398,12 @@ export const missedRecoveryCandidates = internalQuery({
     const candidates = [];
     for (const userId of users) {
       const snapshot = selectExecutionSnapshot(
-        (await projectedWorkRows(ctx, userId, 60)) satisfies ExecutionWorkRow[],
+        (await projectedWorkRows(
+          ctx,
+          userId,
+          60,
+          RECOVERY_CARD_READ_BUDGET_PER_USER,
+        )) satisfies ExecutionWorkRow[],
         ts,
       );
       for (const move of snapshot.missedMoves.slice(0, 8)) {
