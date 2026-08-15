@@ -688,15 +688,17 @@ export const conductorCandidates = internalQuery({
     const withPlans = await Promise.all(
       open.map(async (row) => ({ row, plan: row.latestPlanId ? await ctx.db.get(row.latestPlanId) : null })),
     );
-    return withPlans
-      .filter(({ row, plan }) => {
-        if (plan && plan.userId !== row.userId) return false;
-        return planNeedsConductor(plan);
-      })
-      // Each advance may use the full four-minute app timeout. Keep one tick
-      // bounded to four concurrent requests so it always fits the cron cadence.
-      .slice(0, 4)
-      .map(({ row }) => ({ workId: row._id, userId: row.userId }));
+    return (
+      withPlans
+        .filter(({ row, plan }) => {
+          if (plan && plan.userId !== row.userId) return false;
+          return planNeedsConductor(plan);
+        })
+        // Each advance may use the full four-minute app timeout. Keep one tick
+        // bounded to four concurrent requests so it always fits the cron cadence.
+        .slice(0, 4)
+        .map(({ row }) => ({ workId: row._id, userId: row.userId }))
+    );
   },
 });
 
@@ -746,12 +748,13 @@ export const conductorTick = internalAction({
     }
     if (!claimed.length) return;
     const results = await Promise.all(
-      claimed.map(async (candidate) =>
-        (await fanOutInternalPost(`${appUrl}/api/cron/work-conductor`, secret, [candidate], {
-          label: 'work-conductor cron',
-          timeoutMs: 240_000,
-          concurrency: 1,
-        })) === 1,
+      claimed.map(
+        async (candidate) =>
+          (await fanOutInternalPost(`${appUrl}/api/cron/work-conductor`, secret, [candidate], {
+            label: 'work-conductor cron',
+            timeoutMs: 240_000,
+            concurrency: 1,
+          })) === 1,
       ),
     );
     const failed = claimed.filter((_, index) => !results[index]);

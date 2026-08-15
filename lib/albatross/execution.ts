@@ -133,9 +133,7 @@ export function selectExecutionSnapshot(rows: ExecutionWorkRow[], nowMs: number)
     .sort((a, b) => b.openQuestions - a.openQuestions || b.updatedAt - a.updatedAt);
   const candidates = rows.filter(movable);
   const missed = candidates
-    .filter((row) =>
-      Boolean(row.scheduledStartAt && row.scheduledEndAt && row.scheduledEndAt <= nowMs),
-    )
+    .filter((row) => Boolean(row.scheduledStartAt && row.scheduledEndAt && row.scheduledEndAt <= nowMs))
     .sort((a, b) => Number(b.scheduledEndAt || 0) - Number(a.scheduledEndAt || 0));
   const missedIds = new Set(missed.map((row) => row._id));
   const active = candidates

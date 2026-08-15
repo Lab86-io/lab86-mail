@@ -539,9 +539,10 @@ describe('work_list', () => {
     expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.allWork)?.args).toEqual({
       userId: TEST_USER.userId,
     });
-    expect(
-      queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)?.args,
-    ).toEqual({ userId: TEST_USER.userId, limit: 60 });
+    expect(queryCalls.find((call) => call.fn === apiMock.albatrossWorkV2.executionSnapshot)?.args).toEqual({
+      userId: TEST_USER.userId,
+      limit: 60,
+    });
   });
 
   test('keeps the Work list when the optional execution projection fails', async () => {

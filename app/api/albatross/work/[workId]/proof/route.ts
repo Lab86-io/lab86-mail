@@ -55,10 +55,7 @@ function isTrust(value: unknown): value is Trust {
 }
 
 export function createWorkProofPost(deps: WorkProofDependencies = defaults) {
-  return async function POST(
-    req: NextRequest,
-    context: { params: Promise<{ workId: string }> },
-  ) {
+  return async function POST(req: NextRequest, context: { params: Promise<{ workId: string }> }) {
     try {
       const user = await deps.requireCurrentUser();
       await deps.enforceUserRateLimit({

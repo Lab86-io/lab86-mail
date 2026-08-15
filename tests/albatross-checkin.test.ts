@@ -51,13 +51,7 @@ describe('daily check-in answer payload', () => {
 
   test('includes only explicitly selected candidate evidence', () => {
     expect(
-      dailyCheckinAnswerPayload(
-        checkin,
-        new Set(['event:event-1']),
-        ' Appointment done. ',
-        '',
-        'UTC',
-      ),
+      dailyCheckinAnswerPayload(checkin, new Set(['event:event-1']), ' Appointment done. ', '', 'UTC'),
     ).toEqual({
       responseText: 'Appointment done.',
       tomorrowIntentText: '',

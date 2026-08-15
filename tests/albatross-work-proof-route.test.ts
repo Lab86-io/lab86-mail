@@ -44,11 +44,7 @@ const manualProof = {
 
 describe('Albatross Work proof route', () => {
   test('rejects missing details and values outside the complete source and trust unions', async () => {
-    for (const body of [
-      {},
-      { ...manualProof, sourceKind: 'email' },
-      { ...manualProof, trust: 'trusted' },
-    ]) {
+    for (const body of [{}, { ...manualProof, sourceKind: 'email' }, { ...manualProof, trust: 'trusted' }]) {
       const deps = dependencies();
       const response = await invoke(deps, body);
       expect(response.status).toBe(400);

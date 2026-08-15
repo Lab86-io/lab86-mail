@@ -30,11 +30,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ workId
   } catch (error) {
     if (error instanceof RateLimitError) return rateLimitResponse(error);
     const status =
-      error instanceof AuthRequiredError
-        ? 401
-        : error instanceof StepExecutionError
-          ? error.status
-          : 500;
+      error instanceof AuthRequiredError ? 401 : error instanceof StepExecutionError ? error.status : 500;
     return Response.json(
       { ok: false, error: error instanceof Error ? error.message : 'Step update failed.' },
       { status },

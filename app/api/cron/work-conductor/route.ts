@@ -27,10 +27,7 @@ export function createWorkConductorPost(deps: WorkConductorDependencies = defaul
     const userId = String(body?.userId || '').trim();
     const workId = String(body?.workId || '').trim();
     if (!userId || !workId) {
-      return NextResponse.json(
-        { ok: false, error: 'userId and workId are required.' },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, error: 'userId and workId are required.' }, { status: 400 });
     }
     try {
       const result = await deps.advanceWork({ userId, workId });

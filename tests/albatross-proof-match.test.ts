@@ -6,7 +6,9 @@ describe('proof matching', () => {
     expect(
       matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Payment receipt attached'),
     ).toBe('receipt');
-    expect(matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Confirmation')).toBeNull();
+    expect(
+      matchingProofId([{ id: 'receipt', what: 'The payment receipt arrived' }], 'Confirmation'),
+    ).toBeNull();
   });
 
   test('ignores settled proofs and selects the supported outstanding requirement', () => {

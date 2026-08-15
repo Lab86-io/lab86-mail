@@ -1,11 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import {
-  type OpenWork,
-  ProofOfferMatchSummary,
-  submitMailProof,
-} from '../components/thread/ProofOffer';
+import { type OpenWork, ProofOfferMatchSummary, submitMailProof } from '../components/thread/ProofOffer';
 import { proofCandidatesForMail } from '../lib/albatross/proof-match';
 
 const work: OpenWork = {

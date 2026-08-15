@@ -134,7 +134,9 @@ Mark an item completed only when the user's words explicitly say it was done, fi
           ...(tomorrowWorkId ? { tomorrowWorkId } : {}),
           tomorrowPlanStatus: 'degraded',
           tomorrowPlanError:
-            planningError instanceof Error ? planningError.message : 'Tomorrow planning is temporarily unavailable.',
+            planningError instanceof Error
+              ? planningError.message
+              : 'Tomorrow planning is temporarily unavailable.',
         };
       }
     }

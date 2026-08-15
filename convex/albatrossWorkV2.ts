@@ -585,7 +585,8 @@ export const attachProof = mutation({
       )
       .order('desc')
       .take(100);
-    const currentState = work.workState || (['done', 'archived'].includes(work.status) ? work.status : 'active');
+    const currentState =
+      work.workState || (['done', 'archived'].includes(work.status) ? work.status : 'active');
     if (
       !['done', 'released', 'archived', 'paused', 'waiting'].includes(currentState) &&
       mayCloseAutomatically(updatedContract, evidence) &&

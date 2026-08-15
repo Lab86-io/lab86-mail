@@ -154,9 +154,10 @@ describe('completeWorkStep', () => {
     const missing = completeWorkStep({ userId: 'user-1', workId: 'work-1' }, dependencies);
     await expect(missing).rejects.toMatchObject({ name: 'StepExecutionError', status: 404 });
 
-    dependencies.convexQuery = async () => detail({
-      execution: { currentStep: null, guideSteps: [] },
-    });
+    dependencies.convexQuery = async () =>
+      detail({
+        execution: { currentStep: null, guideSteps: [] },
+      });
     const noStep = completeWorkStep({ userId: 'user-1', workId: 'work-1' }, dependencies);
     await expect(noStep).rejects.toBeInstanceOf(StepExecutionError);
     await expect(noStep).rejects.toMatchObject({ status: 409 });

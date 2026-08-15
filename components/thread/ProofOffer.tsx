@@ -29,23 +29,20 @@ export async function submitMailProof(
   input: MailProofRequest,
   fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ) {
-  const response = await fetcher(
-    `/api/albatross/work/${encodeURIComponent(input.work._id)}/proof`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        claim: input.proofWhat || `Something about "${input.work.title}" happened.`,
-        title: input.subject,
-        summary: input.snippet || 'You pointed at this message as proof.',
-        sourceKind: 'mail_thread',
-        sourceId: input.threadId,
-        accountId: input.accountId,
-        proofId: input.proofId,
-        timezone: input.timezone,
-      }),
-    },
-  );
+  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(input.work._id)}/proof`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      claim: input.proofWhat || `Something about "${input.work.title}" happened.`,
+      title: input.subject,
+      summary: input.snippet || 'You pointed at this message as proof.',
+      sourceKind: 'mail_thread',
+      sourceId: input.threadId,
+      accountId: input.accountId,
+      proofId: input.proofId,
+      timezone: input.timezone,
+    }),
+  });
   const result = await response.json().catch(() => null);
   if (!response.ok) throw new Error(result?.error || 'Could not attach this proof.');
   return result;
@@ -171,11 +168,7 @@ export function ProofOffer({
             size="xs"
             disabled={busy}
             onClick={() =>
-              void use(
-                suggested,
-                suggestedMatch.proofId || undefined,
-                suggestedMatch.proofWhat || undefined,
-              )
+              void use(suggested, suggestedMatch.proofId || undefined, suggestedMatch.proofWhat || undefined)
             }
           >
             {busy ? 'Filing proof…' : 'Yes, use as proof'}

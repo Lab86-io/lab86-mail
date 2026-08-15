@@ -51,10 +51,7 @@ export function NotificationCenter({ className }: { className?: string } = {}) {
     | DailyCheckinData
     | null
     | undefined;
-  const execution = useQuery(
-    api.albatrossWorkV2.executionSnapshot,
-    isAuthenticated ? { nowMs } : 'skip',
-  ) as
+  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
     | { currentMove: CurrentMove | null }
     | undefined;
   const questions = useQuery(
