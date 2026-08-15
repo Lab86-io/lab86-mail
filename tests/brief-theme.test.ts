@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test';
+import { AREA_ARTIFACT_FONT_STYLESHEET } from '../lib/albatross/area-artifact-fonts';
 import {
   BRIEF_FONT_FAMILIES,
   briefThemeTokens,
   postBriefTheme,
   readBriefTheme,
 } from '../lib/theme/brief-theme';
+import { GROTESK_FONT_FAMILY } from '../lib/theme/font-families';
 
 describe('briefThemeTokens', () => {
   it('mirrors resolved app variables into --brief-* tokens', () => {
@@ -59,6 +61,15 @@ describe('briefThemeTokens', () => {
     const theme = briefThemeTokens(() => '', 'instrument');
     expect(theme['--brief-font-display']).toBe(BRIEF_FONT_FAMILIES.instrument);
     expect(theme['--brief-display-tracking']).toBe('0.045em');
+  });
+
+  it('uses one local Grotesk contract in the app and hosted artifacts', () => {
+    const theme = briefThemeTokens(() => '', 'grotesk');
+    expect(BRIEF_FONT_FAMILIES.grotesk).toBe(GROTESK_FONT_FAMILY);
+    expect(theme['--brief-font-display']).toBe(GROTESK_FONT_FAMILY);
+    expect(GROTESK_FONT_FAMILY).toContain('"Avenir Next"');
+    expect(GROTESK_FONT_FAMILY).not.toContain('Hanken');
+    expect(AREA_ARTIFACT_FONT_STYLESHEET).not.toContain('Hanken+Grotesk');
   });
 
   it('treats unknown font keys as the serif default', () => {

@@ -6,6 +6,8 @@ import schema from '../convex/schema';
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/albatrossNotifications.ts': () => import('../convex/albatrossNotifications'),
+  '../convex/albatrossIntents.ts': () => import('../convex/albatrossIntents'),
+  '../convex/albatrossWorkV2.ts': () => import('../convex/albatrossWorkV2'),
   '../convex/accounts.ts': () => import('../convex/accounts'),
 };
 
@@ -244,6 +246,8 @@ describe('native push Convex receipts', () => {
       expect(state.row?.responseText).toBe('I shipped the first pass.');
       expect(state.row?.tomorrowIntentText).toBe('I will validate the production build.');
       expect(state.row?.reconciledChanges?.map((change) => change.id)).toEqual(workIds.map(String));
+      expect(state.row?.reflectionReconcileStatus).toBe('pending');
+      expect(state.row?.tomorrowPlanStatus).toBe('pending');
       expect(state.notification?.status).toBe('acted');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
@@ -694,5 +698,303 @@ describe('native push Convex receipts', () => {
     });
     receipts = await t.run((ctx) => ctx.db.query('nativePushDeliveries').collect());
     expect(receipts.map((receipt) => receipt.userId)).toEqual(['other_user']);
+  });
+
+  test('leases, retries, and completes independently saved check-in work', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const created = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        localDate: '2026-08-15',
+        timezone: 'America/New_York',
+      });
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: 'I finished the application.',
+        completed: [],
+      });
+      await t.run((ctx) =>
+        ctx.db.patch(created.checkin._id, {
+          reconciledChanges: Array.from({ length: 125 }, (_, index) => ({
+            kind: 'work',
+            id: `history-${index}`,
+          })),
+        }),
+      );
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        promptKind: 'reflection',
+        responseText: 'I finished the application.',
+        completed: [],
+      });
+      const boundedHistory = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      expect(boundedHistory?.reconciledChanges).toHaveLength(120);
+      expect(boundedHistory?.reconciledChanges?.[0]?.id).toBe('history-5');
+      await t.mutation(api.albatrossNotifications.answerCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        promptKind: 'tomorrow',
+        responseText: 'Call the DMV.',
+        completed: [],
+      });
+
+      const reflectionCandidates = await t.query(
+        internal.albatrossNotifications.reflectionReconcileCandidates,
+        {},
+      );
+      const tomorrowCandidates = await t.query(internal.albatrossNotifications.tomorrowPlanCandidates, {});
+      expect(reflectionCandidates.map((row) => row._id)).toContain(created.checkin._id);
+      expect(tomorrowCandidates.map((row) => row._id)).toContain(created.checkin._id);
+
+      const reflectionClaim = await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
+        checkinId: created.checkin._id,
+      });
+      const tomorrowClaim = await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
+        checkinId: created.checkin._id,
+      });
+      expect(reflectionClaim?.responseText).toBe('I finished the application.');
+      expect(tomorrowClaim?.tomorrowIntentText).toBe('Call the DMV.');
+      expect(
+        await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
+          checkinId: created.checkin._id,
+        }),
+      ).toBeNull();
+
+      await t.mutation(api.albatrossNotifications.completeReflectionReconcile, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        completed: [],
+      });
+      const failed = await t.mutation(api.albatrossNotifications.failTomorrowPlan, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        error: 'Planner unavailable.',
+      });
+      expect(failed.retrying).toBe(true);
+      const failedTomorrow = await t.run((ctx) => ctx.db.get(created.checkin._id));
+      expect(Number(failedTomorrow?.tomorrowPlanNextAt) - Number(failedTomorrow?.updatedAt)).toBe(120_000);
+
+      const workId = await t.run((ctx) =>
+        ctx.db.insert('albatrossIntents', {
+          userId: 'background_checkin_user',
+          rawText: 'Call the DMV.',
+          source: 'text',
+          title: 'Call the DMV',
+          status: 'ready',
+          workState: 'active',
+          agentState: 'idle',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+      );
+      await t.run((ctx) => ctx.db.patch(created.checkin._id, { tomorrowPlanNextAt: 0 }));
+      expect(
+        await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
+          checkinId: created.checkin._id,
+        }),
+      ).not.toBeNull();
+      await t.mutation(api.albatrossNotifications.completeTomorrowPlan, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        checkinId: created.checkin._id,
+        workId,
+        status: 'ready',
+      });
+
+      const releasable = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+        internalSecret: 'native-push-secret',
+        userId: 'background_checkin_user',
+        localDate: '2026-08-16',
+        timezone: 'America/New_York',
+      });
+      for (const [promptKind, responseText] of [
+        ['reflection', 'I finished another thing.'],
+        ['tomorrow', 'Prepare the receipt.'],
+      ] as const) {
+        await t.mutation(api.albatrossNotifications.answerCheckin, {
+          internalSecret: 'native-push-secret',
+          userId: 'background_checkin_user',
+          checkinId: releasable.checkin._id,
+          promptKind,
+          responseText,
+          completed: [],
+        });
+      }
+      await t.mutation(internal.albatrossNotifications.beginReflectionReconcile, {
+        checkinId: releasable.checkin._id,
+      });
+      await t.mutation(internal.albatrossNotifications.beginTomorrowPlan, {
+        checkinId: releasable.checkin._id,
+      });
+      await t.mutation(internal.albatrossNotifications.releaseReflectionReconcile, {
+        checkinId: releasable.checkin._id,
+      });
+      await t.mutation(internal.albatrossNotifications.releaseTomorrowPlan, {
+        checkinId: releasable.checkin._id,
+      });
+      const released = await t.run((ctx) => ctx.db.get(releasable.checkin._id));
+      expect(released?.reflectionReconcileStatus).toBe('failed');
+      expect(released?.tomorrowPlanStatus).toBe('failed');
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('dedupes conductor notices and leases new Work evidence', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const notice = {
+        userId: 'conductor_user',
+        workId: 'work-notice',
+        title: 'That block passed',
+        body: 'Choose what happens next.',
+        dedupeKey: 'missed-move:work-notice:1',
+      };
+      const firstNotice = await t.mutation(internal.albatrossNotifications.queueWorkConductorNotice, notice);
+      const secondNotice = await t.mutation(internal.albatrossNotifications.queueWorkConductorNotice, notice);
+      expect(firstNotice.created).toBe(true);
+      expect(secondNotice.created).toBe(false);
+
+      const evidenceAt = Date.now() - 1_000;
+      const workId = await t.run((ctx) =>
+        ctx.db.insert('albatrossIntents', {
+          userId: 'conductor_user',
+          rawText: 'Renew passport',
+          source: 'text',
+          title: 'Renew passport',
+          status: 'ready',
+          workState: 'active',
+          agentState: 'idle',
+          lastEvidenceAt: evidenceAt,
+          createdAt: evidenceAt - 1_000,
+          updatedAt: evidenceAt,
+        }),
+      );
+      const candidates = await t.query(internal.albatrossWorkV2.evidenceReconcileCandidates, {});
+      expect(candidates.map((row) => row._id)).toContain(workId);
+      const claim = await t.mutation(internal.albatrossWorkV2.beginEvidenceReconcile, { workId });
+      expect(claim?.evidenceAt).toBe(evidenceAt);
+      expect(await t.mutation(internal.albatrossWorkV2.beginEvidenceReconcile, { workId })).toBeNull();
+      await t.mutation(api.albatrossWorkV2.completeEvidenceReconcile, {
+        internalSecret: 'native-push-secret',
+        userId: 'conductor_user',
+        workId,
+        evidenceAt,
+      });
+      await t.run((ctx) => ctx.db.patch(workId, { lastEvidenceAt: evidenceAt + 2_000 }));
+      expect(await t.mutation(internal.albatrossWorkV2.beginEvidenceReconcile, { workId })).not.toBeNull();
+      await t.mutation(internal.albatrossWorkV2.releaseEvidenceReconcile, { workId });
+      const work = await t.run((ctx) => ctx.db.get(workId));
+      expect(work?.evidenceReconcileClaimedAt).toBeUndefined();
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('updates the same tomorrow Work and reports whether its words changed', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'native-push-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const first = await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Call the DMV.',
+        source: 'text',
+        replaceRawText: true,
+        returnMetadata: true,
+      });
+      if (typeof first === 'string') throw new Error('Expected create metadata.');
+      expect(first.changed).toBe(true);
+      const same = await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Call the DMV.',
+        source: 'text',
+        replaceRawText: true,
+        returnMetadata: true,
+      });
+      const changed = await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Call the county clerk.',
+        source: 'text',
+        replaceRawText: true,
+        returnMetadata: true,
+      });
+      if (typeof same === 'string' || typeof changed === 'string')
+        throw new Error('Expected update metadata.');
+      expect(same).toMatchObject({ workId: first.workId, changed: false });
+      expect(changed).toMatchObject({ workId: first.workId, changed: true });
+      const work = await t.run((ctx) => ctx.db.get(first.workId));
+      expect(work?.rawText).toBe('Call the county clerk.');
+
+      await t.run((ctx) =>
+        ctx.db.patch(first.workId, {
+          status: 'archived',
+          workState: 'active',
+          releaseReason: 'No longer needed.',
+          releaseProposedBy: 'user',
+          releasedAt: 10,
+          reviewAt: 20,
+        }),
+      );
+      await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Revive the archived status.',
+        source: 'text',
+        replaceRawText: true,
+      });
+      let revived = await t.run((ctx) => ctx.db.get(first.workId));
+      expect(revived).toMatchObject({ status: 'ready', workState: 'active' });
+      expect(revived?.releaseReason).toBeUndefined();
+      expect(revived?.releasedAt).toBeUndefined();
+
+      await t.run((ctx) =>
+        ctx.db.patch(first.workId, {
+          status: 'ready',
+          workState: 'archived',
+          releaseReason: 'Archived separately.',
+          releaseProposedBy: 'system',
+          releasedAt: 30,
+          reviewAt: 40,
+        }),
+      );
+      await t.mutation(api.albatrossIntents.createIntent, {
+        internalSecret: 'native-push-secret',
+        userId: 'tomorrow_work_user',
+        externalId: 'checkin:one:tomorrow',
+        rawText: 'Revive the archived Work state.',
+        source: 'text',
+        replaceRawText: true,
+      });
+      revived = await t.run((ctx) => ctx.db.get(first.workId));
+      expect(revived).toMatchObject({ status: 'ready', workState: 'active' });
+      expect(revived?.releaseProposedBy).toBeUndefined();
+      expect(revived?.reviewAt).toBeUndefined();
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
   });
 });

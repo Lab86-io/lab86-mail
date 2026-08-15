@@ -160,6 +160,8 @@ export const createIntent = mutation({
     source: v.union(v.literal('text'), v.literal('voice'), v.literal('chat'), v.literal('import')),
     title: v.optional(v.string()),
     areaId: v.optional(v.string()),
+    replaceRawText: v.optional(v.boolean()),
+    returnMetadata: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -172,15 +174,41 @@ export const createIntent = mutation({
         .withIndex('by_user_external', (q) => q.eq('userId', userId).eq('externalId', externalId))
         .unique();
       if (existing) {
+        const changed = args.replaceRawText === true && existing.rawText !== rawText;
+        const revivingArchivedWork =
+          args.replaceRawText === true &&
+          (existing.status === 'archived' || existing.workState === 'archived');
         await ctx.db.patch(existing._id, {
+          ...(args.replaceRawText
+            ? {
+                rawText,
+                title: bounded(args.title, 180) || existing.title,
+                status:
+                  existing.status === 'done' || existing.status === 'archived' ? 'ready' : existing.status,
+                workState:
+                  existing.workState === 'done' ||
+                  existing.workState === 'released' ||
+                  existing.workState === 'archived'
+                    ? ('active' as const)
+                    : existing.workState || ('active' as const),
+                ...(revivingArchivedWork
+                  ? {
+                      releaseReason: undefined,
+                      releaseProposedBy: undefined,
+                      releasedAt: undefined,
+                      reviewAt: undefined,
+                    }
+                  : {}),
+              }
+            : {}),
           ...(!existing.areaId ? { areaId: await normalizeIntentAreaId(ctx, userId, args.areaId) } : {}),
           areaAutoAssigned: undefined,
           conversationId: existing.conversationId || `work_${String(existing._id)}`,
-          workState: existing.workState || 'active',
+          ...(!args.replaceRawText ? { workState: existing.workState || ('active' as const) } : {}),
           agentState: existing.agentState || 'researching',
           updatedAt: now(),
         });
-        return existing._id;
+        return args.returnMetadata ? { workId: existing._id, changed } : existing._id;
       }
     }
     const ts = now();
@@ -202,7 +230,7 @@ export const createIntent = mutation({
       updatedAt: ts,
     });
     await ctx.db.patch(intentId, { conversationId: `work_${String(intentId)}` });
-    return intentId;
+    return args.returnMetadata ? { workId: intentId, changed: true } : intentId;
   },
 });
 

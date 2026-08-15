@@ -9,30 +9,11 @@ const user = {
   source: 'clerk' as const,
 };
 
-function request() {
+function request(body: unknown) {
   return new NextRequest('http://localhost/api/albatross/checkin/checkin-1/answer', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      tomorrowIntentText: 'Renew my passport',
-      timezone: 'America/New_York',
-    }),
-  });
-}
-
-function malformedRequest() {
-  return new NextRequest('http://localhost/api/albatross/checkin/checkin-1/answer', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: '{not-json',
-  });
-}
-
-function rawRequest(body: string) {
-  return new NextRequest('http://localhost/api/albatross/checkin/checkin-1/answer', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body,
+    body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }
 
@@ -40,119 +21,109 @@ function dependencies() {
   return {
     requireCurrentUser: mock(async () => user),
     enforceUserRateLimit: mock(async () => ({ ok: true }) as any),
-    generateTextForCurrentUser: mock(async () => ({ text: '{"completed":[]}' }) as any),
-    convexQuery: mock(async () => ({
+    convexMutation: mock(async (_fn: any, args: any) => ({
       status: 'open',
-      candidateItems: [],
+      promptKind: args.promptKind,
+      ...(args.promptKind === 'reflection'
+        ? { reflectionReconcileStatus: 'pending' }
+        : { tomorrowPlanStatus: 'pending' }),
     })) as any,
-    convexMutation: mock(async () => ({ status: 'answered' })) as any,
-    advanceWork: mock(async () => ({
-      status: 'ready' as const,
-      workId: 'work-tomorrow',
-      planId: 'plan-tomorrow',
-    })),
     reportUnexpectedError: mock(() => undefined),
   };
 }
 
-async function invoke(deps: ReturnType<typeof dependencies>) {
-  return createCheckinAnswerPost(deps as any)(request(), {
+async function invoke(deps: ReturnType<typeof dependencies>, body: unknown) {
+  return createCheckinAnswerPost(deps as any)(request(body), {
     params: Promise.resolve({ checkinId: 'checkin-1' }),
   });
 }
 
 describe('Albatross check-in answer route', () => {
-  test('treats malformed JSON as an invalid empty answer', async () => {
-    const deps = dependencies();
-
-    const response = await createCheckinAnswerPost(deps as any)(malformedRequest(), {
-      params: Promise.resolve({ checkinId: 'checkin-1' }),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ ok: false, error: 'Tell Albatross what happened.' });
-    expect(deps.convexQuery).not.toHaveBeenCalled();
-  });
-
-  test('treats valid non-object JSON as an invalid empty answer', async () => {
-    for (const body of ['null', '[]', '"answer"']) {
+  test('treats malformed and non-object JSON as an invalid empty answer', async () => {
+    for (const body of ['{not-json', 'null', '[]', '"answer"']) {
       const deps = dependencies();
-
-      const response = await createCheckinAnswerPost(deps as any)(rawRequest(body), {
-        params: Promise.resolve({ checkinId: 'checkin-1' }),
-      });
-
+      const response = await invoke(deps, body);
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ ok: false, error: 'Tell Albatross what happened.' });
-      expect(deps.convexQuery).not.toHaveBeenCalled();
+      expect(deps.convexMutation).not.toHaveBeenCalled();
     }
   });
 
-  test('keeps the answered check-in when intent creation is temporarily unavailable', async () => {
+  test('saves the reflection immediately and queues interpretation', async () => {
     const deps = dependencies();
-    let mutationCount = 0;
-    deps.convexMutation.mockImplementation(async () => {
-      mutationCount += 1;
-      if (mutationCount === 1) return { status: 'answered' };
-      throw new Error('intent service unavailable');
-    });
-
-    const response = await invoke(deps);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      status: 'answered',
-      tomorrowPlanStatus: 'degraded',
-      tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
-    });
-    expect(deps.advanceWork).not.toHaveBeenCalled();
-    expect(deps.reportUnexpectedError).toHaveBeenCalledTimes(1);
-  });
-
-  test('returns the durable Work id when planning fails after idempotent creation', async () => {
-    const deps = dependencies();
-    let mutationCount = 0;
-    deps.convexMutation.mockImplementation(async () => {
-      mutationCount += 1;
-      return mutationCount === 1 ? { status: 'answered' } : 'work-tomorrow';
-    });
-    let queryCount = 0;
-    deps.convexQuery.mockImplementation(async () => {
-      queryCount += 1;
-      return queryCount === 1 ? { status: 'open', candidateItems: [] } : null;
-    });
-    deps.advanceWork.mockImplementation(async () => {
-      throw new Error('planner unavailable');
-    });
-
-    const response = await invoke(deps);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      status: 'answered',
-      tomorrowWorkId: 'work-tomorrow',
-      tomorrowPlanStatus: 'degraded',
-      tomorrowPlanError: 'Tomorrow planning is temporarily unavailable.',
-    });
-    expect(deps.advanceWork).toHaveBeenCalledWith({
-      userId: user.userId,
-      userEmail: user.email,
-      userName: user.name,
-      workId: 'work-tomorrow',
+    const response = await invoke(deps, {
+      promptKind: 'reflection',
+      responseText: 'I submitted the application.',
+      completed: [{ kind: 'work', id: 'work-1' }],
       timezone: 'America/New_York',
     });
-    expect(deps.reportUnexpectedError).toHaveBeenCalledTimes(1);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      saved: { reflection: true, tomorrow: false },
+      reflectionReconcileStatus: 'pending',
+    });
+    expect(deps.convexMutation).toHaveBeenCalledTimes(1);
+    expect(deps.convexMutation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ promptKind: 'reflection', responseText: 'I submitted the application.' }),
+    );
+  });
+
+  test('saves tomorrow independently without running planning in the request', async () => {
+    const deps = dependencies();
+    const response = await invoke(deps, {
+      promptKind: 'tomorrow',
+      responseText: 'Renew my passport',
+      timezone: 'America/New_York',
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      saved: { reflection: false, tomorrow: true },
+      tomorrowPlanStatus: 'pending',
+    });
+    expect(deps.convexMutation).toHaveBeenCalledTimes(1);
+  });
+
+  test('keeps the combined request shape compatible while saving each section separately', async () => {
+    const deps = dependencies();
+    deps.convexMutation.mockImplementation(async (_fn: any, args: any) =>
+      args.promptKind === 'reflection'
+        ? {
+            status: 'open',
+            changes: [{ kind: 'work', id: 'work-1' }],
+            matchedByReflection: [{ kind: 'work', id: 'work-1' }],
+            reflectionReconcileStatus: 'ready',
+          }
+        : { status: 'answered', tomorrowPlanStatus: 'needs_input' },
+    );
+    const response = await invoke(deps, {
+      responseText: 'Finished the filing.',
+      tomorrowIntentText: 'Call the DMV.',
+      completed: [],
+    });
+
+    expect(response.status).toBe(200);
+    expect(deps.convexMutation).toHaveBeenCalledTimes(2);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      saved: { reflection: true, tomorrow: true },
+      changes: [{ kind: 'work', id: 'work-1' }],
+      matchedByReflection: [{ kind: 'work', id: 'work-1' }],
+      reflectionReconcileStatus: 'ready',
+      tomorrowPlanStatus: 'needs_input',
+    });
   });
 
   test('does not expose unexpected server failures', async () => {
     const deps = dependencies();
-    deps.convexQuery.mockImplementation(async () => {
+    deps.convexMutation.mockImplementation(async () => {
       throw new Error('private Convex failure');
     });
-
-    const response = await invoke(deps);
+    const response = await invoke(deps, { promptKind: 'tomorrow', responseText: 'Call the DMV.' });
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ ok: false, error: 'Check-in answer failed.' });

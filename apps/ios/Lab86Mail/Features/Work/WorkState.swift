@@ -63,6 +63,34 @@ struct WorkExecutionMove: Identifiable, Hashable, Codable, Sendable {
         return "\(workID):\(stepKey ?? stepTitle):\(scheduled)"
     }
 
+    init(
+        workID: String,
+        workTitle: String,
+        stepKey: String?,
+        stepTitle: String,
+        detail: String?,
+        url: String?,
+        phase: String,
+        scheduledStartAt: Date?,
+        scheduledEndAt: Date?,
+        remainingSteps: Int,
+        totalSteps: Int,
+        areaName: String?
+    ) {
+        self.workID = workID
+        self.workTitle = workTitle
+        self.stepKey = stepKey
+        self.stepTitle = stepTitle
+        self.detail = detail
+        self.url = url
+        self.phase = phase
+        self.scheduledStartAt = scheduledStartAt
+        self.scheduledEndAt = scheduledEndAt
+        self.remainingSteps = remainingSteps
+        self.totalSteps = totalSteps
+        self.areaName = areaName
+    }
+
     init?(json: JSONValue) {
         guard let workID = json["workId"]?.stringValue else { return nil }
         self.workID = workID

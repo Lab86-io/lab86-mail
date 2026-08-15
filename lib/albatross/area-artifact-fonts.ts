@@ -3,7 +3,7 @@
 // generated before a font preference changed — loads and uses the app faces.
 
 export const AREA_ARTIFACT_FONT_STYLESHEET =
-  'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&family=Hanken+Grotesk:wght@400..700&display=swap';
+  'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..600&family=Instrument+Serif:ital@0;1&family=Averia+Serif+Libre:wght@400;700&family=Geist:wght@400..700&display=swap';
 
 export const AREA_ARTIFACT_FONT_CONTRACT = `<link id="lab86-area-fonts" rel="stylesheet" href="${AREA_ARTIFACT_FONT_STYLESHEET}">
 <style id="lab86-area-font-contract">

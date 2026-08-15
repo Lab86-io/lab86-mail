@@ -60,6 +60,10 @@ function sampleReport(sections?: any): any {
 }
 
 describe('buildNativeDailyReportArtifact', () => {
+  test('does not load the retired Hanken font for the shared Grotesk option', () => {
+    expect(buildNativeDailyReportArtifact(sampleReport())).not.toContain('Hanken+Grotesk');
+  });
+
   test('renders a complete, self-contained HTML document', () => {
     const html = buildNativeDailyReportArtifact(sampleReport());
     expect(html.startsWith('<!doctype html')).toBe(true);
