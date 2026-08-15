@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 interface ProposedChild {
@@ -8,8 +8,12 @@ interface ProposedChild {
   rawText: string;
 }
 
-async function postSplit(workId: string, body: Record<string, unknown>) {
-  const response = await fetch(`/api/albatross/work/${encodeURIComponent(workId)}/split`, {
+export async function postSplit(
+  workId: string,
+  body: Record<string, unknown>,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+) {
+  const response = await fetcher(`/api/albatross/work/${encodeURIComponent(workId)}/split`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -39,7 +43,12 @@ export function SplitSheet({
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Strict mode mounts effects twice in development; a second propose call
+  // would double the model spend for nothing.
+  const proposedFor = useRef<string | null>(null);
   useEffect(() => {
+    if (proposedFor.current === workId) return;
+    proposedFor.current = workId;
     let cancelled = false;
     setItems(null);
     setExcluded(new Set());
@@ -92,7 +101,10 @@ export function SplitSheet({
           {items.map((item, index) => {
             const off = excluded.has(index);
             return (
-              <li key={item.title}>
+              // Proposals can repeat a title; position is the stable identity
+              // inside one immutable proposal list.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the list is immutable per proposal
+              <li key={index}>
                 <label
                   className={
                     'flex cursor-pointer items-start gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2 transition-colors hover:border-[var(--color-border-strong)]' +

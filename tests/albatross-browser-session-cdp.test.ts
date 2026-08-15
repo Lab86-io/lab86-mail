@@ -10,6 +10,13 @@ const visited: string[] = [];
 let innerTextThrows = false;
 let closed = 0;
 
+const backgroundPage = {
+  goto: async () => null,
+  url: () => 'https://stale.example/first-tab',
+  title: async () => 'Stale first tab',
+  innerText: async () => 'stale',
+};
+
 const fakePage = {
   goto: async (url: string) => {
     visited.push(url);
@@ -26,7 +33,9 @@ const fakePage = {
 mock.module('playwright-core', () => ({
   chromium: {
     connectOverCDP: async () => ({
-      contexts: () => [{ pages: () => [fakePage] }],
+      // Two open tabs: the connector must act on the LAST one, where the
+      // user is working, never the first.
+      contexts: () => [{ pages: () => [backgroundPage, fakePage] }],
       close: async () => {
         closed += 1;
       },
@@ -49,8 +58,9 @@ describe('default CDP connector', () => {
     expect(closed).toBe(1);
   });
 
-  test('read collapses whitespace and tolerates a detached body', async () => {
+  test('read acts on the last open page, collapses whitespace, and tolerates a detached body', async () => {
     const state = await readSessionPage('wss://connect.example/bb');
+    expect(state.url).not.toBe('https://stale.example/first-tab');
     expect(state).toEqual({
       url: 'https://county.example/confirmation',
       title: 'Application received',

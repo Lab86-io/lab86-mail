@@ -653,6 +653,7 @@ export const savePlan = mutation({
     await ctx.db.patch(args.intentId, {
       status: planStatus,
       mailWatchAt: hasMailStep ? (intent.mailWatchAt ?? ts) : undefined,
+      ...(hasMailStep ? {} : { mailWatchClaimedAt: undefined }),
       title: bounded(args.title, 180) ?? intent.title,
       kind: args.kind !== undefined ? bounded(args.kind, 40) : intent.kind,
       // The planner saw research the capture splitter never had, so its

@@ -155,6 +155,10 @@ const defaultConnector: CdpConnector = async (connectUrl: string) => {
         },
       };
     },
+    // For a browser reached with connectOverCDP, close() disconnects this
+    // client; it does not end the remote session. The session ends only by
+    // releaseBrowserSession or its own timeout. No contexts are created here,
+    // so nothing of the user's page is torn down either.
     close: () => browser.close(),
   };
 };

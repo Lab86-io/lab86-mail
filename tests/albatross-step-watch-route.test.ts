@@ -89,6 +89,44 @@ describe('step watch conductor route', () => {
     expect(watchDone?.stillWatching).toBe(false);
   });
 
+  test('one satisfied step out of two completes partially and keeps watching', async () => {
+    const secondStep = {
+      ...sheetsStep,
+      key: 'physical-2',
+      identity: 'step:physical:book the massage',
+      title: 'Book the massage',
+      doneWhen: 'The booking confirmation arrives.',
+      evidenceHint: 'Booking confirmation from the studio',
+    };
+    const twoStepDetail = { ...detail, execution: { guideSteps: [sheetsStep, secondStep] } };
+    const completeWorkStep = mock(async () => ({ ok: true }));
+    const mutations: any[] = [];
+    const post = createStepWatchPost({
+      isInternalCronRequest: () => true,
+      convexQuery: mock(async (_fn: any, args: any) =>
+        args.workId ? twoStepDetail : [confirmationThread],
+      ) as any,
+      convexMutation: mock(async (_fn: any, args: any) => {
+        mutations.push(args);
+        return undefined;
+      }) as any,
+      completeWorkStep: completeWorkStep as any,
+      // Only the sheets step matches the sheets confirmation.
+      evidenceSatisfies: mock(async (input: any) => ({
+        satisfies: input.requirement.includes('order confirmation'),
+        reason: 'Judged.',
+      })) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(watchRequest({ userId: 'user-1', workId: 'work-1' }));
+    const body = await response.json();
+    expect(body).toMatchObject({ ok: true, watched: 2, completedSteps: 1, stillWatching: true });
+    expect(completeWorkStep).toHaveBeenCalledTimes(1);
+    expect(completeWorkStep).toHaveBeenCalledWith(expect.objectContaining({ stepKey: 'physical-1' }));
+    const watchDone = mutations.find((args) => typeof args.stillWatching === 'boolean');
+    expect(watchDone?.stillWatching).toBe(true);
+  });
+
   test('a refuted match completes nothing and keeps watching', async () => {
     const completeWorkStep = mock(async () => ({ ok: true }));
     const mutations: any[] = [];

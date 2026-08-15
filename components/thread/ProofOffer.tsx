@@ -66,8 +66,24 @@ export async function loadProofMatches(
   return body.candidates as ProofMatchCandidate[];
 }
 
-/** The exact tentative claim shown before the user confirms a mail match. */
+/**
+ * The exact tentative claim shown before the user confirms a mail match. An
+ * unchecked candidate (the model gate did not run) says so: it is a guess
+ * from shared words, and the wording never claims a verified match.
+ */
 export function ProofOfferMatchSummary({ match }: { match: ProofMatchCandidate }) {
+  if (match.gate === 'unchecked') {
+    return (
+      <>
+        Does this settle something you are carrying? It shares words with{' '}
+        {match.proofWhat ? `“${match.proofWhat}”` : 'the outcome'} for{' '}
+        <span className="font-medium">{match.workTitle}</span>.
+        <span className="ml-1 text-[var(--color-text-muted)]">
+          Unverified match — the check did not run. File it only if it really is proof.
+        </span>
+      </>
+    );
+  }
   return (
     <>
       Does this settle something you are carrying? Albatross matched it to{' '}

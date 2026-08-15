@@ -99,6 +99,17 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         });
         if (!detail?.work) return Response.json({ ok: false, error: 'Work not found.' }, { status: 404 });
         const step = stepKey ? findStep(detail, stepKey) : null;
+        // The Convex ledger supersedes the old row; the remote browser must be
+        // released too, or it idles until its timeout on the account.
+        const previous = await deps
+          .convexQuery<any>((api as any).albatrossBrowserSessions.activeSessionForWork, {
+            userId,
+            workId,
+          })
+          .catch(() => null);
+        if (previous?.sessionId) {
+          await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
+        }
         const session = await deps.createBrowserSession();
         await deps.convexMutation((api as any).albatrossBrowserSessions.openSession, {
           userId,
@@ -156,6 +167,9 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         ]);
         const step = findStep(detail, stepKey);
         if (!step) return Response.json({ ok: false, error: 'Step not found.' }, { status: 404 });
+        if (step.done) {
+          return Response.json({ ok: false, error: 'This step is already complete.' }, { status: 409 });
+        }
         if (!session || session.sessionId !== sessionId) {
           return Response.json(
             { ok: false, error: 'The shared browser is no longer open.' },
@@ -179,8 +193,23 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         )}&sessionId=${encodeURIComponent(sessionId)}`;
         let satisfied = false;
         let reason = '';
+        let checkRan = false;
         try {
-          const page = await deps.readSessionPage(connectUrl);
+          const page = await deps.readSessionPage(connectUrl).catch((error) => {
+            // The connect URL embeds the API key; neither it nor the raw error
+            // may reach the client or the status line.
+            deps.reportError('[work-session] page read failed', sessionId, error?.name || 'error');
+            return null;
+          });
+          if (!page) {
+            return Response.json({
+              ok: true,
+              satisfied: false,
+              reason: 'The page could not be read. Nothing is claimed either way.',
+              checkRan: false,
+            });
+          }
+          checkRan = true;
           const verdict = await deps.evidenceSatisfies({
             userId,
             workTitle: String(detail?.plan?.outcome || detail?.work?.title || ''),
@@ -189,6 +218,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
             evidenceText: `Page: ${page.url}\nTitle: ${page.title}\n${page.text}`,
           });
           satisfied = verdict.satisfies === true && !verdict.unavailable;
+          checkRan = !verdict.unavailable;
           reason = verdict.reason;
           if (satisfied) {
             await deps.convexMutation((api as any).albatrossWorkV2.attachProof, {
@@ -212,15 +242,19 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
               userId,
               sessionId,
               status: 'user',
+              // "Not complete" is a verdict; "did not run" is not. The status
+              // line never converts an unrun check into a judgment.
               statusDetail: satisfied
                 ? 'Verified. The step is checked off.'
-                : reason
-                  ? `Not yet: ${reason}`.slice(0, 300)
-                  : 'The page does not show the completion state yet.',
+                : !checkRan
+                  ? 'The check did not run. Try again.'
+                  : reason
+                    ? `Not yet: ${reason}`.slice(0, 300)
+                    : 'The page does not show the completion state yet.',
             })
             .catch(() => undefined);
         }
-        return Response.json({ ok: true, satisfied, reason });
+        return Response.json({ ok: true, satisfied, reason, checkRan });
       }
 
       if (action === 'end') {

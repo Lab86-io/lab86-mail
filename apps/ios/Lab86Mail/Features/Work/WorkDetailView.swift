@@ -39,6 +39,7 @@ struct WorkDetailView: View {
     @State private var showsArchiveConfirmation = false
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var stepNote = ""
+    @State private var stepNoteStepID: String?
     @State private var browserStep: WorkDetail.ExecutionStep?
 
     var body: some View {
@@ -416,6 +417,14 @@ struct WorkDetailView: View {
                         )
                         .lineLimit(2...4)
                         .textFieldStyle(.roundedBorder)
+                    }
+                    // A note typed for one step must never ride to the next.
+                    .onChange(of: step.id) { _, _ in stepNote = "" }
+                    .onAppear {
+                        if stepNoteStepID != step.id {
+                            stepNoteStepID = step.id
+                            stepNote = ""
+                        }
                     }
                 }
 

@@ -63,6 +63,14 @@ describe('proposeWorkSplit', () => {
   });
 });
 
+describe('parseWorkSplitProposal edge cases', () => {
+  test('malformed JSON produces the intended error, not a SyntaxError', () => {
+    expect(() => parseWorkSplitProposal('{"work": [ {"title": "a", }')).toThrow(
+      'A split could not be proposed.',
+    );
+  });
+});
+
 describe('commitWorkSplit', () => {
   const items = [
     { title: 'Book a massage for Tree', rawText: 'Book a massage for Tree.' },
@@ -140,6 +148,44 @@ describe('commitWorkSplit', () => {
         },
       ),
     ).rejects.toThrow('This Work is already settled.');
+  });
+
+  test('refuses more than six children', async () => {
+    const many = Array.from({ length: 7 }, (_, index) => ({
+      title: `Part ${index + 1}`,
+      rawText: `Part ${index + 1}.`,
+    }));
+    await expect(
+      commitWorkSplit(
+        { userId: 'user-1', workId: 'work-blob', items: many },
+        { query: mock(async () => detail) as any, mutate: mock(async () => undefined) as any },
+      ),
+    ).rejects.toThrow('A split needs between 2 and 6 Works.');
+  });
+
+  test('a provenance failure is logged and the parent still releases', async () => {
+    const sequence: string[] = [];
+    let created = 0;
+    const mutate = mock(async (_fn: any, args: any) => {
+      if (args.externalId) {
+        created += 1;
+        return { workId: `child-${created}`, changed: true };
+      }
+      if (args.sourceKind === 'manual') throw new Error('evidence store down');
+      sequence.push('release');
+      return { releasedAt: 1 };
+    });
+    const result = await commitWorkSplit(
+      { userId: 'user-1', workId: 'work-blob', items },
+      {
+        query: mock(async () => detail) as any,
+        mutate: mutate as any,
+        advance: mock(async () => ({ status: 'ready' })) as any,
+        nowMs: () => 0,
+      },
+    );
+    expect(result.releasedParent).toBe(true);
+    expect(sequence).toEqual(['release']);
   });
 
   test('refuses fewer than two children', async () => {

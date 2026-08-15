@@ -49,7 +49,7 @@ Rules:
 - Preserve the user's meaning and important detail. Never invent a goal.
 - Split automatically when two parts can be completed, paused, or abandoned independently.
 - Keep one outcome together when its steps serve the same definition of done.
-- A shared person, day, or theme is not one outcome. Split errands that different places, merchants, or offices can finish independently.
+- A shared person, day, or theme is not one outcome by itself. Split when the parts can finish independently.
 - A title is short, concrete, and sentence case.
 - When an item is the same outcome as an existing Work in the list, set existingWorkId to that Work's id.
 - Never set existingWorkId to an id outside the list.
@@ -167,11 +167,12 @@ export function contentSlug(title: string) {
 /** Base plus a numeric suffix keeps sibling ids unique inside one family. */
 export function uniqueExternalId(base: string, taken: ReadonlySet<string>) {
   if (!taken.has(base)) return base;
-  for (let suffix = 2; suffix < 20; suffix += 1) {
+  // taken.size + 2 candidates cannot all collide with taken.size entries.
+  for (let suffix = 2; suffix <= taken.size + 2; suffix += 1) {
     const candidate = `${base}-${suffix}`;
     if (!taken.has(candidate)) return candidate;
   }
-  return `${base}-${taken.size + 1}`;
+  return `${base}-${taken.size + 2}`;
 }
 
 /**

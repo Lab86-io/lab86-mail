@@ -21,6 +21,7 @@ struct SharedBrowserSheet: View {
     @State private var verifying = false
     @State private var verified = false
     @State private var failed = false
+    @State private var ended = false
 
     var body: some View {
         NavigationStack {
@@ -70,6 +71,11 @@ struct SharedBrowserSheet: View {
         }
         .interactiveDismissDisabled(verifying)
         .task { await open() }
+        .onDisappear {
+            // A swipe-down dismissal must release the remote browser too, not
+            // only the Close button.
+            Task { await endSessionIfNeeded() }
+        }
     }
 
     private func open() async {
@@ -107,10 +113,14 @@ struct SharedBrowserSheet: View {
         }
     }
 
+    private func endSessionIfNeeded() async {
+        guard let session, !ended else { return }
+        ended = true
+        await environment.store.endWorkSession(workID, sessionID: session.sessionID)
+    }
+
     private func close() async {
-        if let session {
-            await environment.store.endWorkSession(workID, sessionID: session.sessionID)
-        }
+        await endSessionIfNeeded()
         dismiss()
     }
 }
@@ -120,19 +130,24 @@ struct SharedBrowserSheet: View {
 private struct LiveViewWebView: UIViewRepresentable {
     let urlString: String
 
+    private var secureURL: URL? {
+        guard let url = URL(string: urlString), url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.isOpaque = false
-        if let url = URL(string: urlString) {
+        if let url = secureURL {
             webView.load(URLRequest(url: url))
         }
         return webView
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard let url = URL(string: urlString), webView.url == nil else { return }
+        guard let url = secureURL, webView.url == nil else { return }
         webView.load(URLRequest(url: url))
     }
 }

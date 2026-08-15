@@ -14,7 +14,9 @@ describe('agent system prompt contract', () => {
     );
     expect(prompt).toContain('Saved memories');
     expect(prompt).toContain('tree@example.com: Prefers morning appointments.');
-    // Notes are clamped so one memory can never flood the prompt.
+    // Notes are clamped so one memory can never flood the prompt: exactly the
+    // first 300 characters survive.
+    expect(prompt).toContain(`office@example.com: ${'x'.repeat(300)}`);
     expect(prompt).not.toContain('x'.repeat(301));
   });
 

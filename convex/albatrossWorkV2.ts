@@ -488,14 +488,18 @@ export const completeStep = mutation({
         targetId: String(args.workId),
         sourceKind: 'manual' as const,
         sourceId: dedupeKey,
-        stepIdentity: selected.identity,
+        stepIdentity: bounded(selected.identity, 420),
         title: `Noted on: ${selected.action.title!.trim()}`.slice(0, 300),
         claim: note.slice(0, 400),
         summary: note.slice(0, 600),
+        // The user's own words about their own step. That is honest evidence
+        // of the step, but it is not an external receipt, so it must not read
+        // as one when the contract weighs closure.
+        limits: 'A user note about the step, not an external receipt or reply.',
         occurredAt: ts,
         weight: 1,
         confidence: 0.95,
-        trust: 'confirmed' as const,
+        trust: 'observed' as const,
         dedupeKey,
         searchText: [note, selected.action.title].filter(Boolean).join(' ').slice(0, 4000),
         updatedAt: ts,

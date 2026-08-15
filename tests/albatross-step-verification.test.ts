@@ -32,6 +32,23 @@ describe('stepVerification', () => {
     expect(verification?.evidenceTitle).toBe('Your application was received');
   });
 
+  test('each evidence source maps to its own honest level', () => {
+    const cases: Array<[string, string]> = [
+      ['mail_thread', 'confirmed'],
+      ['calendar_event', 'confirmed'],
+      ['browser_session', 'observed'],
+      ['manual', 'artifact'],
+      ['task', 'artifact'],
+      ['chat', 'artifact'],
+    ];
+    for (const [sourceKind, level] of cases) {
+      const verification = stepVerification(identity, true, [
+        { stepIdentity: identity, sourceKind, title: sourceKind },
+      ]);
+      expect(verification?.level).toBe(level as any);
+    }
+  });
+
   test('evidence bound to another step never counts', () => {
     const verification = stepVerification(identity, true, [
       { stepIdentity: 'step:task:another', sourceKind: 'mail_thread', title: 'Unrelated' },

@@ -75,7 +75,7 @@ export function GuidedStepPane({
   activeId?: string;
   onSelect?: (id: string) => void;
   onExit?: () => void;
-  onComplete?: (id: string, note?: string) => void;
+  onComplete?: (id: string, note?: string) => void | Promise<boolean>;
   onDiscuss?: () => void;
   savingIds?: ReadonlySet<string>;
   error?: string | null;
@@ -98,8 +98,13 @@ export function GuidedStepPane({
   const saving = savingIds?.has(active.id);
 
   const complete = () => {
-    onComplete?.(active.id, note.trim() || undefined);
-    setNote('');
+    const stepId = active.id;
+    // The note survives a failed save so the user can retry without retyping.
+    void Promise.resolve(onComplete?.(stepId, note.trim() || undefined)).then((ok) => {
+      if (ok !== false) {
+        setNote((current) => (noteStepId === stepId ? '' : current));
+      }
+    });
   };
 
   return (

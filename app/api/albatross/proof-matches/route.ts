@@ -60,16 +60,21 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         return Response.json({ ok: false, error: 'Mail text is required.' }, { status: 400 });
       }
 
-      // Marketing mail and verification codes never ask to become proof.
+      // Marketing mail and verification codes never ask to become proof. A
+      // thread missing from the corpus is merely unclassified; a failed
+      // lookup fails closed, because "unknown class" must not become "offer".
       if (accountId && providerThreadId) {
-        const thread = await deps
-          .convexQuery<any>((api as any).mailCorpus.getCorpusThread, {
+        let thread: unknown;
+        try {
+          thread = await deps.convexQuery<any>((api as any).mailCorpus.getCorpusThread, {
             userId: user.userId,
             accountId,
             providerThreadId,
-          })
-          .catch(() => null);
-        if (!proofOfferAllowed(threadPrimaryCategory(thread))) {
+          });
+        } catch {
+          return Response.json({ ok: true, candidates: [], blocked: 'lookup_failed' });
+        }
+        if (thread && !proofOfferAllowed(threadPrimaryCategory(thread as any))) {
           return Response.json({ ok: true, candidates: [], blocked: 'category' });
         }
       }

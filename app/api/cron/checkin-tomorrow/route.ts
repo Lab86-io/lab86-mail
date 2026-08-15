@@ -77,7 +77,10 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
         existing: existing.map(({ workId, title, started }) => ({ workId, title, started })),
       });
 
-      const taken = new Set(existing.map((row) => row.externalId).filter((id): id is string => Boolean(id)));
+      // Ids are content-stable, so an unmatched repeat of the same item must
+      // upsert its existing row. Only ids assigned during this run are
+      // reserved; seeding from prior rows would fork duplicates on retry.
+      const taken = new Set<string>();
       const kept = new Set<string>();
       const planTargets: string[] = [];
       let needsInput = false;

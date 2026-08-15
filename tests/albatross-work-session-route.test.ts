@@ -12,6 +12,13 @@ function sessionRequest(body: unknown) {
 
 const context = { params: Promise.resolve({ workId: 'work-1' }) };
 
+// The api proxy mints a fresh reference per property access, so the fakes key
+// on the exported function name instead. Added queries can never flip a
+// mapping the way call-order parity could.
+const { getFunctionName } = await import('convex/server');
+const isWorkDetail = (fn: any) => getFunctionName(fn) === 'albatrossWorkV2:workDetail';
+const isActiveSession = (fn: any) => getFunctionName(fn) === 'albatrossBrowserSessions:activeSessionForWork';
+
 const step = {
   key: 'step-1',
   identity: 'step:task:submit the form',
@@ -41,10 +48,9 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     deps: {
       requireCurrentUser: mock(async () => ({ userId: 'user-1', email: 'u@e.com', name: 'U' })) as any,
       enforceUserRateLimit: mock(async () => undefined) as any,
-      convexQuery: mock(async (_fn: any, args: any) => {
-        if ('workId' in args && !('sessionId' in args)) {
-          return args.workId === 'work-1' ? detail : null;
-        }
+      convexQuery: mock(async (fn: any, args: any) => {
+        if (isWorkDetail(fn)) return args.workId === 'work-1' ? detail : null;
+        if (isActiveSession(fn)) return null;
         return null;
       }) as any,
       convexMutation: mock(async () => undefined) as any,
@@ -107,12 +113,9 @@ describe('work session route', () => {
     };
     const mutations: any[] = [];
     const { deps } = makeDeps({
-      convexQuery: mock(async (_fn: any, args: any) => {
-        if ('workId' in args) {
-          // Both workDetail and activeSessionForWork take workId; tell them
-          // apart by call order via a marker on the mock.
-          return (deps.convexQuery as any).mock.calls.length % 2 === 1 ? detail : activeSession;
-        }
+      convexQuery: mock(async (fn: any) => {
+        if (isWorkDetail(fn)) return detail;
+        if (isActiveSession(fn)) return activeSession;
         return null;
       }) as any,
       convexMutation: mock(async (_fn: any, args: any) => {
@@ -152,9 +155,7 @@ describe('work session route', () => {
     };
     const mutations: any[] = [];
     const { deps } = makeDeps({
-      convexQuery: mock(async () =>
-        (deps.convexQuery as any).mock.calls.length % 2 === 1 ? detail : activeSession,
-      ) as any,
+      convexQuery: mock(async (fn: any) => (isWorkDetail(fn) ? detail : activeSession)) as any,
       convexMutation: mock(async (_fn: any, args: any) => {
         mutations.push(args);
         return undefined;
@@ -171,6 +172,72 @@ describe('work session route', () => {
     expect(deps.completeWorkStep).not.toHaveBeenCalled();
     expect(mutations.some((args) => args.sourceKind === 'browser_session')).toBe(false);
     expect(mutations.at(-1)?.statusDetail).toContain('No reference number yet.');
+  });
+
+  test('an unavailable gate never completes the step', async () => {
+    const activeSession = {
+      sessionId: 'bb-1',
+      status: 'user',
+      liveViewUrl: 'https://live.example/bb-1',
+      replayUrl: 'https://browserbase.com/sessions/bb-1',
+    };
+    const mutations: any[] = [];
+    const { deps } = makeDeps({
+      convexQuery: mock(async (fn: any) => (isWorkDetail(fn) ? detail : activeSession)) as any,
+      convexMutation: mock(async (_fn: any, args: any) => {
+        mutations.push(args);
+        return undefined;
+      }) as any,
+      evidenceSatisfies: mock(async () => ({
+        satisfies: true,
+        reason: 'The check did not run.',
+        unavailable: true,
+      })) as any,
+    });
+    const post = createWorkSessionPost(deps as any);
+    const response = await post(
+      sessionRequest({ action: 'verify', sessionId: 'bb-1', stepKey: 'step-1' }),
+      context,
+    );
+    const body = await response.json();
+    expect(body.satisfied).toBe(false);
+    expect(deps.completeWorkStep).not.toHaveBeenCalled();
+    expect(mutations.some((args) => args.sourceKind === 'browser_session')).toBe(false);
+    expect(mutations.at(-1)?.statusDetail).toBe('The check did not run. Try again.');
+  });
+
+  test('verify rejects a step that is already done', async () => {
+    const activeSession = {
+      sessionId: 'bb-1',
+      status: 'user',
+      liveViewUrl: 'https://live.example/bb-1',
+      replayUrl: 'https://browserbase.com/sessions/bb-1',
+    };
+    const doneDetail = { ...detail, execution: { guideSteps: [{ ...step, done: true }] } };
+    const { deps } = makeDeps({
+      convexQuery: mock(async (fn: any) => (isWorkDetail(fn) ? doneDetail : activeSession)) as any,
+    });
+    const post = createWorkSessionPost(deps as any);
+    const response = await post(
+      sessionRequest({ action: 'verify', sessionId: 'bb-1', stepKey: 'step-1' }),
+      context,
+    );
+    expect(response.status).toBe(409);
+    expect(deps.completeWorkStep).not.toHaveBeenCalled();
+  });
+
+  test('start releases a superseded remote session before opening a new one', async () => {
+    const { deps, scheduled } = makeDeps({
+      convexQuery: mock(async (fn: any) => {
+        if (isWorkDetail(fn)) return detail;
+        if (isActiveSession(fn)) return { sessionId: 'bb-old' };
+        return null;
+      }) as any,
+    });
+    const post = createWorkSessionPost(deps as any);
+    await post(sessionRequest({ action: 'start', stepKey: 'step-1' }), context);
+    expect(deps.releaseBrowserSession).toHaveBeenCalledWith('bb-old');
+    expect(scheduled).toHaveLength(1);
   });
 
   test('end releases the session and closes the ledger row', async () => {

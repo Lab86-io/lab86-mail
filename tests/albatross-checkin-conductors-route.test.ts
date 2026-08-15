@@ -156,6 +156,38 @@ describe('check-in background conductors', () => {
     );
   });
 
+  test('an unchanged sibling with a pending question reports needs_input without replanning', async () => {
+    const convexMutation = mock(async (_fn: any, args: any) => {
+      if (args.externalId) return { workId: 'work-1', changed: false };
+      return { stale: false };
+    });
+    const advanceWork = mock(async () => ({ status: 'ready' })) as any;
+    const post = createCheckinTomorrowPost({
+      isInternalCronRequest: () => true,
+      convexMutation: convexMutation as any,
+      convexQuery: mock(async (_fn: any, args: any) =>
+        args.prefix ? [] : { plan: { status: 'ready' }, questions: [{ status: 'pending' }] },
+      ) as any,
+      advanceWork,
+      splitTomorrow: mock(async () => ({
+        items: [{ title: 'Call the DMV.', rawText: 'Call the DMV.', existingWorkId: null }],
+        fallback: false,
+      })) as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/checkin-tomorrow', {
+        userId: 'user-1',
+        checkinId: 'checkin-1',
+        tomorrowIntentText: 'Call the DMV.',
+      }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe('needs_input');
+    expect(advanceWork).not.toHaveBeenCalled();
+  });
+
   test('a re-save keeps matched siblings and releases only unstarted leftovers', async () => {
     const released: string[] = [];
     const convexMutation = mock(async (_fn: any, args: any) => {

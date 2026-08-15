@@ -297,7 +297,7 @@ export function WorkDetail({ workId }: { workId: string }) {
     }
   };
 
-  const completeGuidedStep = async (stepKey: string, note?: string) => {
+  const completeGuidedStep = async (stepKey: string, note?: string): Promise<boolean> => {
     const visibleSteps = guideStepsWithOptimisticCompletion(
       detail?.execution.guideSteps || [],
       optimisticCompletedSteps,
@@ -318,6 +318,7 @@ export function WorkDetail({ workId }: { workId: string }) {
         },
         'Could not complete this step.',
       );
+      return true;
     } catch (cause) {
       setOptimisticCompletedSteps((current) => {
         const next = new Set(current);
@@ -326,6 +327,7 @@ export function WorkDetail({ workId }: { workId: string }) {
       });
       setActiveGuideId(stepKey);
       setError(cause instanceof Error ? cause.message : 'Could not complete this step.');
+      return false;
     } finally {
       setSavingStepIds((current) => {
         const next = new Set(current);
@@ -393,7 +395,7 @@ export function WorkDetail({ workId }: { workId: string }) {
         activeId={activeGuideId || visibleCurrentStep?.key}
         onSelect={setActiveGuideId}
         onExit={() => setGuided(false)}
-        onComplete={(stepKey, note) => void completeGuidedStep(stepKey, note)}
+        onComplete={(stepKey, note) => completeGuidedStep(stepKey, note)}
         onDiscuss={openAttachedChat}
         savingIds={savingStepIds}
         error={error}

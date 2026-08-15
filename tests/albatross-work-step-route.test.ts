@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createWorkStepPost } from '../app/api/albatross/work/[workId]/step/route';
-import { StepExecutionError } from '../lib/albatross/step-execution';
+import { completeWorkStep, StepExecutionError } from '../lib/albatross/step-execution';
 import { AuthRequiredError } from '../lib/auth/current-user';
 
 const user = {
@@ -81,5 +81,67 @@ describe('Albatross Work step route', () => {
       ok: false,
       error: 'task provider unavailable',
     });
+  });
+});
+
+describe('step completion notes', () => {
+  function noteDeps() {
+    const completeWorkStep = mock(async (input: any) => ({ ok: true, received: input }));
+    return {
+      requireCurrentUser: mock(async () => ({ userId: 'user-1', email: 'u@e.com', name: 'U' })) as any,
+      enforceUserRateLimit: mock(async () => undefined) as any,
+      completeWorkStep: completeWorkStep as any,
+    };
+  }
+
+  function stepRequest(body: unknown) {
+    return new NextRequest('http://localhost/api/albatross/work/work-1/step', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+  const context = { params: Promise.resolve({ workId: 'work-1' }) };
+
+  test('a note is forwarded and clamped to 2,000 characters', async () => {
+    const deps = noteDeps();
+    const post = createWorkStepPost(deps);
+    await post(stepRequest({ stepKey: 'step-1', note: `keep ${'x'.repeat(3000)}` }), context);
+    const input = (deps.completeWorkStep as any).mock.calls[0][0];
+    expect(input.note.startsWith('keep ')).toBe(true);
+    expect(input.note.length).toBeLessThanOrEqual(2_000);
+  });
+
+  test('a non-string note is ignored', async () => {
+    const deps = noteDeps();
+    const post = createWorkStepPost(deps);
+    await post(stepRequest({ stepKey: 'step-1', note: 123 }), context);
+    const input = (deps.completeWorkStep as any).mock.calls[0][0];
+    expect(input.note).toBeUndefined();
+  });
+
+  test('a whitespace-only note never reaches the mutation', async () => {
+    let mutationArgs: any;
+    const result = await completeWorkStep(
+      { userId: 'user-1', workId: 'work-1', stepKey: 'step-1', note: '   ' },
+      {
+        convexMutation: mock(async (_fn: any, args: any) => {
+          mutationArgs = args;
+          return {
+            stepKey: 'step-1',
+            stepIdentity: 'id',
+            stepTitle: 'T',
+            planId: 'p',
+            cardId: null,
+            allStepsComplete: false,
+            workState: 'active',
+            transitioned: true,
+          };
+        }) as any,
+        convexQuery: mock(async () => null) as any,
+      },
+    );
+    expect(result.stepKey).toBe('step-1');
+    expect(mutationArgs.note).toBeUndefined();
   });
 });

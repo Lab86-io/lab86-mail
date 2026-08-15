@@ -1241,7 +1241,10 @@ final class ProductStore {
                 body: .object(["action": .string("start"), "stepKey": .string(stepKey)])
             )
             guard let sessionID = result["sessionId"]?.stringValue,
-                  let liveViewURL = result["liveViewUrl"]?.stringValue else { return nil }
+                  let liveViewURL = result["liveViewUrl"]?.stringValue else {
+                workError = "The shared browser could not open."
+                return nil
+            }
             return WorkBrowserSession(
                 sessionID: sessionID,
                 liveViewURL: liveViewURL,

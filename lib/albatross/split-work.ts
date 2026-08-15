@@ -42,7 +42,7 @@ Rules:
 - Preserve the user's meaning and important detail. Never invent a goal.
 - Each child can be completed, paused, or abandoned independently.
 - Together the children cover the whole parent. Never drop a part of the parent.
-- A shared person, day, or theme is not one outcome. Split errands that different places, merchants, or offices can finish independently.
+- A shared person, day, or theme is not one outcome by itself. Split when the parts can finish independently.
 - Use the plan steps to find the seams between outcomes.
 - When the focus names one part, lift that part into its own child and keep the rest together.
 - A title is short, concrete, and sentence case.
@@ -60,7 +60,13 @@ export function parseWorkSplitProposal(raw: string): SplitWorkChild[] {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) throw new Error('A split could not be proposed.');
-  const parsed = workSplitProposalSchema.safeParse(JSON.parse(text.slice(start, end + 1)));
+  let json: unknown;
+  try {
+    json = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    throw new Error('A split could not be proposed.');
+  }
+  const parsed = workSplitProposalSchema.safeParse(json);
   if (!parsed.success) throw new Error('A split could not be proposed.');
   const items = parsed.data.work
     .map((item) => ({
@@ -205,7 +211,12 @@ export async function commitWorkSplit(
       trust: 'confirmed',
       settleContract: false,
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      // The split still stands without provenance, but silence would hide a
+      // recurring storage failure.
+      console.error('[split-work] provenance evidence failed', input.workId, error);
+      return undefined;
+    });
   await deps.mutate((api as any).albatrossWorkV2.releaseWork, {
     userId: input.userId,
     workId: input.workId,

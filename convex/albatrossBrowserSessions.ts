@@ -92,6 +92,9 @@ export const setSessionStatus = mutation({
       .withIndex('by_user_session', (q) => q.eq('userId', userId).eq('sessionId', args.sessionId))
       .unique();
     if (!row) throw new Error('Session not found.');
+    // Terminal rows stay terminal, or a late status write from a slower
+    // request revives a dead session in every subscribed pane.
+    if (row.status === 'ended' || row.status === 'failed') return { status: row.status };
     const ts = now();
     await ctx.db.patch(row._id, {
       status: args.status,

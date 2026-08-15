@@ -27,6 +27,15 @@ describe('mail proof offer', () => {
     expect(html).toContain('Renew passport');
   });
 
+  test('an unchecked candidate renders as an unverified suggestion, never a claim', () => {
+    const html = renderToStaticMarkup(
+      createElement(ProofOfferMatchSummary, { match: { ...candidate, gate: 'unchecked' } }),
+    );
+    expect(html).toContain('Unverified match');
+    expect(html).toContain('shares words with');
+    expect(html).not.toContain('Albatross matched it to');
+  });
+
   test('asks the server for candidates with the thread identity for class filtering', async () => {
     let request: { url: string; body: Record<string, unknown> } | undefined;
     const matches = await loadProofMatches(
