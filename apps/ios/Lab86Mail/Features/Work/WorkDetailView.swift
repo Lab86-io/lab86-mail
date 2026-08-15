@@ -38,8 +38,9 @@ struct WorkDetailView: View {
     @State private var isMutating = false
     @State private var showsArchiveConfirmation = false
     @State private var artifactReview: ArtifactReviewRequest?
-    @State private var stepNote = ""
-    @State private var stepNoteStepID: String?
+    // Drafts key on the step id, so a watcher-driven completion or a reload
+    // never discards text typed for another step.
+    @State private var stepNotes: [String: String] = [:]
     @State private var browserStep: WorkDetail.ExecutionStep?
 
     var body: some View {
@@ -412,19 +413,14 @@ struct WorkDetailView: View {
                             .foregroundStyle(.secondary)
                         TextField(
                             "The fee is $120. The office wants the packet by Friday.",
-                            text: $stepNote,
+                            text: Binding(
+                                get: { stepNotes[step.id] ?? "" },
+                                set: { stepNotes[step.id] = $0 }
+                            ),
                             axis: .vertical
                         )
                         .lineLimit(2...4)
                         .textFieldStyle(.roundedBorder)
-                    }
-                    // A note typed for one step must never ride to the next.
-                    .onChange(of: step.id) { _, _ in stepNote = "" }
-                    .onAppear {
-                        if stepNoteStepID != step.id {
-                            stepNoteStepID = step.id
-                            stepNote = ""
-                        }
                     }
                 }
 
@@ -567,9 +563,10 @@ struct WorkDetailView: View {
         if let previous { detail = previous.completing(stepID: step.id) }
         isMutating = true
         defer { isMutating = false }
-        let note = stepNote
+        let note = stepNotes[step.id]
         if await environment.store.completeWorkStep(route.workID, stepKey: step.id, note: note) {
-            stepNote = ""
+            // Only the submitted step's draft clears; failure keeps it for retry.
+            stepNotes.removeValue(forKey: step.id)
             detail = environment.store.cachedWorkDetail(route.workID) ?? detail
         } else {
             detail = previous

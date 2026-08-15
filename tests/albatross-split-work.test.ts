@@ -175,17 +175,29 @@ describe('commitWorkSplit', () => {
       sequence.push('release');
       return { releasedAt: 1 };
     });
-    const result = await commitWorkSplit(
-      { userId: 'user-1', workId: 'work-blob', items },
-      {
-        query: mock(async () => detail) as any,
-        mutate: mutate as any,
-        advance: mock(async () => ({ status: 'ready' })) as any,
-        nowMs: () => 0,
-      },
-    );
-    expect(result.releasedParent).toBe(true);
-    expect(sequence).toEqual(['release']);
+    const originalError = console.error;
+    const logged: any[][] = [];
+    console.error = (...args: any[]) => {
+      logged.push(args);
+    };
+    try {
+      const result = await commitWorkSplit(
+        { userId: 'user-1', workId: 'work-blob', items },
+        {
+          query: mock(async () => detail) as any,
+          mutate: mutate as any,
+          advance: mock(async () => ({ status: 'ready' })) as any,
+          nowMs: () => 0,
+        },
+      );
+      expect(result.releasedParent).toBe(true);
+      expect(sequence).toEqual(['release']);
+      const entry = logged.find((args) => args[0] === '[split-work] provenance evidence failed');
+      expect(entry?.[1]).toBe('work-blob');
+      expect(String(entry?.[2])).toContain('evidence store down');
+    } finally {
+      console.error = originalError;
+    }
   });
 
   test('refuses fewer than two children', async () => {
