@@ -282,6 +282,16 @@ export function hasExplicitBuildTarget(workflowID, branchRefID) {
   return Boolean(workflowID && branchRefID);
 }
 
+export function matchesExpectedXcodeVersion(actualVersion, expectedVersion) {
+  if (actualVersion === expectedVersion) return true;
+  const expectedMajor = expectedVersion?.match(/^(\d+)/)?.[1];
+  return Boolean(
+    expectedMajor &&
+      typeof actualVersion === 'string' &&
+      new RegExp(`^${expectedMajor}(?:$|\\.|[A-Z])`).test(actualVersion),
+  );
+}
+
 export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, appStoreConnect) {
   if (!expectedVersion) return;
   if (!workflowID) {
@@ -294,7 +304,7 @@ export async function validateWorkflowXcodeVersion(workflowID, expectedVersion, 
   const actualVersion = response.included?.find(
     ({ type, id }) => type === 'ciXcodeVersions' && id === xcodeVersionID,
   )?.attributes?.version;
-  if (actualVersion !== expectedVersion) {
+  if (!matchesExpectedXcodeVersion(actualVersion, expectedVersion)) {
     throw new Error(
       `Xcode Cloud workflow uses Xcode ${actualVersion ?? 'unknown'}, expected ${expectedVersion}.`,
     );
