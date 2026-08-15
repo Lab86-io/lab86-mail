@@ -104,9 +104,7 @@ describe('Work-level guided-step progress', () => {
       completedAt: index,
       source: 'user' as const,
     }));
-    const merged = mergeStepProgress(entries, [
-      { ...entries[124], completedAt: 999, source: 'evidence' },
-    ]);
+    const merged = mergeStepProgress(entries, [{ ...entries[124], completedAt: 999, source: 'evidence' }]);
 
     expect(merged).toHaveLength(120);
     expect(merged[0].identity).toBe('step:task:5');

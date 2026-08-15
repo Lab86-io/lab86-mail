@@ -449,8 +449,7 @@ export const completeStep = mutation({
       planSteps.length > 0 &&
       planSteps.every(
         (step) =>
-          completedIdentities.has(step.identity) ||
-          Boolean(step.cardId && completedCardIds.has(step.cardId)),
+          completedIdentities.has(step.identity) || Boolean(step.cardId && completedCardIds.has(step.cardId)),
       );
     if (
       transitioned &&

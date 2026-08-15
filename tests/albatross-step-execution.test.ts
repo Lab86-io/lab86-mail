@@ -75,8 +75,7 @@ describe('completeWorkStep', () => {
   test('an already closed final completion needs no queued follow-up', async () => {
     const result = await completeWorkStep({ userId: 'user-1', workId: 'work-1', stepKey: 'step-1' }, {
       convexQuery: async () => null,
-      convexMutation: async () =>
-        completion({ allStepsComplete: true, cardId: null, workState: 'done' }),
+      convexMutation: async () => completion({ allStepsComplete: true, cardId: null, workState: 'done' }),
     } as any);
 
     expect(result).toMatchObject({
