@@ -86,24 +86,41 @@ export function isHitlToolName(name: string): boolean {
   return HITL_TOOL_NAMES.has(name);
 }
 
+// A part that proves the run progressed: visible text, any tool activity, or
+// an attachment. Reasoning and step markers do not count.
+function isMeaningfulPart(part: any): boolean {
+  if (part?.type === 'text') return typeof part.text === 'string' && part.text.trim().length > 0;
+  if (part?.type === 'file' || part?.type === 'source-url') return true;
+  return Boolean(toolPartName(part));
+}
+
 // sendAutomaticallyWhen predicate shared by both chat surfaces: continue the
 // run ONLY after the user answered a paused human-in-the-loop tool call.
 export function lastMessageAnsweredHitl(messages: Array<{ role?: string; parts?: unknown[] }>): boolean {
-  const last = messages[messages.length - 1] as { role?: string; parts?: any[] } | undefined;
-  if (!last || last.role !== 'assistant') return false;
-  return (last.parts || []).some(
-    (part: any) => isHitlToolName(toolPartName(part)) && part?.state === 'output-available',
-  );
+  return answeredHitlToolCallId(messages) !== null;
 }
 
-/** Identify the answered pause that is eligible for an automatic continuation. */
+/**
+ * Identify the answered pause that is eligible for an automatic continuation.
+ *
+ * Two conditions guard against phantom continuations on session restore, which
+ * silently re-run every mutating tool in the follow-up turn:
+ * - The part must CARRY the user's answer (`output` present). Persisted
+ *   sessions can hold HITL parts whose state says answered but whose output
+ *   was never captured — those are stale pauses, not fresh answers.
+ * - The answered pause must be the LAST meaningful part of the message. When
+ *   text or tool activity follows it, the continuation already ran; firing
+ *   again would duplicate the whole turn.
+ */
 export function answeredHitlToolCallId(messages: Array<{ role?: string; parts?: unknown[] }>): string | null {
   const last = messages[messages.length - 1] as { role?: string; parts?: any[] } | undefined;
   if (!last || last.role !== 'assistant') return null;
   for (const part of [...(last.parts || [])].reverse()) {
-    if (!isHitlToolName(toolPartName(part)) || part?.state !== 'output-available') continue;
+    if (!isMeaningfulPart(part)) continue;
+    if (!isHitlToolName(toolPartName(part))) return null;
+    if (part?.state !== 'output-available' || part?.output === undefined) return null;
     const toolCallId = typeof part?.toolCallId === 'string' ? part.toolCallId.trim() : '';
-    if (toolCallId) return toolCallId;
+    return toolCallId || null;
   }
   return null;
 }

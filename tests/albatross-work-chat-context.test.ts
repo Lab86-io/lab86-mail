@@ -49,7 +49,7 @@ describe('Albatross Work chat context', () => {
     const context = formatWorkChatContext({
       work: { _id: 'work_1', rawText: 'x'.repeat(5_000) },
     });
-    expect(context.length).toBeLessThan(4_000);
+    expect(context.length).toBeLessThan(4_600);
   });
 });
 

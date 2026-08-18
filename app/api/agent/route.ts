@@ -4,11 +4,12 @@ import {
   createUIMessageStreamResponse,
   type UIMessage,
 } from 'ai';
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
+import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
@@ -195,6 +196,25 @@ export async function POST(req: NextRequest) {
       userName: user.name,
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
     });
+    // The loop that always closes: after every Work-scoped turn, the server
+    // reconciles the turn back into the Work document — chat-created artifacts,
+    // answered questions, and a replan — independent of what the model chose
+    // to call. Runs after the response so the chat never waits on it.
+    for (const attachment of contextAttachments) {
+      if (attachment.kind !== 'work') continue;
+      const workId = attachment.id;
+      after(() =>
+        reconcileWorkTurn({
+          userId: user.userId,
+          userEmail: user.email,
+          userName: user.name,
+          workId,
+          timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+          steps: Array.isArray(stream.result?.steps) ? stream.result.steps : [],
+          uiMessages: prepared.messages,
+        }).then(() => undefined),
+      );
+    }
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
