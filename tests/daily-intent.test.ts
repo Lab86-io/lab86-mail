@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   intentAppliesToScope,
   matchReflectionCandidates,
+  mergeDuplicateTaskHandoffs,
   selectHandoffsForIntent,
 } from '../lib/albatross/daily-intent';
 
@@ -117,5 +118,100 @@ describe('reflection reconciliation', () => {
         { kind: 'task', id: 'b', title: 'Production notification flow' },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('duplicate task handoff merging', () => {
+  const withItem = (record: any) => ({
+    ...record,
+    items: [
+      {
+        sourceKey: record.sourceKey,
+        ref: record.primaryRef,
+        situation: record.situation,
+        assessment: record.assessment,
+        recommendation: record.recommendation,
+      },
+    ],
+  });
+
+  test('near-identical task handoffs collapse into one carrying every identity', () => {
+    const merged = mergeDuplicateTaskHandoffs([
+      withItem(
+        handoff('massage-1', "Book Tree's massage at Amazing Mind Body Soul Center", { protected: true }),
+      ),
+      withItem(handoff('massage-2', "Book Tree's massage — Amazing Mind Body Soul Center (Canandaigua)")),
+      withItem(handoff('mom', "Find Mom's request and send the needed response", { protected: true })),
+    ]);
+
+    expect(merged.map((record) => record.id)).toEqual(['massage-1', 'mom']);
+    const keeper = merged[0];
+    expect(keeper.protected).toBe(true);
+    expect(keeper.relatedRefs.map((ref: any) => ref.id)).toContain('massage-2');
+    expect(keeper.items.map((item: any) => item.sourceKey)).toEqual(['task:massage-1', 'task:massage-2']);
+  });
+
+  test('a discarded duplicate donates its unique actions to the keeper', () => {
+    const keeper = withItem(handoff('massage-1', "Book Tree's massage at Amazing Mind Body Soul Center"));
+    keeper.actions = [
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+    ];
+    const duplicate = withItem(handoff('massage-2', "Book Tree's massage — Amazing Mind Body Soul Center"));
+    duplicate.actions = [
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+      { action: 'dismiss_task', label: 'Remove', payload: { cardId: 'massage-2' }, style: 'quiet' },
+    ];
+    const merged = mergeDuplicateTaskHandoffs([keeper, duplicate]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].actions).toEqual([
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+      { action: 'dismiss_task', label: 'Remove', payload: { cardId: 'massage-2' }, style: 'quiet' },
+    ]);
+  });
+
+  test('references that share an id across accounts both survive the merge', () => {
+    const keeper = withItem(handoff('thread-a', 'Water the community garden plot on Saturday'));
+    keeper.primaryRef = { kind: 'thread', id: 'shared-id', account: 'first@example.test' };
+    const duplicate = withItem(handoff('thread-b', 'Water the community garden plot Saturday'));
+    duplicate.primaryRef = { kind: 'thread', id: 'shared-id', account: 'second@example.test' };
+    const merged = mergeDuplicateTaskHandoffs([keeper, duplicate]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].relatedRefs).toEqual([
+      { kind: 'thread', id: 'shared-id', account: 'second@example.test' },
+    ]);
+  });
+
+  test('distinct outcomes and non-task kinds never merge', () => {
+    const eventRecord = {
+      ...withItem(handoff('event-1', "Book Tree's massage at Amazing Mind Body Soul Center")),
+      kind: 'event',
+    };
+    const merged = mergeDuplicateTaskHandoffs([
+      withItem(handoff('massage-1', "Book Tree's massage at Amazing Mind Body Soul Center")),
+      eventRecord,
+      withItem(handoff('license', 'Complete NY DMV pre-screening and reserve an Enhanced License visit')),
+    ]);
+    expect(merged.map((record) => record.id)).toEqual(['massage-1', 'event-1', 'license']);
+  });
+
+  test('merging respects the schema caps on items and refs', () => {
+    const keeper = withItem(handoff('cap-0', 'Water the community garden plot on Saturday'));
+    keeper.items = Array.from({ length: 8 }, (_, index) => ({
+      sourceKey: `task:seed-${index}`,
+      ref: { kind: 'task', id: `seed-${index}`, label: 'Water the community garden plot on Saturday' },
+      situation: 's',
+      assessment: 'a',
+      recommendation: 'r',
+    }));
+    keeper.relatedRefs = Array.from({ length: 8 }, (_, index) => ({
+      kind: 'task',
+      id: `ref-${index}`,
+      label: 'Water the community garden plot on Saturday',
+    }));
+    const duplicate = withItem(handoff('cap-1', 'Water the community garden plot Saturday'));
+    const merged = mergeDuplicateTaskHandoffs([keeper, duplicate]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].items).toHaveLength(8);
+    expect(merged[0].relatedRefs).toHaveLength(8);
   });
 });

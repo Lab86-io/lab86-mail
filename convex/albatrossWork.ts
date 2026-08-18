@@ -736,6 +736,58 @@ export const dailyReportContext = query({
         .take(7),
     ]);
 
+    // The newest answered check-in names the Work rows its tomorrow plan
+    // created. The brief reads those rows directly — a Work that stalls in
+    // needs_answers must still reach the morning brief with its open
+    // questions, because the brief is the surface that shows them.
+    const intentWork: Array<Record<string, unknown>> = [];
+    // Only a check-in whose tomorrow prompt was actually answered may supply
+    // the plan. A newer scheduled or half-open row must not displace it.
+    const planCheckin = checkins.find(
+      (checkin) =>
+        (checkin.status === 'answered' || checkin.tomorrowIntentAnsweredAt) &&
+        (checkin.tomorrowWorkIds?.length || checkin.tomorrowWorkId) &&
+        (checkin.tomorrowIntentText || '').trim(),
+    );
+    const tomorrowWorkIds = (
+      planCheckin?.tomorrowWorkIds?.length
+        ? planCheckin.tomorrowWorkIds
+        : planCheckin?.tomorrowWorkId
+          ? [String(planCheckin.tomorrowWorkId)]
+          : []
+    ).slice(0, 8);
+    for (const rawId of tomorrowWorkIds) {
+      const workId = ctx.db.normalizeId('albatrossIntents', String(rawId));
+      if (!workId) continue;
+      const work = await ctx.db.get(workId);
+      if (!work || work.userId !== userId) continue;
+      const questions = await ctx.db
+        .query('albatrossWorkQuestions')
+        .withIndex('by_user_work_status', (q) =>
+          q.eq('userId', userId).eq('workId', workId).eq('status', 'pending'),
+        )
+        .take(2);
+      intentWork.push({
+        _id: work._id,
+        title: work.title,
+        kind: work.kind,
+        shape: work.shape,
+        status: work.status,
+        workState: work.workState,
+        areaId: work.primaryAreaId ?? work.areaId,
+        checkinLocalDate: planCheckin?.localDate,
+        questions: questions.map((question) => ({
+          questionId: question._id,
+          prompt: question.prompt,
+          options: (question.options ?? []).slice(0, 4).map((option) => ({
+            id: option.id,
+            label: option.label,
+            description: option.description,
+          })),
+        })),
+      });
+    }
+
     return {
       projects,
       approvals,
@@ -743,6 +795,7 @@ export const dailyReportContext = query({
       sprints,
       areas,
       checkins,
+      intentWork,
     };
   },
 });

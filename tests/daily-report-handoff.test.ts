@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import './tools/harness';
+import { mergeDuplicateTaskHandoffs } from '../lib/albatross/daily-intent';
 import { buildTriageHandoffIndex } from '../lib/brief/triage-index';
 import { enforceDailyBriefHandoffCoverage, handoffForReportItem } from '../lib/mail/daily-brief-handoff';
+import { composeReport } from '../lib/mail/daily-report';
 import {
   deterministicRecommendation,
   isActionableReportItem,
@@ -9,6 +12,7 @@ import {
 } from '../lib/mail/thread-handoff';
 import type { BriefDocumentV2, BriefNode } from '../lib/shared/brief-document';
 import type { DailyReport, DailyReportItem } from '../lib/shared/types';
+import { withToolContext } from './tools/harness';
 
 describe('Daily Brief handoff recommendations', () => {
   test('rejects generic lane labels while retaining specific recommendations', () => {
@@ -308,6 +312,79 @@ describe('Daily Brief handoff recommendations', () => {
       .find((entity) => entity.ref.id === item.threadId)
       ?.actions.filter((action) => action.action === 'create_document');
     expect(actions).toEqual([exact]);
+  });
+});
+
+describe('stored handoff index deduplication', () => {
+  const duplicateTasks = () => [
+    {
+      cardId: 'massage-1',
+      boardId: 'board-1',
+      columnId: 'column-1',
+      title: "Book Tree's massage at Amazing Mind Body Soul Center",
+      priority: 'high' as const,
+      scope: 'week' as const,
+    },
+    {
+      cardId: 'massage-2',
+      boardId: 'board-2',
+      columnId: 'column-2',
+      title: "Book Tree's massage — Amazing Mind Body Soul Center",
+      priority: 'high' as const,
+      scope: 'week' as const,
+    },
+  ];
+
+  const identityIds = (handoff: {
+    primaryRef: { id: string };
+    relatedRefs: Array<{ id: string }>;
+    items: Array<{ ref: { id: string } }>;
+  }) =>
+    [handoff.primaryRef, ...handoff.relatedRefs, ...handoff.items.map((item) => item.ref)].map(
+      (ref) => ref.id,
+    );
+
+  test('duplicate task cards collapse to one stored handoff with both identities', () => {
+    const report = reportWithProtectedThreads();
+    report.sections.tasks = duplicateTasks();
+
+    const handoffs = mergeDuplicateTaskHandoffs(buildTriageHandoffIndex(report));
+    const taskHandoffs = handoffs.filter((handoff) => handoff.kind === 'task');
+
+    expect(taskHandoffs).toHaveLength(1);
+    expect(identityIds(taskHandoffs[0])).toContain('massage-1');
+    expect(identityIds(taskHandoffs[0])).toContain('massage-2');
+  });
+
+  test('composeReport returns a report whose stored handoffs are merged', async () => {
+    const report = await withToolContext(() =>
+      composeReport({
+        kind: 'morning',
+        now: Date.parse('2026-08-16T11:00:00Z'),
+        accounts: ['jakob@example.com'],
+        insights: [],
+        tracked: [],
+        lastDateByKey: new Map(),
+        calendarContext: [],
+        taskContext: duplicateTasks(),
+        memoryContext: [],
+        albatrossContext: {
+          includedAreas: [],
+          askBeforeCentering: [],
+          activeIntents: [],
+          activeProjects: [],
+          contextReview: [],
+          completions: [],
+        },
+        errors: [],
+        skipNarrative: true,
+      }),
+    );
+
+    const taskHandoffs = (report.handoffs ?? []).filter((handoff) => handoff.kind === 'task');
+    expect(taskHandoffs).toHaveLength(1);
+    expect(identityIds(taskHandoffs[0])).toContain('massage-1');
+    expect(identityIds(taskHandoffs[0])).toContain('massage-2');
   });
 });
 

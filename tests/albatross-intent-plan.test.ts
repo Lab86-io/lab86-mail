@@ -276,6 +276,7 @@ describe('generateIntentPlan orchestration', () => {
       savePlan: 'm:savePlan',
     },
     albatrossWorkV2: { workDetail: 'q:workDetail' },
+    userData: { listDocs: 'q:memoryDocs' },
   };
 
   const AREAS = [
@@ -283,6 +284,13 @@ describe('generateIntentPlan orchestration', () => {
     { _id: 'area_apps', name: 'My Apps', kind: 'work' },
   ];
   const FACTS = [{ areaId: 'area_money', kind: 'website', value: 'tax.ny.gov', label: 'NYS taxes' }];
+  const MEMORY_DOCS = [
+    {
+      key: 'tree@example.test',
+      doc: { email: 'tree@example.test', notes: 'Tree is your partner; she works weekdays at the salon.' },
+    },
+    { key: 'blank@example.test', doc: { email: 'blank@example.test', notes: '   ' } },
+  ];
   const CORPUS_ITEMS = [
     {
       source: 'mail',
@@ -339,6 +347,7 @@ describe('generateIntentPlan orchestration', () => {
         if (fn === 'q:workDetail') return overrides.workDetail ?? null;
         if (fn === 'q:listAreas') return AREAS;
         if (fn === 'q:listVerifiedFacts') return FACTS;
+        if (fn === 'q:memoryDocs') return MEMORY_DOCS;
         if (fn === 'q:areaHome') {
           return {
             area: AREAS[0],
@@ -564,6 +573,18 @@ describe('generateIntentPlan orchestration', () => {
     for (const key of ['detail', 'hoursText', 'phone', 'website', 'mapsQuery']) {
       expect(place[key]).toBeUndefined();
     }
+  });
+
+  test('user memory notes reach the planner context and the day-plan rules hold', async () => {
+    const { calls } = wire({});
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const prompt = calls.generations[0].prompt as string;
+    expect(prompt).toContain('## Notes about people and preferences (user memory)');
+    expect(prompt).toContain('tree@example.test: Tree is your partner');
+    expect(prompt).not.toContain('blank@example.test');
+    const system = calls.generations[0].system as string;
+    expect(system).toContain('A stated day plan is a plan, not an interrogation target');
+    expect(system).toContain('Check the user-memory notes');
   });
 
   test('the planner classifies shape and savePlan receives it', async () => {

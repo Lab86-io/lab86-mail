@@ -3,6 +3,7 @@ import { isConvexConfigured } from '../hosted/env';
 import { areaBrandingFromFacts } from './area-home';
 
 export {
+  mergeDuplicateTaskHandoffs,
   prioritizeHandoffsForIntent,
   selectHandoffsForIntent,
 } from './daily-intent';
@@ -32,10 +33,28 @@ export interface AlbatrossDailyReportProject {
   outcome?: string;
 }
 
+export interface AlbatrossDailyAlignmentWorkQuestion {
+  id: string;
+  prompt: string;
+  options?: Array<{ id: string; label: string; description?: string }>;
+}
+
+export interface AlbatrossDailyAlignmentWork {
+  id: string;
+  title: string;
+  status?: string;
+  kind?: string;
+  shape?: string;
+  areaId?: string;
+  questions: AlbatrossDailyAlignmentWorkQuestion[];
+}
+
 export interface AlbatrossDailyAlignment {
   localDate: string;
   reflection?: string;
   tomorrowIntent?: string;
+  /** Work rows the tomorrow plan created, with their open questions. */
+  work?: AlbatrossDailyAlignmentWork[];
 }
 
 export interface AlbatrossDailyReportContext {
@@ -73,6 +92,7 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   sprints?: any[];
   areas?: any[];
   checkins?: any[];
+  intentWork?: any[];
 }
 
 interface LoadLiveAlbatrossDailyReportInput {
@@ -118,9 +138,42 @@ function cleanText(value: unknown): string | undefined {
   return cleaned || undefined;
 }
 
-function latestDailyAlignment(rows: any[]): AlbatrossDailyAlignment | undefined {
+function localDayKey(at: number, timezone?: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(at));
+  } catch {
+    return new Date(at).toISOString().slice(0, 10);
+  }
+}
+
+// Calendar arithmetic on the local date itself. Subtracting 24 elapsed hours
+// can skip a local date across a DST transition.
+function previousDayKey(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+}
+
+// A tomorrow plan speaks about one specific morning. Only a check-in from
+// yesterday or today may shape today's brief; an older answer must not keep
+// suppressing unrelated work days later.
+function isRecentCheckin(row: any, now: number): boolean {
+  const localDate = String(row.localDate || '');
+  if (!localDate) return false;
+  const timezone = typeof row.timezone === 'string' ? row.timezone : undefined;
+  const today = localDayKey(now, timezone);
+  return localDate === today || localDate === previousDayKey(today);
+}
+
+function latestDailyAlignment(rows: any[], now: number): AlbatrossDailyAlignment | undefined {
   const checkin = [...rows]
     .filter((row) => cleanText(row.responseText) || cleanText(row.tomorrowIntentText))
+    .filter((row) => isRecentCheckin(row, now))
     .sort(
       (a, b) =>
         String(b.localDate || '').localeCompare(String(a.localDate || '')) ||
@@ -132,6 +185,38 @@ function latestDailyAlignment(rows: any[]): AlbatrossDailyAlignment | undefined 
     reflection: cleanText(checkin.responseText),
     tomorrowIntent: cleanText(checkin.tomorrowIntentText),
   };
+}
+
+function alignmentWorkFromRows(
+  alignment: AlbatrossDailyAlignment | undefined,
+  intentWork: any[],
+): AlbatrossDailyAlignment | undefined {
+  if (!alignment) return alignment;
+  const rows = intentWork
+    .filter((row) => !row.checkinLocalDate || String(row.checkinLocalDate) === alignment.localDate)
+    .slice(0, 8)
+    .map((row) => ({
+      id: String(row._id ?? row.id ?? ''),
+      title: String(row.title || ''),
+      status: cleanText(row.status),
+      kind: cleanText(row.kind),
+      shape: cleanText(row.shape),
+      areaId: row.areaId ? String(row.areaId) : undefined,
+      questions: (Array.isArray(row.questions) ? row.questions : []).slice(0, 2).map((question: any) => ({
+        id: String(question.questionId ?? question.id ?? ''),
+        prompt: String(question.prompt || ''),
+        options: Array.isArray(question.options)
+          ? question.options.slice(0, 4).map((option: any) => ({
+              id: String(option.id || ''),
+              label: String(option.label || option.title || ''),
+              description: cleanText(option.description ?? option.detail),
+            }))
+          : undefined,
+      })),
+    }))
+    .filter((row) => row.id && row.title);
+  if (!rows.length) return alignment;
+  return { ...alignment, work: rows };
 }
 
 export function buildAlbatrossDailyReportContext(
@@ -232,7 +317,7 @@ export function buildAlbatrossDailyReportContext(
       completedAt: event.completedAt,
     }))
     .slice(0, 4);
-  const dailyAlignment = latestDailyAlignment(table(seedData, 'albatrossDailyCheckins'));
+  const dailyAlignment = latestDailyAlignment(table(seedData, 'albatrossDailyCheckins'), now);
 
   return {
     includedAreas,
@@ -258,6 +343,8 @@ export function buildAlbatrossDailyReportContextFromLive(
   const sprints = input.sprints ?? [];
   const areaRows = input.areas ?? [];
   const checkins = input.checkins ?? [];
+  const intentWork = input.intentWork ?? [];
+  const now = input.now ?? Date.now();
   const areaById = new Map(
     areaRows.map((area) => {
       const branding = areaBrandingFromFacts(area, []);
@@ -403,7 +490,7 @@ export function buildAlbatrossDailyReportContextFromLive(
     completions: [...projectCompletions, ...sprintCompletions, ...applicationCompletions]
       .sort((a, b) => (Date.parse(b.completedAt || '') || 0) - (Date.parse(a.completedAt || '') || 0))
       .slice(0, 4),
-    dailyAlignment: latestDailyAlignment(checkins),
+    dailyAlignment: alignmentWorkFromRows(latestDailyAlignment(checkins, now), intentWork),
     monthlyPrompt:
       input.isFirstOpenOfMonth === true
         ? 'First report of the month: review active areas, paused projects, and stale context before prioritizing today.'
@@ -438,6 +525,7 @@ export async function loadLiveAlbatrossDailyReportContext(
       sprints: live?.sprints,
       areas: live?.areas,
       checkins: live?.checkins,
+      intentWork: (live as any)?.intentWork,
     });
   } catch (err: any) {
     console.warn('Daily report Albatross context failed:', err?.message || err);
@@ -496,6 +584,17 @@ export function summarizeAlbatrossDailyReportContext(context: AlbatrossDailyRepo
   if (context.dailyAlignment?.tomorrowIntent) {
     parts.push(
       `User's explicit next-day intent (${context.dailyAlignment.localDate}): ${context.dailyAlignment.tomorrowIntent}`,
+    );
+  }
+  if (context.dailyAlignment?.work?.length) {
+    parts.push(
+      `Tomorrow-plan Work: ${context.dailyAlignment.work
+        .map((work) => {
+          const open = work.questions[0]?.prompt;
+          return open ? `${work.title} (open question: ${open})` : work.title;
+        })
+        .slice(0, 4)
+        .join(' | ')}`,
     );
   }
   if (context.monthlyPrompt) parts.push(context.monthlyPrompt);

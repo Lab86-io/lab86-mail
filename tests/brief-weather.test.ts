@@ -421,7 +421,7 @@ describe('brief weather in the data pack', () => {
       expect(prompt).not.toContain('"id": "billing"');
       expect(prompt).not.toContain('"cardId": "billing-task"');
       expect(prompt).toContain('"suppressUnrelated": true');
-      expect(prompt).toContain('authoritative attention budget');
+      expect(prompt).toContain("the user's stated plan is the spine of the brief");
     });
   });
 

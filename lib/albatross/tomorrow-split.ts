@@ -50,6 +50,7 @@ Rules:
 - Split automatically when two parts can be completed, paused, or abandoned independently.
 - Keep one outcome together when its steps serve the same definition of done.
 - A shared person, day, or theme is not one outcome by itself. Split when the parts can finish independently.
+- Unfamiliar lowercase words alongside personal names are usually also people. A nightly plan that names companions describes a real-world outing, never a creative or design request.
 - A title is short, concrete, and sentence case.
 - When an item is the same outcome as an existing Work in the list, set existingWorkId to that Work's id.
 - Never set existingWorkId to an id outside the list.

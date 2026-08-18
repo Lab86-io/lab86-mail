@@ -38,6 +38,17 @@ describe('Brief Document v2', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('four Xcode Cloud builds');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('never a request for artificial empty height');
   });
+  test('the generation prompt makes the stated intent the spine of the document', () => {
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('INTENT SPINE');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain("the user's stated plan IS the document");
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('one region per stated part of the plan');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('answer_question action');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('ONE compact catch-up region');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('never earn a region or an entity');
+    expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain(
+      'When no tomorrowIntent is present, every data.handoffs item with protected:true',
+    );
+  });
   test('accepts the canonical rich and quiet documents', () => {
     expect(BriefDocumentV2Schema.parse(richBriefDocumentFixture)).toEqual(richBriefDocumentFixture);
     expect(BriefDocumentV2Schema.parse(quietBriefDocumentFixture)).toEqual(quietBriefDocumentFixture);
