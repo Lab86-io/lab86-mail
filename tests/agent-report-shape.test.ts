@@ -259,6 +259,84 @@ describe('daily brief service metadata', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('view:"mail"|"tasks"|"calendar"|"areas"');
   });
 
+  test('buildDataPrompt merges duplicate task handoffs and carries the intent spine', async () => {
+    const taskHandoff = (id: string, title: string) => ({
+      version: 1,
+      id,
+      source: 'tasks',
+      sourceKey: `task:${id}`,
+      kind: 'task',
+      lane: 'needs_you',
+      status: 'open',
+      priority: 'high',
+      protected: true,
+      situation: title,
+      background: [],
+      assessment: 'This task is marked high priority.',
+      recommendation: `Complete: ${title}`,
+      evidence: [],
+      primaryRef: { kind: 'task', id, label: title },
+      relatedRefs: [],
+      items: [
+        {
+          sourceKey: `task:${id}`,
+          ref: { kind: 'task', id, label: title },
+          situation: title,
+          assessment: 'High priority.',
+          recommendation: `Complete: ${title}`,
+        },
+      ],
+      actions: [],
+      generatedAt: 1,
+    });
+    const base = reportFixture();
+    const report = reportFixture({
+      handoffs: [
+        taskHandoff('massage-1', "Book Tree's massage at Amazing Mind Body Soul Center"),
+        taskHandoff('massage-2', "Book Tree's massage — Amazing Mind Body Soul Center"),
+      ] as any,
+      sections: {
+        ...base.sections,
+        albatross: {
+          includedAreas: [],
+          askBeforeCentering: [],
+          activeIntents: [],
+          activeProjects: [],
+          contextReview: [],
+          completions: [],
+          dailyAlignment: {
+            localDate: '2026-06-09',
+            tomorrowIntent: 'Morning at the farmers market, then massage prep.',
+            work: [
+              {
+                id: 'work_market',
+                title: 'Visit a farmers market',
+                status: 'needs_answers',
+                questions: [{ id: 'question_market', prompt: 'Which farmers market?' }],
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const prompt = await withToolContext(() =>
+      Promise.resolve(buildDataPrompt(report, { digests: [], voiceSamples: [], services: [] })),
+    );
+    const data = JSON.parse(prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+
+    expect(data.handoffs).toHaveLength(1);
+    expect(data.handoffs[0].id).toBe('massage-1');
+    expect(data.handoffs[0].relatedRefs.map((ref: any) => ref.id)).toContain('massage-2');
+    expect(data.dailyAlignment.work[0]).toMatchObject({
+      id: 'work_market',
+      questions: [{ id: 'question_market', prompt: 'Which farmers market?' }],
+    });
+    expect(prompt).toContain("the user's stated plan is the spine of the brief");
+    expect(prompt).toContain('answer_question action wired to the exact question id');
+    expect(prompt).toContain('one compact catch-up region');
+  });
+
   test('HTML artifact prompt requires system theme, typography, and art masthead', () => {
     expect(HTML_ARTIFACT_BRIEF).toContain('MASTHEAD (signature element');
     expect(HTML_ARTIFACT_BRIEF).toContain('Claude Artifact');

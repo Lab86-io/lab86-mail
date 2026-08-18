@@ -270,6 +270,53 @@ export function selectHandoffsForIntent(
   };
 }
 
+/**
+ * Repeated plan writes leave near-identical task handoffs in the index. The
+ * duplicates merge into the first copy: their items and refs travel with the
+ * keeper (inside the schema caps), so identity and actions survive while the
+ * brief stops rendering the same outcome three times.
+ */
+export function mergeDuplicateTaskHandoffs(handoffs: TriageHandoffV1[]): TriageHandoffV1[] {
+  const kept: Array<{ handoff: TriageHandoffV1; terms: Set<string> }> = [];
+  for (const handoff of handoffs) {
+    const terms =
+      handoff.kind === 'task'
+        ? intentTerms(handoff.primaryRef?.label || handoff.situation)
+        : new Set<string>();
+    const keeper =
+      handoff.kind === 'task' && terms.size
+        ? kept.find(({ handoff: other, terms: otherTerms }) => {
+            if (other.kind !== 'task') return false;
+            const overlap = [...terms].filter((term) => otherTerms.has(term)).length;
+            const union = new Set([...terms, ...otherTerms]).size;
+            return union > 0 && overlap / union >= 0.6;
+          })
+        : undefined;
+    if (!keeper) {
+      kept.push({ handoff: { ...handoff }, terms });
+      continue;
+    }
+    const target = keeper.handoff;
+    const knownItems = new Set(target.items.map((item) => item.sourceKey));
+    for (const item of handoff.items) {
+      if (target.items.length >= 8 || knownItems.has(item.sourceKey)) continue;
+      knownItems.add(item.sourceKey);
+      target.items = [...target.items, item];
+    }
+    const knownRefs = new Set(
+      [target.primaryRef, ...target.relatedRefs].map((ref) => `${ref.kind}:${ref.id}`),
+    );
+    for (const ref of [handoff.primaryRef, ...handoff.relatedRefs]) {
+      const key = `${ref.kind}:${ref.id}`;
+      if (target.relatedRefs.length >= 8 || knownRefs.has(key)) continue;
+      knownRefs.add(key);
+      target.relatedRefs = [...target.relatedRefs, ref];
+    }
+    target.protected = target.protected || handoff.protected;
+  }
+  return kept.map(({ handoff }) => handoff);
+}
+
 export function intentAppliesToScope(intent: string | null | undefined, labels: string[]): boolean {
   const desired = intentTerms(intent?.trim() || '');
   if (!desired.size) return false;

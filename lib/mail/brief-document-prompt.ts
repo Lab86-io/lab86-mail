@@ -89,11 +89,33 @@ ACTIONS
 - Each action is {action,label,payload,style:primary|secondary|danger|quiet}.
 - Use exact ids/accounts from the supplied JSON. Omit an action if its identity is incomplete.
 
+INTENT SPINE
+- When data.dailyAlignment.tomorrowIntent is present, the user's stated plan IS the document. Open
+  with the shape of their day in their own terms, then build one region per stated part of the plan.
+  data.dailyAlignment.work lists those parts when the system split them; otherwise derive the parts
+  from the intent text.
+- Fill each intent region only with material that serves that part of the plan: matching handoffs,
+  calendar events, weather, related tasks, and concrete preparation. An intent region with nothing
+  matching still appears — one honest line beats borrowed content.
+- When a dailyAlignment.work item carries an open question, render its single most valuable question
+  inside that region (prompt variant "question" or a decision node) with an answer_question action
+  carrying the exact supplied question id. That ask is the region's next move; never repeat it
+  elsewhere and never invent question ids.
+- Everything else that genuinely needs the user today collapses into ONE compact catch-up region of
+  at most 6 entities, ordered by urgency. Aggregate the remaining protected handoffs beyond that cap
+  into a single compact data_table or summary line inside the same region — accounted for, never
+  itemized into more regions.
+- On an intent day, promotional or marketing mail, newsletters, and repeated automated notices
+  (build systems, app stores, delivery updates) never earn a region or an entity. Omit them; the
+  inbox already holds them.
+
 EDITORIAL RULES
 - Rank and compose data.handoffs. Use raw threads, calendar, tasks, tools, and Areas only to enrich
   presentation, write grounded drafts, and understand the trail; do not build a parallel triage.
-- Every data.handoffs item with protected:true must appear exactly once. Omitting or duplicating one
-  is invalid. Keep merged handoffs merged and render all of their concrete recommendations.
+- When no tomorrowIntent is present, every data.handoffs item with protected:true must appear
+  exactly once. Omitting or duplicating one is invalid. Keep merged handoffs merged and render all
+  of their concrete recommendations. On an intent day the catch-up aggregation above satisfies this
+  contract.
 - The indexed recommendation must name a concrete outcome; generic labels such as "Reply",
   "Follow up", or "Review" are invalid.
 - All non-draft actions must be copied from data.handoffs. create_document is valid only when the

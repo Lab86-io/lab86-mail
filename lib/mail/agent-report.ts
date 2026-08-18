@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
-import { selectHandoffsForIntent } from '../albatross/daily-report';
+import { mergeDuplicateTaskHandoffs, selectHandoffsForIntent } from '../albatross/daily-report';
 import { briefDocumentV2Enabled } from '../brief/feature';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
@@ -1121,7 +1121,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
   const storedHandoffs = parseTriageHandoffs(report.handoffs);
   const dailyAlignment = report.sections.albatross?.dailyAlignment ?? null;
   const intentSelection = selectHandoffsForIntent(
-    storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report),
+    mergeDuplicateTaskHandoffs(storedHandoffs.length ? storedHandoffs : buildTriageHandoffIndex(report)),
     dailyAlignment?.tomorrowIntent,
   );
   const handoffs = intentSelection.handoffs;
@@ -1216,7 +1216,7 @@ export function buildDataPrompt(report: DailyReport, extras: BriefExtras): strin
     `This is the "${report.kind}" edition.`,
     `The document title must be exactly "The ${data.weekday} Brief". Put the changing editorial statement in the summary so clients render it as the lede.`,
     'Compose the brief from data.handoffs, the canonical deduplicated attention index. Use the raw threads, calendar, tasks, Areas, and connected items as supporting evidence and draft context, not as a second triage pass.',
-    "When data.dailyAlignment.tomorrowIntent is present, treat it as the user's authoritative attention budget. Compose only from the already-selected data.handoffs: retain every protected handoff, do not reintroduce suppressed optional work from raw arrays, and give the user's non-work plan useful space when it changes the shape of the day. Never treat the reflection as completion evidence by itself.",
+    "When data.dailyAlignment.tomorrowIntent is present, the user's stated plan is the spine of the brief. Build one region per stated part of the plan (data.dailyAlignment.work names them when present) and fill each region only with material that serves that part: matching handoffs, events, weather, and preparation. When a dailyAlignment.work item carries an open question, surface that question inside its region with an answer_question action wired to the exact question id — that ask is the region's next move, and it appears nowhere else. Collapse everything else that still needs the user into one compact catch-up region; suppressed optional work stays out, and never reintroduce it from raw arrays. Never treat the reflection as completion evidence by itself.",
     'Backend contract: use exact ids/accounts from this JSON verbatim. For action controls, use only valid data-action enum strings and valid data-payload JSON. Omit any action you cannot wire exactly.',
     'Design contract: be editorial and component-minded. Create the layout, visual comparisons, timelines, checklists, or compact dashboards that best fit the actual day.',
     '',

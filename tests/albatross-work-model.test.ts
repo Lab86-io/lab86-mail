@@ -5,6 +5,7 @@ import {
   buildAlbatrossDailyReportContextFromLive,
   loadLiveAlbatrossDailyReportContext,
   prioritizeHandoffsForIntent,
+  summarizeAlbatrossDailyReportContext,
 } from '../lib/albatross/daily-report';
 import {
   appliedStepsFromApplyResult,
@@ -424,6 +425,97 @@ describe('Albatross Daily Report context', () => {
       reflection: 'Shipped the billing fix.',
       tomorrowIntent: 'Renew the passport and confirm the trip.',
     });
+  });
+
+  test('a stale check-in no longer shapes the daily alignment', () => {
+    const context = buildAlbatrossDailyReportContextFromLive({
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+      checkins: [
+        {
+          localDate: '2026-06-26',
+          timezone: 'UTC',
+          responseText: 'Old reflection.',
+          tomorrowIntentText: 'Old plan.',
+          updatedAt: Date.parse('2026-06-27T01:00:00.000Z'),
+        },
+      ],
+    });
+    expect(context.dailyAlignment).toBeUndefined();
+  });
+
+  test('the recency guard follows the check-in timezone', () => {
+    // 2026-07-01T03:00Z is still June 30 in New York, so a June 29 New York
+    // check-in is "yesterday" there even though UTC has moved two days on.
+    const context = buildAlbatrossDailyReportContextFromLive({
+      now: Date.parse('2026-07-01T03:00:00.000Z'),
+      checkins: [
+        {
+          localDate: '2026-06-29',
+          timezone: 'America/New_York',
+          tomorrowIntentText: 'Morning at the lake.',
+          updatedAt: Date.parse('2026-06-30T01:00:00.000Z'),
+        },
+      ],
+    });
+    expect(context.dailyAlignment?.tomorrowIntent).toBe('Morning at the lake.');
+  });
+
+  test('attaches the tomorrow-plan Work rows with their open questions', () => {
+    const context = buildAlbatrossDailyReportContextFromLive({
+      now: Date.parse('2026-06-30T14:00:00.000Z'),
+      checkins: [
+        {
+          localDate: '2026-06-29',
+          timezone: 'UTC',
+          responseText: 'Shipped the billing fix.',
+          tomorrowIntentText: 'Farmers market, then the lake.',
+          updatedAt: Date.parse('2026-06-30T01:00:00.000Z'),
+        },
+      ],
+      intentWork: [
+        {
+          _id: 'work_market',
+          title: 'Visit a farmers market',
+          status: 'needs_answers',
+          kind: 'errand',
+          shape: 'quick',
+          areaId: 'area_personal',
+          checkinLocalDate: '2026-06-29',
+          questions: [
+            {
+              questionId: 'question_market',
+              prompt: 'Which farmers market do you want to visit?',
+              options: [{ id: 'share_market', label: 'Share the market name' }],
+            },
+          ],
+        },
+        {
+          _id: 'work_stale',
+          title: 'From an older check-in',
+          checkinLocalDate: '2026-06-20',
+          questions: [],
+        },
+        { _id: '', title: 'Missing id never survives', questions: [] },
+      ],
+    });
+
+    expect(context.dailyAlignment?.work?.map((work) => work.id)).toEqual(['work_market']);
+    expect(context.dailyAlignment?.work?.[0]).toMatchObject({
+      title: 'Visit a farmers market',
+      status: 'needs_answers',
+      shape: 'quick',
+      areaId: 'area_personal',
+    });
+    expect(context.dailyAlignment?.work?.[0].questions[0]).toMatchObject({
+      id: 'question_market',
+      prompt: 'Which farmers market do you want to visit?',
+      options: [{ id: 'share_market', label: 'Share the market name' }],
+    });
+
+    const summary = summarizeAlbatrossDailyReportContext(context);
+    expect(summary).toContain(
+      'Tomorrow-plan Work: Visit a farmers market (open question: Which farmers market do you want to visit?)',
+    );
   });
 
   test('uses tomorrow intent as a stable ordering overlay for SBAR handoffs', () => {

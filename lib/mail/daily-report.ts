@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
 import { contextFirstName, getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import { intentTerms } from '../albatross/daily-intent';
 import {
   type AlbatrossDailyReportContext,
   loadLiveAlbatrossDailyReportContext,
@@ -1164,6 +1165,32 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
   }
 }
 
+/**
+ * Repeated plan writes leave near-identical open tasks on different boards.
+ * The report keeps the first copy in sort order (the soonest-due one) and
+ * drops the rest. Completed tasks never absorb an open one.
+ */
+export function dedupeSimilarTasks(tasks: DailyReportTaskItem[]): DailyReportTaskItem[] {
+  const keptOpen: Array<Set<string>> = [];
+  const result: DailyReportTaskItem[] = [];
+  for (const task of tasks) {
+    if (!task.completedAt) {
+      const terms = intentTerms(task.title);
+      if (terms.size) {
+        const duplicate = keptOpen.some((otherTerms) => {
+          const overlap = [...terms].filter((term) => otherTerms.has(term)).length;
+          const union = new Set([...terms, ...otherTerms]).size;
+          return union > 0 && overlap / union >= 0.6;
+        });
+        if (duplicate) continue;
+        keptOpen.push(terms);
+      }
+    }
+    result.push(task);
+  }
+  return result;
+}
+
 async function loadTaskContext(
   userId: string | null | undefined,
   now: number,
@@ -1177,45 +1204,48 @@ async function loadTaskContext(
       endAt: now + FUTURE_CONTEXT_WINDOW,
       limit: 500,
     });
-    return rows
-      .filter((card) => !dismissedTaskIds.has(String(card.cardId)))
-      .map((card) => {
-        const source = card.source || {};
-        const sourceUrl = source.url || source.htmlLink;
-        const sourceTitle =
-          source.title || (source.threadId ? 'Email thread' : source.eventId ? 'Calendar event' : undefined);
-        return {
-          cardId: String(card.cardId),
-          boardId: String(card.boardId),
-          columnId: String(card.columnId),
-          boardTitle: card.boardTitle,
-          columnName: card.columnName,
-          title: stripEmoji(String(card.title || 'Untitled task')),
-          description: card.description ? stripEmoji(String(card.description)).slice(0, 500) : undefined,
-          dueAt: card.dueAt ?? null,
-          completedAt: card.completedAt ?? null,
-          priority: card.priority,
-          labels: card.labels || [],
-          assignees: card.assignees || [],
-          sourceTitle,
-          sourceUrl,
-          source,
-          sourceThreadId: card.sourceThreadId,
-          sourceCalendarEventId: card.sourceCalendarEventId,
-          sourceAccountId: card.sourceAccountId,
-          scope: contextScope(card.dueAt || card.updatedAt || card.createdAt || now, now),
-        } satisfies DailyReportTaskItem;
-      })
-      .sort((a, b) => {
-        const aDone = a.completedAt ? 1 : 0;
-        const bDone = b.completedAt ? 1 : 0;
-        if (aDone !== bDone) return aDone - bDone;
-        if (a.scope !== b.scope) return a.scope === 'week' ? -1 : 1;
-        const aDue = a.dueAt ?? Number.POSITIVE_INFINITY;
-        const bDue = b.dueAt ?? Number.POSITIVE_INFINITY;
-        if (aDue !== bDue) return aDue - bDue;
-        return a.title.localeCompare(b.title);
-      });
+    return dedupeSimilarTasks(
+      rows
+        .filter((card) => !dismissedTaskIds.has(String(card.cardId)))
+        .map((card) => {
+          const source = card.source || {};
+          const sourceUrl = source.url || source.htmlLink;
+          const sourceTitle =
+            source.title ||
+            (source.threadId ? 'Email thread' : source.eventId ? 'Calendar event' : undefined);
+          return {
+            cardId: String(card.cardId),
+            boardId: String(card.boardId),
+            columnId: String(card.columnId),
+            boardTitle: card.boardTitle,
+            columnName: card.columnName,
+            title: stripEmoji(String(card.title || 'Untitled task')),
+            description: card.description ? stripEmoji(String(card.description)).slice(0, 500) : undefined,
+            dueAt: card.dueAt ?? null,
+            completedAt: card.completedAt ?? null,
+            priority: card.priority,
+            labels: card.labels || [],
+            assignees: card.assignees || [],
+            sourceTitle,
+            sourceUrl,
+            source,
+            sourceThreadId: card.sourceThreadId,
+            sourceCalendarEventId: card.sourceCalendarEventId,
+            sourceAccountId: card.sourceAccountId,
+            scope: contextScope(card.dueAt || card.updatedAt || card.createdAt || now, now),
+          } satisfies DailyReportTaskItem;
+        })
+        .sort((a, b) => {
+          const aDone = a.completedAt ? 1 : 0;
+          const bDone = b.completedAt ? 1 : 0;
+          if (aDone !== bDone) return aDone - bDone;
+          if (a.scope !== b.scope) return a.scope === 'week' ? -1 : 1;
+          const aDue = a.dueAt ?? Number.POSITIVE_INFINITY;
+          const bDue = b.dueAt ?? Number.POSITIVE_INFINITY;
+          if (aDue !== bDue) return aDue - bDue;
+          return a.title.localeCompare(b.title);
+        }),
+    );
   } catch (err) {
     console.warn('Daily report task context failed:', err);
     return [];
