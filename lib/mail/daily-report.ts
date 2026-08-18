@@ -896,7 +896,9 @@ async function buildThreadInsight(
 
 // ---- Stage 3: demote-don't-drop assembly -----------------------------------
 
-async function composeReport(input: {
+// Exported for tests: the handoff-index merge below must stay on the
+// composition path that returns and persists DailyReport.handoffs.
+export async function composeReport(input: {
   kind: DailyReport['kind'];
   now: number;
   accounts: string[];
