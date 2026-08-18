@@ -49,6 +49,9 @@ export function toolCallsFromSteps(steps: any[]): TurnToolCall[] {
   for (const step of steps || []) {
     for (const part of step?.content || []) {
       if (part?.type === 'tool-call' && part.toolCallId) {
+        // A repeated id must not re-register the call: that would duplicate it
+        // in order and clear an output an earlier step already paired.
+        if (calls.has(part.toolCallId)) continue;
         calls.set(part.toolCallId, {
           toolName: String(part.toolName || ''),
           input: part.input,
@@ -228,6 +231,8 @@ async function classifyAnsweredQuestions(input: {
     userName: input.userName,
     system: CLASSIFIER_SYSTEM,
     prompt: prompt.slice(0, 20_000),
+    // A stalled provider must not leave the reconcile pending forever.
+    abortSignal: AbortSignal.timeout(45_000),
   });
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -289,27 +294,37 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
     const workState = detail.work.workState || detail.work.status;
     if (['done', 'released', 'archived'].includes(workState)) return skipped;
 
+    // Each artifact write stands alone: one failed write must not abort the
+    // question resolution and replan this module exists to guarantee.
     if (artifacts.length) {
-      await dependencies.convexMutation((api as any).albatrossWork.appendPlanApplicationArtifacts, {
-        userId: input.userId,
-        intentId: input.workId,
-        artifacts: artifacts.map(({ sourceKind: _sourceKind, ...artifact }) => artifact),
-        operationIds: artifacts.map((artifact) => artifact.operationId || '').filter(Boolean),
-      });
+      await dependencies
+        .convexMutation((api as any).albatrossWork.appendPlanApplicationArtifacts, {
+          userId: input.userId,
+          intentId: input.workId,
+          artifacts: artifacts.map(({ sourceKind: _sourceKind, ...artifact }) => artifact),
+          operationIds: artifacts.map((artifact) => artifact.operationId || '').filter(Boolean),
+        })
+        .catch((error) => {
+          dependencies.reportError('[work-turn-reconcile] artifact append failed', error);
+        });
       for (const artifact of artifacts) {
         // settleContract: false — a chat-created hold is context for the
         // planner, never proof that the outcome itself happened.
-        await dependencies.convexMutation((api as any).albatrossWorkV2.attachProof, {
-          userId: input.userId,
-          workId: input.workId,
-          claim: `Created in chat for this Work: "${artifact.title}".`,
-          title: artifact.title,
-          summary: `Chat-created ${artifact.kind === 'calendarEvent' ? 'calendar event' : artifact.kind}. Do not propose it again.`,
-          sourceKind: artifact.sourceKind,
-          sourceId: artifact.id,
-          trust: 'observed',
-          settleContract: false,
-        });
+        await dependencies
+          .convexMutation((api as any).albatrossWorkV2.attachProof, {
+            userId: input.userId,
+            workId: input.workId,
+            claim: `Created in chat for this Work: "${artifact.title}".`,
+            title: artifact.title,
+            summary: `Chat-created ${artifact.kind === 'calendarEvent' ? 'calendar event' : artifact.kind}. Do not propose it again.`,
+            sourceKind: artifact.sourceKind,
+            sourceId: artifact.id,
+            trust: 'observed',
+            settleContract: false,
+          })
+          .catch((error) => {
+            dependencies.reportError('[work-turn-reconcile] artifact proof failed', error);
+          });
       }
     }
 
@@ -331,16 +346,19 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
           return [] as ResolvedAnswer[];
         });
         for (const answer of resolved) {
-          const answered = await dependencies.convexMutation<{ shouldAdvance?: boolean }>(
-            (api as any).albatrossWorkV2.answerQuestion,
-            {
+          const answered = await dependencies
+            .convexMutation<{ shouldAdvance?: boolean }>((api as any).albatrossWorkV2.answerQuestion, {
               userId: input.userId,
               questionId: answer.questionId,
               answer: answer.answer,
-            },
-          );
+            })
+            .catch((error) => {
+              dependencies.reportError('[work-turn-reconcile] answer write failed', error);
+              return null;
+            });
+          if (!answered) continue;
           questionsAnswered += 1;
-          if (answered?.shouldAdvance) answersWantAdvance = true;
+          if (answered.shouldAdvance) answersWantAdvance = true;
         }
       }
     }

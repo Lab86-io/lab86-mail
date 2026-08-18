@@ -200,9 +200,12 @@ export async function POST(req: NextRequest) {
     // reconciles the turn back into the Work document — chat-created artifacts,
     // answered questions, and a replan — independent of what the model chose
     // to call. Runs after the response so the chat never waits on it.
-    for (const attachment of contextAttachments) {
-      if (attachment.kind !== 'work') continue;
-      const workId = attachment.id;
+    // Only an unambiguous turn reconciles: with several Works attached, the
+    // turn's artifacts and answers cannot be attributed to one of them, and
+    // fanning out would cross-pollinate evidence between Works.
+    const workAttachments = contextAttachments.filter((attachment) => attachment.kind === 'work');
+    if (workAttachments.length === 1) {
+      const workId = workAttachments[0].id;
       after(() =>
         reconcileWorkTurn({
           userId: user.userId,

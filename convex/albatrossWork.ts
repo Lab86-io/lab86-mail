@@ -708,12 +708,16 @@ export const appendPlanApplicationArtifacts = mutation({
         operationId: artifact.operationId ? bounded(String(artifact.operationId), 180) : undefined,
       }));
     if (!incoming.length) return null;
-    const operationIds = args.operationIds.slice(0, 24).map((id) => bounded(id, 180, '')!);
-    const rows = await ctx.db
+    const operationIds = args.operationIds
+      .slice(0, 24)
+      .map((id) => bounded(id, 180))
+      .filter((id): id is string => Boolean(id));
+    // Both insert paths set createdAt from now(), so creation order matches it.
+    const newest = await ctx.db
       .query('albatrossPlanApplications')
       .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', intentId))
-      .collect();
-    const newest = rows.sort((a, b) => b.createdAt - a.createdAt)[0];
+      .order('desc')
+      .first();
     if (newest) {
       const seen = new Set(
         (newest.artifacts || []).map((artifact: any) => `${artifact.kind}:${artifact.id}`),
@@ -727,9 +731,15 @@ export const appendPlanApplicationArtifacts = mutation({
       });
       return newest._id;
     }
+    // A fallback row without projectId would vanish from the project pane
+    // (getProjectPane reads by_user_project), so carry the Work's project.
+    const workId = ctx.db.normalizeId('albatrossIntents', intentId);
+    const work = workId ? await ctx.db.get(workId) : null;
+    const projectId = work?.userId === userId ? work.primaryProjectId : undefined;
     return ctx.db.insert('albatrossPlanApplications', {
       userId,
       intentId,
+      projectId,
       operationBatchId: `chat-turn:${ts}`,
       status: 'applied',
       artifacts: incoming,

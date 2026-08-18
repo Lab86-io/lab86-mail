@@ -39,6 +39,19 @@ describe('toolCallsFromSteps', () => {
     ]);
     expect(calls[0].ok).toBe(false);
   });
+
+  test('a repeated toolCallId never re-registers or clears a paired result', () => {
+    const calls = toolCallsFromSteps([
+      step([
+        call('c1', 'calendar_create_event', { title: 'Trip' }),
+        result('c1', { ok: true, eventId: 'evt_1' }),
+      ]),
+      step([call('c1', 'calendar_create_event', { title: 'Trip' })]),
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ok).toBe(true);
+    expect(calls[0].output.eventId).toBe('evt_1');
+  });
 });
 
 describe('harvestTurnArtifacts', () => {
@@ -314,6 +327,60 @@ describe('reconcileWorkTurn', () => {
       expect(state.advances).toHaveLength(0);
     } finally {
       state.restore();
+    }
+  });
+
+  test('a failed artifact write does not abort the replan', async () => {
+    const advances: any[] = [];
+    const restore = setWorkTurnReconcileDependenciesForTest({
+      convexQuery: (async () => ({
+        work: { _id: 'w1', workState: 'active', status: 'active', lastEvidenceAt: 5 },
+        questions: [],
+      })) as any,
+      convexMutation: (async (_ref: any, args: any) => {
+        if (args?.artifacts || args?.sourceKind) throw new Error('write failed');
+        return undefined;
+      }) as any,
+      advanceWork: (async (input: any) => {
+        advances.push(input);
+        return { status: 'ready', workId: input.workId };
+      }) as any,
+      reportError: () => undefined,
+    });
+    try {
+      const outcome = await reconcileWorkTurn({ ...baseInput, steps: artifactSteps, uiMessages: [] });
+      expect(outcome.status).toBe('ok');
+      expect(outcome.advanced).toBe(true);
+      expect(advances).toHaveLength(1);
+    } finally {
+      restore();
+    }
+  });
+
+  test('the classifier call carries an abort timeout', async () => {
+    let captured: any = null;
+    const restore = setWorkTurnReconcileDependenciesForTest({
+      convexQuery: (async () => ({
+        work: { _id: 'w1', workState: 'active', status: 'active' },
+        questions: [{ _id: 'q_open', status: 'pending', prompt: 'Which day?' }],
+      })) as any,
+      convexMutation: (async () => undefined) as any,
+      generateTextForCurrentUser: (async (input: any) => {
+        captured = input;
+        return { text: '{"answers": []}' };
+      }) as any,
+      advanceWork: (async () => ({ status: 'ready' })) as any,
+      reportError: () => undefined,
+    });
+    try {
+      await reconcileWorkTurn({
+        ...baseInput,
+        steps: [],
+        uiMessages: [{ role: 'user', parts: [{ type: 'text', text: 'Hello.' }] }],
+      });
+      expect(captured?.abortSignal).toBeInstanceOf(AbortSignal);
+    } finally {
+      restore();
     }
   });
 
