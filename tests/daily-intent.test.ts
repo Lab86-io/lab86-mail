@@ -151,6 +151,36 @@ describe('duplicate task handoff merging', () => {
     expect(keeper.items.map((item: any) => item.sourceKey)).toEqual(['task:massage-1', 'task:massage-2']);
   });
 
+  test('a discarded duplicate donates its unique actions to the keeper', () => {
+    const keeper = withItem(handoff('massage-1', "Book Tree's massage at Amazing Mind Body Soul Center"));
+    keeper.actions = [
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+    ];
+    const duplicate = withItem(handoff('massage-2', "Book Tree's massage — Amazing Mind Body Soul Center"));
+    duplicate.actions = [
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+      { action: 'dismiss_task', label: 'Remove', payload: { cardId: 'massage-2' }, style: 'quiet' },
+    ];
+    const merged = mergeDuplicateTaskHandoffs([keeper, duplicate]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].actions).toEqual([
+      { action: 'toggle_task', label: 'Complete', payload: { cardId: 'massage-1' }, style: 'primary' },
+      { action: 'dismiss_task', label: 'Remove', payload: { cardId: 'massage-2' }, style: 'quiet' },
+    ]);
+  });
+
+  test('references that share an id across accounts both survive the merge', () => {
+    const keeper = withItem(handoff('thread-a', 'Water the community garden plot on Saturday'));
+    keeper.primaryRef = { kind: 'thread', id: 'shared-id', account: 'first@example.test' };
+    const duplicate = withItem(handoff('thread-b', 'Water the community garden plot Saturday'));
+    duplicate.primaryRef = { kind: 'thread', id: 'shared-id', account: 'second@example.test' };
+    const merged = mergeDuplicateTaskHandoffs([keeper, duplicate]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].relatedRefs).toEqual([
+      { kind: 'thread', id: 'shared-id', account: 'second@example.test' },
+    ]);
+  });
+
   test('distinct outcomes and non-task kinds never merge', () => {
     const eventRecord = {
       ...withItem(handoff('event-1', "Book Tree's massage at Amazing Mind Body Soul Center")),

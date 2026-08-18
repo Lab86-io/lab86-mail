@@ -132,6 +132,48 @@ describe('dailyReportContext intent work', () => {
       expect(lake.questions).toEqual([]);
     }));
 
+  test('a newer unanswered check-in never displaces the answered plan', () =>
+    withSecret(async () => {
+      const t = convexTest(schema, convexModules);
+      const userId = 'daily_context_race';
+      const answeredWorkId = await t.run((ctx) =>
+        ctx.db.insert('albatrossIntents', intentRow(userId, 'Visit a farmers market')),
+      );
+      const strayWorkId = await t.run((ctx) =>
+        ctx.db.insert('albatrossIntents', intentRow(userId, 'Stray draft work')),
+      );
+      await t.run((ctx) =>
+        ctx.db.insert(
+          'albatrossDailyCheckins',
+          checkinRow(userId, {
+            localDate: '2026-08-15',
+            tomorrowIntentText: 'Farmers market in the morning.',
+            tomorrowIntentAnsweredAt: Date.now(),
+            tomorrowWorkIds: [String(answeredWorkId)],
+          }),
+        ),
+      );
+      // Newer row, but its tomorrow prompt was never answered.
+      await t.run((ctx) =>
+        ctx.db.insert(
+          'albatrossDailyCheckins',
+          checkinRow(userId, {
+            localDate: '2026-08-16',
+            status: 'open',
+            tomorrowIntentText: 'Draft text that was never submitted.',
+            tomorrowWorkIds: [String(strayWorkId)],
+          }),
+        ),
+      );
+
+      const context = await t.query(api.albatrossWork.dailyReportContext, {
+        internalSecret: SECRET,
+        userId,
+      });
+      expect(context.intentWork.map((work: any) => work.title)).toEqual(['Visit a farmers market']);
+      expect(context.intentWork[0].checkinLocalDate).toBe('2026-08-15');
+    }));
+
   test('a check-in without a tomorrow plan yields no intent work', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);

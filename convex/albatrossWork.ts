@@ -741,8 +741,11 @@ export const dailyReportContext = query({
     // needs_answers must still reach the morning brief with its open
     // questions, because the brief is the surface that shows them.
     const intentWork: Array<Record<string, unknown>> = [];
+    // Only a check-in whose tomorrow prompt was actually answered may supply
+    // the plan. A newer scheduled or half-open row must not displace it.
     const planCheckin = checkins.find(
       (checkin) =>
+        (checkin.status === 'answered' || checkin.tomorrowIntentAnsweredAt) &&
         (checkin.tomorrowWorkIds?.length || checkin.tomorrowWorkId) &&
         (checkin.tomorrowIntentText || '').trim(),
     );

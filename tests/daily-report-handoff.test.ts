@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { mergeDuplicateTaskHandoffs } from '../lib/albatross/daily-intent';
 import { buildTriageHandoffIndex } from '../lib/brief/triage-index';
 import { enforceDailyBriefHandoffCoverage, handoffForReportItem } from '../lib/mail/daily-brief-handoff';
 import {
@@ -308,6 +309,43 @@ describe('Daily Brief handoff recommendations', () => {
       .find((entity) => entity.ref.id === item.threadId)
       ?.actions.filter((action) => action.action === 'create_document');
     expect(actions).toEqual([exact]);
+  });
+});
+
+describe('stored handoff index deduplication', () => {
+  test('duplicate task cards collapse to one stored handoff with both identities', () => {
+    const report = reportWithProtectedThreads();
+    report.sections.tasks = [
+      {
+        cardId: 'massage-1',
+        boardId: 'board-1',
+        columnId: 'column-1',
+        title: "Book Tree's massage at Amazing Mind Body Soul Center",
+        priority: 'high',
+        scope: 'week',
+      },
+      {
+        cardId: 'massage-2',
+        boardId: 'board-2',
+        columnId: 'column-2',
+        title: "Book Tree's massage — Amazing Mind Body Soul Center",
+        priority: 'high',
+        scope: 'week',
+      },
+    ];
+
+    // generateDailyReport merges the index before it persists the report.
+    const handoffs = mergeDuplicateTaskHandoffs(buildTriageHandoffIndex(report));
+    const taskHandoffs = handoffs.filter((handoff) => handoff.kind === 'task');
+
+    expect(taskHandoffs).toHaveLength(1);
+    const identityIds = [
+      taskHandoffs[0].primaryRef,
+      ...taskHandoffs[0].relatedRefs,
+      ...taskHandoffs[0].items.map((item) => item.ref),
+    ].map((ref) => ref.id);
+    expect(identityIds).toContain('massage-1');
+    expect(identityIds).toContain('massage-2');
   });
 });
 

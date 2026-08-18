@@ -460,6 +460,24 @@ describe('Albatross Daily Report context', () => {
     expect(context.dailyAlignment?.tomorrowIntent).toBe('Morning at the lake.');
   });
 
+  test('the recency guard survives a DST transition', () => {
+    // 2026-03-09T04:30Z is March 9, 00:30 EDT. Twenty-four elapsed hours
+    // earlier is March 7 in New York (spring forward), so hour arithmetic
+    // would reject the March 8 check-in. Calendar arithmetic keeps it.
+    const context = buildAlbatrossDailyReportContextFromLive({
+      now: Date.parse('2026-03-09T04:30:00.000Z'),
+      checkins: [
+        {
+          localDate: '2026-03-08',
+          timezone: 'America/New_York',
+          tomorrowIntentText: 'Slow morning, then errands.',
+          updatedAt: Date.parse('2026-03-09T01:00:00.000Z'),
+        },
+      ],
+    });
+    expect(context.dailyAlignment?.tomorrowIntent).toBe('Slow morning, then errands.');
+  });
+
   test('attaches the tomorrow-plan Work rows with their open questions', () => {
     const context = buildAlbatrossDailyReportContextFromLive({
       now: Date.parse('2026-06-30T14:00:00.000Z'),

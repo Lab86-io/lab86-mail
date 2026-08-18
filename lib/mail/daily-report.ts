@@ -6,6 +6,7 @@ import { intentTerms } from '../albatross/daily-intent';
 import {
   type AlbatrossDailyReportContext,
   loadLiveAlbatrossDailyReportContext,
+  mergeDuplicateTaskHandoffs,
   selectHandoffsForIntent,
 } from '../albatross/daily-report';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
@@ -1049,17 +1050,22 @@ async function composeReport(input: {
   const title = `${
     input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
   } Daily Report`;
+  // Merge duplicate task handoffs before the index is persisted, so the
+  // stored report and the narrative carry one handoff per outcome — not just
+  // the artifact prompt downstream.
   const handoffs = selectHandoffsForIntent(
-    buildTriageHandoffIndex({
-      _id: reportId,
-      kind: input.kind,
-      generatedAt: input.now,
-      accounts: input.accounts,
-      title,
-      narrative,
-      sections,
-      stats,
-    }),
+    mergeDuplicateTaskHandoffs(
+      buildTriageHandoffIndex({
+        _id: reportId,
+        kind: input.kind,
+        generatedAt: input.now,
+        accounts: input.accounts,
+        title,
+        narrative,
+        sections,
+        stats,
+      }),
+    ),
     input.albatrossContext.dailyAlignment?.tomorrowIntent,
   ).handoffs;
   narrative = localHandoffNarrative(input.kind, handoffs);

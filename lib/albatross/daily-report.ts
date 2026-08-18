@@ -151,6 +151,14 @@ function localDayKey(at: number, timezone?: string): string {
   }
 }
 
+// Calendar arithmetic on the local date itself. Subtracting 24 elapsed hours
+// can skip a local date across a DST transition.
+function previousDayKey(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+}
+
 // A tomorrow plan speaks about one specific morning. Only a check-in from
 // yesterday or today may shape today's brief; an older answer must not keep
 // suppressing unrelated work days later.
@@ -158,9 +166,8 @@ function isRecentCheckin(row: any, now: number): boolean {
   const localDate = String(row.localDate || '');
   if (!localDate) return false;
   const timezone = typeof row.timezone === 'string' ? row.timezone : undefined;
-  return (
-    localDate === localDayKey(now, timezone) || localDate === localDayKey(now - 24 * 60 * 60 * 1000, timezone)
-  );
+  const today = localDayKey(now, timezone);
+  return localDate === today || localDate === previousDayKey(today);
 }
 
 function latestDailyAlignment(rows: any[], now: number): AlbatrossDailyAlignment | undefined {

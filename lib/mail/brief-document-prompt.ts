@@ -25,8 +25,9 @@ LAYOUT NODES
 LIVE DATA LEAVES
 - entity_list: optional title, variant rows|cards|compact, items with
   {ref:{kind,id,account?,label?}, framing:{reason?,lane?,prep?}, handoff?, actions:[]}.
-- data.handoffs is the canonical, deduplicated SBAR index. Each protected handoff must appear exactly
-  once as an entity. A handoff can contain several related source items and several recommendations.
+- data.handoffs is the canonical, deduplicated SBAR index. Protected handoffs follow the INTENT
+  SPINE and EDITORIAL RULES below: entities on a normal day, entity-or-aggregation on an intent day.
+  A handoff can contain several related source items and several recommendations.
 - Handoff shape:
   {id,primaryRef,relatedRefs,protected,items:[{sourceKey,ref,situation,assessment,recommendation}],
    situation,background:[up to 3],assessment,recommendation,evidence:[{label,ref?}],actions:[]}.

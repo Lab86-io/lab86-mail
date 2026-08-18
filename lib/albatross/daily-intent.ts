@@ -303,14 +303,25 @@ export function mergeDuplicateTaskHandoffs(handoffs: TriageHandoffV1[]): TriageH
       knownItems.add(item.sourceKey);
       target.items = [...target.items, item];
     }
-    const knownRefs = new Set(
-      [target.primaryRef, ...target.relatedRefs].map((ref) => `${ref.kind}:${ref.id}`),
-    );
+    // Identity matches the downstream selection key: kind, account, and id.
+    // Same provider id under two accounts stays two references.
+    const refKey = (ref: (typeof target.relatedRefs)[number]) =>
+      `${ref.kind}:${ref.account?.toLocaleLowerCase() || ''}:${ref.id}`;
+    const knownRefs = new Set([target.primaryRef, ...target.relatedRefs].map(refKey));
     for (const ref of [handoff.primaryRef, ...handoff.relatedRefs]) {
-      const key = `${ref.kind}:${ref.id}`;
+      const key = refKey(ref);
       if (target.relatedRefs.length >= 8 || knownRefs.has(key)) continue;
       knownRefs.add(key);
       target.relatedRefs = [...target.relatedRefs, ref];
+    }
+    const knownActions = new Set(
+      target.actions.map((action) => `${action.action}:${JSON.stringify(action.payload ?? null)}`),
+    );
+    for (const action of handoff.actions) {
+      const key = `${action.action}:${JSON.stringify(action.payload ?? null)}`;
+      if (target.actions.length >= 8 || knownActions.has(key)) continue;
+      knownActions.add(key);
+      target.actions = [...target.actions, action];
     }
     target.protected = target.protected || handoff.protected;
   }
