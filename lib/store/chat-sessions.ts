@@ -1,3 +1,4 @@
+import { isHitlToolName, toolPartName } from '../albatross/teach-ui';
 import { kvDelete, kvGet, kvList, kvUpsert } from './kv';
 
 // Persistent AI chat sessions. Each session stores the AI SDK UIMessage array
@@ -31,16 +32,21 @@ const MAX_SESSIONS_SCANNED = 1_000;
 
 // Tool outputs can carry whole thread bodies; history only needs the shape
 // (name, state, input) for the step cards, so big payloads are dropped.
-function compactMessage(message: any): any {
+// Server tools stuck at 'input-available' are rewritten as completed so
+// restored history does not render spinners — EXCEPT human-in-the-loop pauses:
+// faking those as answered makes a restored session auto-continue and re-run
+// every mutating tool. An unanswered pause must persist as a pause.
+export function compactMessage(message: any): any {
   const parts = Array.isArray(message?.parts)
     ? message.parts.map((part: any) => {
         const type = String(part?.type || '');
         if (type !== 'dynamic-tool' && !type.startsWith('tool-')) return part;
+        const isHitlPause = part.state === 'input-available' && isHitlToolName(toolPartName(part));
         const compact: Record<string, unknown> = {
           type: part.type,
           toolName: part.toolName,
           toolCallId: part.toolCallId,
-          state: part.state === 'input-available' ? 'output-available' : part.state,
+          state: part.state === 'input-available' && !isHitlPause ? 'output-available' : part.state,
           input: part.input,
         };
         try {

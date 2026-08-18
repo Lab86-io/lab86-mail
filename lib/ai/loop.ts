@@ -358,7 +358,7 @@ function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Re
   return lifted;
 }
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   try {
@@ -370,13 +370,13 @@ function errorText(error: unknown): string {
 
 // Auth-failure diagnostics can carry bearer tokens or submitted key material —
 // non-Error objects stringify request metadata. Redact before logging.
-function safeAuthErrorText(error: unknown): string {
+export function safeAuthErrorText(error: unknown): string {
   return errorText(error)
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
     .replace(/\bsk-(?:or-v1-|ant-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
 }
 
-function isRecoverableAgentProviderError(error: any): boolean {
+export function isRecoverableAgentProviderError(error: any): boolean {
   const message = String(error?.message || error || '');
   const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status);
   const responseBody = String(error?.responseBody || '');
@@ -398,7 +398,7 @@ function isRecoverableAgentProviderError(error: any): boolean {
 // falling back can't fix it, and routing it through providerFailureResult hides
 // the real problem behind "malformed response". Detect it so we can tell the
 // user exactly what to do.
-function isAuthError(error: any): boolean {
+export function isAuthError(error: any): boolean {
   const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.status);
   const haystack = `${error?.message || ''} ${error?.responseBody || ''}`.toLowerCase();
   const hasAuthSignal =
@@ -482,7 +482,7 @@ function writeToolResultPart(writer: UiStreamWriter, part: any) {
   });
 }
 
-function writeDelayedAgentResult(writer: UiStreamWriter, result: any) {
+export function writeDelayedAgentResult(writer: UiStreamWriter, result: any) {
   writer.write({ type: 'start' });
   const steps = Array.isArray(result.steps) && result.steps.length ? result.steps : [result];
   let emittedText = false;
@@ -641,6 +641,8 @@ export async function runAgent({
     }
   }
   return {
+    /** The completed generation (steps, text) — the run finishes before streaming starts. */
+    result,
     toUIMessageStreamResponse() {
       return createUIMessageStreamResponse({
         stream: createUIMessageStream({

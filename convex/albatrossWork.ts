@@ -680,6 +680,78 @@ export const recordPlanApplication = mutation({
   },
 });
 
+/**
+ * Fold chat-created artifacts into the Work's newest plan application so the
+ * "What changed" ledger and the planner both see them. Without this, an event
+ * or task the chat agent creates is invisible to the plan and gets proposed
+ * again on the next replan.
+ */
+export const appendPlanApplicationArtifacts = mutation({
+  args: {
+    ...callerArgs,
+    intentId: v.string(),
+    artifacts: v.array(v.any()),
+    operationIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const intentId = bounded(args.intentId, 160, '')!;
+    if (!intentId) throw new Error('intentId required.');
+    const ts = now();
+    const incoming = args.artifacts
+      .slice(0, 24)
+      .filter((artifact) => artifact && typeof artifact === 'object' && artifact.id)
+      .map((artifact) => ({
+        kind: bounded(String(artifact.kind || 'task'), 60),
+        id: bounded(String(artifact.id), 320),
+        title: bounded(String(artifact.title || artifact.id), 300),
+        operationId: artifact.operationId ? bounded(String(artifact.operationId), 180) : undefined,
+      }));
+    if (!incoming.length) return null;
+    const operationIds = args.operationIds
+      .slice(0, 24)
+      .map((id) => bounded(id, 180))
+      .filter((id): id is string => Boolean(id));
+    // Both insert paths set createdAt from now(), so creation order matches it.
+    const newest = await ctx.db
+      .query('albatrossPlanApplications')
+      .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', intentId))
+      .order('desc')
+      .first();
+    if (newest) {
+      const seen = new Set(
+        (newest.artifacts || []).map((artifact: any) => `${artifact.kind}:${artifact.id}`),
+      );
+      const fresh = incoming.filter((artifact) => !seen.has(`${artifact.kind}:${artifact.id}`));
+      if (!fresh.length) return newest._id;
+      await ctx.db.patch(newest._id, {
+        artifacts: [...(newest.artifacts || []), ...fresh],
+        operationIds: Array.from(new Set([...(newest.operationIds || []), ...operationIds])),
+        updatedAt: ts,
+      });
+      return newest._id;
+    }
+    // A fallback row without projectId would vanish from the project pane
+    // (getProjectPane reads by_user_project), so carry the Work's project.
+    const workId = ctx.db.normalizeId('albatrossIntents', intentId);
+    const work = workId ? await ctx.db.get(workId) : null;
+    const projectId = work?.userId === userId ? work.primaryProjectId : undefined;
+    return ctx.db.insert('albatrossPlanApplications', {
+      userId,
+      intentId,
+      projectId,
+      operationBatchId: `chat-turn:${ts}`,
+      status: 'applied',
+      artifacts: incoming,
+      operationIds,
+      pendingApprovalIds: [],
+      unresolvedArtifacts: [],
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  },
+});
+
 export const listPlanApplications = query({
   args: { ...callerArgs, intentId: v.optional(v.string()), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {

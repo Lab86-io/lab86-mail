@@ -28,14 +28,28 @@ describe('HITL tool identity', () => {
 
 describe('lastMessageAnsweredHitl (auto-continue predicate)', () => {
   const assistant = (parts: any[]) => ({ role: 'assistant', parts });
+  const answered = (extra: Record<string, unknown> = {}) => ({
+    type: 'tool-ask_user',
+    toolCallId: 'question_1',
+    state: 'output-available',
+    output: { answers: [{ question: 'Which day?', response: 'Wednesday' }] },
+    ...extra,
+  });
 
-  test('fires when any HITL tool part has its output', () => {
-    expect(lastMessageAnsweredHitl([assistant([{ type: 'tool-ask_user', state: 'output-available' }])])).toBe(
-      true,
-    );
+  test('fires when the final meaningful part is an answered HITL call', () => {
+    expect(lastMessageAnsweredHitl([assistant([answered()])])).toBe(true);
     expect(
       lastMessageAnsweredHitl([
-        assistant([{ type: 'dynamic-tool', toolName: 'ask_approval', state: 'output-available' }]),
+        assistant([
+          { type: 'text', text: 'Two options.' },
+          {
+            type: 'dynamic-tool',
+            toolName: 'ask_approval',
+            toolCallId: 'approval_1',
+            state: 'output-available',
+            output: { decision: 'approved' },
+          },
+        ]),
       ]),
     ).toBe(true);
   });
@@ -50,6 +64,54 @@ describe('lastMessageAnsweredHitl (auto-continue predicate)', () => {
     expect(lastMessageAnsweredHitl([{ role: 'user', parts: [] }])).toBe(false);
     expect(lastMessageAnsweredHitl([])).toBe(false);
   });
+
+  test('ignores an answered state whose output was never captured (restored session)', () => {
+    // Persisted sessions can hold HITL parts rewritten to output-available with
+    // the output dropped. Continuing on those re-runs mutating tools on reload.
+    expect(
+      lastMessageAnsweredHitl([
+        assistant([{ type: 'tool-ask_user', toolCallId: 'question_1', state: 'output-available' }]),
+      ]),
+    ).toBe(false);
+  });
+
+  test('ignores an answered pause the run already continued past', () => {
+    expect(
+      lastMessageAnsweredHitl([assistant([answered(), { type: 'text', text: 'Booked it. Anything else?' }])]),
+    ).toBe(false);
+    expect(
+      lastMessageAnsweredHitl([
+        assistant([
+          answered(),
+          { type: 'tool-calendar_create_event', toolCallId: 'call_2', state: 'output-available' },
+        ]),
+      ]),
+    ).toBe(false);
+  });
+
+  test('a message with no meaningful parts never fires', () => {
+    expect(
+      lastMessageAnsweredHitl([assistant([{ type: 'step-start' }, { type: 'reasoning', text: 'thinking' }])]),
+    ).toBe(false);
+  });
+
+  test('a file or source attachment after the answer counts as continuation', () => {
+    expect(
+      lastMessageAnsweredHitl([assistant([answered(), { type: 'file', url: 'https://example.test/a.png' }])]),
+    ).toBe(false);
+    expect(
+      lastMessageAnsweredHitl([assistant([answered(), { type: 'source-url', url: 'https://example.test' }])]),
+    ).toBe(false);
+  });
+
+  test('skips reasoning, step markers, and empty text after the answer', () => {
+    expect(
+      lastMessageAnsweredHitl([
+        assistant([answered(), { type: 'step-start' }, { type: 'reasoning', text: 'thinking' }]),
+      ]),
+    ).toBe(true);
+    expect(lastMessageAnsweredHitl([assistant([answered(), { type: 'text', text: '   ' }])])).toBe(true);
+  });
 });
 
 describe('createHitlAutoContinueGuard', () => {
@@ -58,7 +120,14 @@ describe('createHitlAutoContinueGuard', () => {
   test('consumes one answered tool call exactly once', () => {
     const shouldContinue = createHitlAutoContinueGuard();
     const messages = [
-      assistant([{ type: 'tool-ask_user', toolCallId: 'question_1', state: 'output-available' }]),
+      assistant([
+        {
+          type: 'tool-ask_user',
+          toolCallId: 'question_1',
+          state: 'output-available',
+          output: { answers: [] },
+        },
+      ]),
     ];
     expect(answeredHitlToolCallId(messages)).toBe('question_1');
     expect(shouldContinue(messages)).toBe(true);
@@ -67,7 +136,11 @@ describe('createHitlAutoContinueGuard', () => {
 
   test('allows a later distinct answer and ignores malformed answers', () => {
     const shouldContinue = createHitlAutoContinueGuard();
-    expect(shouldContinue([assistant([{ type: 'tool-ask_user', state: 'output-available' }])])).toBe(false);
+    expect(
+      shouldContinue([
+        assistant([{ type: 'tool-ask_user', state: 'output-available', output: { answers: [] } }]),
+      ]),
+    ).toBe(false);
     expect(
       shouldContinue([
         assistant([
@@ -76,10 +149,31 @@ describe('createHitlAutoContinueGuard', () => {
             toolName: 'ask_approval',
             toolCallId: 'approval_2',
             state: 'output-available',
+            output: { decision: 'approved' },
           },
         ]),
       ]),
     ).toBe(true);
+  });
+
+  test('a fresh guard (page reload) still refuses a continued-past answer', () => {
+    // The in-memory dedupe set dies with the page. The structural check —
+    // content after the answered pause — is what stops a reload from
+    // re-submitting the turn and re-running its mutating tools.
+    const shouldContinue = createHitlAutoContinueGuard();
+    expect(
+      shouldContinue([
+        assistant([
+          {
+            type: 'tool-ask_user',
+            toolCallId: 'question_1',
+            state: 'output-available',
+            output: { answers: [] },
+          },
+          { type: 'text', text: 'Done — created the event.' },
+        ]),
+      ]),
+    ).toBe(false);
   });
 });
 

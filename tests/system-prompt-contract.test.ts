@@ -25,4 +25,10 @@ describe('agent system prompt contract', () => {
     expect(prompt).toContain('albatross_split_work');
     expect(prompt).toContain('commit only after the user confirms');
   });
+
+  test('the voice rules ban emoji and dramatization', () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain('Never use emoji');
+    expect(prompt).toContain('never dramatize');
+  });
 });
