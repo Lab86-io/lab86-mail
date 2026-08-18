@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import {
   conversationExcerpt,
   harvestTurnArtifacts,
@@ -183,8 +184,18 @@ interface HarnessOptions {
   answerResults?: Array<{ shouldAdvance: boolean }>;
 }
 
+// The generated api is a proxy; String(ref) throws. getFunctionName is the
+// supported way to read which Convex function a reference points at.
+function refName(ref: any): string {
+  try {
+    return getFunctionName(ref);
+  } catch {
+    return 'unknown';
+  }
+}
+
 function harness(options: HarnessOptions = {}) {
-  const mutations: Array<{ args: any }> = [];
+  const mutations: Array<{ name: string; args: any }> = [];
   const advances: any[] = [];
   let answerIndex = 0;
   const detail =
@@ -196,8 +207,8 @@ function harness(options: HarnessOptions = {}) {
       : options.detail;
   const restore = setWorkTurnReconcileDependenciesForTest({
     convexQuery: (async () => detail) as any,
-    convexMutation: (async (_ref: any, args: any) => {
-      mutations.push({ args });
+    convexMutation: (async (ref: any, args: any) => {
+      mutations.push({ name: refName(ref), args });
       if (args?.questionId) {
         const next = options.answerResults?.[answerIndex] ?? { shouldAdvance: true };
         answerIndex += 1;
@@ -245,10 +256,12 @@ describe('reconcileWorkTurn', () => {
         advanced: true,
       });
       const append = state.mutations.find((entry) => entry.args.artifacts);
+      expect(append?.name).toBe('albatrossWork:appendPlanApplicationArtifacts');
       expect(append?.args.artifacts).toEqual([
         { kind: 'calendarEvent', id: 'evt_1', title: 'Keuka Lake Trip', operationId: 'op_1' },
       ]);
       const proof = state.mutations.find((entry) => entry.args.sourceKind === 'calendar_event');
+      expect(proof?.name).toBe('albatrossWorkV2:attachProof');
       expect(proof?.args).toMatchObject({
         workId: 'w1',
         sourceId: 'evt_1',
@@ -257,7 +270,7 @@ describe('reconcileWorkTurn', () => {
       });
       expect(state.advances).toHaveLength(1);
       const reconcileMark = state.mutations.find((entry) => entry.args.evidenceAt === 111);
-      expect(reconcileMark).toBeDefined();
+      expect(reconcileMark?.name).toBe('albatrossWorkV2:completeEvidenceReconcile');
     } finally {
       state.restore();
     }
@@ -301,6 +314,7 @@ describe('reconcileWorkTurn', () => {
       });
       expect(outcome).toMatchObject({ status: 'ok', questionsAnswered: 1, advanced: true });
       const answered = state.mutations.find((entry) => entry.args.questionId);
+      expect(answered?.name).toBe('albatrossWorkV2:answerQuestion');
       expect(answered?.args).toMatchObject({ questionId: 'q_open', answer: 'A coffee table and a desk.' });
       expect(state.advances).toHaveLength(1);
     } finally {
