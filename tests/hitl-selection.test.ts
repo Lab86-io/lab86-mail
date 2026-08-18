@@ -89,6 +89,21 @@ describe('lastMessageAnsweredHitl (auto-continue predicate)', () => {
     ).toBe(false);
   });
 
+  test('a message with no meaningful parts never fires', () => {
+    expect(
+      lastMessageAnsweredHitl([assistant([{ type: 'step-start' }, { type: 'reasoning', text: 'thinking' }])]),
+    ).toBe(false);
+  });
+
+  test('a file or source attachment after the answer counts as continuation', () => {
+    expect(
+      lastMessageAnsweredHitl([assistant([answered(), { type: 'file', url: 'https://example.test/a.png' }])]),
+    ).toBe(false);
+    expect(
+      lastMessageAnsweredHitl([assistant([answered(), { type: 'source-url', url: 'https://example.test' }])]),
+    ).toBe(false);
+  });
+
   test('skips reasoning, step markers, and empty text after the answer', () => {
     expect(
       lastMessageAnsweredHitl([
