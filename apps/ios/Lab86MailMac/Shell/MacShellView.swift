@@ -66,13 +66,17 @@ struct MacShellView: View {
                 AssistantView()
                     .frame(minWidth: 520, minHeight: 560)
             case .activity:
+                // Grouped keeps AppKit's legacy columnar Form layout (clipped
+                // leading labels) out of every sheet-hosted settings surface.
                 ActivityView()
+                    .formStyle(.grouped)
                     .frame(minWidth: 520, minHeight: 560)
             case .compose:
                 ComposeView()
                     .frame(minWidth: 640, minHeight: 560)
             case .settings:
                 SettingsView()
+                    .formStyle(.grouped)
                     .frame(minWidth: 620, minHeight: 620)
             }
         }
