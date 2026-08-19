@@ -930,15 +930,8 @@
             "maxLength": 1000
           },
           "fromEmail": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 320
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 320
           },
           "to": {
             "type": "string",
@@ -966,15 +959,8 @@
             "maxLength": 500000
           },
           "bodyHTML": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 1000000
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 1000000
           },
           "labels": {
             "maxItems": 200,
@@ -1030,14 +1016,12 @@
           "accountID",
           "subject",
           "fromHeader",
-          "fromEmail",
           "to",
           "cc",
           "bcc",
           "sentAt",
           "snippet",
           "bodyText",
-          "bodyHTML",
           "labels",
           "unread",
           "starred",
@@ -1091,15 +1075,8 @@
                   "maxLength": 1000
                 },
                 "fromEmail": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "maxLength": 320
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "maxLength": 320
                 },
                 "to": {
                   "type": "string",
@@ -1127,15 +1104,8 @@
                   "maxLength": 500000
                 },
                 "bodyHTML": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "maxLength": 1000000
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "maxLength": 1000000
                 },
                 "labels": {
                   "maxItems": 200,
@@ -1191,14 +1161,12 @@
                 "accountID",
                 "subject",
                 "fromHeader",
-                "fromEmail",
                 "to",
                 "cc",
                 "bcc",
                 "sentAt",
                 "snippet",
                 "bodyText",
-                "bodyHTML",
                 "labels",
                 "unread",
                 "starred",
@@ -1208,23 +1176,15 @@
             }
           },
           "summary": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 20000
           }
         },
         "required": [
           "threadID",
           "accountID",
           "subject",
-          "messages",
-          "summary"
+          "messages"
         ],
         "additionalProperties": false
       },
@@ -1255,15 +1215,8 @@
                   "maxLength": 1000
                 },
                 "senderEmail": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "maxLength": 320
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "maxLength": 320
                 },
                 "snippet": {
                   "type": "string",
@@ -1303,7 +1256,6 @@
                 "accountID",
                 "subject",
                 "fromHeader",
-                "senderEmail",
                 "snippet",
                 "lastMessageAt",
                 "unread",
@@ -1355,15 +1307,8 @@
             "maxLength": 1000
           },
           "senderEmail": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 320
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 320
           },
           "snippet": {
             "type": "string",
@@ -1403,7 +1348,6 @@
           "accountID",
           "subject",
           "fromHeader",
-          "senderEmail",
           "snippet",
           "lastMessageAt",
           "unread",

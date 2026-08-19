@@ -97,7 +97,12 @@ final class AppEnvironment {
             )
         )
         convex = convexClient
-        store = ProductStore(tools: tools, backend: backend, convex: convexClient)
+        store = ProductStore(
+            tools: tools,
+            backend: backend,
+            convex: convexClient,
+            mailPages: mobileClient
+        )
         mailIdentity = MailIdentityStore(tools: tools)
         notifications = NotificationCoordinator(
             backend: backend,

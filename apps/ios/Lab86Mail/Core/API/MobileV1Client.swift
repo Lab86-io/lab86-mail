@@ -5,6 +5,23 @@ protocol MobileCommandSubmitting: Sendable {
     func submit(_ snapshot: PendingCommandSnapshot) async throws -> OutboxCommandReceipt
 }
 
+// One unified-inbox page from the typed v1 read path, already in the UI's
+// thread-summary shape.
+struct MailListPage: Sendable {
+    let items: [MailThreadSummary]
+    let nextCursor: String?
+    let hasMore: Bool
+}
+
+protocol MailPageFetching: Sendable {
+    func fetchMailThreads(
+        accountID: String?,
+        category: String?,
+        cursor: String?,
+        limit: Int
+    ) async throws -> MailListPage
+}
+
 enum MobileV1ClientError: LocalizedError, Sendable, Equatable {
     case server(status: Int, code: String, message: String, retryable: Bool)
     case undocumented(status: Int)
@@ -19,7 +36,8 @@ enum MobileV1ClientError: LocalizedError, Sendable, Equatable {
     }
 }
 
-actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSyncFetching {
+actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSyncFetching,
+    MailPageFetching {
     private let client: Client
 
     init(
@@ -105,6 +123,61 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
         case .undocumented(let status, _):
             throw MobileV1ClientError.undocumented(status: status)
         }
+    }
+
+    func fetchMailThreads(
+        accountID: String?,
+        category: String?,
+        cursor: String?,
+        limit: Int
+    ) async throws -> MailListPage {
+        let output = try await client.getMobileMailThreads(
+            .init(
+                query: .init(
+                    accountID: accountID,
+                    category: category,
+                    cursor: cursor,
+                    limit: min(max(limit, 1), 100)
+                )
+            )
+        )
+        switch output {
+        case .ok(let response):
+            return Self.mailListPage(from: try response.body.json)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    private static func mailListPage(from value: Components.Schemas.MailThreadPage) -> MailListPage {
+        MailListPage(
+            items: value.items.map { item in
+                MailThreadSummary(
+                    id: item.id,
+                    accountID: item.accountID,
+                    subject: item.subject,
+                    sender: item.fromHeader,
+                    snippet: item.snippet,
+                    date: Date(timeIntervalSince1970: Double(item.lastMessageAt) / 1_000),
+                    unread: item.unread,
+                    starred: item.starred,
+                    category: item.smartCategory,
+                    senderEmail: item.senderEmail
+                )
+            },
+            nextCursor: value.nextCursor,
+            hasMore: value.hasMore
+        )
     }
 
     private static func bootstrap(
@@ -452,6 +525,138 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     payload: .init(accountID: payload.accountID, messageID: payload.messageID)
                 )
             )
+        case .mailAddLabel(let payload):
+            .mail_addLabel(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_addLabel,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID,
+                        label: payload.label
+                    )
+                )
+            )
+        case .mailRemoveLabel(let payload):
+            .mail_removeLabel(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_removeLabel,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID,
+                        label: payload.label
+                    )
+                )
+            )
+        case .mailSnooze(let payload):
+            .mail_snooze(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_snooze,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID,
+                        untilAt: payload.untilAt
+                    )
+                )
+            )
+        case .mailUnsnooze(let payload):
+            .mail_unsnooze(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_unsnooze,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID
+                    )
+                )
+            )
+        case .mailMute(let payload):
+            .mail_mute(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_mute,
+                    payload: .init(accountID: payload.accountID, threadID: payload.threadID)
+                )
+            )
+        case .mailRestore(let payload):
+            .mail_restore(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_restore,
+                    payload: .init(accountID: payload.accountID, threadID: payload.threadID)
+                )
+            )
+        case .mailSend(let payload):
+            .mail_send(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_send,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        mode: sendMode(payload.mode),
+                        to: payload.to,
+                        cc: payload.cc,
+                        bcc: payload.bcc,
+                        subject: payload.subject,
+                        bodyText: payload.bodyText,
+                        bodyHTML: payload.bodyHTML,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID
+                    )
+                )
+            )
+        case .mailSaveDraft(let payload):
+            .mail_saveDraft(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_saveDraft,
+                    payload: .init(
+                        accountID: payload.accountID,
+                        draftID: payload.draftID,
+                        threadID: payload.threadID,
+                        inReplyToMessageID: payload.inReplyToMessageID,
+                        to: payload.to,
+                        cc: payload.cc,
+                        bcc: payload.bcc,
+                        subject: payload.subject,
+                        bodyText: payload.bodyText,
+                        bodyHTML: payload.bodyHTML,
+                        scheduledFor: payload.scheduledFor
+                    )
+                )
+            )
+        case .mailDeleteDraft(let payload):
+            .mail_deleteDraft(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .mail_deleteDraft,
+                    payload: .init(accountID: payload.accountID, draftID: payload.draftID)
+                )
+            )
         case .calendarCreate(let payload):
             .calendar_create(
                 .init(
@@ -538,6 +743,17 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     payload: .init(approvalID: payload.approvalID, reason: payload.reason)
                 )
             )
+        }
+    }
+
+    private static func sendMode(
+        _ mode: MailSendMode
+    ) -> Components.Schemas.MailSendCommand.PayloadPayload.ModePayload {
+        switch mode {
+        case .new: .new
+        case .reply: .reply
+        case .replyAll: .replyAll
+        case .forward: .forward
         }
     }
 

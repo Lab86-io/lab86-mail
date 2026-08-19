@@ -78,6 +78,22 @@ struct MailView: View {
                         MailDateline(label: group.label)
                     }
                 }
+                // Older pages stream in beneath the list as this row scrolls
+                // into view; the unified cursor comes from the typed v1 reads.
+                if environment.store.hasMoreMail, searchText.isEmpty {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Spacer()
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .onAppear {
+                        Task { await environment.store.loadMoreMail() }
+                    }
+                    .accessibilityLabel("Loading older mail")
+                }
             }
         }
         .listStyle(.plain)

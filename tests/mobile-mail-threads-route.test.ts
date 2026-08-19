@@ -59,7 +59,7 @@ describe('mailThreadSummaryFromCorpus', () => {
   test('defends against sparse rows instead of leaking undefined', () => {
     const mapped = mailThreadSummaryFromCorpus({ _id: 'thread-2', account: 'account-1' });
     expect(mapped.subject).toBe('(no subject)');
-    expect(mapped.senderEmail).toBeNull();
+    expect(mapped.senderEmail).toBeUndefined();
     expect(mapped.lastMessageAt).toBe(0);
     expect(mapped.labels).toEqual([]);
     expect(mapped.smartCategory).toBeUndefined();
