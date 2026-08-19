@@ -41,6 +41,15 @@ export function mobileOpenAPIV1() {
         'mail.markUnread': '#/components/schemas/MailMarkUnreadCommand',
         'mail.star': '#/components/schemas/MailStarCommand',
         'mail.unstar': '#/components/schemas/MailUnstarCommand',
+        'mail.addLabel': '#/components/schemas/MailAddLabelCommand',
+        'mail.removeLabel': '#/components/schemas/MailRemoveLabelCommand',
+        'mail.snooze': '#/components/schemas/MailSnoozeCommand',
+        'mail.unsnooze': '#/components/schemas/MailUnsnoozeCommand',
+        'mail.mute': '#/components/schemas/MailMuteCommand',
+        'mail.restore': '#/components/schemas/MailRestoreCommand',
+        'mail.send': '#/components/schemas/MailSendCommand',
+        'mail.saveDraft': '#/components/schemas/MailSaveDraftCommand',
+        'mail.deleteDraft': '#/components/schemas/MailDeleteDraftCommand',
         'calendar.create': '#/components/schemas/CalendarCreateCommand',
         'task.create': '#/components/schemas/TaskCreateCommand',
         'task.setCompleted': '#/components/schemas/TaskSetCompletedCommand',
@@ -59,6 +68,7 @@ export function mobileOpenAPIV1() {
       mapping: {
         thread: '#/components/schemas/MailThreadSyncChange',
         message: '#/components/schemas/MailMessageSyncChange',
+        draft: '#/components/schemas/MailDraftSyncChange',
         event: '#/components/schemas/CalendarEventSyncChange',
         task: '#/components/schemas/TaskSyncChange',
         work: '#/components/schemas/WorkSyncChange',
@@ -121,6 +131,42 @@ export function mobileOpenAPIV1() {
           ],
           responses: {
             '200': { description: 'One domain change page', content: jsonContent('SyncEnvelope') },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/mail/threads': {
+        get: {
+          operationId: 'getMobileMailThreads',
+          parameters: [
+            { name: 'accountID', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'category', in: 'query', required: false, schema: { type: 'string' } },
+            { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
+            {
+              name: 'limit',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1, maximum: 100 },
+            },
+          ],
+          responses: {
+            '200': { description: 'One page of thread summaries', content: jsonContent('MailThreadPage') },
+            ...errorResponses,
+          },
+        },
+      },
+      '/api/mobile/v1/mail/threads/{threadID}': {
+        get: {
+          operationId: 'getMobileMailThread',
+          parameters: [
+            { name: 'threadID', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'accountID', in: 'query', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description: 'A full thread with ordered messages',
+              content: jsonContent('MailThreadDetail'),
+            },
             ...errorResponses,
           },
         },
