@@ -93,7 +93,12 @@ struct MacChatOverlay: View {
             }
         }
         .frame(width: Self.panelSize.width, height: Self.panelSize.height)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // One opaque paper surface: a translucent header over the masthead art
+        // read as a glitch, not as chrome.
+        .background(
+            environment.theme.paperColor,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
