@@ -27,6 +27,13 @@ Calendar, Tasks, Work/Albatrosses, Assistant, Files, Activity, Settings — shar
   optional payload fields requires the installed TestFlight build to update in step. Sole-user
   product; documented here deliberately.
 
+## Progress
+
+- 2026-08-19: Phase 1 landed (typed paged mail reads, nine new commands, regenerated
+  OpenAPI, full Bun suite green). Phase 2 landed: the complete product compiles and links
+  for macOS 27 (`Lab86MailMac`), iOS still green; see `docs/mobile/macos-target.md` for
+  Mac specifics and the external setup list.
+
 ## Phase 1 — Contract and server alignment (web/iOS/macOS one spine)
 
 1. `convex/mailCorpus.ts`: additive `pageRecentCorpusThreads` query — `lastDate` before-cursor,

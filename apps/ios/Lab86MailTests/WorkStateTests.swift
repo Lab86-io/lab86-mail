@@ -55,7 +55,7 @@ struct WorkStateTests {
                 ]),
                 "remainingSteps": .number(1),
                 "totalSteps": .number(4),
-                "scheduledStartAt": .number(1_999_000),
+                "scheduledStartAt": .number(1_999_999_999_000),
                 "scheduledEndAt": .number(scheduledEndAt.timeIntervalSince1970 * 1_000),
             ]),
         ]))!
@@ -103,14 +103,14 @@ struct WorkStateTests {
     }
 
     @Test func aCalendarHoldStopsBlockingWorkWhenItEnds() {
-        let end = Date(timeIntervalSince1970: 2_000)
+        let end = Date(timeIntervalSince1970: 2_000_000_000)
         let work = item(scheduledEndAt: end)
         #expect(work.hasUpcomingBooking(at: end.addingTimeInterval(-1)))
         #expect(!work.hasUpcomingBooking(at: end))
     }
 
     @Test func workDetailRecoveryAppearsAsTheClockPassesTheDeadline() throws {
-        let now = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
         #expect(passedWorkExecutionMove(detail(scheduledEndAt: now.addingTimeInterval(1)), at: now) == nil)
 
         let passed = try #require(
@@ -118,7 +118,7 @@ struct WorkStateTests {
         )
         #expect(passed.workID == "work-1")
         #expect(passed.stepKey == "official-form")
-        #expect(passed.scheduledStartAt == Date(timeIntervalSince1970: 1_999))
+        #expect(passed.scheduledStartAt == Date(timeIntervalSince1970: 1_999_999_999))
 
         for state in ["done", "released", "archived"] {
             #expect(
@@ -251,7 +251,7 @@ struct WorkStateTests {
     }
 
     @Test func executionSnapshotKeepsCurrentMissedAndNeedsYouSeparate() throws {
-        let now = Date(timeIntervalSince1970: 2_000)
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
         let value = try JSONDecoder().decode(
             JSONValue.self,
             from: Data(
@@ -260,7 +260,7 @@ struct WorkStateTests {
                   "currentMove": {
                     "workId":"current", "workTitle":"Renew passport",
                     "stepKey":"book", "stepTitle":"Book the appointment",
-                    "phase":"active", "scheduledStartAt":2000000,
+                    "phase":"active", "scheduledStartAt":2000000000000,
                     "remainingSteps":2, "totalSteps":3, "areaName":"Personal"
                   },
                   "missedMoves": [{

@@ -122,7 +122,8 @@ struct BriefChromeTests {
         #expect(
             DailyBriefMasthead.editionTitle(
                 for: date,
-                timeZone: TimeZone(secondsFromGMT: 0)!
+                timeZone: TimeZone(secondsFromGMT: 0)!,
+                locale: Locale(identifier: "en_US")
             ) == "The Thursday Brief"
         )
     }

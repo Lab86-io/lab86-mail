@@ -3,7 +3,11 @@ import CoreLocation
 import Foundation
 import MobileAPI
 import Testing
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import UniformTypeIdentifiers
 @testable import Lab86Mail
 
@@ -12,7 +16,11 @@ struct Lab86MailTests {
     private final class StubLocationManager: CaptureLocationManaging {
         var delegate: (any CLLocationManagerDelegate)?
         var desiredAccuracy: CLLocationAccuracy = kCLLocationAccuracyHundredMeters
+        #if os(macOS)
+        var authorizationStatus: CLAuthorizationStatus = .authorized
+        #else
         var authorizationStatus: CLAuthorizationStatus = .authorizedWhenInUse
+        #endif
         private(set) var authorizationRequestCount = 0
         private(set) var locationRequestCount = 0
 
@@ -65,6 +73,7 @@ struct Lab86MailTests {
 
     @Test
     func adaptiveThemeColorResolvesOnSwiftUIBackgroundRenderer() async {
+        #if canImport(UIKit)
         let lightAndDarkDiffer = await Task.detached {
             let dynamicColor = ThemeStore.adaptiveUIColor(hue: 156, chroma: 0.09)
             let lightColor = dynamicColor.resolvedColor(
@@ -75,6 +84,19 @@ struct Lab86MailTests {
             )
             return !lightColor.isEqual(darkColor)
         }.value
+        #else
+        // AppKit resolves dynamic providers per drawing appearance.
+        let dynamicColor = ThemeStore.adaptiveUIColor(hue: 156, chroma: 0.09)
+        var lightColor = NSColor.clear
+        var darkColor = NSColor.clear
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            lightColor = dynamicColor.usingColorSpace(.sRGB) ?? dynamicColor
+        }
+        NSAppearance(named: .darkAqua)?.performAsCurrentDrawingAppearance {
+            darkColor = dynamicColor.usingColorSpace(.sRGB) ?? dynamicColor
+        }
+        let lightAndDarkDiffer = !lightColor.isEqual(darkColor)
+        #endif
 
         #expect(lightAndDarkDiffer)
     }
@@ -982,7 +1004,7 @@ struct Lab86MailTests {
              "plan":{"_id":"p1","status":"ready","outcome":"A review ready to send","summary":"Evidence assembled.","artifactHtml":"<main><h1>Review</h1></main>","artifactTitle":"Launch brief","assumptions":["Dates are current"],"sourceRefs":[{"kind":"mailThread","id":"t1","label":"Launch thread"}],"digitalActions":[{"key":"draft","kind":"mail_draft","title":"Draft response"}],"physicalActions":[],"appliedSteps":[{"stepKey":"draft","kind":"mail_draft"}]},
              "project":{"_id":"project-1","title":"Launch","status":"active"},
              "questions":[],"application":{"_id":"application-1","status":"applied","operationIds":["operation-1"]},
-             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1,"scheduledStartAt":2000000,"scheduledEndAt":3800000}}
+             "execution":{"currentStep":{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false},"guideSteps":[{"key":"draft","kind":"mail_draft","title":"Draft response","detail":"Use the launch evidence.","url":"https://example.test/review","done":false}],"remainingSteps":1,"totalSteps":1,"scheduledStartAt":2000000000000,"scheduledEndAt":3800000000000}}
             """#.utf8)
         )
         let detail = try #require(WorkDetail(json: value))
@@ -997,8 +1019,10 @@ struct Lab86MailTests {
         #expect(detail.execution.currentStep?.id == "draft")
         #expect(detail.execution.currentStep?.url == "https://example.test/review")
         #expect(detail.execution.remainingSteps == 1)
-        #expect(detail.execution.scheduledStartAt == Date(timeIntervalSince1970: 2_000))
-        #expect(detail.execution.scheduledEndAt == Date(timeIntervalSince1970: 3_800))
+        // Epoch fixtures stay realistic (post-2001) so the shared parser's
+        // seconds/milliseconds heuristic reads them as the server sends them.
+        #expect(detail.execution.scheduledStartAt == Date(timeIntervalSince1970: 2_000_000_000))
+        #expect(detail.execution.scheduledEndAt == Date(timeIntervalSince1970: 3_800_000_000))
     }
 
     @Test @MainActor

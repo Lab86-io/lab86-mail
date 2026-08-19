@@ -21,11 +21,18 @@ struct DailyBriefMasthead: View {
         return min(360, max(220, width * 0.62))
     }
 
-    static func editionTitle(for date: Date, timeZone: TimeZone = .current) -> String {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let weekdayIndex = max(1, min(7, calendar.component(.weekday, from: date))) - 1
-        return "The \(calendar.weekdaySymbols[weekdayIndex]) Brief"
+    static func editionTitle(
+        for date: Date,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
+        // The 27 SDKs abbreviate Calendar.weekdaySymbols ("Thu"); the explicit
+        // EEEE pattern is the stable way to ask for the full weekday name.
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "EEEE"
+        return "The \(formatter.string(from: date)) Brief"
     }
 
     private var sources: [URL] { art?.orderedURLs ?? [] }
