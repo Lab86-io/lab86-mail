@@ -4,7 +4,11 @@ import SwiftUI
 
 @main
 struct Lab86MailApp: App {
+    #if os(iOS)
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    #else
+    @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
+    #endif
     @State private var environment: AppEnvironment
     private let configuration: AppConfiguration
 

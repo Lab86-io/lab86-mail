@@ -128,6 +128,13 @@ struct SharedBrowserSheet: View {
 /// A minimal wrapper: the live view URL is a self-contained remote-browser
 /// client, so the web view needs no navigation chrome of its own.
 private struct LiveViewWebView: UIViewRepresentable {
+    #if os(macOS)
+    // Associated-type inference does not cross the shim protocol when there is
+    // no makeCoordinator; spell the witnesses out.
+    typealias UIViewType = WKWebView
+    typealias NSViewType = WKWebView
+    typealias Coordinator = Void
+    #endif
     let urlString: String
 
     private var secureURL: URL? {
@@ -137,9 +144,13 @@ private struct LiveViewWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
+        #endif
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        #if os(iOS)
         webView.isOpaque = false
+        #endif
         if let url = secureURL {
             webView.load(URLRequest(url: url))
         }

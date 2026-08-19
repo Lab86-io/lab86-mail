@@ -1,3 +1,4 @@
+#if os(iOS)
 import CoreHaptics
 import UIKit
 
@@ -169,3 +170,4 @@ final class SidebarWheelHaptics {
         fallback = generator
     }
 }
+#endif

@@ -1,6 +1,5 @@
 import SwiftUI
 import QuickLook
-import UIKit
 import UniformTypeIdentifiers
 
 struct FilesView: View {
@@ -95,12 +94,18 @@ struct FilesView: View {
         } message: {
             Text("Connected drives stay private to your account. Albatross requests write access so you can publish and sync edits.")
         }
+        #if os(iOS)
         .sheet(isPresented: $showsFileImporter) {
             OpenInPlaceDocumentPicker { urls in
                 showsFileImporter = false
                 openLocalFile(urls.first)
             }
         }
+        #else
+        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item]) { result in
+            openLocalFile(try? result.get())
+        }
+        #endif
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { oldValue, newValue in
             if oldValue != newValue,
@@ -544,6 +549,7 @@ private struct CloudFolderRoute: Hashable {
     let name: String
 }
 
+#if os(iOS)
 private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
     let onPick: ([URL]) -> Void
 
@@ -587,6 +593,7 @@ private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
         deinit {}
     }
 }
+#endif
 
 private enum CloudBrowseOutcome: Sendable {
     case success(Int, [CloudFileItem])

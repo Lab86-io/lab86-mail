@@ -1,3 +1,4 @@
+#if os(iOS)
 import BackgroundTasks
 import Foundation
 import UIKit
@@ -49,3 +50,4 @@ final class BackgroundRefreshCoordinator {
         task.setTaskCompleted(success: success && !operation.isCancelled)
     }
 }
+#endif

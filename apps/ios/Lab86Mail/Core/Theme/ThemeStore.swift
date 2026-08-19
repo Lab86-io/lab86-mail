@@ -1,6 +1,12 @@
 import Observation
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+typealias PlatformNativeColor = UIColor
+#else
+import AppKit
+typealias PlatformNativeColor = NSColor
+#endif
 
 // Native mirror of the desktop ThemePanel: the same OKLCH dual-accent seeds and
 // curated palette pairs, derived with the same lightness rules as globals.css
@@ -152,12 +158,33 @@ final class ThemeStore {
     // necessarily the main actor. Keep the provider and its pure color math
     // explicitly nonisolated so strict-concurrency executor checks do not trap
     // while a view is being rendered.
-    nonisolated static func adaptiveUIColor(hue: Double, chroma: Double) -> UIColor {
-        UIColor { traits in
-            traits.userInterfaceStyle == .dark
+    nonisolated static func adaptiveUIColor(hue: Double, chroma: Double) -> PlatformNativeColor {
+        adaptiveNativeColor { isDark in
+            isDark
                 ? oklch(l: 0.73, c: chroma * 0.78, h: hue)
                 : oklch(l: 0.45, c: chroma, h: hue)
         }
+    }
+
+    // One appearance-dynamic color for both platforms: UIKit resolves through
+    // trait collections, AppKit through the appearance's best match. Every
+    // adaptive surface in the product funnels through here.
+    nonisolated static func adaptiveNativeColor(
+        _ resolve: @Sendable @escaping (_ isDark: Bool) -> PlatformNativeColor
+    ) -> PlatformNativeColor {
+        #if canImport(UIKit)
+        UIColor { traits in resolve(traits.userInterfaceStyle == .dark) }
+        #else
+        NSColor(name: nil) { appearance in
+            resolve(appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        }
+        #endif
+    }
+
+    nonisolated static func dynamicColor(
+        _ resolve: @Sendable @escaping (_ isDark: Bool) -> PlatformNativeColor
+    ) -> Color {
+        Color(adaptiveNativeColor(resolve))
     }
 
     private func persist() {
@@ -222,7 +249,13 @@ final class ThemeStore {
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
+        #if canImport(UIKit)
         color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        #else
+        // AppKit traps on component reads outside an RGB space; the OKLCH
+        // conversion above always produces sRGB, so this is a formality.
+        (color.usingColorSpace(.sRGB) ?? color).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        #endif
         return String(
             format: "#%02x%02x%02x",
             Int(round(red * 255)),
@@ -233,7 +266,7 @@ final class ThemeStore {
 
     // MARK: - OKLCH → sRGB
 
-    nonisolated static func oklch(l: Double, c: Double, h: Double) -> UIColor {
+    nonisolated static func oklch(l: Double, c: Double, h: Double) -> PlatformNativeColor {
         let hRad = h * .pi / 180
         let labA = c * cos(hRad)
         let labB = c * sin(hRad)
@@ -255,6 +288,6 @@ final class ThemeStore {
             return CGFloat(clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * pow(clamped, 1 / 2.4) - 0.055)
         }
 
-        return UIColor(red: gamma(r), green: gamma(g), blue: gamma(b), alpha: 1)
+        return PlatformNativeColor(red: gamma(r), green: gamma(g), blue: gamma(b), alpha: 1)
     }
 }

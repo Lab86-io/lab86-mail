@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Testing
 @testable import Lab86Mail
@@ -498,3 +499,4 @@ struct SidebarWheelPlacementTests {
         ) == 0)
     }
 }
+#endif

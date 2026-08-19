@@ -65,7 +65,11 @@ struct RootView: View {
         case .ready(let ownerID):
             if ownerID == sessionSnapshot.userID {
                 if onboardingCompletedOwners.contains(ownerID) || onboardingDismissals.contains(ownerID: ownerID) {
+                    #if os(macOS)
+                    MacShellView()
+                    #else
                     AppShellView()
+                    #endif
                 } else {
                     MailboxOnboardingView(ownerID: ownerID) {
                         onboardingDismissals.insert(ownerID: ownerID)

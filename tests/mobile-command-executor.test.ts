@@ -256,7 +256,7 @@ describe('expanded mail commands', () => {
     expect(calls).toEqual([
       { name: 'unsnooze_thread', args: { account: 'account-1', messageId: 'message-4' } },
     ]);
-    expect(result.syncPayload).toEqual({ accountID: 'account-1', snoozedUntil: null });
+    expect(result.syncPayload).toEqual({ accountID: 'account-1', snoozeCleared: true });
   });
 
   test('mute and restore route through their thread tools', async () => {

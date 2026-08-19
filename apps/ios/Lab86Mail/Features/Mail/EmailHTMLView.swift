@@ -50,6 +50,7 @@ private struct EmailWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        #if os(iOS)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
@@ -60,6 +61,11 @@ private struct EmailWebView: UIViewRepresentable {
         // the content, so height is tracked by observing the scroll view rather
         // than measured once. The observation is torn down in `dismantleUIView`.
         context.coordinator.observeContentSize(of: webView)
+        #else
+        // AppKit WKWebView exposes no scroll view; the KVC switch is the
+        // supported way to keep the page transparent over the app surface.
+        webView.setValue(false, forKey: "drawsBackground")
+        #endif
         context.coordinator.load(document, in: webView)
         return webView
     }
@@ -96,6 +102,7 @@ private struct EmailWebView: UIViewRepresentable {
         // observation is retained here and invalidated on teardown, so there is
         // no repeated registration, timer, or observer leak. `[weak self]` avoids
         // a Coordinator -> observation -> Coordinator retain cycle.
+        #if os(iOS)
         func observeContentSize(of webView: WKWebView) {
             heightObservation?.invalidate()
             heightObservation = webView.scrollView.observe(
@@ -107,6 +114,7 @@ private struct EmailWebView: UIViewRepresentable {
                 }
             }
         }
+        #endif
 
         func tearDown() {
             heightObservation?.invalidate()
@@ -114,8 +122,28 @@ private struct EmailWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+            #if os(iOS)
             applyHeight(from: webView.scrollView)
+            #else
+            measureHeight(of: webView)
+            #endif
         }
+
+        #if os(macOS)
+        // No scroll view to observe on AppKit; measure the document itself.
+        // Content JavaScript is disabled, but app-initiated evaluation is not.
+        private func measureHeight(of webView: WKWebView) {
+            webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] value, _ in
+                MainActor.assumeIsolated {
+                    guard let self, let measured = value as? Double, measured > 0 else { return }
+                    let resolved = EmailBodyHeight.resolve(forMeasured: ceil(measured))
+                    if abs(self.parent.contentHeight - resolved.height) > 1 {
+                        self.parent.contentHeight = resolved.height
+                    }
+                }
+            }
+        }
+        #endif
 
         func webView(
             _ webView: WKWebView,
@@ -132,6 +160,7 @@ private struct EmailWebView: UIViewRepresentable {
             return .cancel
         }
 
+        #if os(iOS)
         private func applyHeight(from scrollView: UIScrollView) {
             let measured = ceil(scrollView.contentSize.height)
             let resolved = EmailBodyHeight.resolve(forMeasured: measured)
@@ -142,6 +171,7 @@ private struct EmailWebView: UIViewRepresentable {
                 parent.contentHeight = resolved.height
             }
         }
+        #endif
     }
 }
 

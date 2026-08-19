@@ -760,6 +760,7 @@ struct BriefArtifactWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        #if os(iOS)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         // The outer SwiftUI ScrollView owns scrolling; the artifact sizes to content.
@@ -767,6 +768,9 @@ struct BriefArtifactWebView: UIViewRepresentable {
         webView.scrollView.bounces = false
         webView.scrollView.showsVerticalScrollIndicator = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        #else
+        webView.setValue(false, forKey: "drawsBackground")
+        #endif
         context.coordinator.load(html, in: webView)
         return webView
     }

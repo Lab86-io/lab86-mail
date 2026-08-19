@@ -153,7 +153,7 @@ struct ThreadView: View {
                 .accessibilityLabel("\(pageTitle). \(metaLine(detail))")
                 .contextMenu {
                     Button("Copy Subject", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = pageTitle
+                        PlatformPasteboard.copy(pageTitle)
                     }
                 }
             if let modelSummary {

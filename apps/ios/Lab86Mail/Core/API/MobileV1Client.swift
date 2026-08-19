@@ -201,7 +201,10 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     accountID: change.payload.accountID,
                     archived: change.payload.archived,
                     trashed: change.payload.trashed,
-                    unread: change.payload.unread
+                    unread: change.payload.unread,
+                    snoozedUntil: change.payload.snoozedUntil,
+                    snoozeCleared: change.payload.snoozeCleared,
+                    muted: change.payload.muted
                 )
             )
         case .message(let change):
@@ -211,7 +214,19 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     revision: change.revision,
                     accountID: change.payload.accountID,
                     unread: change.payload.unread,
-                    starred: change.payload.starred
+                    starred: change.payload.starred,
+                    labelsAdded: change.payload.labelsAdded,
+                    labelsRemoved: change.payload.labelsRemoved
+                )
+            )
+        case .draft(let change):
+            return .mailDraft(
+                MailDraftSyncPatch(
+                    entityID: change.entityID,
+                    revision: change.revision,
+                    accountID: change.payload.accountID,
+                    draftID: change.payload.draftID,
+                    deleted: change.payload.deleted ?? false
                 )
             )
         case .event(let change):

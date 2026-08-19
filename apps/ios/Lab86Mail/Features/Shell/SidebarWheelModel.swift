@@ -1,5 +1,5 @@
+#if os(iOS)
 import SwiftUI
-import UIKit
 
 enum SidebarWheelSpace {
     static let name = "sidebarWheel"
@@ -351,3 +351,4 @@ extension View {
         modifier(SidebarPageEffect(engagement: engagement, focusY: focusY))
     }
 }
+#endif

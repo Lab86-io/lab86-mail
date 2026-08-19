@@ -2068,16 +2068,13 @@
                 "type": "boolean"
               },
               "snoozedUntil": {
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "snoozeCleared": {
+                "type": "boolean",
+                "const": true
               },
               "muted": {
                 "type": "boolean"

@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // MARK: - Detent tagging
@@ -209,3 +210,4 @@ struct SidebarWheelLayout: Layout {
         ) * CGFloat(engagement)
     }
 }
+#endif

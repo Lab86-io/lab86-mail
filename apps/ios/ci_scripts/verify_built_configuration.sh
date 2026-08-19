@@ -1,6 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
+# Local Debug iteration intentionally embeds staging/dev configuration; the
+# release gate below exists for archives and for any build carrying an Xcode
+# Cloud source identity. A CI build never enters this branch: Xcode Cloud
+# always provides its source refs, which are validated exactly below.
+if [[ -z "${CI_GIT_REF:-}${CI_BRANCH:-}${CI_TAG:-}${CI_COMMIT:-}" \
+  && "${CONFIGURATION:-}" == "Debug" ]]; then
+  echo "Skipping release configuration verification for a local Debug build."
+  exit 0
+fi
+
 info_plist="${TARGET_BUILD_DIR:-}/${INFOPLIST_PATH:-}"
 if [[ ! -f "$info_plist" ]]; then
   echo "Processed application Info.plist is unavailable for release verification." >&2

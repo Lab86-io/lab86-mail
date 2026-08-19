@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 // A phone-native calendar in the shape of the best mobile references
 // (Outlook/Cron/Google Calendar): a paged week strip up top, a swipeable
@@ -253,7 +252,17 @@ struct CalendarView: View {
 
     // MARK: - Month mode
 
-    private var monthBody: some View {
+    @ViewBuilder private var monthBody: some View {
+        #if canImport(HorizonCalendar)
+        horizonMonthBody
+        #else
+        // The Mac month grid is still to come; agenda keeps the mode usable.
+        agendaBody
+        #endif
+    }
+
+    #if canImport(HorizonCalendar)
+    private var horizonMonthBody: some View {
         HorizonMonthView(
             events: store.events,
             tasks: store.dueCalendarTasks,
@@ -267,6 +276,7 @@ struct CalendarView: View {
         )
         .background(Color(uiColor: .systemBackground))
     }
+    #endif
 
     // MARK: - Year mode
 
@@ -644,10 +654,9 @@ private struct DayTimelineView: View {
                                     event.end.addingTimeInterval(TimeInterval(minutes * 60))
                                 )
                                 onReschedule(event, event.start, end)
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                UIAccessibility.post(
-                                    notification: .announcement,
-                                    argument: "Ends at \(end.formatted(date: .omitted, time: .shortened))"
+                                PlatformHaptics.lightImpact()
+                                PlatformAccessibility.announce(
+                                    "Ends at \(end.formatted(date: .omitted, time: .shortened))"
                                 )
                             },
                         isEnabled: horizontalSizeClass == .regular
@@ -665,10 +674,9 @@ private struct DayTimelineView: View {
                     let start = event.start.addingTimeInterval(TimeInterval(minutes * 60))
                     let end = event.end.addingTimeInterval(TimeInterval(minutes * 60))
                     onReschedule(event, start, end)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    UIAccessibility.post(
-                        notification: .announcement,
-                        argument: "Moved to \(start.formatted(date: .omitted, time: .shortened))"
+                    PlatformHaptics.lightImpact()
+                    PlatformAccessibility.announce(
+                        "Moved to \(start.formatted(date: .omitted, time: .shortened))"
                     )
                 },
             isEnabled: horizontalSizeClass == .regular

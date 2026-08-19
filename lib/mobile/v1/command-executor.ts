@@ -194,7 +194,7 @@ export async function executeMobileCommand(
         syncDomain: 'mail',
         entityKind: 'thread',
         entityID: command.payload.threadID,
-        syncPayload: { accountID: command.payload.accountID, snoozedUntil: null },
+        syncPayload: { accountID: command.payload.accountID, snoozeCleared: true },
       };
     }
     case 'mail.mute': {

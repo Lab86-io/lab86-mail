@@ -115,8 +115,11 @@ export const MailThreadSyncChangeSchema = z
         archived: z.boolean().optional(),
         trashed: z.boolean().optional(),
         unread: z.boolean().optional(),
-        // Epoch ms when a snoozed thread resurfaces; null clears the snooze.
-        snoozedUntil: z.number().int().nonnegative().nullable().optional(),
+        // Epoch ms when a snoozed thread resurfaces. Clearing is a separate
+        // literal flag (not null) so generated clients that fold JSON null
+        // into absence keep the tri-state.
+        snoozedUntil: z.number().int().nonnegative().optional(),
+        snoozeCleared: z.literal(true).optional(),
         muted: z.boolean().optional(),
       })
       .strict(),
