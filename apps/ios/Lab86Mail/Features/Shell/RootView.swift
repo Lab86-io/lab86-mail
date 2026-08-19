@@ -113,6 +113,9 @@ struct RootView: View {
             } actions: {
                 Button("Sign in") { showsAuthentication = true }
                     .buttonStyle(.borderedProminent)
+                    // ContentUnavailableView actions dropped the inherited
+                    // scene tint on iOS; state the product accent explicitly.
+                    .tint(environment.theme.accentColor)
             }
             .navigationTitle("Albatross")
         }

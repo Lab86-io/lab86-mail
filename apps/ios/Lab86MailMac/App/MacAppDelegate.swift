@@ -11,6 +11,22 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrency UNU
         UNUserNotificationCenter.current().delegate = self
         NotificationCoordinator.configureCategories()
         NSApplication.shared.registerForRemoteNotifications()
+        // SwiftUI's scene windows were coming up without fullScreenPrimary, so
+        // the green button zoomed instead of entering full screen. Every
+        // titled window that becomes key gets the behavior restored.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowBecameKey(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+    }
+
+    // NSWindow notifications post on the main thread.
+    @MainActor @objc private func windowBecameKey(_ note: Notification) {
+        guard let window = note.object as? NSWindow,
+              window.styleMask.contains(.titled) else { return }
+        window.collectionBehavior.insert(.fullScreenPrimary)
     }
 
     // Closing the last window must not kill the product loop: pushes, the

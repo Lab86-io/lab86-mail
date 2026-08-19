@@ -79,22 +79,39 @@ HTML thread rendering (JS-free height measurement), calendar timeline, tasks boa
 files with drive connections, compose with account picker, Apple Intelligence availability,
 sync ("Last sync N minutes ago"), keyboard shortcuts, session persistence across relaunch.
 
-Open findings, ordered by priority:
-1. Mail list rows print the raw `Name <address>` header; web shows the display name only.
-   Desktop width makes this ugly (long private-relay addresses). Show the parsed display name.
-2. Calendar paged TabViews leave phantom horizontal scroller artifacts on macOS (the .page
-   style shim falls back to a default TabView). Replace the week strip/day pager with a
-   Mac-appropriate control; agenda mode also anchors at the list top (July) instead of today.
-3. Empty capsule renders in the Today toolbar's principal slot (likely the nav-title
-   crossfade placeholder).
-4. Sender identity avatars show initials only on the Mac (web shows brand photos) — verify
-   MailIdentityStore photo loading on macOS.
-5. Native category pills lack the web's custom smart labels (web shows Noise, Dev/Ops).
-6. Activity sheet: stray floating glyph at the check-in editor's leading edge; rough padding.
-7. Compose From row is cramped (avatar/label/picker collide); Mail rows are iOS-scale —
-   desktop wants denser rows and eventually a list+reading-pane split.
-8. Email bodies render left-anchored in the wide detail view; consider a centered column.
-9. Signed-out iOS shows a default blue accent where the Mac shows the theme green — check
-   accent tint application on a fresh iOS install.
-10. Files location pills show two indistinguishable "Google Drive" chips — add the account
-    email when a provider repeats.
+Findings resolved 2026-08-19 (same day, second pass):
+1. ✅ Mail rows now print the parsed display name (`senderDisplayName`); raw headers stay in
+   the thread detail. Applies to iOS too.
+2. ✅ Calendar on macOS no longer uses paged TabViews (the phantom-scroller source): the week
+   strip pages with chevrons, day/week render the selection directly, and agenda anchors to
+   today on every platform.
+3. ✅ The Today toolbar's empty principal capsule is gone (item mounts only when the inline
+   dateline is showing).
+4. ✅ Sender avatars were broken on iOS **and** macOS: the server answers company logos with
+   site-relative `/api/logos/<domain>` paths, which the client rejected (`scheme != nil`) and
+   cached as permanent misses. `MailIdentityStore` now resolves relative paths against the
+   backend origin.
+5. Deliberately unchanged: Noise/Dev-Ops pills exist on web but native intentionally folds
+   noise into All Mail (`MailCategoryScope` design note) — not a defect.
+6. Activity sheet stray glyph: still to verify visually after the grouped-form change.
+7. ✅ Compose From row: AppKit's menu indicator/border doubled the custom chrome — hidden.
+8. ✅ Email bodies cap at an 840pt centred reader column on macOS.
+9. ✅ Signed-out Sign-in button now states the theme accent explicitly (iOS showed default blue).
+10. ✅ Repeated drive providers now label chips with the account email.
+
+New in the same pass:
+- Chat on the Mac is a bottom-right bubble that opens a compact floating panel (360×480);
+  the panel's header drags and magnetizes to any window corner, and can tear out into its
+  own "Albatross Chat" window. ⌘K toggles it. The chat composer also collapsed to a pill on
+  macOS (AppKit text fields hug content) — fixed with a plain style + flexible width.
+- The sidebar gained the web rail's create (+) menu.
+- Full screen works: SwiftUI scene windows were missing `fullScreenPrimary`; the Mac delegate
+  restores it as windows become key.
+
+**Local Debug signing (important):** sign Debug builds with the real "Apple Development"
+certificate (automatic signing; pass `CODE_SIGN_ENTITLEMENTS=` until Mac provisioning
+exists). Ad-hoc (`CODE_SIGN_IDENTITY=-`) re-signs every build with a new identity, and once
+a Clerk session exists in the keychain the next build **hangs at launch** inside
+`SecItemCopyMatching` on an invisible keychain-ACL prompt. If a build ever hangs at launch,
+delete the stale items: `security delete-generic-password -s io.lab86.mail` (repeat until
+exhausted) and sign in again.

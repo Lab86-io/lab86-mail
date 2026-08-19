@@ -37,6 +37,13 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
     // written before this field existed still decode.
     let senderEmail: String?
 
+    // What a list row prints: the display name from a `Name <addr>` header.
+    // Desktop widths expose the full header's address noise; the web rows
+    // already show the name alone.
+    var senderDisplayName: String {
+        EmailTextNormalizer.displayName(from: sender) ?? sender
+    }
+
     init(
         id: String,
         accountID: String,

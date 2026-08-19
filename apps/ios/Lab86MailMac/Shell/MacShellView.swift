@@ -15,6 +15,14 @@ struct MacShellView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             MacSourceList()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+                .toolbar {
+                    // The web rail's create button, in the sidebar's chrome.
+                    ToolbarItem(placement: .automatic) {
+                        GlobalCreateMenu {
+                            Label("Create", systemImage: "plus")
+                        }
+                    }
+                }
         } detail: {
             NavigationStack {
                 RootDestinationView()
@@ -25,6 +33,9 @@ struct MacShellView: View {
             ShellStatusOverlay()
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
+        }
+        .overlay {
+            MacChatOverlay()
         }
         .task {
             let ownerID = environment.sessionStore.ownerID

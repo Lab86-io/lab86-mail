@@ -38,6 +38,16 @@ struct Lab86MailApp: App {
         .commands {
             AlbatrossCommands(environment: environment)
         }
+        #if os(macOS)
+        // The torn-out chat panel. Shares the live conversation model with the
+        // in-window panel; opened from the panel's pop-out control.
+        Window("Albatross Chat", id: MacChatWindowScene.identifier) {
+            MacChatWindowRoot()
+                .tint(environment.theme.accentColor)
+                .environment(environment)
+        }
+        .defaultSize(width: 440, height: 620)
+        #endif
     }
 
     private var configuredRoot: some View {

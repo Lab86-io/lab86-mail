@@ -108,6 +108,22 @@ struct CalendarView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }
+            #if os(macOS)
+            // The Mac has no swipe pager (and the TabView fallback painted
+            // phantom scrollers); the strip's arrows and cells drive the day.
+            DayTimelineView(
+                day: selectedDay,
+                events: timedEvents(on: selectedDay),
+                allDayEvents: allDayEvents(on: selectedDay),
+                tasks: dueTasks(on: selectedDay),
+                onOpen: { environment.navigation.openEvent($0) },
+                onOpenTask: { openTask = $0 },
+                onReschedule: { event, start, end in
+                    Task { await store.rescheduleEvent(event, start: start, end: end) }
+                }
+            )
+            .id(selectedDay)
+            #else
             TabView(selection: dayBinding) {
                 ForEach(dayRange, id: \.self) { day in
                     DayTimelineView(
@@ -126,11 +142,40 @@ struct CalendarView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea(edges: .bottom)
+            #endif
         }
         .background(Color(uiColor: .systemBackground))
         .refreshableIfAvailable { await store.refreshCalendar(sync: true) }
     }
 
+    #if os(macOS)
+    private var weekStrip: some View {
+        HStack(spacing: 2) {
+            weekStepButton(direction: -1, symbol: "chevron.left", label: "Previous week")
+            ForEach(0..<7, id: \.self) { offset in
+                let day = calendar.date(byAdding: .day, value: offset, to: weekPage) ?? weekPage
+                dayCell(day)
+            }
+            weekStepButton(direction: 1, symbol: "chevron.right", label: "Next week")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 74)
+    }
+
+    private func weekStepButton(direction: Int, symbol: String, label: String) -> some View {
+        Button {
+            weekPage = calendar.date(byAdding: .day, value: direction * 7, to: weekPage) ?? weekPage
+        } label: {
+            Image(systemName: symbol)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+    #else
     private var weekStrip: some View {
         TabView(selection: weekBinding) {
             ForEach(weekRange, id: \.self) { weekStart in
@@ -147,6 +192,7 @@ struct CalendarView: View {
         .tabViewStyle(.page(indexDisplayMode: .never))
         .frame(height: 74)
     }
+    #endif
 
     private func dayCell(_ day: Date) -> some View {
         let isSelected = calendar.isDate(day, inSameDayAs: selectedDay)
@@ -223,6 +269,34 @@ struct CalendarView: View {
 
     // MARK: - Week mode
 
+    #if os(macOS)
+    private var weekBody: some View {
+        VStack(spacing: 0) {
+            HStack {
+                weekStepButton(direction: -1, symbol: "chevron.left", label: "Previous week")
+                Spacer()
+                weekStepButton(direction: 1, symbol: "chevron.right", label: "Next week")
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            WeekTimelineView(
+                weekStart: weekPage,
+                events: store.events,
+                tasks: store.dueCalendarTasks,
+                selectedDay: selectedDay,
+                onOpen: { environment.navigation.openEvent($0) },
+                onOpenTask: { openTask = $0 },
+                onSelectDay: { day in select(day: day) },
+                onOpenDay: { day in
+                    select(day: day)
+                    viewMode = "day"
+                }
+            )
+            .id(weekPage)
+        }
+        .background(Color(uiColor: .systemBackground))
+    }
+    #else
     private var weekBody: some View {
         TabView(selection: weekBinding) {
             ForEach(weekRange, id: \.self) { weekStart in
@@ -249,6 +323,7 @@ struct CalendarView: View {
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color(uiColor: .systemBackground))
     }
+    #endif
 
     // MARK: - Month mode
 
@@ -299,10 +374,30 @@ struct CalendarView: View {
 
     // MARK: - Agenda mode
 
+    // The loaded window includes weeks of history; the agenda opens on today,
+    // not on the oldest loaded day.
+    private var agendaAnchorDay: Date? {
+        let today = calendar.startOfDay(for: .now)
+        let days = groupedDates.map(\.0)
+        return days.first(where: { $0 >= today }) ?? days.last
+    }
+
     @ViewBuilder private var agendaBody: some View {
         if store.events.isEmpty, store.dueCalendarTasks.isEmpty {
             emptyOrErrorState
         } else {
+            ScrollViewReader { proxy in
+                agendaList
+                    .onAppear {
+                        if let anchor = agendaAnchorDay {
+                            proxy.scrollTo(anchor, anchor: .top)
+                        }
+                    }
+            }
+        }
+    }
+
+    private var agendaList: some View {
             List {
                 if let error = store.calendarError {
                     Section {
@@ -336,10 +431,10 @@ struct CalendarView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                    .id(day)
                 }
             }
             .refreshable { await store.refreshCalendar(sync: true) }
-        }
     }
 
     @ViewBuilder private var emptyOrErrorState: some View {

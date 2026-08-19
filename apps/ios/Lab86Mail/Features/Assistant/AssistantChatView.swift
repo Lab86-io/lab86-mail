@@ -228,6 +228,11 @@ struct AssistantChatView: View {
                 .accessibilityLabel("Attach files")
 
                 TextField("Message Albatross", text: $draft, axis: .vertical)
+                // Plain style and an explicit flexible width: AppKit's default
+                // field hugs its content, which collapsed the whole glass
+                // composer to a pill on the Mac.
+                .textFieldStyle(.plain)
+                .frame(maxWidth: .infinity)
                 .lineLimit(1...6)
                 .focused($composerFocused)
                 .padding(.leading, 16)

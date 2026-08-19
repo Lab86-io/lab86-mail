@@ -773,7 +773,7 @@ private struct MailThreadRow: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(thread.sender)
+                    Text(thread.senderDisplayName)
                         .font(environment.theme.displayType.displayFont(
                             size: 16,
                             weight: thread.unread ? .semibold : .regular

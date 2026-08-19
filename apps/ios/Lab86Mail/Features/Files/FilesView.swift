@@ -300,6 +300,12 @@ struct FilesView: View {
         }
     }
 
+    private func chipTitle(for connection: CloudFileConnection) -> String {
+        let providerName = connection.provider == "google_drive" ? "Google Drive" : "OneDrive"
+        let sameProvider = store.connections.filter { $0.provider == connection.provider }
+        return sameProvider.count > 1 ? connection.label : providerName
+    }
+
     private var locationPicker: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
@@ -310,8 +316,11 @@ struct FilesView: View {
                     selectLocation("albatross")
                 }
                 ForEach(store.connections) { connection in
+                    // Two drives from one provider are indistinguishable by
+                    // provider name alone; repeats fall back to the account
+                    // label the server already supplies.
                     LocationChip(
-                        title: connection.provider == "google_drive" ? "Google Drive" : "OneDrive",
+                        title: chipTitle(for: connection),
                         symbol: connection.provider == "google_drive" ? "triangle" : "cloud",
                         selected: locationID == connection.id,
                         warning: connection.status == "error"
