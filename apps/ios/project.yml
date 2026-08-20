@@ -158,10 +158,33 @@ targets:
         product: ClerkConvex
       - package: Convex
         product: ConvexMobile
+      - target: Lab86MailMacAutoFill
     scheme:
       testTargets:
         - Lab86MailMacTests
       gatherCoverageData: true
+
+  # The same one-time-code AutoFill provider, for the Mac (macOS 15 added
+  # third-party one-time-code providers). Shares the iOS extension's sources
+  # and Info.plist wholesale; only the sandboxed entitlements differ.
+  Lab86MailMacAutoFill:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Lab86MailAutoFill
+      - path: Shared
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.autofill
+        PRODUCT_NAME: Lab86MailAutoFill
+        PRODUCT_MODULE_NAME: Lab86MailAutoFill
+        INFOPLIST_FILE: Lab86MailAutoFill/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86MailAutoFill/Resources/Lab86MailMacAutoFill.entitlements
+        ENABLE_HARDENED_RUNTIME: true
+        GENERATE_INFOPLIST_FILE: false
 
   Lab86MailMacTests:
     type: bundle.unit-test

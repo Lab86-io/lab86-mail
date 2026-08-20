@@ -74,10 +74,12 @@
 		36308F19F6600337120AD2BC /* BriefDocumentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE2D2BA666D4BAA6CA2C16A /* BriefDocumentView.swift */; };
 		368B5B9265451C9FD6470840 /* SidebarWheelLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0223F0A3E37353E7D4132A60 /* SidebarWheelLayout.swift */; };
 		36A3BB042CDE800AFF0A4808 /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 773537A136827A825AB7B87B /* AssistantView.swift */; };
+		36FC338FE0998F59DEEE4D11 /* Lab86MailMacAutoFill.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FED3AF733F01E7DB66079D1 /* Lab86MailMacAutoFill.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3733A60A60F96AF481745B42 /* Geist-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3F4FB3A7EB76621D8932B954 /* Geist-SemiBold.ttf */; };
 		37ECE244AC0D074141CA8B6D /* SidebarWheelHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DF20902A3606322177B61B /* SidebarWheelHaptics.swift */; };
 		38832BB2F330AF25ED84E875 /* GlobalCreateMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48D2B3E13DDCD536176E2671 /* GlobalCreateMenu.swift */; };
 		39A6A323826288E5B752A479 /* MobileAPI in Frameworks */ = {isa = PBXBuildFile; productRef = 61D927059C097803A0B4D042 /* MobileAPI */; };
+		3A97526824286418EDE464A8 /* OneTimeCodeVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D7A2D3571A230CF7C08E145 /* OneTimeCodeVault.swift */; };
 		3ACEA028AB44937F039EAEC5 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 7E2740007ED53851910D769B /* Kingfisher */; };
 		3AF395BCD96BD1221AEBDDF9 /* AssistantChatModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 539CF3C7C801C9A8D70762EC /* AssistantChatModel.swift */; };
 		3C8D9A3F23E764412063ED1A /* OutcomeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C16DCD717811987FBCB2F62 /* OutcomeContractTests.swift */; };
@@ -148,6 +150,7 @@
 		762C0C08CB8F5F5C066C1B70 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = BDD0BA078D3AD09E741A9D76 /* Kingfisher */; };
 		764BA61D5F9B0E419AB9DE17 /* ModelRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3806FE606756006B7C430B4B /* ModelRouter.swift */; };
 		76A75C7332492DCFAC784D62 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F702FEDDFD51F6203A91E05 /* NotificationSettingsView.swift */; };
+		776EB27264CC43309B04105C /* CredentialProviderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65BB020641B916B297844441 /* CredentialProviderViewController.swift */; };
 		781C163EE906564C4FA78574 /* BriefChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0A71FB72335FE13C5514785 /* BriefChromeTests.swift */; };
 		788BB72C1848AA990C1A0423 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 39B6B921F00497AB5BFD1B86 /* ConvexMobile */; };
 		78C9C73963BEBE70D44205D3 /* TasksProjectsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C85B53019828E559BE7447AE /* TasksProjectsTests.swift */; };
@@ -255,6 +258,7 @@
 		DBA467BF60269D7470CE3D4B /* DayRibbonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F7AB2E4E372DBC62CA267F3 /* DayRibbonView.swift */; };
 		DBF313F19219404191B735FA /* ClerkKitUI in Frameworks */ = {isa = PBXBuildFile; productRef = 9D5A5F6EDB851C9D5CE4622F /* ClerkKitUI */; };
 		DBF5CFC189439F2E39612993 /* WorkDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1931D9BFF9483D51029473DB /* WorkDetailView.swift */; };
+		DF92A8E0034A8C3B2BBB0C4C /* OneTimeCodeConsumeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D709DAD0CBE2B61A2B81A98E /* OneTimeCodeConsumeReporter.swift */; };
 		E24E083DDA01C70966E9B347 /* AssistantChatModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 539CF3C7C801C9A8D70762EC /* AssistantChatModel.swift */; };
 		E28DC87B6241F9362874974C /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D055B06B173A2B537CD3AC7 /* JSONValue.swift */; };
 		E335C7DBF5D1809CECF9637B /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F702FEDDFD51F6203A91E05 /* NotificationSettingsView.swift */; };
@@ -304,6 +308,13 @@
 			remoteGlobalIDString = AAD85C3B554C655E051CE3EA;
 			remoteInfo = Lab86Mail;
 		};
+		7DFCBA46B230A90E757D6162 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 393EC118107F8224588EA933 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 33B6B3FED69BCE23B41933C1;
+			remoteInfo = Lab86MailMacAutoFill;
+		};
 		F10049A7637D3867E532B197 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 393EC118107F8224588EA933 /* Project object */;
@@ -332,6 +343,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A06237600D2A26B8178A44AC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				36FC338FE0998F59DEEE4D11 /* Lab86MailMacAutoFill.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -351,6 +373,7 @@
 		0A91942E14F83AEBA5C5CD0B /* ProductModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductModels.swift; sourceTree = "<group>"; };
 		10343F3BA20E045570BC575D /* MobileAccountModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAccountModels.swift; sourceTree = "<group>"; };
 		1595B35FF438451CC0A76561 /* DocumentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentModelsTests.swift; sourceTree = "<group>"; };
+		186A5EDD951D12F7EA320D07 /* Lab86MailMacAutoFill.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Lab86MailMacAutoFill.entitlements; sourceTree = "<group>"; };
 		1931D9BFF9483D51029473DB /* WorkDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkDetailView.swift; sourceTree = "<group>"; };
 		19B25F33046F6A9004A8CE0C /* Lab86MailTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = Lab86MailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1C53B5057DE8B8400B2664E3 /* MailIntentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailIntentService.swift; sourceTree = "<group>"; };
@@ -391,6 +414,7 @@
 		5D6FF8570807BB483B114261 /* TodayCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayCompositionTests.swift; sourceTree = "<group>"; };
 		5F45A758574584C77B7ED989 /* MailPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MailPresentationTests.swift; sourceTree = "<group>"; };
 		5F7AB2E4E372DBC62CA267F3 /* DayRibbonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayRibbonView.swift; sourceTree = "<group>"; };
+		5FED3AF733F01E7DB66079D1 /* Lab86MailMacAutoFill.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Lab86MailMacAutoFill.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		60AD3F07E1BF1EC85BDF5DC8 /* Lab86MailAutoFill.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Lab86MailAutoFill.entitlements; sourceTree = "<group>"; };
 		61557C607D3BF244F27FF23F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		61AE87CA9944621A5F6779C6 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -557,6 +581,7 @@
 				295F9B2F5E38249F7A0C5A49 /* Lab86Mail.app */,
 				BCCC311BA9937DC393B5B016 /* Lab86MailAutoFill.appex */,
 				63879F16C815BACA0F4DA1AF /* Lab86MailMac.app */,
+				5FED3AF733F01E7DB66079D1 /* Lab86MailMacAutoFill.appex */,
 				264A8F7A9D4AA10EF7D5CF06 /* Lab86MailMacTests.xctest */,
 				19B25F33046F6A9004A8CE0C /* Lab86MailTests.xctest */,
 				014E57E3463668EEB5ED8E03 /* Lab86MailUITests.xctest */,
@@ -1001,6 +1026,7 @@
 			children = (
 				61557C607D3BF244F27FF23F /* Info.plist */,
 				60AD3F07E1BF1EC85BDF5DC8 /* Lab86MailAutoFill.entitlements */,
+				186A5EDD951D12F7EA320D07 /* Lab86MailMacAutoFill.entitlements */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1066,6 +1092,23 @@
 			productName = Lab86MailUITests;
 			productReference = 014E57E3463668EEB5ED8E03 /* Lab86MailUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		33B6B3FED69BCE23B41933C1 /* Lab86MailMacAutoFill */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 37BE84E495F9B106D14A2584 /* Build configuration list for PBXNativeTarget "Lab86MailMacAutoFill" */;
+			buildPhases = (
+				20A630A1E85B58F80A76B542 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Lab86MailMacAutoFill;
+			packageProductDependencies = (
+			);
+			productName = Lab86MailMacAutoFill;
+			productReference = 5FED3AF733F01E7DB66079D1 /* Lab86MailMacAutoFill.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		6CCE8E23FC25CCA15F239AC4 /* Lab86MailTests */ = {
 			isa = PBXNativeTarget;
@@ -1145,11 +1188,13 @@
 				F008F6E469E6E795F3F2DD58 /* Sources */,
 				D256E7474C37289234672084 /* Resources */,
 				C686D28822F0DC9161E17FCE /* Frameworks */,
+				A06237600D2A26B8178A44AC /* Embed Foundation Extensions */,
 				763064C2D6F8DADB97A66924 /* Verify embedded release configuration */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				91D901D6955AD83028337431 /* PBXTargetDependency */,
 			);
 			name = Lab86MailMac;
 			packageProductDependencies = (
@@ -1196,6 +1241,9 @@
 						DevelopmentTeam = 5JZV7V6Y4Z;
 						TestTargetID = AAD85C3B554C655E051CE3EA;
 					};
+					33B6B3FED69BCE23B41933C1 = {
+						DevelopmentTeam = 5JZV7V6Y4Z;
+					};
 					6CCE8E23FC25CCA15F239AC4 = {
 						DevelopmentTeam = 5JZV7V6Y4Z;
 					};
@@ -1239,6 +1287,7 @@
 			targets = (
 				AAD85C3B554C655E051CE3EA /* Lab86Mail */,
 				C1A09ECA37A21AD6309A1353 /* Lab86MailMac */,
+				33B6B3FED69BCE23B41933C1 /* Lab86MailMacAutoFill */,
 				7D5FCAFDCD1A95BA28134C5F /* Lab86MailMacTests */,
 				D685DE0B4DA81ADD5D68FD86 /* Lab86MailAutoFill */,
 				6CCE8E23FC25CCA15F239AC4 /* Lab86MailTests */,
@@ -1321,6 +1370,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		20A630A1E85B58F80A76B542 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				776EB27264CC43309B04105C /* CredentialProviderViewController.swift in Sources */,
+				DF92A8E0034A8C3B2BBB0C4C /* OneTimeCodeConsumeReporter.swift in Sources */,
+				3A97526824286418EDE464A8 /* OneTimeCodeVault.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7CD926EEB9F1DB88670969D8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -1620,6 +1679,11 @@
 			target = D685DE0B4DA81ADD5D68FD86 /* Lab86MailAutoFill */;
 			targetProxy = 2D40DD855ED9F3AC3F86583F /* PBXContainerItemProxy */;
 		};
+		91D901D6955AD83028337431 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 33B6B3FED69BCE23B41933C1 /* Lab86MailMacAutoFill */;
+			targetProxy = 7DFCBA46B230A90E757D6162 /* PBXContainerItemProxy */;
+		};
 		A086809B8FD0D3FFE140FEDF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = AAD85C3B554C655E051CE3EA /* Lab86Mail */;
@@ -1861,6 +1925,27 @@
 			};
 			name = Release;
 		};
+		63CE1F2B350D94315CEED036 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 489189199225D0BE78538DBB /* Debug.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Lab86MailAutoFill/Resources/Lab86MailMacAutoFill.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Lab86MailAutoFill/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.lab86.mail.autofill;
+				PRODUCT_MODULE_NAME = Lab86MailAutoFill;
+				PRODUCT_NAME = Lab86MailAutoFill;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		7142B0933DCC2E1A9AD99263 /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 806C6B91F9256240C61C1209 /* Release.xcconfig */;
@@ -1900,6 +1985,27 @@
 				TEST_TARGET_NAME = Lab86Mail;
 			};
 			name = Debug;
+		};
+		C458ECDB0E5AC6EFC6020A4E /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 806C6B91F9256240C61C1209 /* Release.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Lab86MailAutoFill/Resources/Lab86MailMacAutoFill.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Lab86MailAutoFill/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.lab86.mail.autofill;
+				PRODUCT_MODULE_NAME = Lab86MailAutoFill;
+				PRODUCT_NAME = Lab86MailAutoFill;
+				SDKROOT = macosx;
+			};
+			name = Release;
 		};
 		D473CAD6CEB9AA347EF362CA /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -2018,6 +2124,15 @@
 			buildConfigurations = (
 				F725D567283255739D333092 /* Debug */,
 				E742ED3DD15EC35D69E5105B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		37BE84E495F9B106D14A2584 /* Build configuration list for PBXNativeTarget "Lab86MailMacAutoFill" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				63CE1F2B350D94315CEED036 /* Debug */,
+				C458ECDB0E5AC6EFC6020A4E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
