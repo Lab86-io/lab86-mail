@@ -41,19 +41,27 @@ final class CaptureVoiceCoordinator: NSObject {
             errorMessage = "Speech recognition permission was not granted. You can keep typing."
             return
         }
+        #if os(iOS)
         let microphone = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission {
                 continuation.resume(returning: $0)
             }
         }
+        #else
+        let microphone = await AVCaptureDevice.requestAccess(for: .audio)
+        #endif
         guard microphone else {
             errorMessage = "Microphone permission was not granted. You can keep typing."
             return
         }
         do {
+            #if os(iOS)
+            // AVAudioSession is an iOS concept; the Mac's audio engine taps the
+            // default input without a session category.
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            #endif
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -191,7 +199,12 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if status == .authorizedAlways || status == .authorizedWhenInUse {
+            #if os(macOS)
+            let isAuthorized = status == .authorizedAlways || status == .authorized
+            #else
+            let isAuthorized = status == .authorizedAlways || status == .authorizedWhenInUse
+            #endif
+            if isAuthorized {
                 self.manager.requestLocation()
             } else if status == .denied || status == .restricted {
                 self.isRequesting = false

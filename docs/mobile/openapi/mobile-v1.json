@@ -93,7 +93,16 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
+              "enum": [
+                "accounts",
+                "mail",
+                "calendar",
+                "tasks",
+                "today",
+                "work",
+                "assistant",
+                "activity"
+              ]
             }
           },
           {
@@ -122,6 +131,194 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SyncEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/mail/threads": {
+      "get": {
+        "operationId": "getMobileMailThreads",
+        "parameters": [
+          {
+            "name": "accountID",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of thread summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailThreadPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mobile/v1/mail/threads/{threadID}": {
+      "get": {
+        "operationId": "getMobileMailThread",
+        "parameters": [
+          {
+            "name": "threadID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "accountID",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A full thread with ordered messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailThreadDetail"
                 }
               }
             }
@@ -426,7 +623,10 @@
                 "type": "string"
               }
             },
-            "required": ["type", "text"],
+            "required": [
+              "type",
+              "text"
+            ],
             "additionalProperties": false
           },
           {
@@ -447,7 +647,11 @@
                 "maxLength": 240
               }
             },
-            "required": ["type", "toolCallID", "toolName"],
+            "required": [
+              "type",
+              "toolCallID",
+              "toolName"
+            ],
             "additionalProperties": false
           },
           {
@@ -470,7 +674,11 @@
                 "additionalProperties": {}
               }
             },
-            "required": ["type", "toolCallID", "result"],
+            "required": [
+              "type",
+              "toolCallID",
+              "result"
+            ],
             "additionalProperties": false
           },
           {
@@ -486,7 +694,10 @@
                 "maxLength": 240
               }
             },
-            "required": ["type", "approvalID"],
+            "required": [
+              "type",
+              "approvalID"
+            ],
             "additionalProperties": false
           },
           {
@@ -502,7 +713,10 @@
                 "maxLength": 240
               }
             },
-            "required": ["type", "questionID"],
+            "required": [
+              "type",
+              "questionID"
+            ],
             "additionalProperties": false
           },
           {
@@ -525,7 +739,11 @@
                 "additionalProperties": {}
               }
             },
-            "required": ["type", "artifactKind", "artifact"],
+            "required": [
+              "type",
+              "artifactKind",
+              "artifact"
+            ],
             "additionalProperties": false
           },
           {
@@ -541,7 +759,10 @@
                 "maxLength": 240
               }
             },
-            "required": ["type", "conversationID"],
+            "required": [
+              "type",
+              "conversationID"
+            ],
             "additionalProperties": false
           },
           {
@@ -568,11 +789,18 @@
                     "type": "boolean"
                   }
                 },
-                "required": ["code", "message", "retryable"],
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
                 "additionalProperties": false
               }
             },
-            "required": ["type", "error"],
+            "required": [
+              "type",
+              "error"
+            ],
             "additionalProperties": false
           }
         ]
@@ -587,7 +815,13 @@
           },
           "status": {
             "type": "string",
-            "enum": ["queued", "applied", "needsApproval", "conflicted", "failed"]
+            "enum": [
+              "queued",
+              "applied",
+              "needsApproval",
+              "conflicted",
+              "failed"
+            ]
           },
           "entityRevision": {
             "type": "integer",
@@ -626,11 +860,501 @@
                 "type": "boolean"
               }
             },
-            "required": ["code", "message", "retryable"],
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["commandID", "status"],
+        "required": [
+          "commandID",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "MailAttachment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "contentType": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "contentType"
+        ],
+        "additionalProperties": false
+      },
+      "MailMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "threadID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "fromHeader": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "fromEmail": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "to": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "cc": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "bcc": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "sentAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "snippet": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "bodyText": {
+            "type": "string",
+            "maxLength": 500000
+          },
+          "bodyHTML": {
+            "type": "string",
+            "maxLength": 1000000
+          },
+          "labels": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 240
+            }
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "starred": {
+            "type": "boolean"
+          },
+          "attachments": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "contentType": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "size": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "contentType"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "threadID",
+          "accountID",
+          "subject",
+          "fromHeader",
+          "to",
+          "cc",
+          "bcc",
+          "sentAt",
+          "snippet",
+          "bodyText",
+          "labels",
+          "unread",
+          "starred",
+          "attachments"
+        ],
+        "additionalProperties": false
+      },
+      "MailThreadDetail": {
+        "type": "object",
+        "properties": {
+          "threadID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "threadID": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "accountID": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "subject": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "fromHeader": {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "fromEmail": {
+                  "type": "string",
+                  "maxLength": 320
+                },
+                "to": {
+                  "type": "string",
+                  "maxLength": 20000
+                },
+                "cc": {
+                  "type": "string",
+                  "maxLength": 20000
+                },
+                "bcc": {
+                  "type": "string",
+                  "maxLength": 20000
+                },
+                "sentAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "snippet": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "bodyText": {
+                  "type": "string",
+                  "maxLength": 500000
+                },
+                "bodyHTML": {
+                  "type": "string",
+                  "maxLength": 1000000
+                },
+                "labels": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 240
+                  }
+                },
+                "unread": {
+                  "type": "boolean"
+                },
+                "starred": {
+                  "type": "boolean"
+                },
+                "attachments": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240
+                      },
+                      "name": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "contentType": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "size": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "contentType"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "threadID",
+                "accountID",
+                "subject",
+                "fromHeader",
+                "to",
+                "cc",
+                "bcc",
+                "sentAt",
+                "snippet",
+                "bodyText",
+                "labels",
+                "unread",
+                "starred",
+                "attachments"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        },
+        "required": [
+          "threadID",
+          "accountID",
+          "subject",
+          "messages"
+        ],
+        "additionalProperties": false
+      },
+      "MailThreadPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "accountID": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "subject": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "fromHeader": {
+                  "type": "string",
+                  "maxLength": 1000
+                },
+                "senderEmail": {
+                  "type": "string",
+                  "maxLength": 320
+                },
+                "snippet": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "lastMessageAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "unread": {
+                  "type": "boolean"
+                },
+                "starred": {
+                  "type": "boolean"
+                },
+                "labels": {
+                  "maxItems": 200,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 240
+                  }
+                },
+                "messageCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "smartCategory": {
+                  "type": "string",
+                  "maxLength": 240
+                }
+              },
+              "required": [
+                "id",
+                "accountID",
+                "subject",
+                "fromHeader",
+                "snippet",
+                "lastMessageAt",
+                "unread",
+                "starred",
+                "labels",
+                "messageCount"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "serverTime": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "items",
+          "hasMore",
+          "serverTime"
+        ],
+        "additionalProperties": false
+      },
+      "MailThreadSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "accountID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "fromHeader": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "senderEmail": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "snippet": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "lastMessageAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "starred": {
+            "type": "boolean"
+          },
+          "labels": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 240
+            }
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "smartCategory": {
+            "type": "string",
+            "maxLength": 240
+          }
+        },
+        "required": [
+          "id",
+          "accountID",
+          "subject",
+          "fromHeader",
+          "snippet",
+          "lastMessageAt",
+          "unread",
+          "starred",
+          "labels",
+          "messageCount"
+        ],
         "additionalProperties": false
       },
       "MobileBootstrap": {
@@ -661,7 +1385,11 @@
                 "format": "uri"
               }
             },
-            "required": ["id", "email", "name"],
+            "required": [
+              "id",
+              "email",
+              "name"
+            ],
             "additionalProperties": false
           },
           "accounts": {
@@ -681,11 +1409,20 @@
                 },
                 "provider": {
                   "type": "string",
-                  "enum": ["google", "microsoft", "icloud", "imap"]
+                  "enum": [
+                    "google",
+                    "microsoft",
+                    "icloud",
+                    "imap"
+                  ]
                 },
                 "status": {
                   "type": "string",
-                  "enum": ["connected", "disconnected", "error"]
+                  "enum": [
+                    "connected",
+                    "disconnected",
+                    "error"
+                  ]
                 },
                 "displayName": {
                   "type": "string",
@@ -752,7 +1489,13 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": ["idle", "backfilling", "syncing", "ready", "error"]
+                      "enum": [
+                        "idle",
+                        "backfilling",
+                        "syncing",
+                        "ready",
+                        "error"
+                      ]
                     },
                     "corpusReady": {
                       "type": "boolean"
@@ -772,11 +1515,22 @@
                       "maxLength": 500
                     }
                   },
-                  "required": ["status", "corpusReady"],
+                  "required": [
+                    "status",
+                    "corpusReady"
+                  ],
                   "additionalProperties": false
                 }
               },
-              "required": ["id", "email", "provider", "status", "scopes", "capabilities", "sync"],
+              "required": [
+                "id",
+                "email",
+                "provider",
+                "status",
+                "scopes",
+                "capabilities",
+                "sync"
+              ],
               "additionalProperties": false
             }
           },
@@ -841,7 +1595,16 @@
                 "type": "string"
               }
             },
-            "required": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"],
+            "required": [
+              "accounts",
+              "mail",
+              "calendar",
+              "tasks",
+              "today",
+              "work",
+              "assistant",
+              "activity"
+            ],
             "additionalProperties": false
           },
           "serverTime": {
@@ -882,6 +1645,33 @@
             "$ref": "#/components/schemas/MailUnstarCommand"
           },
           {
+            "$ref": "#/components/schemas/MailAddLabelCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailRemoveLabelCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailSnoozeCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailUnsnoozeCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailMuteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailSendCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailSaveDraftCommand"
+          },
+          {
+            "$ref": "#/components/schemas/MailDeleteDraftCommand"
+          },
+          {
             "$ref": "#/components/schemas/CalendarCreateCommand"
           },
           {
@@ -909,6 +1699,15 @@
             "mail.markUnread": "#/components/schemas/MailMarkUnreadCommand",
             "mail.star": "#/components/schemas/MailStarCommand",
             "mail.unstar": "#/components/schemas/MailUnstarCommand",
+            "mail.addLabel": "#/components/schemas/MailAddLabelCommand",
+            "mail.removeLabel": "#/components/schemas/MailRemoveLabelCommand",
+            "mail.snooze": "#/components/schemas/MailSnoozeCommand",
+            "mail.unsnooze": "#/components/schemas/MailUnsnoozeCommand",
+            "mail.mute": "#/components/schemas/MailMuteCommand",
+            "mail.restore": "#/components/schemas/MailRestoreCommand",
+            "mail.send": "#/components/schemas/MailSendCommand",
+            "mail.saveDraft": "#/components/schemas/MailSaveDraftCommand",
+            "mail.deleteDraft": "#/components/schemas/MailDeleteDraftCommand",
             "calendar.create": "#/components/schemas/CalendarCreateCommand",
             "task.create": "#/components/schemas/TaskCreateCommand",
             "task.setCompleted": "#/components/schemas/TaskSetCompletedCommand",
@@ -947,11 +1746,19 @@
                 "type": "boolean"
               }
             },
-            "required": ["code", "message", "retryable"],
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["ok", "requestID", "error"],
+        "required": [
+          "ok",
+          "requestID",
+          "error"
+        ],
         "additionalProperties": false
       },
       "ProviderCapabilitySet": {
@@ -1029,7 +1836,16 @@
             "properties": {
               "domain": {
                 "type": "string",
-                "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
+                "enum": [
+                  "accounts",
+                  "mail",
+                  "calendar",
+                  "tasks",
+                  "today",
+                  "work",
+                  "assistant",
+                  "activity"
+                ]
               },
               "kind": {
                 "type": "string",
@@ -1042,7 +1858,11 @@
                 "maxLength": 240
               }
             },
-            "required": ["domain", "kind", "id"],
+            "required": [
+              "domain",
+              "kind",
+              "id"
+            ],
             "additionalProperties": false
           },
           "allowedActions": {
@@ -1080,6 +1900,9 @@
             "$ref": "#/components/schemas/MailMessageSyncChange"
           },
           {
+            "$ref": "#/components/schemas/MailDraftSyncChange"
+          },
+          {
             "$ref": "#/components/schemas/CalendarEventSyncChange"
           },
           {
@@ -1100,6 +1923,7 @@
           "mapping": {
             "thread": "#/components/schemas/MailThreadSyncChange",
             "message": "#/components/schemas/MailMessageSyncChange",
+            "draft": "#/components/schemas/MailDraftSyncChange",
             "event": "#/components/schemas/CalendarEventSyncChange",
             "task": "#/components/schemas/TaskSyncChange",
             "work": "#/components/schemas/WorkSyncChange",
@@ -1111,7 +1935,13 @@
       "SyncEnvelope": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "deletedIDs", "cursor", "serverRevision", "hasMore"],
+        "required": [
+          "items",
+          "deletedIDs",
+          "cursor",
+          "serverRevision",
+          "hasMore"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -1180,13 +2010,34 @@
               },
               "unread": {
                 "type": "boolean"
+              },
+              "snoozedUntil": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "snoozeCleared": {
+                "type": "boolean",
+                "const": true
+              },
+              "muted": {
+                "type": "boolean"
               }
             },
-            "required": ["accountID"],
+            "required": [
+              "accountID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailMessageSyncChange": {
@@ -1227,13 +2078,100 @@
               },
               "starred": {
                 "type": "boolean"
+              },
+              "labelsAdded": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
+              },
+              "labelsRemoved": {
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
               }
             },
-            "required": ["accountID"],
+            "required": [
+              "accountID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailDraftSyncChange": {
+        "type": "object",
+        "properties": {
+          "entityID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "operation": {
+            "type": "string",
+            "const": "upsert"
+          },
+          "domain": {
+            "type": "string",
+            "const": "mail"
+          },
+          "entityKind": {
+            "type": "string",
+            "const": "draft"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "draftID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "deleted": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "accountID",
+              "draftID"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "CalendarEventSyncChange": {
@@ -1275,11 +2213,21 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "eventID"],
+            "required": [
+              "accountID",
+              "eventID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "TaskSyncChange": {
@@ -1324,11 +2272,20 @@
                 "type": "boolean"
               }
             },
-            "required": ["cardID"],
+            "required": [
+              "cardID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "WorkSyncChange": {
@@ -1377,11 +2334,22 @@
                 "type": "boolean"
               }
             },
-            "required": ["captureID", "workIDs", "fallback"],
+            "required": [
+              "captureID",
+              "workIDs",
+              "fallback"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "ApprovalSyncChange": {
@@ -1425,7 +2393,10 @@
                     "maxLength": 240
                   }
                 },
-                "required": ["approvalID", "commandKind"],
+                "required": [
+                  "approvalID",
+                  "commandKind"
+                ],
                 "additionalProperties": false
               },
               {
@@ -1438,16 +2409,29 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": ["approved", "rejected"]
+                    "enum": [
+                      "approved",
+                      "rejected"
+                    ]
                   }
                 },
-                "required": ["approvalID", "status"],
+                "required": [
+                  "approvalID",
+                  "status"
+                ],
                 "additionalProperties": false
               }
             ]
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "OperationSyncChange": {
@@ -1469,7 +2453,16 @@
           },
           "domain": {
             "type": "string",
-            "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
+            "enum": [
+              "accounts",
+              "mail",
+              "calendar",
+              "tasks",
+              "today",
+              "work",
+              "assistant",
+              "activity"
+            ]
           },
           "entityKind": {
             "type": "string",
@@ -1488,11 +2481,21 @@
                 "const": true
               }
             },
-            "required": ["operationID", "undone"],
+            "required": [
+              "operationID",
+              "undone"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "required": [
+          "entityID",
+          "revision",
+          "operation",
+          "domain",
+          "entityKind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailArchiveCommand": {
@@ -1531,11 +2534,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "threadID"],
+            "required": [
+              "accountID",
+              "threadID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailTrashCommand": {
@@ -1574,11 +2585,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "threadID"],
+            "required": [
+              "accountID",
+              "threadID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailMarkReadCommand": {
@@ -1617,11 +2636,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "threadID"],
+            "required": [
+              "accountID",
+              "threadID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailMarkUnreadCommand": {
@@ -1660,11 +2687,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "messageID"],
+            "required": [
+              "accountID",
+              "messageID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailStarCommand": {
@@ -1703,11 +2738,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "messageID"],
+            "required": [
+              "accountID",
+              "messageID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "MailUnstarCommand": {
@@ -1746,11 +2789,600 @@
                 "maxLength": 240
               }
             },
-            "required": ["accountID", "messageID"],
+            "required": [
+              "accountID",
+              "messageID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailAddLabelCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.addLabel"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID",
+              "messageID",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailRemoveLabelCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.removeLabel"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID",
+              "messageID",
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailSnoozeCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.snooze"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "untilAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID",
+              "messageID",
+              "untilAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailUnsnoozeCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.unsnooze"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID",
+              "messageID"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailMuteCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.mute"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailRestoreCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.restore"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "threadID"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailSendCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.send"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "new",
+                  "reply",
+                  "replyAll",
+                  "forward"
+                ]
+              },
+              "to": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "cc": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "bcc": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "subject": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "bodyText": {
+                "type": "string",
+                "maxLength": 500000
+              },
+              "bodyHTML": {
+                "type": "string",
+                "maxLength": 1000000
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "mode",
+              "bodyText"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailSaveDraftCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.saveDraft"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "draftID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "threadID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "inReplyToMessageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "to": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "cc": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "bcc": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "subject": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "bodyText": {
+                "type": "string",
+                "maxLength": 500000
+              },
+              "bodyHTML": {
+                "type": "string",
+                "maxLength": 1000000
+              },
+              "scheduledFor": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              }
+            },
+            "required": [
+              "accountID",
+              "to",
+              "subject",
+              "bodyText"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "MailDeleteDraftCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "mail.deleteDraft"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "draftID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": [
+              "accountID",
+              "draftID"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "CalendarCreateCommand": {
@@ -1830,7 +3462,9 @@
                       "maxLength": 160
                     }
                   },
-                  "required": ["email"],
+                  "required": [
+                    "email"
+                  ],
                   "additionalProperties": false
                 }
               },
@@ -1846,11 +3480,24 @@
                 "type": "boolean"
               }
             },
-            "required": ["accountID", "title", "startAt", "endAt", "allDay", "attendees", "busy"],
+            "required": [
+              "accountID",
+              "title",
+              "startAt",
+              "endAt",
+              "allDay",
+              "attendees",
+              "busy"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "TaskCreateCommand": {
@@ -1899,7 +3546,11 @@
               },
               "priority": {
                 "type": "string",
-                "enum": ["low", "medium", "high"]
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
               },
               "dueAt": {
                 "type": "string",
@@ -1907,11 +3558,18 @@
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
               }
             },
-            "required": ["title"],
+            "required": [
+              "title"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "TaskSetCompletedCommand": {
@@ -1948,11 +3606,19 @@
                 "type": "boolean"
               }
             },
-            "required": ["cardID", "completed"],
+            "required": [
+              "cardID",
+              "completed"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "WorkCaptureCommand": {
@@ -1991,7 +3657,11 @@
               },
               "source": {
                 "type": "string",
-                "enum": ["text", "voice", "chat"]
+                "enum": [
+                  "text",
+                  "voice",
+                  "chat"
+                ]
               },
               "areaID": {
                 "type": "string",
@@ -1999,11 +3669,19 @@
                 "maxLength": 240
               }
             },
-            "required": ["rawText", "source"],
+            "required": [
+              "rawText",
+              "source"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "ApprovalApproveCommand": {
@@ -2044,11 +3722,18 @@
                 "additionalProperties": {}
               }
             },
-            "required": ["approvalID"],
+            "required": [
+              "approvalID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       },
       "ApprovalRejectCommand": {
@@ -2086,11 +3771,18 @@
                 "maxLength": 1000
               }
             },
-            "required": ["approvalID"],
+            "required": [
+              "approvalID"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "required": [
+          "idempotencyKey",
+          "clientCreatedAt",
+          "kind",
+          "payload"
+        ],
         "additionalProperties": false
       }
     },

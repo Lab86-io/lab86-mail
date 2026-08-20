@@ -1011,6 +1011,46 @@ export const listRecentCorpusThreads = query({
   },
 });
 
+// Cursor-paged variant of listRecentCorpusThreads for the mobile v1 typed
+// read path. Both branches cursor on lastDate (by_user_account_updated's
+// third index column is lastDate despite the name), so one opaque numeric
+// cursor works for account-scoped and unified listings alike.
+export const pageRecentCorpusThreads = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    before: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 50, 100);
+    const before = Number.isFinite(args.before) ? Number(args.before) : undefined;
+    const rows = args.accountId
+      ? await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_account_updated', (q) => {
+            const eq = q.eq('userId', args.userId).eq('accountId', args.accountId as string);
+            return before === undefined ? eq : eq.lt('lastDate', before);
+          })
+          .order('desc')
+          .take(limit + 1)
+      : await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_lastDate', (q) => {
+            const eq = q.eq('userId', args.userId);
+            return before === undefined ? eq : eq.lt('lastDate', before);
+          })
+          .order('desc')
+          .take(limit + 1);
+    const page = rows.slice(0, limit);
+    const nextBefore =
+      rows.length > page.length && page.length ? Number(page[page.length - 1].lastDate || 0) : undefined;
+    return { items: page.map(normalizeCorpusThread), nextBefore };
+  },
+});
+
 function trimCorpusText(value: unknown) {
   return String(value ?? '')
     .replace(/\s+/g, ' ')

@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 // Native mirror of the desktop surface system (globals.css): backgrounds are
 // never pure white or pure black — the paper carries a whisper of the accent
@@ -45,11 +44,11 @@ extension ThemeStore {
     var accentSoftColor: Color {
         let hue = accentHue
         let chroma = accentChroma
-        return Color(UIColor { traits in
-            traits.userInterfaceStyle == .dark
+        return Self.dynamicColor { isDark in
+            isDark
                 ? Self.oklch(l: 0.73, c: chroma * 0.78, h: hue).withAlphaComponent(0.16)
                 : Self.oklch(l: 0.45, c: chroma, h: hue).withAlphaComponent(0.10)
-        })
+        }
     }
 
     var hairlineColor: Color { Color.primary.opacity(0.08) }
@@ -61,11 +60,11 @@ extension ThemeStore {
         darkL: Double,
         darkC: Double
     ) -> Color {
-        Color(UIColor { traits in
-            traits.userInterfaceStyle == .dark
+        dynamicColor { isDark in
+            isDark
                 ? oklch(l: darkL, c: darkC, h: hue)
                 : oklch(l: lightL, c: lightC, h: hue)
-        })
+        }
     }
 
     // MARK: - Avatar palette
@@ -81,11 +80,11 @@ extension ThemeStore {
         ]
         let hue = (accentHue + rotation).truncatingRemainder(dividingBy: 360)
         let chroma = max(accentChroma, 0.07)
-        return Color(UIColor { traits in
-            traits.userInterfaceStyle == .dark
+        return Self.dynamicColor { isDark in
+            isDark
                 ? Self.oklch(l: 0.68, c: chroma * 0.85, h: hue)
                 : Self.oklch(l: 0.58, c: chroma, h: hue)
-        })
+        }
     }
 }
 

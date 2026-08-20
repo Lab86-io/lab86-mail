@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import UserNotifications
 
 struct NotificationSettingsView: View {
@@ -14,9 +13,8 @@ struct NotificationSettingsView: View {
             Section("System permission") {
                 LabeledContent("Notifications", value: authorizationLabel)
                 if environment.notifications.authorizationStatus == .denied {
-                    Button("Open iOS Settings", systemImage: "gear") {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
+                    Button("Open \(PlatformSettings.systemSettingsName)", systemImage: "gear") {
+                        PlatformSettings.openNotificationSettings()
                     }
                 } else if environment.notifications.authorizationStatus == .notDetermined {
                     Button("Enable notifications") {

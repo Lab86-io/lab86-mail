@@ -1,6 +1,10 @@
 import AuthenticationServices
 import Observation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 enum WebAuthenticationError: LocalizedError {
     case couldNotStart
@@ -121,9 +125,15 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        #if canImport(UIKit)
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         return scenes
             .flatMap(\.windows)
             .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        #else
+        return NSApplication.shared.keyWindow
+            ?? NSApplication.shared.windows.first(where: \.isVisible)
+            ?? ASPresentationAnchor()
+        #endif
     }
 }

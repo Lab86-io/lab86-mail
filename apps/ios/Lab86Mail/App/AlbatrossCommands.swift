@@ -16,7 +16,7 @@ struct AlbatrossCommands: Commands {
             .keyboardShortcut("n", modifiers: .command)
 
             Button("Ask Albatross") {
-                environment.startAssistantChat()
+                environment.toggleAssistantChatPanel()
             }
             .keyboardShortcut("k", modifiers: .command)
 
