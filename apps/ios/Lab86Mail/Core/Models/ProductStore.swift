@@ -2608,8 +2608,12 @@ final class ProductStore {
         }
     }
 
-    private func applyLiveMail(_ payload: LiveMailThreadsPayload) async {
+    func applyLiveMail(_ payload: LiveMailThreadsPayload) async {
         let live = payload.items.map(\.summary).compactMap(applyPendingMailState)
+        // An empty live window says nothing about mail that was paged in
+        // beneath it; replacing the list here would blank the inbox on one
+        // empty tick while the cursor still described a partially paged list.
+        guard !live.isEmpty else { return }
         // The live query owns its recency window; threads paged in beneath it
         // must survive each tick or Load More would visibly undo itself.
         let liveKeys = Set(live.map(mailKey))

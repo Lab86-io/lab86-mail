@@ -344,7 +344,7 @@ final class NotificationCoordinator {
         #endif
     }
 
-    private static var devicePlatform: String {
+    nonisolated static var devicePlatform: String {
         #if os(macOS)
         "macos"
         #else
@@ -352,7 +352,7 @@ final class NotificationCoordinator {
         #endif
     }
 
-    private static var deviceIdentifier: String {
+    static var deviceIdentifier: String {
         #if canImport(UIKit)
         UIDevice.current.identifierForVendor?.uuidString ?? "ios-unknown-install"
         #else

@@ -734,6 +734,9 @@ private struct GrowingTextEditor: View {
             .font(Font(font))
             .scrollContentBackground(.hidden)
             .scrollDisabled(true)
+            // With internal scrolling off, the editor must size itself to
+            // its text or anything past the minimum height is unreachable.
+            .fixedSize(horizontal: false, vertical: true)
             .frame(minHeight: minimumHeight)
     }
 }

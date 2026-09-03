@@ -269,18 +269,30 @@ export async function executeMobileCommand(
                 },
                 user,
               );
+      // A brand-new send has no client-side thread; the provider's thread id
+      // is the real identity, and only failing that does the idempotency key
+      // stand in so the sync change still has a stable key.
+      const providerThreadID =
+        typeof result?.threadId === 'string' && result.threadId ? String(result.threadId) : undefined;
+      const threadID = payload.threadID || providerThreadID || command.idempotencyKey;
       return {
         status: 'applied',
         ...resultMetadata(result),
         syncDomain: 'mail',
         entityKind: 'thread',
-        entityID: payload.threadID || command.idempotencyKey,
+        entityID: threadID,
         syncPayload: { accountID: payload.accountID },
       };
     }
     case 'mail.saveDraft': {
       const payload = command.payload;
-      const scheduledFor = payload.scheduledFor ? Date.parse(payload.scheduledFor) : undefined;
+      // Tri-state, like snooze: an ISO time schedules, `scheduleCleared`
+      // unschedules (explicit null in the patch), absent leaves it alone.
+      const scheduledFor = payload.scheduleCleared
+        ? null
+        : payload.scheduledFor
+          ? Date.parse(payload.scheduledFor)
+          : undefined;
       if (payload.draftID) {
         const result = await dependencies.invoke(
           'update_draft',
@@ -319,7 +331,7 @@ export async function executeMobileCommand(
           subject: payload.subject,
           body: payload.bodyText,
           html: payload.bodyHTML,
-          scheduledFor,
+          scheduledFor: scheduledFor ?? undefined,
         },
         user,
       );

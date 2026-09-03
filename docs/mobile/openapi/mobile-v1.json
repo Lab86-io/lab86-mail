@@ -93,16 +93,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": [
-                "accounts",
-                "mail",
-                "calendar",
-                "tasks",
-                "today",
-                "work",
-                "assistant",
-                "activity"
-              ]
+              "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
             }
           },
           {
@@ -205,15 +196,19 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
             }
           },
           {
             "name": "cursor",
             "in": "query",
             "required": false,
+            "description": "Opaque page cursor from a previous response (a decimal epoch-ms watermark).",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^\\d+$"
             }
           },
           {
@@ -623,10 +618,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "type",
-              "text"
-            ],
+            "required": ["type", "text"],
             "additionalProperties": false
           },
           {
@@ -647,11 +639,7 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "type",
-              "toolCallID",
-              "toolName"
-            ],
+            "required": ["type", "toolCallID", "toolName"],
             "additionalProperties": false
           },
           {
@@ -674,11 +662,7 @@
                 "additionalProperties": {}
               }
             },
-            "required": [
-              "type",
-              "toolCallID",
-              "result"
-            ],
+            "required": ["type", "toolCallID", "result"],
             "additionalProperties": false
           },
           {
@@ -694,10 +678,7 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "type",
-              "approvalID"
-            ],
+            "required": ["type", "approvalID"],
             "additionalProperties": false
           },
           {
@@ -713,10 +694,7 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "type",
-              "questionID"
-            ],
+            "required": ["type", "questionID"],
             "additionalProperties": false
           },
           {
@@ -739,11 +717,7 @@
                 "additionalProperties": {}
               }
             },
-            "required": [
-              "type",
-              "artifactKind",
-              "artifact"
-            ],
+            "required": ["type", "artifactKind", "artifact"],
             "additionalProperties": false
           },
           {
@@ -759,10 +733,7 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "type",
-              "conversationID"
-            ],
+            "required": ["type", "conversationID"],
             "additionalProperties": false
           },
           {
@@ -789,18 +760,11 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "code",
-                  "message",
-                  "retryable"
-                ],
+                "required": ["code", "message", "retryable"],
                 "additionalProperties": false
               }
             },
-            "required": [
-              "type",
-              "error"
-            ],
+            "required": ["type", "error"],
             "additionalProperties": false
           }
         ]
@@ -815,13 +779,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "queued",
-              "applied",
-              "needsApproval",
-              "conflicted",
-              "failed"
-            ]
+            "enum": ["queued", "applied", "needsApproval", "conflicted", "failed"]
           },
           "entityRevision": {
             "type": "integer",
@@ -860,18 +818,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "code",
-              "message",
-              "retryable"
-            ],
+            "required": ["code", "message", "retryable"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "commandID",
-          "status"
-        ],
+        "required": ["commandID", "status"],
         "additionalProperties": false
       },
       "MailAttachment": {
@@ -896,11 +847,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": [
-          "id",
-          "name",
-          "contentType"
-        ],
+        "required": ["id", "name", "contentType"],
         "additionalProperties": false
       },
       "MailMessage": {
@@ -1001,11 +948,7 @@
                   "maximum": 9007199254740991
                 }
               },
-              "required": [
-                "id",
-                "name",
-                "contentType"
-              ],
+              "required": ["id", "name", "contentType"],
               "additionalProperties": false
             }
           }
@@ -1146,11 +1089,7 @@
                         "maximum": 9007199254740991
                       }
                     },
-                    "required": [
-                      "id",
-                      "name",
-                      "contentType"
-                    ],
+                    "required": ["id", "name", "contentType"],
                     "additionalProperties": false
                   }
                 }
@@ -1180,12 +1119,7 @@
             "maxLength": 20000
           }
         },
-        "required": [
-          "threadID",
-          "accountID",
-          "subject",
-          "messages"
-        ],
+        "required": ["threadID", "accountID", "subject", "messages"],
         "additionalProperties": false
       },
       "MailThreadPage": {
@@ -1278,11 +1212,7 @@
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
           }
         },
-        "required": [
-          "items",
-          "hasMore",
-          "serverTime"
-        ],
+        "required": ["items", "hasMore", "serverTime"],
         "additionalProperties": false
       },
       "MailThreadSummary": {
@@ -1385,11 +1315,7 @@
                 "format": "uri"
               }
             },
-            "required": [
-              "id",
-              "email",
-              "name"
-            ],
+            "required": ["id", "email", "name"],
             "additionalProperties": false
           },
           "accounts": {
@@ -1409,20 +1335,11 @@
                 },
                 "provider": {
                   "type": "string",
-                  "enum": [
-                    "google",
-                    "microsoft",
-                    "icloud",
-                    "imap"
-                  ]
+                  "enum": ["google", "microsoft", "icloud", "imap"]
                 },
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "connected",
-                    "disconnected",
-                    "error"
-                  ]
+                  "enum": ["connected", "disconnected", "error"]
                 },
                 "displayName": {
                   "type": "string",
@@ -1489,13 +1406,7 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "idle",
-                        "backfilling",
-                        "syncing",
-                        "ready",
-                        "error"
-                      ]
+                      "enum": ["idle", "backfilling", "syncing", "ready", "error"]
                     },
                     "corpusReady": {
                       "type": "boolean"
@@ -1515,22 +1426,11 @@
                       "maxLength": 500
                     }
                   },
-                  "required": [
-                    "status",
-                    "corpusReady"
-                  ],
+                  "required": ["status", "corpusReady"],
                   "additionalProperties": false
                 }
               },
-              "required": [
-                "id",
-                "email",
-                "provider",
-                "status",
-                "scopes",
-                "capabilities",
-                "sync"
-              ],
+              "required": ["id", "email", "provider", "status", "scopes", "capabilities", "sync"],
               "additionalProperties": false
             }
           },
@@ -1595,16 +1495,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "accounts",
-              "mail",
-              "calendar",
-              "tasks",
-              "today",
-              "work",
-              "assistant",
-              "activity"
-            ],
+            "required": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"],
             "additionalProperties": false
           },
           "serverTime": {
@@ -1746,19 +1637,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "code",
-              "message",
-              "retryable"
-            ],
+            "required": ["code", "message", "retryable"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "ok",
-          "requestID",
-          "error"
-        ],
+        "required": ["ok", "requestID", "error"],
         "additionalProperties": false
       },
       "ProviderCapabilitySet": {
@@ -1836,16 +1719,7 @@
             "properties": {
               "domain": {
                 "type": "string",
-                "enum": [
-                  "accounts",
-                  "mail",
-                  "calendar",
-                  "tasks",
-                  "today",
-                  "work",
-                  "assistant",
-                  "activity"
-                ]
+                "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
               },
               "kind": {
                 "type": "string",
@@ -1858,11 +1732,7 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "domain",
-              "kind",
-              "id"
-            ],
+            "required": ["domain", "kind", "id"],
             "additionalProperties": false
           },
           "allowedActions": {
@@ -1935,13 +1805,7 @@
       "SyncEnvelope": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "items",
-          "deletedIDs",
-          "cursor",
-          "serverRevision",
-          "hasMore"
-        ],
+        "required": ["items", "deletedIDs", "cursor", "serverRevision", "hasMore"],
         "properties": {
           "items": {
             "type": "array",
@@ -2024,20 +1888,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "accountID"
-            ],
+            "required": ["accountID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "MailMessageSyncChange": {
@@ -2098,20 +1953,11 @@
                 }
               }
             },
-            "required": [
-              "accountID"
-            ],
+            "required": ["accountID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "MailDraftSyncChange": {
@@ -2157,21 +2003,11 @@
                 "const": true
               }
             },
-            "required": [
-              "accountID",
-              "draftID"
-            ],
+            "required": ["accountID", "draftID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "CalendarEventSyncChange": {
@@ -2213,21 +2049,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "eventID"
-            ],
+            "required": ["accountID", "eventID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "TaskSyncChange": {
@@ -2272,20 +2098,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "cardID"
-            ],
+            "required": ["cardID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "WorkSyncChange": {
@@ -2334,22 +2151,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "captureID",
-              "workIDs",
-              "fallback"
-            ],
+            "required": ["captureID", "workIDs", "fallback"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "ApprovalSyncChange": {
@@ -2393,10 +2199,7 @@
                     "maxLength": 240
                   }
                 },
-                "required": [
-                  "approvalID",
-                  "commandKind"
-                ],
+                "required": ["approvalID", "commandKind"],
                 "additionalProperties": false
               },
               {
@@ -2409,29 +2212,16 @@
                   },
                   "status": {
                     "type": "string",
-                    "enum": [
-                      "approved",
-                      "rejected"
-                    ]
+                    "enum": ["approved", "rejected"]
                   }
                 },
-                "required": [
-                  "approvalID",
-                  "status"
-                ],
+                "required": ["approvalID", "status"],
                 "additionalProperties": false
               }
             ]
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "OperationSyncChange": {
@@ -2453,16 +2243,7 @@
           },
           "domain": {
             "type": "string",
-            "enum": [
-              "accounts",
-              "mail",
-              "calendar",
-              "tasks",
-              "today",
-              "work",
-              "assistant",
-              "activity"
-            ]
+            "enum": ["accounts", "mail", "calendar", "tasks", "today", "work", "assistant", "activity"]
           },
           "entityKind": {
             "type": "string",
@@ -2481,21 +2262,11 @@
                 "const": true
               }
             },
-            "required": [
-              "operationID",
-              "undone"
-            ],
+            "required": ["operationID", "undone"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "entityID",
-          "revision",
-          "operation",
-          "domain",
-          "entityKind",
-          "payload"
-        ],
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
         "additionalProperties": false
       },
       "MailArchiveCommand": {
@@ -2534,19 +2305,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
+            "required": ["accountID", "threadID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailTrashCommand": {
@@ -2585,19 +2348,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
+            "required": ["accountID", "threadID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailMarkReadCommand": {
@@ -2636,19 +2391,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
+            "required": ["accountID", "threadID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailMarkUnreadCommand": {
@@ -2687,19 +2434,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "messageID"
-            ],
+            "required": ["accountID", "messageID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailStarCommand": {
@@ -2738,19 +2477,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "messageID"
-            ],
+            "required": ["accountID", "messageID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailUnstarCommand": {
@@ -2789,19 +2520,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "messageID"
-            ],
+            "required": ["accountID", "messageID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailAddLabelCommand": {
@@ -2850,21 +2573,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID",
-              "label"
-            ],
+            "required": ["accountID", "threadID", "messageID", "label"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailRemoveLabelCommand": {
@@ -2913,21 +2626,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID",
-              "label"
-            ],
+            "required": ["accountID", "threadID", "messageID", "label"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailSnoozeCommand": {
@@ -2976,21 +2679,11 @@
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
               }
             },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID",
-              "untilAt"
-            ],
+            "required": ["accountID", "threadID", "messageID", "untilAt"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailUnsnoozeCommand": {
@@ -3034,20 +2727,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID"
-            ],
+            "required": ["accountID", "threadID", "messageID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailMuteCommand": {
@@ -3086,19 +2770,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
+            "required": ["accountID", "threadID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailRestoreCommand": {
@@ -3137,19 +2813,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
+            "required": ["accountID", "threadID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailSendCommand": {
@@ -3184,12 +2852,7 @@
               },
               "mode": {
                 "type": "string",
-                "enum": [
-                  "new",
-                  "reply",
-                  "replyAll",
-                  "forward"
-                ]
+                "enum": ["new", "reply", "replyAll", "forward"]
               },
               "to": {
                 "type": "string",
@@ -3226,20 +2889,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "mode",
-              "bodyText"
-            ],
+            "required": ["accountID", "mode", "bodyText"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailSaveDraftCommand": {
@@ -3315,23 +2969,17 @@
                 "type": "string",
                 "format": "date-time",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "scheduleCleared": {
+                "type": "boolean",
+                "const": true
               }
             },
-            "required": [
-              "accountID",
-              "to",
-              "subject",
-              "bodyText"
-            ],
+            "required": ["accountID", "to", "subject", "bodyText"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "MailDeleteDraftCommand": {
@@ -3370,19 +3018,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "accountID",
-              "draftID"
-            ],
+            "required": ["accountID", "draftID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "CalendarCreateCommand": {
@@ -3462,9 +3102,7 @@
                       "maxLength": 160
                     }
                   },
-                  "required": [
-                    "email"
-                  ],
+                  "required": ["email"],
                   "additionalProperties": false
                 }
               },
@@ -3480,24 +3118,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "accountID",
-              "title",
-              "startAt",
-              "endAt",
-              "allDay",
-              "attendees",
-              "busy"
-            ],
+            "required": ["accountID", "title", "startAt", "endAt", "allDay", "attendees", "busy"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "TaskCreateCommand": {
@@ -3546,11 +3171,7 @@
               },
               "priority": {
                 "type": "string",
-                "enum": [
-                  "low",
-                  "medium",
-                  "high"
-                ]
+                "enum": ["low", "medium", "high"]
               },
               "dueAt": {
                 "type": "string",
@@ -3558,18 +3179,11 @@
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
               }
             },
-            "required": [
-              "title"
-            ],
+            "required": ["title"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "TaskSetCompletedCommand": {
@@ -3606,19 +3220,11 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "cardID",
-              "completed"
-            ],
+            "required": ["cardID", "completed"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "WorkCaptureCommand": {
@@ -3657,11 +3263,7 @@
               },
               "source": {
                 "type": "string",
-                "enum": [
-                  "text",
-                  "voice",
-                  "chat"
-                ]
+                "enum": ["text", "voice", "chat"]
               },
               "areaID": {
                 "type": "string",
@@ -3669,19 +3271,11 @@
                 "maxLength": 240
               }
             },
-            "required": [
-              "rawText",
-              "source"
-            ],
+            "required": ["rawText", "source"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "ApprovalApproveCommand": {
@@ -3722,18 +3316,11 @@
                 "additionalProperties": {}
               }
             },
-            "required": [
-              "approvalID"
-            ],
+            "required": ["approvalID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
       "ApprovalRejectCommand": {
@@ -3771,18 +3358,11 @@
                 "maxLength": 1000
               }
             },
-            "required": [
-              "approvalID"
-            ],
+            "required": ["approvalID"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       }
     },

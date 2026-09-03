@@ -30,6 +30,19 @@ enum EmailBodyHeight {
         let bounded = min(max(measured, minimumHeight), maximumHeight)
         return (bounded, measured > maximumHeight)
     }
+
+    // AppKit's WKWebView has no scroll view to observe, so after `didFinish`
+    // the Mac re-measures the document a few times while allowed remote
+    // images (which can finish after the navigation) settle its height.
+    static let macRemeasureDelays: [Duration] = [
+        .milliseconds(250), .milliseconds(750), .seconds(2), .seconds(5),
+    ]
+
+    // A measurement only moves the frame when it actually differs; sub-point
+    // jitter between passes must not re-layout the reader.
+    static func shouldApply(measured height: CGFloat, current: CGFloat) -> Bool {
+        abs(current - height) > 1
+    }
 }
 
 private struct EmailWebView: UIViewRepresentable {
@@ -86,6 +99,7 @@ private struct EmailWebView: UIViewRepresentable {
         var parent: EmailWebView
         private var loadedDocument: String?
         private var heightObservation: NSKeyValueObservation?
+        private var remeasureTask: Task<Void, Never>?
 
         init(parent: EmailWebView) {
             self.parent = parent
@@ -119,6 +133,8 @@ private struct EmailWebView: UIViewRepresentable {
         func tearDown() {
             heightObservation?.invalidate()
             heightObservation = nil
+            remeasureTask?.cancel()
+            remeasureTask = nil
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
@@ -126,6 +142,7 @@ private struct EmailWebView: UIViewRepresentable {
             applyHeight(from: webView.scrollView)
             #else
             measureHeight(of: webView)
+            scheduleRemeasures(of: webView)
             #endif
         }
 
@@ -137,9 +154,23 @@ private struct EmailWebView: UIViewRepresentable {
                 MainActor.assumeIsolated {
                     guard let self, let measured = value as? Double, measured > 0 else { return }
                     let resolved = EmailBodyHeight.resolve(forMeasured: ceil(measured))
-                    if abs(self.parent.contentHeight - resolved.height) > 1 {
+                    if EmailBodyHeight.shouldApply(measured: resolved.height, current: self.parent.contentHeight) {
                         self.parent.contentHeight = resolved.height
                     }
+                }
+            }
+        }
+
+        // Late-loading remote images grow the document after `didFinish`;
+        // a short, bounded series of re-measures tracks that growth. A new
+        // navigation or teardown cancels the series.
+        private func scheduleRemeasures(of webView: WKWebView) {
+            remeasureTask?.cancel()
+            remeasureTask = Task { [weak self, weak webView] in
+                for delay in EmailBodyHeight.macRemeasureDelays {
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled, let self, let webView else { return }
+                    self.measureHeight(of: webView)
                 }
             }
         }
@@ -167,7 +198,7 @@ private struct EmailWebView: UIViewRepresentable {
             if scrollView.isScrollEnabled != resolved.scrollsInternally {
                 scrollView.isScrollEnabled = resolved.scrollsInternally
             }
-            if abs(parent.contentHeight - resolved.height) > 1 {
+            if EmailBodyHeight.shouldApply(measured: resolved.height, current: parent.contentHeight) {
                 parent.contentHeight = resolved.height
             }
         }

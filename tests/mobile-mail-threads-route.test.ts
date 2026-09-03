@@ -121,6 +121,33 @@ describe('GET /api/mobile/v1/mail/threads', () => {
     expect(body.nextCursor).toBeUndefined();
   });
 
+  test('treats a null page watermark as the last page', async () => {
+    const handler = createMobileMailThreadsGet({
+      requireCurrentUser: async () => user,
+      pageRecent: async () => ({ items: [corpusItem], nextBefore: null }),
+      pageCategory: async () => ({ items: [] }),
+    });
+
+    const response = await handler(listRequest(''));
+    expect(response.status).toBe(200);
+    const body: any = await response.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.hasMore).toBe(false);
+    expect(body.nextCursor).toBeUndefined();
+  });
+
+  test('never hands out a zero or negative watermark as a cursor', async () => {
+    const handler = createMobileMailThreadsGet({
+      requireCurrentUser: async () => user,
+      pageRecent: async () => ({ items: [corpusItem], nextBefore: 0 }),
+      pageCategory: async () => ({ items: [] }),
+    });
+
+    const body: any = await (await handler(listRequest(''))).json();
+    expect(body.hasMore).toBe(false);
+    expect(body.nextCursor).toBeUndefined();
+  });
+
   test('rejects a malformed cursor as invalid input, not a server error', async () => {
     const handler = createMobileMailThreadsGet({
       requireCurrentUser: async () => user,

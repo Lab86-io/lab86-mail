@@ -109,4 +109,27 @@ struct DocumentModelsTests {
         #expect(missingKind.title.contains("editable document"))
         #expect(!missingTitle.supported)
     }
+
+
+    @Test
+    func driveChipsFallBackToTheAccountLabelOnlyWhenAProviderRepeats() throws {
+        func connection(_ id: String, provider: String, label: String) throws -> CloudFileConnection {
+            let json = JSONValue.object([
+                "connectionId": .string(id),
+                "provider": .string(provider),
+                "accountEmail": .string(label),
+                "status": .string("connected"),
+            ])
+            return try #require(CloudFileConnection(json: json))
+        }
+        let work = try connection("c1", provider: "google_drive", label: "work@example.com")
+        let home = try connection("c2", provider: "google_drive", label: "home@example.com")
+        let one = try connection("c3", provider: "onedrive", label: "me@outlook.com")
+
+        #expect(FilesView.chipTitle(for: work, among: [work, one]) == "Google Drive")
+        #expect(FilesView.chipTitle(for: one, among: [work, one]) == "OneDrive")
+        #expect(FilesView.chipTitle(for: work, among: [work, home, one]) == "work@example.com")
+        #expect(FilesView.chipTitle(for: home, among: [work, home, one]) == "home@example.com")
+        #expect(FilesView.chipTitle(for: one, among: [work, home, one]) == "OneDrive")
+    }
 }

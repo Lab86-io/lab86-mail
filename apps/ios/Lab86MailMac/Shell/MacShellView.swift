@@ -227,18 +227,23 @@ struct MacSourceList: View {
     }
 
     @ViewBuilder private var areaState: some View {
-        if environment.store.isLoadingWork || !environment.store.workDidLoad {
+        switch AreaListState.resolve(
+            isLoading: environment.store.isLoadingWork,
+            didLoad: environment.store.workDidLoad,
+            hasError: environment.store.workError != nil
+        ) {
+        case .loading:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Loading areas…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } else if environment.store.workError != nil {
+        case .failed:
             Button("Retry loading Areas") {
                 Task { await environment.store.refreshWork() }
             }
-        } else {
+        case .empty:
             Text("No active areas")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

@@ -83,11 +83,14 @@ final class MailIdentityStore {
         }
     }
 
-    // Absolute URLs pass through; site-relative logo paths resolve against the
-    // backend origin. Anything else is a genuine miss.
+    // Absolute http(s) URLs pass through; site-relative logo paths resolve
+    // against the backend origin. Any other scheme (file:, data:, javascript:)
+    // is never a usable network image and is treated as a miss.
     nonisolated static func photoURL(from urlString: String, baseURL: URL?) -> URL? {
         guard !urlString.isEmpty else { return nil }
-        if let url = URL(string: urlString), url.scheme != nil { return url }
+        if let url = URL(string: urlString), let scheme = url.scheme?.lowercased() {
+            return scheme == "https" || scheme == "http" ? url : nil
+        }
         guard urlString.hasPrefix("/"), let baseURL else { return nil }
         return URL(string: urlString, relativeTo: baseURL)?.absoluteURL
     }

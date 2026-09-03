@@ -1045,8 +1045,10 @@ export const pageRecentCorpusThreads = query({
           .order('desc')
           .take(limit + 1);
     const page = rows.slice(0, limit);
-    const nextBefore =
-      rows.length > page.length && page.length ? Number(page[page.length - 1].lastDate || 0) : undefined;
+    // A row without a usable lastDate cannot anchor a `lt` watermark; report
+    // the page as the last one rather than hand out a cursor that matches nothing.
+    const lastDate = page.length ? Number(page[page.length - 1].lastDate ?? 0) : 0;
+    const nextBefore = rows.length > page.length && lastDate > 0 ? lastDate : undefined;
     return { items: page.map(normalizeCorpusThread), nextBefore };
   },
 });

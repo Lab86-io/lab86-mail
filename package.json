@@ -11,7 +11,7 @@
     "start:railway": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
-    "mobile:openapi": "bun scripts/generate-mobile-openapi.ts",
+    "mobile:openapi": "bun scripts/generate-mobile-openapi.ts && biome format --write docs/mobile/openapi/mobile-v1.json",
     "ios:configure": "bun scripts/configure-ios.ts",
     "ios:verify-auth": "bun scripts/verify-ios-auth.ts",
     "daily-report": "bun --bun scripts/generate-daily-report.ts",

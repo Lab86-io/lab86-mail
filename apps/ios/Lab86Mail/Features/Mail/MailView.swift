@@ -80,7 +80,11 @@ struct MailView: View {
                 }
                 // Older pages stream in beneath the list as this row scrolls
                 // into view; the unified cursor comes from the typed v1 reads.
-                if environment.store.hasMoreMail, searchText.isEmpty {
+                if Self.showsLoadMoreRow(
+                    hasMore: environment.store.hasMoreMail,
+                    accountScope: accountScope,
+                    query: effectiveQuery
+                ) {
                     HStack {
                         Spacer()
                         ProgressView()
@@ -501,6 +505,15 @@ struct MailView: View {
             accountLabel = "\(accountScope.count) Accounts"
         }
         return mailboxScope == .inbox ? accountLabel : "\(mailboxScope.title) · \(accountLabel)"
+    }
+
+    // The cursor pages the unified inbox. An account filter or a mailbox
+    // query (Unread, Starred, search) narrows the list locally, so a fetched
+    // page could add nothing visible and the row would just keep requesting
+    // pages; those views stay on what is loaded. Category pills are a view
+    // over the same unified list and keep paging.
+    nonisolated static func showsLoadMoreRow(hasMore: Bool, accountScope: Set<String>, query: String) -> Bool {
+        hasMore && accountScope.isEmpty && query.isEmpty
     }
 
     private var effectiveQuery: String {

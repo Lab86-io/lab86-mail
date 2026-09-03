@@ -86,7 +86,10 @@ function mailMessage(message: any, accountID: string, threadID: string) {
 export function mailThreadDetailFromTool(thread: any, accountID: string, threadID: string) {
   const messages = (Array.isArray(thread?.messages) ? thread.messages : [])
     .map((message: any) => mailMessage(message, accountID, threadID))
-    .filter((message: any) => message.id);
+    .filter((message: any) => message.id)
+    // The contract promises ordered messages; enforce it at the boundary so
+    // the response never depends on the tool's own ordering.
+    .sort((left: any, right: any) => left.sentAt - right.sentAt);
   return MailThreadDetailSchema.parse({
     threadID,
     accountID,

@@ -138,6 +138,20 @@ async function sendWithNylas(args: Parameters<typeof sendNylasMessage>[0]) {
   return sent;
 }
 
+// The provider's identity for what was just sent, so callers (the mobile
+// command executor in particular) can key sync changes on the real thread.
+const SentOutput = z.object({
+  ok: z.boolean(),
+  messageId: z.string().optional(),
+  threadId: z.string().optional(),
+});
+
+function sentResult(sent: { _id?: unknown; threadId?: unknown }) {
+  const messageId = typeof sent?._id === 'string' && sent._id ? sent._id : undefined;
+  const threadId = typeof sent?.threadId === 'string' && sent.threadId ? sent.threadId : undefined;
+  return { ok: true as const, messageId, threadId };
+}
+
 async function resolveReplyAnchor(account: string, messageId?: string, threadId?: string) {
   const anchor =
     (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
@@ -221,10 +235,10 @@ export const sendMessage = defineTool({
   category: 'compose',
   mutating: true,
   input: SendBase,
-  output: z.object({ ok: z.boolean() }),
+  output: SentOutput,
   async handler({ account, to, cc, bcc, subject, body, html, attachments }, ctx) {
     const resolved = await resolveSendAttachments(ctx.userId, attachments);
-    await sendWithNylas({
+    const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
       to,
@@ -235,7 +249,7 @@ export const sendMessage = defineTool({
       html,
       attachments: resolved,
     });
-    return { ok: true };
+    return sentResult(sent as any);
   },
 });
 
@@ -253,10 +267,10 @@ export const replyMessage = defineTool({
     from: z.string().optional(),
     attachments: z.array(AttachmentSource).optional(),
   }),
-  output: z.object({ ok: z.boolean() }),
+  output: SentOutput,
   async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyTarget(account, messageId, threadId);
-    await sendWithNylas({
+    const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
       to: target.to,
@@ -266,7 +280,7 @@ export const replyMessage = defineTool({
       replyToMessageId: messageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
-    return { ok: true };
+    return sentResult(sent as any);
   },
 });
 
@@ -284,11 +298,11 @@ export const replyAllMessage = defineTool({
     from: z.string().optional(),
     attachments: z.array(AttachmentSource).optional(),
   }),
-  output: z.object({ ok: z.boolean() }),
+  output: SentOutput,
   async handler({ account, messageId, threadId, body, html, attachments }, ctx) {
     const target = await resolveReplyAllTarget(account, messageId, threadId);
     if (!target.to) throw new Error('Cannot reply-all — no recipients are available.');
-    await sendWithNylas({
+    const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
       to: target.to,
@@ -298,7 +312,7 @@ export const replyAllMessage = defineTool({
       replyToMessageId: messageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
-    return { ok: true };
+    return sentResult(sent as any);
   },
 });
 
@@ -319,13 +333,13 @@ export const forwardMessage = defineTool({
     from: z.string().optional(),
     attachments: z.array(AttachmentSource).optional(),
   }),
-  output: z.object({ ok: z.boolean() }),
+  output: SentOutput,
   async handler({ account, messageId, to, cc, bcc, body, html, attachments }, ctx) {
     const original = await getMessageRecord(account, messageId);
     if (!original)
       throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
     const quoted = buildForwardMessagePayload(original, { body, html });
-    await sendWithNylas({
+    const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
       to,
@@ -336,7 +350,7 @@ export const forwardMessage = defineTool({
       html: quoted.html,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
-    return { ok: true };
+    return sentResult(sent as any);
   },
 });
 
@@ -388,14 +402,18 @@ export const updateDraft = defineTool({
       subject: z.string().optional(),
       body: z.string().optional(),
       html: z.string().optional(),
-      scheduledFor: z.number().optional(),
+      // `null` clears a scheduled send; `undefined` leaves it unchanged.
+      scheduledFor: z.number().nullable().optional(),
     }),
   }),
   output: z.object({ ok: z.boolean() }),
   async handler({ id, patch }) {
     const draft = await getDraft(id);
     if (!draft) throw new Error('Draft not found');
-    Object.assign(draft, patch);
+    const { scheduledFor, ...fields } = patch;
+    Object.assign(draft, fields);
+    if (scheduledFor === null) delete (draft as { scheduledFor?: number }).scheduledFor;
+    else if (scheduledFor !== undefined) (draft as { scheduledFor?: number }).scheduledFor = scheduledFor;
     await saveDraftRecord(draft);
     return { ok: true };
   },

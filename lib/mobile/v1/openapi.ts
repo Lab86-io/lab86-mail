@@ -140,8 +140,19 @@ export function mobileOpenAPIV1() {
           operationId: 'getMobileMailThreads',
           parameters: [
             { name: 'accountID', in: 'query', required: false, schema: { type: 'string' } },
-            { name: 'category', in: 'query', required: false, schema: { type: 'string' } },
-            { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
+            {
+              name: 'category',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', minLength: 1, maxLength: 240 },
+            },
+            {
+              name: 'cursor',
+              in: 'query',
+              required: false,
+              description: 'Opaque page cursor from a previous response (a decimal epoch-ms watermark).',
+              schema: { type: 'string', pattern: '^\\d+$' },
+            },
             {
               name: 'limit',
               in: 'query',

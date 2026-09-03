@@ -164,7 +164,9 @@ struct CalendarView: View {
 
     private func weekStepButton(direction: Int, symbol: String, label: String) -> some View {
         Button {
-            weekPage = calendar.date(byAdding: .day, value: direction * 7, to: weekPage) ?? weekPage
+            // Route through the same setter the paged strip uses so the
+            // selected day (and the day timeline) follow the week.
+            weekBinding.wrappedValue = Self.weekPage(afterStepping: direction, from: weekPage, calendar: calendar)
         } label: {
             Image(systemName: symbol)
                 .font(.callout.weight(.semibold))
@@ -393,6 +395,13 @@ struct CalendarView: View {
                             proxy.scrollTo(anchor, anchor: .top)
                         }
                     }
+                    // The toolbar's Today asks for a scroll explicitly; the
+                    // agenda only positioned itself on first appearance before.
+                    .onChange(of: todayToken) {
+                        if let anchor = agendaAnchorDay {
+                            withAnimation { proxy.scrollTo(anchor, anchor: .top) }
+                        }
+                    }
             }
         }
     }
@@ -493,11 +502,7 @@ struct CalendarView: View {
                 weekPage = newWeek
                 // Paging the strip moves the selection into the visible week,
                 // keeping the same weekday when possible (Outlook behavior).
-                if Self.weekStart(for: selectedDay, calendar: calendar) != newWeek {
-                    let weekday = calendar.component(.weekday, from: selectedDay)
-                    let offset = (weekday - calendar.firstWeekday + 7) % 7
-                    selectedDay = calendar.date(byAdding: .day, value: offset, to: newWeek) ?? newWeek
-                }
+                selectedDay = Self.selectedDay(forWeek: newWeek, keeping: selectedDay, calendar: calendar)
             }
         )
     }
@@ -508,9 +513,22 @@ struct CalendarView: View {
         if weekPage != week { weekPage = week }
     }
 
-    static func weekStart(for date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
+    nonisolated static func weekStart(for date: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
         let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
         return calendar.startOfDay(for: start)
+    }
+
+    nonisolated static func weekPage(afterStepping direction: Int, from weekPage: Date, calendar: Calendar) -> Date {
+        calendar.date(byAdding: .day, value: direction * 7, to: weekPage) ?? weekPage
+    }
+
+    // The selection that belongs to a newly shown week: unchanged when the
+    // selected day is already in it, otherwise the same weekday of that week.
+    nonisolated static func selectedDay(forWeek newWeek: Date, keeping selectedDay: Date, calendar: Calendar) -> Date {
+        guard weekStart(for: selectedDay, calendar: calendar) != newWeek else { return selectedDay }
+        let weekday = calendar.component(.weekday, from: selectedDay)
+        let offset = (weekday - calendar.firstWeekday + 7) % 7
+        return calendar.date(byAdding: .day, value: offset, to: newWeek) ?? newWeek
     }
 
     private var dayRange: [Date] {

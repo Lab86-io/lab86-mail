@@ -84,7 +84,8 @@ policy (XcodeGen, ref validation, credential pinning). TestFlight for Mac distri
 ## Explicitly deferred
 
 - Typed `AssistantEvent` SSE endpoint (assistant streaming stays on `/api/agent`).
-- Mac AutoFill/credential-provider extension, share extension, widgets.
+- Share extension and widgets on the Mac (the Mac AutoFill one-time-code provider
+  "Albatross Codes" shipped with the store-ready pass; see `docs/mobile/macos-target.md`).
 - `com.apple.developer.mail-client` (blocked on Apple grant).
 - Renaming `apps/ios` (it now hosts both platforms; churn not worth it yet).
 

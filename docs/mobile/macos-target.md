@@ -20,9 +20,12 @@ Date: 2026-08-19. Status: full product compiles, links, and runs unit tests on m
     `PendingSendToast`, `shellToolbar`, notification-action consumption, shared by
     `AppShellView` (iOS) and `MacShellView` (macOS).
 - iOS-only by design: sidebar wheel (`SidebarWheel*`, `SidebarScrub`), `BGTaskScheduler`
-  refresh, AutoFill extension, HorizonCalendar month view (Mac falls back to agenda until
+  refresh, HorizonCalendar month view (Mac falls back to agenda until
   the Mac month grid lands). The Mac stays fresh through Convex live queries, foreground
   activation, and APNs remote wakes (`.lab86RemoteWake`).
+- AutoFill on the Mac: the `Lab86MailMacAutoFill` extension ("Albatross Codes") shares the
+  iOS extension's code and vault group, so one-time codes fill in Safari and Mac apps
+  after enabling it under System Settings → General → AutoFill & Passwords.
 - Server: `/api/mobile/devices` and Convex accept `platform: "macos"`; the Mac registers
   APNs tokens with a persisted per-install identity.
 

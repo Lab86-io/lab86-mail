@@ -5,6 +5,20 @@ import SwiftUI
 // overlays, the common toolbar, and notification-action consumption. Kept
 // platform-neutral so the two shells stay thin presentations over one model.
 
+// What an empty Areas list should say. A failed first load must surface its
+// retry rather than hide behind "loading" because `didLoad` never flipped.
+enum AreaListState: Equatable {
+    case loading
+    case failed
+    case empty
+
+    nonisolated static func resolve(isLoading: Bool, didLoad: Bool, hasError: Bool) -> AreaListState {
+        if isLoading { return .loading }
+        if hasError { return .failed }
+        return didLoad ? .empty : .loading
+    }
+}
+
 struct RootDestinationView: View {
     @Environment(AppEnvironment.self) private var environment
 

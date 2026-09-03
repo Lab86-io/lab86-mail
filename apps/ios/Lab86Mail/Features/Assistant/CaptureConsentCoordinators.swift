@@ -171,18 +171,32 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         accuracy >= 0
     }
 
+    // One platform-specific notion of "may request a fix", shared by the
+    // explicit request and the authorization callback so neither path can
+    // drift (macOS reports `.authorized`, iOS `.authorizedWhenInUse`).
+    nonisolated static func grantsLocation(_ status: CLAuthorizationStatus) -> Bool {
+        #if os(macOS)
+        return status == .authorizedAlways || status == .authorized
+        #else
+        return status == .authorizedAlways || status == .authorizedWhenInUse
+        #endif
+    }
+
     func requestOnce() {
         errorMessage = nil
-        switch manager.authorizationStatus {
+        let status = manager.authorizationStatus
+        if Self.grantsLocation(status) {
+            isRequesting = true
+            manager.requestLocation()
+            return
+        }
+        switch status {
         case .notDetermined:
             isRequesting = true
             manager.requestWhenInUseAuthorization()
-        case .authorizedAlways, .authorizedWhenInUse:
-            isRequesting = true
-            manager.requestLocation()
         case .denied, .restricted:
             errorMessage = "Location permission is off. No location will be attached."
-        @unknown default:
+        default:
             errorMessage = "Location is unavailable. No location will be attached."
         }
     }
@@ -199,12 +213,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor [weak self] in
             guard let self else { return }
-            #if os(macOS)
-            let isAuthorized = status == .authorizedAlways || status == .authorized
-            #else
-            let isAuthorized = status == .authorizedAlways || status == .authorizedWhenInUse
-            #endif
-            if isAuthorized {
+            if Self.grantsLocation(status) {
                 self.manager.requestLocation()
             } else if status == .denied || status == .restricted {
                 self.isRequesting = false

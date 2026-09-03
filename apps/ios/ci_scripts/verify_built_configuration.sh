@@ -4,9 +4,12 @@ set -euo pipefail
 # Local Debug iteration intentionally embeds staging/dev configuration; the
 # release gate below exists for archives and for any build carrying an Xcode
 # Cloud source identity. A CI build never enters this branch: Xcode Cloud
-# always provides its source refs, which are validated exactly below.
+# always provides its source refs, which are validated exactly below, and any
+# other CI runner announces itself through CI=true, which also keeps the gate.
+ci_flag="$(printf '%s' "${CI:-}" | tr '[:upper:]' '[:lower:]')"
 if [[ -z "${CI_GIT_REF:-}${CI_BRANCH:-}${CI_TAG:-}${CI_COMMIT:-}" \
-  && "${CONFIGURATION:-}" == "Debug" ]]; then
+  && "${CONFIGURATION:-}" == "Debug" \
+  && "$ci_flag" != "true" && "$ci_flag" != "1" && "$ci_flag" != "yes" ]]; then
   echo "Skipping release configuration verification for a local Debug build."
   exit 0
 fi
@@ -107,5 +110,25 @@ case "$build_channel" in
     exit 1
     ;;
 esac
+
+# The signed entitlements must carry a concrete passkey association. Xcode
+# expands `$(LAB86_INFO_CLERK_FRONTEND_API_HOST)` into the processed
+# entitlements (.xcent); an empty or unexpanded value, or one carrying a
+# scheme or path, silently disables passkeys on the distributed app.
+entitlements_file="${TARGET_TEMP_DIR:-}/${FULL_PRODUCT_NAME:-}.xcent"
+if [[ -n "${LAB86_ENTITLEMENTS_FILE:-}" ]]; then
+  entitlements_file="$LAB86_ENTITLEMENTS_FILE"
+fi
+if [[ -f "$entitlements_file" ]]; then
+  webcredentials="$(
+    /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.associated-domains' "$entitlements_file" 2>/dev/null \
+      | grep 'webcredentials:' | sed -E 's/^[[:space:]]*webcredentials://' | tr -d '[:space:]' || true
+  )"
+  if [[ -z "$webcredentials" || ! "$webcredentials" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "Refusing to archive with an invalid webcredentials association: '${webcredentials:-<missing>}'." >&2
+    exit 1
+  fi
+  echo "Verified passkey association webcredentials:$webcredentials"
+fi
 
 echo "Verified processed $build_channel application configuration."

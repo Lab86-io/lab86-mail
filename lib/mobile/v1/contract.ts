@@ -437,16 +437,16 @@ const mailSendPayload = z
   .superRefine((value, ctx) => {
     if ((value.mode === 'new' || value.mode === 'forward') && !value.to?.trim()) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'to is required for new and forward sends.',
       });
     }
     if (value.mode === 'new' && value.subject === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'subject is required for a new send.' });
+      ctx.addIssue({ code: 'custom', message: 'subject is required for a new send.' });
     }
     if (value.mode !== 'new' && !value.messageID) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'messageID is required for reply, replyAll, and forward sends.',
       });
     }
@@ -465,8 +465,22 @@ const mailSaveDraftPayload = z
     bodyText: z.string().max(500_000),
     bodyHTML: z.string().max(1_000_000).optional(),
     scheduledFor: isoTimestamp.optional(),
+    // Explicit unschedule for an existing draft (mirrors `snoozeCleared`):
+    // omitting `scheduledFor` on an update must mean "leave it unchanged".
+    scheduleCleared: z.literal(true).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.scheduleCleared && value.scheduledFor !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'scheduleCleared cannot be combined with scheduledFor.',
+      });
+    }
+    if (value.scheduleCleared && !value.draftID) {
+      ctx.addIssue({ code: 'custom', message: 'scheduleCleared requires an existing draftID.' });
+    }
+  });
 
 const mailDeleteDraftPayload = z
   .object({

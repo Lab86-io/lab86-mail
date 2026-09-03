@@ -244,7 +244,7 @@ describe('expanded mail commands', () => {
     });
   });
 
-  test('unsnooze clears the snooze with an explicit null deadline', async () => {
+  test('unsnooze clears the snooze with the explicit snoozeCleared flag', async () => {
     const { calls, deps } = recordingDependencies();
 
     const result = await executeMobileCommand(
@@ -386,6 +386,107 @@ describe('expanded mail commands', () => {
     );
     expect(result.entityID).toBe('send-key-1');
     expect(result.syncPayload).toEqual({ accountID: 'account-1' });
+  });
+
+  test('send keys the sync change on the provider thread id when the tool reports one', async () => {
+    const { deps } = recordingDependencies({ ok: true, messageId: 'msg-9', threadId: 'thread-9' });
+    const result = await executeMobileCommand(
+      command(
+        'mail.send',
+        { accountID: 'account-1', mode: 'new', to: 'sam@example.com', subject: 'Hi', bodyText: 'Body' },
+        'send-key-2',
+      ),
+      user,
+      deps,
+    );
+    expect(result.entityID).toBe('thread-9');
+    expect(result.syncPayload).toEqual({ accountID: 'account-1' });
+  });
+
+  test('send prefers the thread the client already knows over the provider id', async () => {
+    const { deps } = recordingDependencies({ ok: true, threadId: 'provider-thread' });
+    const result = await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'reply',
+        messageID: 'msg-1',
+        threadID: 'thread-1',
+        bodyText: 'Body',
+      }),
+      user,
+      deps,
+    );
+    expect(result.entityID).toBe('thread-1');
+  });
+
+  test('saveDraft converts scheduledFor to epoch ms on the create path', async () => {
+    const { calls, deps } = recordingDependencies({ ok: true, draft: { _id: 'draft-30' } });
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        to: 'sam@example.com',
+        subject: 'Later',
+        bodyText: 'Body',
+        scheduledFor: '2026-08-20T09:00:00.000Z',
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('save_draft');
+    expect(calls[0].args.scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
+  });
+
+  test('saveDraft converts scheduledFor to epoch ms inside the update patch', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Later',
+        bodyText: 'Body',
+        scheduledFor: '2026-08-20T09:00:00.000Z',
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('update_draft');
+    expect((calls[0].args.patch as any).scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
+  });
+
+  test('saveDraft leaves an existing schedule alone when scheduledFor is omitted', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Edited',
+        bodyText: 'Body',
+      }),
+      user,
+      deps,
+    );
+    expect('scheduledFor' in (calls[0].args.patch as any)).toBe(true);
+    expect((calls[0].args.patch as any).scheduledFor).toBeUndefined();
+  });
+
+  test('saveDraft with scheduleCleared sends an explicit null so the draft unschedules', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Now',
+        bodyText: 'Body',
+        scheduleCleared: true,
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('update_draft');
+    expect((calls[0].args.patch as any).scheduledFor).toBeNull();
   });
 
   test('saveDraft creates through save_draft and reports the stored draft id', async () => {

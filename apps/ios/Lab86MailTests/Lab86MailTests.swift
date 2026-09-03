@@ -2280,4 +2280,53 @@ struct Lab86MailTests {
             serverTime: Date(timeIntervalSince1970: 200)
         )
     }
+
+
+    @Test
+    func locationAuthorizationPredicateMatchesThePlatform() {
+        #expect(CaptureLocationCoordinator.grantsLocation(.authorizedAlways))
+        #expect(!CaptureLocationCoordinator.grantsLocation(.notDetermined))
+        #expect(!CaptureLocationCoordinator.grantsLocation(.denied))
+        #expect(!CaptureLocationCoordinator.grantsLocation(.restricted))
+        #if os(macOS)
+        #expect(CaptureLocationCoordinator.grantsLocation(.authorized))
+        #else
+        #expect(CaptureLocationCoordinator.grantsLocation(.authorizedWhenInUse))
+        #endif
+    }
+
+    @Test
+    @MainActor
+    func anAlreadyAuthorizedLocationRequestAsksForAFixImmediately() {
+        let manager = StubLocationManager()
+        #if os(macOS)
+        manager.authorizationStatus = .authorized
+        #else
+        manager.authorizationStatus = .authorizedWhenInUse
+        #endif
+        let coordinator = CaptureLocationCoordinator(manager: manager, labelResolver: StubLocationLabelResolver())
+        coordinator.requestOnce()
+        #expect(manager.authorizationRequestCount == 0)
+        #expect(manager.locationRequestCount == 1)
+        #expect(coordinator.isRequesting)
+
+        manager.authorizationStatus = .notDetermined
+        let fresh = CaptureLocationCoordinator(manager: manager, labelResolver: StubLocationLabelResolver())
+        fresh.requestOnce()
+        #expect(manager.authorizationRequestCount == 1)
+        #expect(manager.locationRequestCount == 1)
+    }
+
+    @Test
+    func emailBodyHeightOnlyMovesTheFrameForRealChanges() {
+        #expect(!EmailBodyHeight.shouldApply(measured: 640, current: 640))
+        #expect(!EmailBodyHeight.shouldApply(measured: 640.5, current: 640))
+        #expect(EmailBodyHeight.shouldApply(measured: 642, current: 640))
+        #expect(EmailBodyHeight.shouldApply(measured: 900, current: 640))
+        // Re-measure passes on the Mac are bounded and spread out over time.
+        let delays = EmailBodyHeight.macRemeasureDelays
+        #expect(!delays.isEmpty)
+        #expect(delays == delays.sorted())
+        #expect(delays.last! <= .seconds(10))
+    }
 }

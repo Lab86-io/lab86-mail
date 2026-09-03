@@ -163,4 +163,44 @@ struct MailPagingTests {
         #expect(store.threads.map(\.id) == ["legacy-1"])
         #expect(!store.hasMoreMail)
     }
+
+
+    @Test
+    func anEmptyLiveTickKeepsThePagedList() async {
+        let pages = PagedMailStub(pages: [
+            MailListPage(
+                items: [summary("t1", epoch: 2_000_000_100)],
+                nextCursor: "2000000100000",
+                hasMore: true
+            ),
+            MailListPage(
+                items: [summary("t2", epoch: 2_000_000_000)],
+                nextCursor: nil,
+                hasMore: false
+            ),
+        ])
+        let store = ProductStore(
+            tools: AccountsOnlyTools(),
+            backend: BackendClient(baseURL: nil),
+            spotlight: NoopSpotlight(),
+            mailPages: pages
+        )
+        await store.refreshMail()
+        await store.loadMoreMail()
+        #expect(store.threads.map(\.id) == ["t1", "t2"])
+
+        // A live window with no rows must not blank a partially paged inbox.
+        await store.applyLiveMail(LiveMailThreadsPayload(items: []))
+        #expect(store.threads.map(\.id) == ["t1", "t2"])
+    }
+
+    @Test
+    func theLoadMoreRowOnlyPagesTheUnfilteredUnifiedList() {
+        #expect(MailView.showsLoadMoreRow(hasMore: true, accountScope: [], query: ""))
+        #expect(!MailView.showsLoadMoreRow(hasMore: false, accountScope: [], query: ""))
+        // A single-account filter narrows locally; unified pages may add nothing visible.
+        #expect(!MailView.showsLoadMoreRow(hasMore: true, accountScope: ["account-1"], query: ""))
+        // Mailbox scopes (Unread, Starred) and search ride the query, not just the search field.
+        #expect(!MailView.showsLoadMoreRow(hasMore: true, accountScope: [], query: "is:unread"))
+    }
 }

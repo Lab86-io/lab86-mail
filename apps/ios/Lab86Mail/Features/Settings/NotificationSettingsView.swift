@@ -37,7 +37,7 @@ struct NotificationSettingsView: View {
             } header: {
                 Text("Delivery")
             } footer: {
-                Text("Urgent mail is delivered as time-sensitive, so it can reach you through a Focus. Everything else follows iOS Focus and per-app notification settings.")
+                Text("Urgent mail is delivered as time-sensitive, so it can reach you through a Focus. Everything else follows the system Focus and per-app notification settings.")
             }
 
             oneTimeCodeSection

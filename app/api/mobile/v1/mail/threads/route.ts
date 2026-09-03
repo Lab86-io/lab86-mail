@@ -6,10 +6,13 @@ import { mailListCursor, mailListLimit, mailThreadSummaryFromCorpus } from '@/li
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 interface CorpusPage {
   items: any[];
-  nextBefore?: number;
+  // Convex answers `undefined` or `null` for the last page; only a numeric
+  // watermark means another page exists.
+  nextBefore?: number | null;
 }
 
 interface MobileMailThreadsDependencies {
@@ -51,10 +54,14 @@ export function createMobileMailThreadsGet(deps: MobileMailThreadsDependencies =
       const page = category
         ? await deps.pageCategory({ userId: user.userId, accountId: accountID, category, limit, before })
         : await deps.pageRecent({ userId: user.userId, accountId: accountID, limit, before });
+      const nextBefore =
+        typeof page.nextBefore === 'number' && Number.isFinite(page.nextBefore) && page.nextBefore > 0
+          ? Math.floor(page.nextBefore)
+          : undefined;
       const payload = MailThreadPageSchema.parse({
         items: (page.items || []).map(mailThreadSummaryFromCorpus),
-        nextCursor: page.nextBefore !== undefined ? String(page.nextBefore) : undefined,
-        hasMore: page.nextBefore !== undefined,
+        nextCursor: nextBefore !== undefined ? String(nextBefore) : undefined,
+        hasMore: nextBefore !== undefined,
         serverTime: new Date().toISOString(),
       });
       return mobileJSON(payload, undefined, requestID);

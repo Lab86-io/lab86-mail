@@ -301,8 +301,14 @@ struct FilesView: View {
     }
 
     private func chipTitle(for connection: CloudFileConnection) -> String {
+        Self.chipTitle(for: connection, among: store.connections)
+    }
+
+    // One drive per provider reads by provider name; a second account of the
+    // same provider needs its own label (the account email) to tell them apart.
+    nonisolated static func chipTitle(for connection: CloudFileConnection, among connections: [CloudFileConnection]) -> String {
         let providerName = connection.provider == "google_drive" ? "Google Drive" : "OneDrive"
-        let sameProvider = store.connections.filter { $0.provider == connection.provider }
+        let sameProvider = connections.filter { $0.provider == connection.provider }
         return sameProvider.count > 1 ? connection.label : providerName
     }
 
