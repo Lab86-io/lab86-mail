@@ -43,6 +43,7 @@ struct WorkDetailView: View {
     @State private var stepNotes: [String: String] = [:]
     @State private var browserStep: WorkDetail.ExecutionStep?
     @State private var showsHorizonSheet = false
+    @State private var showsShapeSheet = false
 
     var body: some View {
         Group {
@@ -122,6 +123,11 @@ struct WorkDetailView: View {
                 await load(initial: false)
             }
         }
+        .sheet(isPresented: $showsShapeSheet) {
+            ShapePickerSheet(current: detail?.work.resolvedShape ?? .default) { shape in
+                await setShape(shape)
+            }
+        }
         .sheet(isPresented: $showsHorizonSheet) {
             HorizonSheet(
                 title: detail?.plan?.outcome ?? detail?.work.title ?? route.title ?? "Work",
@@ -130,6 +136,13 @@ struct WorkDetailView: View {
                 await setHorizon(horizon)
             }
         }
+    }
+
+    /// Write the shape. The body swaps to the one the new shape owns.
+    private func setShape(_ shape: WorkShape) async -> Bool {
+        let ok = await WorkShapeWriter.setShape(shape, for: route.workID, environment: environment)
+        if ok { await load(initial: false) }
+        return ok
     }
 
     /// Write the horizon. The lead crossfades to the horizon line at once.
@@ -146,6 +159,37 @@ struct WorkDetailView: View {
         return true
     }
 
+    /// The body a shape owns. A list keeps items, a practice keeps a metric,
+    /// a project keeps milestones. Every other shape keeps the guided plan.
+    @ViewBuilder private func shapeBody(_ detail: WorkDetail) -> some View {
+        switch detail.work.resolvedShape.detail {
+        case .list:
+            bareSection {
+                ListBody(workID: route.workID, items: detail.work.listItems ?? [])
+            }
+        case .practice:
+            bareSection {
+                PracticeBody(
+                    workID: route.workID,
+                    metric: detail.work.metric,
+                    entries: detail.metricEntries
+                )
+            }
+        case .milestones:
+            bareSection {
+                ProjectBody(
+                    workID: route.workID,
+                    milestones: detail.work.milestones ?? [],
+                    evidence: detail.evidence,
+                    lastUserTouchAt: detail.work.lastUserTouchAt,
+                    updatedAt: detail.work.updatedAt
+                )
+            }
+        case .guided, .decision, .monitor, .routine:
+            EmptyView()
+        }
+    }
+
     private func loadedBody(_ detail: WorkDetail) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -160,6 +204,8 @@ struct WorkDetailView: View {
 
                 workLead(detail)
 
+                shapeBody(detail)
+
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if let move = passedWorkExecutionMove(detail, at: context.date) {
                         bareSection {
@@ -170,7 +216,7 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if let step = detail.execution.currentStep {
+                if detail.work.resolvedShape.plans, let step = detail.execution.currentStep {
                     currentStepSection(step, execution: detail.execution)
                 }
 
@@ -238,7 +284,7 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if !detail.execution.guideSteps.isEmpty {
+                if detail.work.resolvedShape.plans, !detail.execution.guideSteps.isEmpty {
                     documentSection("The plan") {
                         VStack(spacing: 0) {
                             ForEach(Array(detail.execution.guideSteps.enumerated()), id: \.element.id) { offset, step in
@@ -391,6 +437,21 @@ struct WorkDetailView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // The shape word. It says what kind of outcome this is, and it
+            // opens the picker.
+            Button {
+                showsShapeSheet = true
+            } label: {
+                Text(detail.work.resolvedShape.label)
+                    .font(.subheadline)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Shape: \(detail.work.resolvedShape.label)")
+            .accessibilityHint("Opens the shape picker")
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)

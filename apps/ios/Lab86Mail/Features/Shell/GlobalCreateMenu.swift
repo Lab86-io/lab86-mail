@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The one global creation surface — New intent, New chat, Compose email — with
+// The one global creation surface — Ask or hold, Compose email — with
 // its presentation chosen by the owner: a floating liquid-glass circle over
 // most root pages, or a native bottom-toolbar item where a root owns its
 // bottom bar (Mail, whose search field sits beside it). The action set must
@@ -12,10 +12,9 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
 
     var body: some View {
         Menu {
-            Button("New intent") {
-                environment.navigation.sheet = .assistant
-            }
-            Button("New chat") {
+            // One door. The bar decides whether the text is a question or
+            // something to hold.
+            Button("Ask or hold") {
                 environment.startAssistantChat()
             }
             Button("Compose email") {
@@ -36,7 +35,7 @@ struct GlobalCreateMenu<MenuLabel: View>: View {
         } label: {
             label()
         }
-        .accessibilityLabel("Create an intent, chat, email, or file")
+        .accessibilityLabel("Ask or hold, write an email, or make a file")
         .alert("Couldn’t create file", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }

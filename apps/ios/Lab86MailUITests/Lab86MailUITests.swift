@@ -31,19 +31,18 @@ final class Lab86MailUITests: XCTestCase {
             // own affordance instead of a fixed bar title.
             XCTAssertTrue(app.buttons["New event"].waitForExistence(timeout: 5))
 
-            // The floating create button offers intent capture, chat, and
-            // compose; chat opens the full-page conversation.
-            let createButton = app.buttons["New intent, chat, or email"]
+            // The floating create button offers one door for a question or
+            // something to hold, plus compose.
+            let createButton = app.buttons["Ask or hold, write an email, or make a file"]
             XCTAssertTrue(createButton.waitForExistence(timeout: 3))
             createButton.tap()
-            XCTAssertTrue(app.buttons["New intent"].waitForExistence(timeout: 3))
-            let newChat = app.buttons["New chat"]
-            XCTAssertTrue(newChat.exists)
-            newChat.tap()
-            XCTAssertTrue(app.textFields["Message Albatross"].waitForExistence(timeout: 5))
+            let askOrHold = app.buttons["Ask or hold"]
+            XCTAssertTrue(askOrHold.waitForExistence(timeout: 3))
+            askOrHold.tap()
+            XCTAssertTrue(app.textFields["Ask or hold"].waitForExistence(timeout: 5))
 
             let chatScreenshot = XCTAttachment(screenshot: app.screenshot())
-            chatScreenshot.name = "New chat conversation"
+            chatScreenshot.name = "Ask or hold conversation"
             chatScreenshot.lifetime = .keepAlways
             add(chatScreenshot)
 

@@ -120,6 +120,19 @@ final class AssistantChatModel {
     private(set) var canContinue = false
     var canRetry: Bool { lastFailedUserText != nil || lastFailedApprovalID != nil }
 
+    // The bar route, the Hold landing, and the receipts. Receipts are client
+    // state; a Hold never writes a chat message.
+    private(set) var route: BarRoute = .ask
+    private(set) var routePinned = false
+    private(set) var holdCards: [HoldCardModel] = []
+    private(set) var holdPhase: HoldPhase = .collapse
+    private(set) var isHolding = false
+    private(set) var holdError: String?
+    private(set) var receipts: [HoldCardModel] = []
+    private(set) var heldMessageIDs: Set<String> = []
+    private(set) var holdingMessageID: String?
+    private var routeTask: Task<Void, Never>?
+
     private let backend: BackendClient
     private let baseURL: URL?
     private let session: URLSession
@@ -516,6 +529,161 @@ final class AssistantChatModel {
                 "workId": scope.kind == .work ? scope.contextID.map(JSONValue.string) ?? .null : .null,
             ])
         )
+    }
+
+    // MARK: - Ask or hold
+
+    /// The chip value while the person types. The heuristic answers at once.
+    /// The endpoint confirms after `RoutePredictor.confirmDelay`.
+    func updateDraft(_ text: String) {
+        routeTask?.cancel()
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty {
+            route = .ask
+            routePinned = false
+            return
+        }
+        if !routePinned {
+            route = RouteHeuristic.instant(clean, current: route).route
+        }
+        routeTask = Task { [weak self] in
+            try? await Task.sleep(for: RoutePredictor.confirmDelay)
+            guard !Task.isCancelled else { return }
+            await self?.confirmRoute(for: clean)
+        }
+    }
+
+    /// Flip the chip by hand. The route stays pinned until the field clears.
+    func flipRoute() {
+        route = route.flipped
+        routePinned = true
+        routeTask?.cancel()
+    }
+
+    /// Open the bar already set to hold, for the one entry point.
+    func presetRoute(_ next: BarRoute) {
+        route = next
+        routePinned = true
+    }
+
+    func clearRoute() {
+        routeTask?.cancel()
+        route = .ask
+        routePinned = false
+    }
+
+    private func confirmRoute(for text: String) async {
+        guard !routePinned else { return }
+        let verdict = await routeVerdict(for: text)
+        guard !Task.isCancelled, !routePinned else { return }
+        guard RoutePredictor.shouldAdopt(verdict, pinned: routePinned) else { return }
+        route = verdict.route
+    }
+
+    private func routeVerdict(for text: String) async -> RouteVerdict {
+        do {
+            let result = try await backend.post(
+                path: "/api/mobile/v1/assistant/route",
+                body: .object(["text": .string(text)])
+            )
+            guard let raw = result["route"]?.stringValue,
+                  let parsed = BarRoute(rawValue: raw) else { return .askFallback }
+            return RouteVerdict(
+                route: parsed,
+                confidence: result["confidence"]?.doubleValue ?? 0,
+                reason: "server"
+            )
+        } catch {
+            return .askFallback
+        }
+    }
+
+    /// Keep the text as Work. No chat reply follows.
+    func hold(_ raw: String) async {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isHolding else { return }
+        isHolding = true
+        holdError = nil
+        holdPhase = .collapse
+        defer { isHolding = false }
+        do {
+            let cards = try await captureFromChat(text: text, replyText: nil, messageID: nil)
+            guard !cards.isEmpty else {
+                holdError = "Could not hold that. Try again."
+                return
+            }
+            await runLanding(cards)
+        } catch {
+            holdError = "Could not hold that. Try again."
+        }
+    }
+
+    /// Keep an assistant reply. The same landing runs from the message.
+    func holdReply(messageID: String, userText: String, replyText: String) async {
+        guard !heldMessageIDs.contains(messageID), holdingMessageID == nil else { return }
+        holdingMessageID = messageID
+        holdError = nil
+        defer { holdingMessageID = nil }
+        do {
+            let cards = try await captureFromChat(
+                text: userText,
+                replyText: replyText,
+                messageID: messageID
+            )
+            guard !cards.isEmpty else {
+                holdError = "Could not hold that. Try again."
+                return
+            }
+            heldMessageIDs.insert(messageID)
+            await runLanding(cards)
+        } catch {
+            holdError = "Could not hold that. Try again."
+        }
+    }
+
+    private func runLanding(_ cards: [HoldCardModel]) async {
+        holdCards = cards
+        holdPhase = .collapse
+        try? await Task.sleep(for: .seconds(HoldPhase.collapseDuration))
+        holdPhase = .hold
+        try? await Task.sleep(for: .seconds(HoldPhase.holdDuration))
+        holdPhase = .travel
+        try? await Task.sleep(for: .seconds(HoldPhase.travelDuration))
+        receipts.append(contentsOf: cards)
+        holdCards = []
+        clearRoute()
+    }
+
+    private func captureFromChat(
+        text: String,
+        replyText: String?,
+        messageID: String?
+    ) async throws -> [HoldCardModel] {
+        var body: [String: JSONValue] = [
+            "text": .string(text),
+            "source": .string("chat"),
+            "conversationId": .string(sessionID),
+        ]
+        if let replyText { body["replyText"] = .string(replyText) }
+        if let messageID { body["sourceMessageId"] = .string(messageID) }
+        let result = try await backend.post(path: "/api/albatross/capture", body: .object(body))
+        guard let rows = result["work"]?.arrayValue else { return [] }
+        return rows.compactMap { row in
+            guard let id = row["id"]?.stringValue,
+                  let title = row["title"]?.stringValue?.nilIfBlank else { return nil }
+            let shape = row["shape"]?.stringValue.flatMap { WorkShape(rawValue: $0) } ?? .quick
+            let horizon = WorkHorizon(json: row["horizon"])
+            return HoldCardModel(
+                id: id,
+                title: title,
+                shapeWord: shape.label,
+                horizonLine: horizon?.line(at: Date())
+            )
+        }
+    }
+
+    func dismissHoldError() {
+        holdError = nil
     }
 
     func history() async -> [AssistantChatSessionSummary] {
