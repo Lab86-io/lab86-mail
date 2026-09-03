@@ -13,7 +13,6 @@ import { WORK_SHAPE_GUIDE, WORK_SHAPES, type WorkShape } from '@/lib/albatross/w
 // leaves out and act as the test oracle, exactly as capture does.
 
 export const SHAPE_BACKFILL_BATCH = 20;
-export const SHAPE_BACKFILL_TIMEOUT_MS = 45_000;
 
 export interface UnshapedWorkRow {
   workId: string;
