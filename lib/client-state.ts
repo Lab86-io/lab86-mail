@@ -225,6 +225,38 @@ export function capturePillHidden(
   return aiBarOpen || readerOpen || (railOpen && !isMobile);
 }
 
+/**
+ * Where the floating "Ask Assistant" pill sits. It is the always-there door
+ * to the assistant (⌘K is the other) and only leaves while the panel itself
+ * is open or the reader has taken the whole window. When something else
+ * already holds the bottom-right corner — the New Intent pill, or an open
+ * reader's action bar — the pill stacks above it instead of overlapping.
+ */
+export type AssistantLauncherPlacement = 'hidden' | 'corner' | 'stacked';
+
+export function assistantLauncherPlacement(input: {
+  aiBarOpen: boolean;
+  threadFullscreen: boolean;
+  capturePillVisible: boolean;
+  readerOpen: boolean;
+}): AssistantLauncherPlacement {
+  if (input.aiBarOpen || input.threadFullscreen) return 'hidden';
+  return input.capturePillVisible || input.readerOpen ? 'stacked' : 'corner';
+}
+
+/** ⌘K / Ctrl+K, and nothing else, toggles the assistant panel. */
+export function isAssistantShortcut(event: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+}): boolean {
+  return (
+    (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k'
+  );
+}
+
 export function migratePersistedClientState(persisted: any) {
   if (!persisted) return persisted;
   persisted.account = '';
