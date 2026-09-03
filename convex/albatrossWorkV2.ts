@@ -591,6 +591,75 @@ export const setShape = mutation({
 });
 
 /**
+ * Work that has never been given a shape. Work captured before shapes existed
+ * reads as `quick`, which plans and checks it. The backfill gives each row the
+ * shape it always was.
+ */
+export const unshapedWork = query({
+  args: { ...callerArgs, limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.max(1, Math.min(args.limit ?? 40, 200));
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_user_updatedAt', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(500);
+    return rows
+      .filter((row) => {
+        const state = row.workState || row.status;
+        if (['done', 'released', 'archived'].includes(state)) return false;
+        return !row.shape;
+      })
+      .slice(0, limit)
+      .map((row) => ({
+        workId: String(row._id),
+        title: row.title ?? null,
+        rawText: row.rawText,
+        createdAt: row._creationTime,
+      }));
+  },
+});
+
+/**
+ * Write one backfilled shape and whatever the shape carries. One patch, so a
+ * row is never half-shaped. This is not a user touch: the person did not act.
+ */
+export const applyShapeBackfill = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    shape: workShapeValidator,
+    listItems: v.optional(v.array(v.string())),
+    metric: v.optional(albatrossMetricValidator),
+    horizon: v.optional(albatrossHorizonValidator),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    // A row shaped by hand between the read and the write keeps its shape.
+    if (work.shape) return { skipped: true, shape: work.shape };
+    const ts = now();
+    const patch: Record<string, unknown> = { shape: args.shape, updatedAt: ts };
+    if (args.listItems?.length && !work.listItems?.length) {
+      patch.listItems = args.listItems.map((text, index) => ({
+        id: `backfill-${ts}-${index}`,
+        text,
+        done: false,
+        addedAt: ts,
+      }));
+    }
+    if (args.metric && !work.metric) patch.metric = args.metric;
+    if (args.horizon && !work.horizon) {
+      patch.horizon = args.horizon;
+      if (args.horizon.notBefore) patch.horizonWakeAt = args.horizon.notBefore;
+    }
+    await ctx.db.patch(args.workId, patch);
+    return { skipped: false, shape: args.shape };
+  },
+});
+
+/**
  * A step did not happen. Record what came of that, not merely that it slipped.
  */
 export const recordLapse = mutation({

@@ -49,6 +49,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_area_route: 1200,
   // One route word and one number for the Ask / Hold bar.
   albatross_route: 60,
+  albatross_shape_backfill: 2000,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;
