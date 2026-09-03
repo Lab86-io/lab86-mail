@@ -212,6 +212,7 @@
 		9DCBBD69B1376B98C2241574 /* HorizonMonthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FF66D3AE9B51A98B399153E /* HorizonMonthView.swift */; };
 		A0802799457F579BD4698225 /* WorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D403937A578D846E0CA6C9 /* WorkView.swift */; };
 		A093A5EAA55CE302E9820B2A /* TaskDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63A22BA220B210B8BB51B1D8 /* TaskDetailView.swift */; };
+		A38793C0150A3D3B61BF634D /* MacMailSplitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10ACC467E0E95C951792A3D8 /* MacMailSplitView.swift */; };
 		A5ADEBC3E2AD86855B1B8D16 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 791BC9AFF1D61218F921983A /* SyncCoordinator.swift */; };
 		A9F6421BC04253B465BADAB0 /* ModelRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3806FE606756006B7C430B4B /* ModelRouter.swift */; };
 		AA461B5756CA68BA65785235 /* ShellChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1598804A80E88F9D56B4A26 /* ShellChrome.swift */; };
@@ -379,6 +380,7 @@
 		0A781DEE5ED25EA9C3460526 /* FilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilesView.swift; sourceTree = "<group>"; };
 		0A91942E14F83AEBA5C5CD0B /* ProductModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductModels.swift; sourceTree = "<group>"; };
 		10343F3BA20E045570BC575D /* MobileAccountModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAccountModels.swift; sourceTree = "<group>"; };
+		10ACC467E0E95C951792A3D8 /* MacMailSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMailSplitView.swift; sourceTree = "<group>"; };
 		1595B35FF438451CC0A76561 /* DocumentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentModelsTests.swift; sourceTree = "<group>"; };
 		186A5EDD951D12F7EA320D07 /* Lab86MailMacAutoFill.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Lab86MailMacAutoFill.entitlements; sourceTree = "<group>"; };
 		1931D9BFF9483D51029473DB /* WorkDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkDetailView.swift; sourceTree = "<group>"; };
@@ -676,6 +678,7 @@
 			isa = PBXGroup;
 			children = (
 				4036E4ECD67CE14C97416BDD /* MacChatPanel.swift */,
+				10ACC467E0E95C951792A3D8 /* MacMailSplitView.swift */,
 				B08F34616564933C017BEF2F /* MacShellView.swift */,
 			);
 			path = Shell;
@@ -1631,6 +1634,7 @@
 				485C81A5A56C745072AA1D4A /* MacAppDelegate.swift in Sources */,
 				F73E795A49817AB2CC1B6C6F /* MacChatPanel.swift in Sources */,
 				F2E7A19D8BD46E462BD8ED29 /* MacCompatibilityShims.swift in Sources */,
+				A38793C0150A3D3B61BF634D /* MacMailSplitView.swift in Sources */,
 				82FF4E94C0CAE8C657F6E032 /* MacMonthGridView.swift in Sources */,
 				D1BFA12668E2B2B7049EFD0C /* MacShellView.swift in Sources */,
 				CFFE9895D2325C0FA63DC4F8 /* MailAppSchemaEntities.swift in Sources */,
