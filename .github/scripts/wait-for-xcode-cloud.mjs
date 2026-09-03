@@ -10,7 +10,7 @@ import {
   findFailedAction,
   findTestFlightAction,
 } from './xcode-cloud-artifacts.mjs';
-import { preserveLogBundles } from './xcode-cloud-diagnostics.mjs';
+import { preserveLogBundles, summarizeIssues } from './xcode-cloud-diagnostics.mjs';
 
 const requiredEnvironment = ['ASC_ISSUER_ID', 'ASC_KEY_ID', 'ASC_PRIVATE_KEY', 'XCODE_CLOUD_BUILD_RUN_ID'];
 
@@ -119,8 +119,7 @@ if (!appStoreExport) {
     diagnosticsDirectory: process.env.XCODE_CLOUD_DIAGNOSTICS_DIR,
   });
   const issues = await appStoreConnect(`/v1/ciBuildActions/${archiveAction.id}/issues`);
-  const messages = issues.data.map(({ attributes }) => attributes.message);
-  throw new Error(`Xcode Cloud did not produce an App Store export. ${messages.join('; ')}`);
+  throw new Error(`Xcode Cloud did not produce an App Store export. ${summarizeIssues(issues.data)}`);
 }
 
 console.log(

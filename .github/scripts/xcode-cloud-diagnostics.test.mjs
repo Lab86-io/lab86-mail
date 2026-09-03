@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { preserveLogBundles } from './xcode-cloud-diagnostics.mjs';
+import { preserveLogBundles, summarizeIssues } from './xcode-cloud-diagnostics.mjs';
 
 function logBundle(fileName, downloadUrl = `https://example.com/${fileName}`) {
   return {
@@ -163,4 +163,37 @@ test('times out one download and continues with the next bundle', async () => {
     preserved: ['success.zip'],
     failed: ['slow.zip'],
   });
+});
+
+test('the issue digest leads with errors and keeps warnings out of the way', () => {
+  const issues = [
+    {
+      attributes: {
+        issueType: 'WARNING',
+        message: "'+' was deprecated in iOS 26.0",
+        fileSource: { path: 'A.swift' },
+      },
+    },
+    {
+      attributes: {
+        issueType: 'ERROR',
+        message: 'cannot find type Foo in scope',
+        fileSource: { path: 'B.swift' },
+      },
+    },
+    { attributes: { issueType: 'WARNING', message: 'unused variable' } },
+  ];
+  assert.equal(
+    summarizeIssues(issues),
+    '1 error: B.swift: cannot find type Foo in scope (2 warnings omitted)',
+  );
+  assert.equal(
+    summarizeIssues([{ attributes: { issueType: 'WARNING', message: 'unused variable' } }]),
+    'No errors reported; warnings: unused variable',
+  );
+  assert.equal(summarizeIssues([]), 'No issues reported.');
+  assert.match(
+    summarizeIssues([{ attributes: { issueType: 'TEST_FAILURE', message: 'testX failed' } }]),
+    /^1 error: testX failed$/,
+  );
 });

@@ -109,6 +109,7 @@ jobs:
           node --test .github/scripts/xcode-cloud-artifacts.test.mjs
           node --test .github/scripts/xcode-cloud-diagnostics.test.mjs
           node --test .github/scripts/upload-ios-export.test.mjs
+          node --test .github/scripts/testflight-build.test.mjs
           node --test .github/scripts/xcode-cloud-workflows.test.mjs
           bash apps/ios/ci_scripts/ci_post_clone_test.sh
           apps/ios/ci_scripts/verify_built_configuration_test.sh
@@ -190,4 +191,8 @@ jobs:
           APP_STORE_APP_ID: 6792830834
           TESTFLIGHT_GROUP_ID: 4606fec2-432b-4875-93dc-8f4a3982f6e0
           BUILD_NUMBER: ${{ steps.start.outputs.build_number }}
+          # A build with this number must also be this release: its marketing
+          # version, uploaded after this run's Xcode Cloud build was created.
+          EXPECTED_MARKETING_VERSION: ${{ steps.release.outputs.version }}
+          BUILD_NOT_BEFORE: ${{ steps.start.outputs.build_created_at }}
         run: node .github/scripts/wait-for-testflight.mjs

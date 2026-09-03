@@ -531,7 +531,7 @@ export async function main() {
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `build_run_id=${buildRun.id}\nbuild_number=${buildRun.attributes.number}\n`,
+      `build_run_id=${buildRun.id}\nbuild_number=${buildRun.attributes.number}\nbuild_created_at=${buildRun.attributes.createdDate}\n`,
     );
   }
 }
