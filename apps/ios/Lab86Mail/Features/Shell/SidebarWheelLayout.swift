@@ -1,5 +1,19 @@
 #if os(iOS)
+import os
 import SwiftUI
+
+// Numbers each measurement the layout publishes, from whatever thread the
+// layout runs on, so the model can tell a late old one from the newest.
+final class SidebarMeasurementSequence: Sendable {
+    private let counter = OSAllocatedUnfairLock(initialState: 0)
+
+    func next() -> Int {
+        counter.withLock { value in
+            value += 1
+            return value
+        }
+    }
+}
 
 // MARK: - Detent tagging
 

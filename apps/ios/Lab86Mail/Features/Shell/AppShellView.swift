@@ -281,6 +281,8 @@ private struct SourceList: View {
     let onSelect: () -> Void
 
     @State private var model = SidebarWheelModel()
+
+    @State private var measurementSequence = SidebarMeasurementSequence()
     @State private var wheelFrame: CGRect = .zero
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
@@ -334,12 +336,15 @@ private struct SourceList: View {
             slotY: model.slotY,
             engagement: model.engagement,
             spacing: 4,
-            onMeasure: { centers, total in
+            onMeasure: { [measurementSequence] centers, total in
                 // Layout may measure off the main actor; the model is
                 // main-actor state, so hand the measurement over rather than
-                // assume. Main-actor tasks from one origin run in order, so a
-                // later measurement can never land before an earlier one.
-                Task { @MainActor in model.setMeasurement(centers: centers, total: total) }
+                // assume. The sequence lets the model drop a measurement that
+                // arrives after a newer one, since task order is not promised.
+                let sequence = measurementSequence.next()
+                Task { @MainActor in
+                    model.setMeasurement(centers: centers, total: total, sequence: sequence)
+                }
             }
         ) {
             rows

@@ -67,6 +67,10 @@ final class SidebarWheelModel {
     // reading it must never invalidate a view.
     @ObservationIgnored private var restingCenters: [CGFloat] = []
     @ObservationIgnored private var contentHeight: CGFloat = 0
+    // The newest measurement the layout has published. Measurements arrive
+    // through main-actor tasks whose relative order Swift does not promise,
+    // so an older one that lands late is dropped rather than applied.
+    @ObservationIgnored private(set) var measurementSequence = 0
     // A pick the wheel is still coasting toward. Held until it arrives so the
     // committed row is always the one showing as picked.
     @ObservationIgnored private var pendingCommit: Int?
@@ -79,9 +83,18 @@ final class SidebarWheelModel {
     // gesture arbitration, it cannot navigate behind the wheel's back.
     @ObservationIgnored private(set) var suppressesRowTaps = false
 
-    func setMeasurement(centers: [CGFloat], total: CGFloat) {
+    func setMeasurement(centers: [CGFloat], total: CGFloat, sequence: Int? = nil) {
+        if let sequence {
+            guard sequence > measurementSequence else { return }
+            measurementSequence = sequence
+        }
         restingCenters = centers
         contentHeight = total
+    }
+
+    // Exposed for the layout's tests: what the wheel currently believes.
+    var publishedMeasurement: (centers: [CGFloat], total: CGFloat) {
+        (restingCenters, contentHeight)
     }
 
     var pickedDestination: SidebarDestination? {
