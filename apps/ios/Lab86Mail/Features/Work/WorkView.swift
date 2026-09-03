@@ -68,6 +68,24 @@ struct WorkView: View {
                         workGroup(group.state, items: group.items)
                     }
                     if !laterItems.isEmpty {
+                        #if os(macOS)
+                        // The Mac reads the shelf as an ordinal ruler: equal
+                        // steps in wake order, with the elapsed time written
+                        // on the hairline between the cards.
+                        MacLaterRuler(
+                            items: laterItems,
+                            now: .now,
+                            onOpen: { item in
+                                environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                            },
+                            onWake: { item in
+                                Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
+                            },
+                            onSetHorizon: { item, horizon in
+                                await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
+                            }
+                        )
+                        #else
                         LaterShelf(
                             items: laterItems,
                             now: .now,
@@ -79,6 +97,7 @@ struct WorkView: View {
                             },
                             onChangeHorizon: { item in horizonTarget = item }
                         )
+                        #endif
                     }
                     if showsClosed {
                         ForEach(closedGroups, id: \.state) { group in

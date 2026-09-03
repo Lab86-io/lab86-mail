@@ -7,6 +7,9 @@ import SwiftUI
 struct CalendarView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @State private var macSyncCaption = MacCalendarSyncCaptionModel()
+    #endif
     @State private var showsNewEvent = false
     // The freshness subtitle re-renders on this clock, not on every layout.
     @State private var freshnessClock = Date.now
@@ -68,6 +71,22 @@ struct CalendarView: View {
             Task { await store.resyncCalendar(reason: .viewOpen) }
         }
         .onChange(of: store.calendarSync.phase) { freshnessClock = .now }
+        #if os(macOS)
+        // ⌘R runs a manual sync and writes one short caption after it.
+        .onChange(of: MacRequests.shared.syncCalendarToken) { _, _ in
+            Task { await macSyncCaption.manualKick(store: store) }
+        }
+        .onChange(of: store.calendarSync.phase) { _, phase in
+            macSyncCaption.phaseChanged(phase)
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                MacCalendarSyncCaptionView(model: macSyncCaption) {
+                    Task { await macSyncCaption.manualKick(store: store) }
+                }
+            }
+        }
+        #endif
         .syncCompletionHaptic(trigger: store.calendarSync.completionToken)
         .onChange(of: viewMode) {
             // A title carried over from the previous mode would describe a

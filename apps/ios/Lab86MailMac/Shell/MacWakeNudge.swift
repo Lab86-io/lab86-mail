@@ -121,3 +121,43 @@ enum MacWakeNotifier {
         center.add(request(for: nudge))
     }
 }
+
+
+/// The Mac host for the wake nudge. It sits under the toolbar at the trailing
+/// edge and shows one Work at a time.
+struct MacWakeNudgeOverlay: View {
+    @Environment(AppEnvironment.self) private var environment
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var model = WakeNudgeModel()
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let nudge = model.current {
+                MacWakeNudgeBanner(
+                    nudge: nudge,
+                    onOpen: {
+                        model.dismiss()
+                        environment.navigation.openWork(id: nudge.workID, title: nudge.title)
+                    },
+                    onDismiss: { model.dismiss() }
+                )
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .opacity
+                        )
+                )
+                .id(nudge.id)
+            }
+        }
+        .animation(
+            model.current == nil ? WorkMotion.cross : WorkMotion.settle(reduceMotion: reduceMotion),
+            value: model.current
+        )
+        .onChange(of: environment.store.allWork, initial: true) { _, work in
+            model.consider(work)
+        }
+    }
+}

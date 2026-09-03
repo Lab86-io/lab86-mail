@@ -44,6 +44,9 @@ struct WorkDetailView: View {
     @State private var browserStep: WorkDetail.ExecutionStep?
     @State private var showsHorizonSheet = false
     @State private var showsShapeSheet = false
+    #if os(macOS)
+    @State private var showsHorizonPopover = false
+    #endif
 
     var body: some View {
         Group {
@@ -98,6 +101,11 @@ struct WorkDetailView: View {
             }
         }
         .task(id: route.id) { await load(initial: true) }
+        #if os(macOS)
+        .onChange(of: MacRequests.shared.openHorizonToken) { _, _ in
+            showsHorizonPopover = true
+        }
+        #endif
         .confirmationDialog(
             "Archive this Work?",
             isPresented: $showsArchiveConfirmation,
@@ -407,7 +415,11 @@ struct WorkDetailView: View {
                 // The state label opens the horizon sheet. Once a horizon is
                 // set, the label reads the horizon line instead.
                 Button {
+                    #if os(macOS)
+                    showsHorizonPopover = true
+                    #else
                     showsHorizonSheet = true
+                    #endif
                 } label: {
                     Text(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
                         .font(.caption.weight(.medium))
@@ -417,7 +429,17 @@ struct WorkDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
-                .accessibilityHint("Opens the horizon sheet")
+                .accessibilityHint("Opens the horizon control")
+                #if os(macOS)
+                // The Mac answers from a popover on the button, not a sheet.
+                .popover(isPresented: $showsHorizonPopover, arrowEdge: .bottom) {
+                    MacHorizonPopover(initial: detail.work.horizon) { horizon in
+                        await setHorizon(horizon)
+                    } onClose: {
+                        showsHorizonPopover = false
+                    }
+                }
+                #endif
             }
 
             Text(detail.plan?.outcome ?? detail.work.title)
