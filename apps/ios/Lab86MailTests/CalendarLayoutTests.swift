@@ -243,4 +243,109 @@ struct CalendarLayoutTests {
         let week = CalendarView.weekStart(for: wednesday, calendar: calendar)
         #expect(CalendarView.selectedDay(forWeek: week, keeping: wednesday, calendar: calendar) == wednesday)
     }
+
+    // MARK: - Identity
+
+    @Test
+    func entityKeysCannotCollideAcrossTheIdAndAccountBoundary() {
+        #expect(CalendarGrid.entityKey(id: "ab", accountID: "c") != CalendarGrid.entityKey(id: "a", accountID: "bc"))
+        #expect(CalendarGrid.entityKey(id: "ab", accountID: "c") == CalendarGrid.entityKey(id: "ab", accountID: "c"))
+        let placed = TimelineLayout.place([event("ab", from: date(2026, 7, 6, 9), to: date(2026, 7, 6, 10))], on: date(2026, 7, 6), calendar: calendar)
+        #expect(placed.first?.id == CalendarGrid.entityKey(id: "ab", accountID: "acct"))
+        let chips = DayChips.make(events: [event("ab", from: date(2026, 7, 6), to: date(2026, 7, 7), allDay: true)], tasks: [], limit: 3)
+        #expect(chips.chips.first?.id == CalendarGrid.entityKey(id: "ab", accountID: "acct"))
+    }
+
+    // MARK: - Daylight-saving days
+
+    @Test
+    func theShortMarchDayPlacesEventsOnTheirWallClockHour() {
+        // 8 March 2026 in New York has 23 hours: 02:00 jumps to 03:00.
+        let day = date(2026, 3, 8)
+        let late = TimelineLayout.place([event("late", from: date(2026, 3, 8, 23), to: date(2026, 3, 8, 23, 30))], on: day, calendar: calendar)
+        #expect(late.first?.startMinutes == 23 * 60)
+        #expect(late.first?.endMinutes == 23 * 60 + 30)
+        // Elapsed minutes would have said 22:00; the wall clock says 23:00.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 3, 8, 23), on: day, calendar: calendar) == 1380)
+        // An event across the gap keeps its wall-clock span.
+        let across = TimelineLayout.place([event("gap", from: date(2026, 3, 8, 1, 30), to: date(2026, 3, 8, 3, 30))], on: day, calendar: calendar)
+        #expect(across.first?.startMinutes == 90)
+        #expect(across.first?.endMinutes == 210)
+    }
+
+    @Test
+    func theLongNovemberDayKeepsLateEventsInsideTheAxis() {
+        // 1 November 2026 in New York has 25 hours: 02:00 falls back to 01:00.
+        let day = date(2026, 11, 1)
+        let late = TimelineLayout.place([event("late", from: date(2026, 11, 1, 23), to: date(2026, 11, 2, 0))], on: day, calendar: calendar)
+        #expect(late.first?.startMinutes == 23 * 60)
+        #expect(late.first?.endMinutes == TimelineLayout.minutesPerDay)
+        // Midnight of the next day is the axis end, not an hour past it.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 11, 2), on: day, calendar: calendar) == TimelineLayout.minutesPerDay)
+        // Moments before the day clamp to its start.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 10, 31, 23), on: day, calendar: calendar) == 0)
+    }
+
+    // MARK: - Day index
+
+    private func task(_ id: String, due: Date?) -> TaskSummary {
+        TaskSummary(id: id, title: "Task \(id)", column: "Tasks", due: due, completed: false, order: 0)
+    }
+
+    @Test
+    func theDayIndexBucketsEveryDayAnEntryTouches() {
+        let events = [
+            event("one", from: date(2026, 7, 6, 9), to: date(2026, 7, 6, 10)),
+            event("span", from: date(2026, 7, 6, 22), to: date(2026, 7, 8, 2)),
+            event("whole", from: date(2026, 7, 7), to: date(2026, 7, 8), allDay: true),
+            event("ends-at-midnight", from: date(2026, 7, 9, 23), to: date(2026, 7, 10)),
+        ]
+        let tasks = [task("t1", due: date(2026, 7, 7, 15)), task("none", due: nil)]
+        let index = CalendarDayIndex(events: events, tasks: tasks, calendar: calendar, revision: 3)
+
+        #expect(index.timed(on: date(2026, 7, 6)).map(\.id) == ["one", "span"])
+        #expect(index.timed(on: date(2026, 7, 7)).map(\.id) == ["span"])
+        #expect(index.timed(on: date(2026, 7, 8)).map(\.id) == ["span"])
+        #expect(index.allDay(on: date(2026, 7, 7)).map(\.id) == ["whole"])
+        #expect(index.allDay(on: date(2026, 7, 8)).isEmpty)
+        // All-day entries lead when a day is asked for everything.
+        #expect(index.events(on: date(2026, 7, 7)).map(\.id) == ["whole", "span"])
+        // An event ending exactly at midnight belongs to the day it started.
+        #expect(index.timed(on: date(2026, 7, 10)).isEmpty)
+        #expect(index.tasks(on: date(2026, 7, 7)).map(\.id) == ["t1"])
+        #expect(index.tasks(on: date(2026, 7, 6)).isEmpty)
+        #expect(index.hasEntries(on: date(2026, 7, 8)))
+        #expect(!index.hasEntries(on: date(2026, 7, 11)))
+        // Any moment of the day resolves to the same bucket.
+        #expect(index.timed(on: date(2026, 7, 6, 17, 45)).map(\.id) == ["one", "span"])
+    }
+
+    @Test
+    func theDayIndexCapsARunawaySpanAndCarriesItsRevision() {
+        let runaway = event("forever", from: date(2026, 1, 1), to: date(2030, 1, 1))
+        let days = CalendarDayIndex.days(touchedBy: runaway, calendar: calendar)
+        #expect(days.count == CalendarDayIndex.maximumSpanDays)
+        let a = CalendarDayIndex(events: [], tasks: [], calendar: calendar, revision: 1)
+        let b = CalendarDayIndex(events: [runaway], tasks: [], calendar: calendar, revision: 1)
+        let c = CalendarDayIndex(events: [], tasks: [], calendar: calendar, revision: 2)
+        #expect(a == b)
+        #expect(a != c)
+    }
+
+    #if os(macOS)
+    @Test
+    func theMacMonthGridReportsTheMonthUnderAnOffset() {
+        let months = [date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1)]
+        let june = MacMonthGridView.sectionHeight(
+            weeks: CalendarGrid.weeks(ofMonthContaining: months[0], calendar: calendar).count
+        )
+        #expect(MacMonthGridView.month(atOffset: 0, months: months, calendar: calendar) == months[0])
+        #expect(MacMonthGridView.month(atOffset: june - 1, months: months, calendar: calendar) == months[0])
+        #expect(
+            MacMonthGridView.month(atOffset: june + MacMonthGridView.monthSpacing + 1, months: months, calendar: calendar)
+                == months[1]
+        )
+        #expect(MacMonthGridView.month(atOffset: 100_000, months: months, calendar: calendar) == months[2])
+    }
+    #endif
 }

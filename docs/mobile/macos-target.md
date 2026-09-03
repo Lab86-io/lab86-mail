@@ -61,7 +61,9 @@ source identity + `CONFIGURATION=Debug`); every CI and Release path keeps the fu
 
 ## Known Mac gaps (tracked for the polish pass)
 
-- Month calendar falls back to agenda (needs a Mac month grid).
+- ~~Month calendar falls back to agenda~~ — `MacMonthGridView` (2026-09-03): continuous
+  month scroll on the shared `CalendarGrid`/`DayChips` helpers, single click selects,
+  double click opens the day.
 - Compose/sheet sizing is functional, not yet Mac-refined; no dedicated ⌘K palette,
   menu-bar extra, or multiple-window scenes yet.
 - Document editor uses SwiftUI `TextEditor` on the Mac (no NSTextView finesse yet).

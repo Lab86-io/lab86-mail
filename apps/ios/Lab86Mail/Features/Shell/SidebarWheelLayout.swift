@@ -118,7 +118,9 @@ struct SidebarWheelLayout: Layout {
     // a grab can put the slot where the current row already is and the model
     // can work out the same clamp the layout applies. Fires only when the
     // measurement actually changes, never per frame.
-    var onMeasure: ([CGFloat], CGFloat) -> Void = { _, _ in }
+    // `Layout` is Sendable, so the callback must be too; SwiftUI still calls
+    // it during layout on the main thread, which the caller relies on.
+    var onMeasure: @Sendable ([CGFloat], CGFloat) -> Void = { _, _ in }
 
     struct Cache {
         var width: CGFloat = -1

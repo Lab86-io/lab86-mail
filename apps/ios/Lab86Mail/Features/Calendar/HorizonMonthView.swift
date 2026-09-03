@@ -9,8 +9,7 @@ import SwiftUI
 // actual entries instead of anonymous dots.
 struct HorizonMonthView: View {
     @Environment(AppEnvironment.self) private var environment
-    let events: [CalendarEventSummary]
-    let tasks: [TaskSummary]
+    let index: CalendarDayIndex
     let selectedDay: Date
     let onSelectDay: (Date) -> Void
     // The title belongs to the month under the reader's eye, which changes as
@@ -100,8 +99,9 @@ struct HorizonMonthView: View {
     // loop, so everything they read has to be declared as a dependency.
     private var dataDependency: AnyHashable {
         AnyHashable([
-            AnyHashable(events),
-            AnyHashable(tasks),
+            // The index's revision stands in for the arrays: it changes
+            // exactly when they do, without rehashing every entry.
+            AnyHashable(index.revision),
             AnyHashable(selectedDay),
             AnyHashable(environment.theme.accentHue),
             AnyHashable(environment.theme.accentChroma),
@@ -278,15 +278,11 @@ struct HorizonMonthView: View {
     // MARK: - Data
 
     private func events(on day: Date) -> [CalendarEventSummary] {
-        guard let end = calendar.date(byAdding: .day, value: 1, to: day) else { return [] }
-        return events.filter { $0.start < end && $0.end > day }
+        index.events(on: day)
     }
 
     private func tasks(on day: Date) -> [TaskSummary] {
-        tasks.filter { task in
-            guard let due = task.due else { return false }
-            return calendar.isDate(due, inSameDayAs: day)
-        }
+        index.tasks(on: day)
     }
 
     private func reportVisibleMonth(in range: ClosedRange<DayComponents>) {
