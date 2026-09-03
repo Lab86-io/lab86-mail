@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import UserNotifications
 
 struct NotificationSettingsView: View {
@@ -14,9 +13,8 @@ struct NotificationSettingsView: View {
             Section("System permission") {
                 LabeledContent("Notifications", value: authorizationLabel)
                 if environment.notifications.authorizationStatus == .denied {
-                    Button("Open iOS Settings", systemImage: "gear") {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
+                    Button("Open \(PlatformSettings.systemSettingsName)", systemImage: "gear") {
+                        PlatformSettings.openNotificationSettings()
                     }
                 } else if environment.notifications.authorizationStatus == .notDetermined {
                     Button("Enable notifications") {
@@ -39,7 +37,7 @@ struct NotificationSettingsView: View {
             } header: {
                 Text("Delivery")
             } footer: {
-                Text("Urgent mail is delivered as time-sensitive, so it can reach you through a Focus. Everything else follows iOS Focus and per-app notification settings.")
+                Text("Urgent mail is delivered as time-sensitive, so it can reach you through a Focus. Everything else follows the system Focus and per-app notification settings.")
             }
 
             oneTimeCodeSection

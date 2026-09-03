@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 
 // MARK: - Destinations
@@ -43,3 +44,4 @@ enum SidebarDestination: Hashable, Identifiable {
         }
     }
 }
+#endif

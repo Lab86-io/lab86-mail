@@ -501,7 +501,7 @@ export const upsertMobileDevice = mutation({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    platform: v.literal('ios'),
+    platform: v.union(v.literal('ios'), v.literal('macos')),
     token: v.string(),
     deviceId: v.string(),
     environment: v.union(v.literal('development'), v.literal('production')),

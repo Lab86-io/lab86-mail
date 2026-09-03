@@ -45,6 +45,8 @@ final class ProductStore {
     private let cache: ProductCache
     private let spotlight: any MailSpotlightIndexing
     private let convex: ConvexClientWithAuth<String>?
+    // Typed v1 paged mail reads; nil keeps the legacy per-account tool path.
+    private let mailPages: (any MailPageFetching)?
     private var cacheOwner: String?
     private var liveMailTask: Task<Void, Never>?
     private var mailStateOverrides: [String: MailStateOverride] = [:]
@@ -53,6 +55,11 @@ final class ProductStore {
 
     var accounts: [AccountSummary] = []
     var threads: [MailThreadSummary] = []
+    // Cursor state for the typed unified-inbox pages. hasMoreMail drives the
+    // list's load-more row; the cursor is a lastDate watermark from the server.
+    private(set) var hasMoreMail = false
+    private(set) var isLoadingMoreMail = false
+    private var mailNextCursor: String?
     var searchedThreads: [MailThreadSummary] = []
     var completedMailSearchQuery: String?
     var isSearchingMail = false
@@ -128,13 +135,15 @@ final class ProductStore {
         backend: BackendClient,
         convex: ConvexClientWithAuth<String>? = nil,
         cache: ProductCache = .shared,
-        spotlight: any MailSpotlightIndexing = MailSpotlightIndexer.shared
+        spotlight: any MailSpotlightIndexing = MailSpotlightIndexer.shared,
+        mailPages: (any MailPageFetching)? = nil
     ) {
         self.tools = tools
         self.backend = backend
         self.convex = convex
         self.cache = cache
         self.spotlight = spotlight
+        self.mailPages = mailPages
     }
 
     func bootstrap(cacheOwner: String? = nil) async {
@@ -162,6 +171,30 @@ final class ProductStore {
             let result = try await tools.invoke("list_accounts")
             let refreshedAccounts = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
             accounts = refreshedAccounts
+            // Typed paged path: one unified corpus page with a real cursor,
+            // instead of 200 threads per account replayed on every refresh.
+            // An empty first page on a corpus that is still backfilling falls
+            // through to the legacy per-account read so the inbox never blanks.
+            if let mailPages {
+                do {
+                    let page = try await mailPages.fetchMailThreads(
+                        accountID: nil,
+                        category: nil,
+                        cursor: nil,
+                        limit: 100
+                    )
+                    if !page.items.isEmpty || refreshedAccounts.isEmpty {
+                        threads = page.items.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
+                        mailNextCursor = page.nextCursor
+                        hasMoreMail = page.hasMore
+                        await persistCache()
+                        await syncMailIndex()
+                        return
+                    }
+                } catch {
+                    // The legacy path below remains the fallback contract.
+                }
+            }
             var allThreads: [MailThreadSummary] = []
             var firstFailure: Error?
             for account in refreshedAccounts where !account.id.isEmpty {
@@ -181,9 +214,37 @@ final class ProductStore {
                 }
             }
             threads = allThreads.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
+            mailNextCursor = nil
+            hasMoreMail = false
             await persistCache()
             await syncMailIndex()
             if let firstFailure { recordMail(firstFailure) }
+        } catch {
+            recordMail(error)
+        }
+    }
+
+    // Appends the next unified page beneath what is already shown. Existing
+    // rows win a collision so optimistic state and live updates are kept.
+    func loadMoreMail() async {
+        guard let mailPages, hasMoreMail, !isLoadingMoreMail, let cursor = mailNextCursor else { return }
+        isLoadingMoreMail = true
+        defer { isLoadingMoreMail = false }
+        do {
+            let page = try await mailPages.fetchMailThreads(
+                accountID: nil,
+                category: nil,
+                cursor: cursor,
+                limit: 100
+            )
+            let existing = Set(threads.map(mailKey))
+            let fresh = page.items
+                .filter { !existing.contains(mailKey($0)) }
+                .compactMap(applyPendingMailState)
+            threads = (threads + fresh).sorted { $0.date > $1.date }
+            mailNextCursor = page.nextCursor
+            hasMoreMail = page.hasMore
+            await persistCache()
         } catch {
             recordMail(error)
         }
@@ -2547,8 +2608,18 @@ final class ProductStore {
         }
     }
 
-    private func applyLiveMail(_ payload: LiveMailThreadsPayload) async {
-        threads = payload.items.map(\.summary).compactMap(applyPendingMailState).sorted { $0.date > $1.date }
+    func applyLiveMail(_ payload: LiveMailThreadsPayload) async {
+        let live = payload.items.map(\.summary).compactMap(applyPendingMailState)
+        // An empty live window says nothing about mail that was paged in
+        // beneath it; replacing the list here would blank the inbox on one
+        // empty tick while the cursor still described a partially paged list.
+        guard !live.isEmpty else { return }
+        // The live query owns its recency window; threads paged in beneath it
+        // must survive each tick or Load More would visibly undo itself.
+        let liveKeys = Set(live.map(mailKey))
+        let oldestLive = live.map(\.date).min() ?? .distantPast
+        let pagedTail = threads.filter { !liveKeys.contains(mailKey($0)) && $0.date < oldestLive }
+        threads = (live + pagedTail).sorted { $0.date > $1.date }
         await persistCache()
         await syncMailIndex()
     }

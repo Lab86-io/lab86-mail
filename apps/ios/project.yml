@@ -5,6 +5,7 @@ options:
   createIntermediateGroups: true
   deploymentTarget:
     iOS: "27.0"
+    macOS: "27.0"
   xcodeVersion: "27.0"
 
 packages:
@@ -104,6 +105,102 @@ targets:
         - Lab86MailTests
         - Lab86MailUITests
       gatherCoverageData: true
+
+  # The same product, native on the Mac. Shares the Lab86Mail sources and the
+  # Lab86Mail module name wholesale; Mac-only shell code and resources live in
+  # Lab86MailMac/. Same bundle identifier as iOS for universal purchase and so
+  # the existing associated-domain registrations (TEAMID.io.lab86.mail) apply.
+  # HorizonCalendar is UIKit-only and deliberately absent — its call sites are
+  # gated with canImport(HorizonCalendar).
+  Lab86MailMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: Lab86Mail
+      - path: Shared
+      - path: Lab86MailMac
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail
+        PRODUCT_NAME: Albatross
+        PRODUCT_MODULE_NAME: Lab86Mail
+        INFOPLIST_FILE: Lab86MailMac/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86MailMac/Resources/Lab86MailMac.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_USER_SCRIPT_SANDBOXING: true
+        ENABLE_HARDENED_RUNTIME: true
+        GENERATE_INFOPLIST_FILE: false
+    postBuildScripts:
+      - name: Verify embedded release configuration
+        script: '"$SRCROOT/ci_scripts/verify_built_configuration.sh"'
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(SRCROOT)/ci_scripts/verify_built_configuration.sh
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+    dependencies:
+      - package: MobileAPI
+        product: MobileAPI
+      - package: SwiftSoup
+        product: SwiftSoup
+      - package: SwiftStreamingMarkdown
+        product: SwiftStreamingMarkdown
+      - package: Kingfisher
+        product: Kingfisher
+      - package: Clerk
+        product: ClerkKit
+      - package: Clerk
+        product: ClerkKitUI
+      - package: ClerkConvex
+        product: ClerkConvex
+      - package: Convex
+        product: ConvexMobile
+      - target: Lab86MailMacAutoFill
+    scheme:
+      testTargets:
+        - Lab86MailMacTests
+      gatherCoverageData: true
+
+  # The same one-time-code AutoFill provider, for the Mac (macOS 15 added
+  # third-party one-time-code providers). Shares the iOS extension's sources
+  # and Info.plist wholesale; only the sandboxed entitlements differ.
+  Lab86MailMacAutoFill:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Lab86MailAutoFill
+      - path: Shared
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.autofill
+        PRODUCT_NAME: Lab86MailAutoFill
+        PRODUCT_MODULE_NAME: Lab86MailAutoFill
+        INFOPLIST_FILE: Lab86MailAutoFill/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86MailAutoFill/Resources/Lab86MailMacAutoFill.entitlements
+        ENABLE_HARDENED_RUNTIME: true
+        GENERATE_INFOPLIST_FILE: false
+
+  Lab86MailMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Lab86MailTests
+    dependencies:
+      - target: Lab86MailMac
+      - package: MobileAPI
+        product: MobileAPI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.mactests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Albatross.app/Contents/MacOS/Albatross
+        BUNDLE_LOADER: $(TEST_HOST)
 
   # Supplies one-time codes from mail to system AutoFill. Deliberately depends
   # on nothing but the shared vault types: it runs in a short-lived, memory

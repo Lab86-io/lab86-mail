@@ -34,6 +34,16 @@ struct TodayView: View {
         .toolbar {
             // The dateline lives in the masthead. It crossfades into the bar
             // only once the masthead has scrolled away, so it never reads twice.
+            #if os(macOS)
+            // AppKit draws an empty capsule for a principal item even at
+            // opacity zero; mount the item only when it has something to say.
+            if showsInlineDate {
+                ToolbarItem(placement: .principal) {
+                    Text(dateline)
+                        .font(.headline)
+                }
+            }
+            #else
             ToolbarItem(placement: .principal) {
                 Text(dateline)
                     .font(.headline)
@@ -41,6 +51,7 @@ struct TodayView: View {
                     .animation(.easeInOut(duration: 0.15), value: showsInlineDate)
                     .accessibilityHidden(!showsInlineDate)
             }
+            #endif
             ToolbarItem(placement: .primaryAction) {
                 regenerateButton
             }

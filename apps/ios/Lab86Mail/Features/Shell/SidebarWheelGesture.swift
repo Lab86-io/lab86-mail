@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import UIKit
 
@@ -278,3 +279,4 @@ struct SidebarWheelGestureAttachment: UIViewRepresentable {
         }
     }
 }
+#endif

@@ -2136,7 +2136,7 @@ export default defineSchema({
   // token replace the old one atomically without leaving a live stale target.
   mobilePushDevices: defineTable({
     userId: v.string(),
-    platform: v.literal('ios'),
+    platform: v.union(v.literal('ios'), v.literal('macos')),
     token: v.string(),
     deviceId: v.string(),
     environment: v.union(v.literal('development'), v.literal('production')),

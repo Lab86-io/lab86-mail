@@ -97,8 +97,13 @@ final class AppEnvironment {
             )
         )
         convex = convexClient
-        store = ProductStore(tools: tools, backend: backend, convex: convexClient)
-        mailIdentity = MailIdentityStore(tools: tools)
+        store = ProductStore(
+            tools: tools,
+            backend: backend,
+            convex: convexClient,
+            mailPages: mobileClient
+        )
+        mailIdentity = MailIdentityStore(tools: tools, baseURL: configuration.apiBaseURL)
         notifications = NotificationCoordinator(
             backend: backend,
             responseOutbox: notificationResponseOutbox
@@ -142,7 +147,32 @@ final class AppEnvironment {
             baseURL: configuration.apiBaseURL,
             scope: scope
         )
+        #if os(macOS)
+        navigation.chatPanelPresented = true
+        #else
         navigation.selectPrimary(.chat)
+        #endif
+    }
+
+    // ⌘K and the chat button. The Mac toggles its floating panel, keeping the
+    // in-flight conversation; iOS keeps its start-a-chat behavior.
+    func toggleAssistantChatPanel() {
+        #if os(macOS)
+        if navigation.chatPanelPresented {
+            navigation.chatPanelPresented = false
+        } else {
+            if assistantChat == nil {
+                assistantChat = AssistantChatModel(
+                    backend: backend,
+                    baseURL: configuration.apiBaseURL,
+                    scope: .global
+                )
+            }
+            navigation.chatPanelPresented = true
+        }
+        #else
+        startAssistantChat()
+        #endif
     }
 
     func createAndOpenDocument(kind: AlbatrossDocumentKind) async throws {

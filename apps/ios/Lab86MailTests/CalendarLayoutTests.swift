@@ -211,4 +211,36 @@ struct CalendarLayoutTests {
         #expect(DayChips.seed(for: work) != DayChips.seed(for: home))
         #expect(DayChips.seed(for: unlabelled) == "acct")
     }
+
+
+    // MARK: - Week navigation
+
+    @Test
+    func steppingTheWeekMovesTheSelectionToTheSameWeekday() {
+        // Wednesday, 4 March 2026; the week (Sunday-first) starts 1 March.
+        let wednesday = date(2026, 3, 4)
+        let week = CalendarView.weekStart(for: wednesday, calendar: calendar)
+        #expect(week == date(2026, 3, 1))
+
+        let nextWeek = CalendarView.weekPage(afterStepping: 1, from: week, calendar: calendar)
+        #expect(nextWeek == date(2026, 3, 8))
+        #expect(
+            CalendarView.selectedDay(forWeek: nextWeek, keeping: wednesday, calendar: calendar)
+                == date(2026, 3, 11)
+        )
+
+        let previousWeek = CalendarView.weekPage(afterStepping: -1, from: week, calendar: calendar)
+        #expect(previousWeek == date(2026, 2, 22))
+        #expect(
+            CalendarView.selectedDay(forWeek: previousWeek, keeping: wednesday, calendar: calendar)
+                == date(2026, 2, 25)
+        )
+    }
+
+    @Test
+    func showingTheWeekThatAlreadyHoldsTheSelectionKeepsIt() {
+        let wednesday = date(2026, 3, 4, 9, 30)
+        let week = CalendarView.weekStart(for: wednesday, calendar: calendar)
+        #expect(CalendarView.selectedDay(forWeek: week, keeping: wednesday, calendar: calendar) == wednesday)
+    }
 }

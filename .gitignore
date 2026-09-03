@@ -28,7 +28,8 @@ data/
 .env.local
 .env.*.local
 apps/ios/Config/Local.xcconfig
-apps/ios/*.xcodeproj/xcuserdata/
+apps/ios/**/xcuserdata/
+apps/ios/**/.swiftpm/xcode/xcuserdata/
 apps/ios/DerivedData/
 
 # bun

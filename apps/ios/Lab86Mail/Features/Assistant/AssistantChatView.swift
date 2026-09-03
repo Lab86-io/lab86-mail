@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 // user turns in quiet raised bubbles, assistant turns as plain document text,
 // and a single floating glass composer detached from the bottom edge.
 struct AssistantChatView: View {
+    // Copilot-style reveal: the library fades each appended word in as deltas
+    // arrive, so streaming reads as continuous writing instead of chunk swaps.
+    private static let markdownConfig = MarkdownRenderConfig(shouldAnimateText: true)
+
     @Environment(AppEnvironment.self) private var environment
     @Bindable var model: AssistantChatModel
     @State private var draft = ""
@@ -107,7 +111,7 @@ struct AssistantChatView: View {
                         if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             // Full GFM rendering (tables, lists, code blocks)
                             // built for streaming LLM output.
-                            MarkdownView(text: text)
+                            MarkdownView(text: text, config: Self.markdownConfig)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     case .card(_, let card):
@@ -129,8 +133,13 @@ struct AssistantChatView: View {
 
     private func activityRow(_ label: String) -> some View {
         HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
+            // Typing-indicator dots: the variable-color symbol effect cycles
+            // the ellipsis glyphs, which reads as "composing" rather than the
+            // generic busy spinner.
+            Image(systemName: "ellipsis")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(environment.theme.accentColor)
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers.nonReversing)
             Text(label)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -223,11 +232,20 @@ struct AssistantChatView: View {
                 } label: {
                     Image(systemName: "paperclip")
                         .frame(width: 34, height: 34)
+                        .contentShape(.rect)
                 }
+                // Plain everywhere: AppKit's default bordered button painted a
+                // grey field behind every glyph in the composer.
+                .buttonStyle(.plain)
                 .disabled(model.isStreaming || model.isUploading || pendingFiles.count >= 5)
                 .accessibilityLabel("Attach files")
 
                 TextField("Message Albatross", text: $draft, axis: .vertical)
+                // Plain style and an explicit flexible width: AppKit's default
+                // field hugs its content, which collapsed the whole glass
+                // composer to a pill on the Mac.
+                .textFieldStyle(.plain)
+                .frame(maxWidth: .infinity)
                 .lineLimit(1...6)
                 .focused($composerFocused)
                 .padding(.leading, 16)
@@ -242,7 +260,9 @@ struct AssistantChatView: View {
                         .foregroundStyle(Color(uiColor: .systemBackground))
                         .frame(width: 34, height: 34)
                         .background(Circle().fill(Color.primary))
+                        .contentShape(Circle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Stop responding")
                 } else {
                     Button(action: sendDraft) {
@@ -255,7 +275,9 @@ struct AssistantChatView: View {
                                 canSend ? environment.theme.accentColor : Color.secondary.opacity(0.4)
                             )
                         )
+                        .contentShape(Circle())
                 }
+                    .buttonStyle(.plain)
                     .disabled(!canSend)
                     .accessibilityLabel(model.isUploading ? "Uploading" : "Send")
                 }

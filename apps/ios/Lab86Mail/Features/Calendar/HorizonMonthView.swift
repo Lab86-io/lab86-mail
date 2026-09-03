@@ -1,3 +1,4 @@
+#if canImport(HorizonCalendar)
 import HorizonCalendar
 import SwiftUI
 
@@ -301,3 +302,4 @@ struct HorizonMonthView: View {
         onVisibleMonthChange(month)
     }
 }
+#endif

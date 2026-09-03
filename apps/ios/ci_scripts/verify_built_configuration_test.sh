@@ -146,4 +146,39 @@ if run_verifier preview 2>/dev/null; then
   exit 1
 fi
 
+# A local Debug build skips the gate; a generic CI runner with CI=true must not.
+env -u CI_BRANCH -u CI_TAG -u CI_GIT_REF -u CI_COMMIT -u CI \
+  CONFIGURATION=Debug TARGET_BUILD_DIR="$test_root/missing" INFOPLIST_PATH=Info.plist \
+  "$script_dir/verify_built_configuration.sh" >/dev/null
+if env -u CI_BRANCH -u CI_TAG -u CI_GIT_REF -u CI_COMMIT \
+  CI=true CONFIGURATION=Debug TARGET_BUILD_DIR="$test_root/missing" INFOPLIST_PATH=Info.plist \
+  "$script_dir/verify_built_configuration.sh" 2>/dev/null; then
+  echo 'A CI=true Debug build must not bypass release verification.' >&2
+  exit 1
+fi
+
+# Signed entitlements must carry a concrete webcredentials host.
+write_plist \
+  "$test_root/Info.plist" \
+  'https://mail.lab86.io' \
+  'https://proficient-viper-594.convex.cloud' \
+  'pk_live_example'
+write_entitlements() {
+  local path="$1"
+  local webcredentials="$2"
+  rm -f "$path"
+  /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.associated-domains array' "$path"
+  /usr/libexec/PlistBuddy -c 'Add :com.apple.developer.associated-domains:0 string applinks:mail.lab86.io' "$path"
+  /usr/libexec/PlistBuddy -c "Add :com.apple.developer.associated-domains:1 string $webcredentials" "$path"
+}
+write_entitlements "$test_root/app.xcent" 'webcredentials:clerk.mail.lab86.io'
+LAB86_ENTITLEMENTS_FILE="$test_root/app.xcent" run_verifier production >/dev/null
+for bad in 'webcredentials:' 'webcredentials:$(LAB86_INFO_CLERK_FRONTEND_API_HOST)' 'webcredentials:https://clerk.mail.lab86.io' 'webcredentials:clerk.mail.lab86.io/path'; do
+  write_entitlements "$test_root/app.xcent" "$bad"
+  if LAB86_ENTITLEMENTS_FILE="$test_root/app.xcent" run_verifier production 2>/dev/null; then
+    echo "Release verification must reject the entitlement '$bad'." >&2
+    exit 1
+  fi
+done
+
 printf 'built configuration verification tests passed\n'

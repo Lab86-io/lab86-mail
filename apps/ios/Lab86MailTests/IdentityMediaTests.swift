@@ -209,4 +209,27 @@ struct IdentityMediaTests {
 
         #expect(store.photoURL(for: "c@example.com") == nil)
     }
+
+
+    @Test
+    func photoURLOnlyPassesThroughNetworkSchemes() {
+        let base = URL(string: "https://mail.lab86.io")!
+        #expect(
+            MailIdentityStore.photoURL(from: "https://cdn.example.com/a.jpg", baseURL: base)
+                == URL(string: "https://cdn.example.com/a.jpg")
+        )
+        #expect(
+            MailIdentityStore.photoURL(from: "HTTP://cdn.example.com/a.jpg", baseURL: base)
+                == URL(string: "HTTP://cdn.example.com/a.jpg")
+        )
+        #expect(
+            MailIdentityStore.photoURL(from: "/api/logos/example.com", baseURL: base)
+                == URL(string: "https://mail.lab86.io/api/logos/example.com")
+        )
+        #expect(MailIdentityStore.photoURL(from: "file:///etc/passwd", baseURL: base) == nil)
+        #expect(MailIdentityStore.photoURL(from: "data:image/png;base64,AAAA", baseURL: base) == nil)
+        #expect(MailIdentityStore.photoURL(from: "javascript:alert(1)", baseURL: base) == nil)
+        #expect(MailIdentityStore.photoURL(from: "/api/logos/example.com", baseURL: nil) == nil)
+        #expect(MailIdentityStore.photoURL(from: "", baseURL: base) == nil)
+    }
 }
