@@ -1338,6 +1338,76 @@ final class ProductStore {
         }
     }
 
+    // MARK: - Shape writes
+    //
+    // Each shape command is applied locally first. The row and the cached
+    // detail change at once; the next `work_home` read settles them.
+
+    func applyWorkShape(_ workID: String, shape: WorkShape) {
+        allWork = allWork.map { $0.id == workID ? $0.withShape(shape) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withShape(shape)
+        }
+    }
+
+    func applyWorkListItems(_ workID: String, items: [WorkListEntry]) {
+        allWork = allWork.map { $0.id == workID ? $0.withListItems(items) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withListItems(items)
+        }
+    }
+
+    func applyWorkMilestones(_ workID: String, milestones: [WorkMilestone]) {
+        allWork = allWork.map { $0.id == workID ? $0.withMilestones(milestones) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withMilestones(milestones)
+        }
+    }
+
+    func applyWorkMetricEntry(_ workID: String, entry: WorkMetricEntry, now: Date = .now) {
+        if let detail = workDetails[workID] {
+            let next = detail.appendingMetricEntry(entry, now: now)
+            workDetails[workID] = next
+            allWork = allWork.map { $0.id == workID ? $0.withMetricSummary(next.metricSummary) : $0 }
+        }
+    }
+
+    /// Replace the milestone set. There is no durable command for this: the
+    /// Mac and the phone call the same mutation the web calls. Ids are kept
+    /// when they are sent, so a rename never reopens a done milestone.
+    func setWorkMilestones(_ workID: String, milestones: [WorkMilestone]) async -> Bool {
+        guard let convex else {
+            workError = "Live connection unavailable — try again shortly."
+            return false
+        }
+        let previous = workDetails[workID]?.work.milestones
+        applyWorkMilestones(workID, milestones: milestones)
+        nonisolated(unsafe) let client = convex
+        do {
+            let rows: [ConvexEncodable?] = milestones.map { milestone in
+                var row: [String: ConvexEncodable?] = ["title": milestone.title]
+                if !milestone.id.hasPrefix("local-") { row["id"] = milestone.id }
+                return row
+            }
+            try await client.mutation(
+                "albatrossWorkV2:setMilestones",
+                with: ["workId": workID, "milestones": rows]
+            )
+            _ = try? await loadWorkDetail(workID)
+            return true
+        } catch {
+            if let previous { applyWorkMilestones(workID, milestones: previous) }
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Refresh one cached detail after a shape command. A failure keeps the
+    /// optimistic state; the next open settles it.
+    func settleWorkDetail(_ workID: String) async {
+        _ = try? await loadWorkDetail(workID)
+    }
+
     func answerWorkQuestion(_ question: WorkDetail.Question, answer: String, optionID: String?) async -> Bool {
         var body: [String: JSONValue] = [
             "answer": .string(answer),

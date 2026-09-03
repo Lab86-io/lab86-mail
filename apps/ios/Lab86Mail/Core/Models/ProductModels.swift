@@ -1522,6 +1522,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let updatedAt: Date?
         // Optional so cached details from older servers keep decoding.
         var horizon: WorkHorizon?
+        // The shape and the data it owns. All optional for the same reason.
+        // `shape` is the raw word; `resolvedShape` reads a missing one as quick.
+        var shape: WorkShape?
+        var listItems: [WorkListEntry]?
+        var metric: WorkMetric?
+        var milestones: [WorkMilestone]?
+        var lastUserTouchAt: Date?
 
         init(
             id: String,
@@ -1532,7 +1539,12 @@ struct WorkDetail: Hashable, Codable, Sendable {
             agentState: String,
             planError: String?,
             updatedAt: Date?,
-            horizon: WorkHorizon? = nil
+            horizon: WorkHorizon? = nil,
+            shape: WorkShape? = nil,
+            listItems: [WorkListEntry]? = nil,
+            metric: WorkMetric? = nil,
+            milestones: [WorkMilestone]? = nil,
+            lastUserTouchAt: Date? = nil
         ) {
             self.id = id
             self.title = title
@@ -1543,7 +1555,14 @@ struct WorkDetail: Hashable, Codable, Sendable {
             self.planError = planError
             self.updatedAt = updatedAt
             self.horizon = horizon
+            self.shape = shape
+            self.listItems = listItems
+            self.metric = metric
+            self.milestones = milestones
+            self.lastUserTouchAt = lastUserTouchAt
         }
+
+        var resolvedShape: WorkShape { shape ?? .default }
 
         var stateLabel: String {
             switch agentState {
@@ -1831,9 +1850,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let execution: Execution
     let contract: Contract?
     let evidence: [Evidence]
+    // Shape-owned data for the detail body. Entries are newest first.
+    let metricEntries: [WorkMetricEntry]
+    let metricSummary: WorkMetricSummary?
 
     private enum CodingKeys: String, CodingKey {
         case work, plan, project, questions, application, execution, contract, evidence
+        case metricEntries, metricSummary
     }
 
     private init(
@@ -1844,7 +1867,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
         application: Application?,
         execution: Execution,
         contract: Contract?,
-        evidence: [Evidence]
+        evidence: [Evidence],
+        metricEntries: [WorkMetricEntry],
+        metricSummary: WorkMetricSummary?
     ) {
         self.work = work
         self.plan = plan
@@ -1854,19 +1879,32 @@ struct WorkDetail: Hashable, Codable, Sendable {
         self.execution = execution
         self.contract = contract
         self.evidence = evidence
+        self.metricEntries = metricEntries
+        self.metricSummary = metricSummary
     }
 
-    func completing(stepID: String) -> WorkDetail {
+    private func copy(
+        work: Work? = nil,
+        execution: Execution? = nil,
+        metricEntries: [WorkMetricEntry]? = nil,
+        metricSummary: WorkMetricSummary?? = nil
+    ) -> WorkDetail {
         WorkDetail(
-            work: work,
+            work: work ?? self.work,
             plan: plan,
             project: project,
             questions: questions,
             application: application,
-            execution: execution.completing(stepID: stepID),
+            execution: execution ?? self.execution,
             contract: contract,
-            evidence: evidence
+            evidence: evidence,
+            metricEntries: metricEntries ?? self.metricEntries,
+            metricSummary: metricSummary ?? self.metricSummary
         )
+    }
+
+    func completing(stepID: String) -> WorkDetail {
+        copy(execution: execution.completing(stepID: stepID))
     }
 
     /// The same detail with a new horizon. The optimistic write while the
@@ -1874,16 +1912,34 @@ struct WorkDetail: Hashable, Codable, Sendable {
     func withHorizon(_ horizon: WorkHorizon?) -> WorkDetail {
         var nextWork = work
         nextWork.horizon = horizon
-        return WorkDetail(
-            work: nextWork,
-            plan: plan,
-            project: project,
-            questions: questions,
-            application: application,
-            execution: execution,
-            contract: contract,
-            evidence: evidence
-        )
+        return copy(work: nextWork)
+    }
+
+    /// The same detail with a new shape. The body routes on it at once.
+    func withShape(_ shape: WorkShape) -> WorkDetail {
+        var nextWork = work
+        nextWork.shape = shape
+        return copy(work: nextWork)
+    }
+
+    func withListItems(_ items: [WorkListEntry]) -> WorkDetail {
+        var nextWork = work
+        nextWork.listItems = items
+        return copy(work: nextWork)
+    }
+
+    func withMilestones(_ milestones: [WorkMilestone]) -> WorkDetail {
+        var nextWork = work
+        nextWork.milestones = milestones
+        return copy(work: nextWork)
+    }
+
+    /// The same detail with one more log. Entries stay newest first and the
+    /// summary is recomputed on device, so the number ticks before the
+    /// server answers.
+    func appendingMetricEntry(_ entry: WorkMetricEntry, now: Date) -> WorkDetail {
+        let entries = (metricEntries + [entry]).sorted { $0.at > $1.at }
+        return copy(metricEntries: entries, metricSummary: .some(PracticeReview.summary(entries, now: now)))
     }
 
     // Snapshots written before guided execution carry no `execution` key.
@@ -1898,6 +1954,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
         execution = try container.decodeIfPresent(Execution.self, forKey: .execution) ?? Execution(json: nil)
         contract = try container.decodeIfPresent(Contract.self, forKey: .contract)
         evidence = try container.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
+        metricEntries = try container.decodeIfPresent([WorkMetricEntry].self, forKey: .metricEntries) ?? []
+        metricSummary = try container.decodeIfPresent(WorkMetricSummary.self, forKey: .metricSummary)
     }
 
     /// Where the outcome stands. This is a state, not a sentence: the views test
@@ -1964,9 +2022,18 @@ struct WorkDetail: Hashable, Codable, Sendable {
             agentState: workJSON?["agentState"]?.stringValue ?? "idle",
             planError: workJSON?["planError"]?.stringValue?.nilIfBlank,
             updatedAt: CalendarDateParser.date(workJSON?["updatedAt"]),
-            horizon: WorkHorizon(json: workJSON?["horizon"])
+            horizon: WorkHorizon(json: workJSON?["horizon"]),
+            shape: workJSON?["shape"]?.stringValue.flatMap(WorkShape.init(rawValue:)),
+            listItems: workJSON?["listItems"]?.arrayValue.map { $0.compactMap(WorkListEntry.init) },
+            metric: WorkMetric(json: workJSON?["metric"]),
+            milestones: workJSON?["milestones"]?.arrayValue.map { $0.compactMap(WorkMilestone.init) },
+            lastUserTouchAt: CalendarDateParser.date(workJSON?["lastUserTouchAt"])
         )
         execution = Execution(json: json["execution"])
+        metricEntries = (json["metricEntries"]?.arrayValue ?? [])
+            .compactMap(WorkMetricEntry.init)
+            .sorted { $0.at > $1.at }
+        metricSummary = WorkMetricSummary(json: json["metricSummary"])
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {

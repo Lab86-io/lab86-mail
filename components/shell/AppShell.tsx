@@ -15,7 +15,6 @@ import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
 import { AreaHome } from '@/components/albatross/AreaHome';
-import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
@@ -277,7 +276,6 @@ export function AppShell({
             </div>
             <AssistantChat />
             <AIBarTrigger />
-            <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
             <AlbatrossCompanion />
             <WakeNudgeHost />
           </main>
@@ -360,7 +358,6 @@ export function AppShell({
           </TooltipProvider>
           <AssistantChat />
           <AIBarTrigger />
-          <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
           <AlbatrossCompanion />
           <WakeNudgeHost />
         </main>

@@ -8,13 +8,38 @@ import { HORIZON_SAVE_ERROR, HorizonControl } from '@/components/albatross/Horiz
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
 import { SplitSheet } from '@/components/albatross/SplitSheet';
+import { LIST_SAVE_ERROR, ListBody, visibleListItems } from '@/components/albatross/shapes/ListBody';
+import type { ListItem } from '@/components/albatross/shapes/ListRow';
+import {
+  MILESTONES_SAVE_ERROR,
+  type Milestone,
+  type MilestoneRow,
+} from '@/components/albatross/shapes/MilestoneRail';
+import {
+  METRIC_SAVE_ERROR,
+  type MetricEntry,
+  PracticeBody,
+} from '@/components/albatross/shapes/PracticeBody';
+import { ProjectBody } from '@/components/albatross/shapes/ProjectBody';
+import {
+  SHAPE_STATUS_LINE,
+  ShapeBodySwap,
+  ShapeFactsRow,
+  shapeFacts,
+  shapeFinishes,
+  shapeShowsPlan,
+} from '@/components/albatross/shapes/ShapeFrame';
+import { SHAPE_SAVE_ERROR, ShapePicker } from '@/components/albatross/shapes/ShapePicker';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import type { OutcomeContract } from '@/lib/albatross/contract';
 import type { WorkHorizon } from '@/lib/albatross/horizon';
+import { type MetricLike, type MetricSummary, metricSummary } from '@/lib/albatross/practice-review';
 import type { EvidenceLike } from '@/lib/albatross/proof';
+import { resolveShape } from '@/lib/albatross/shape-policy';
+import type { WorkShape } from '@/lib/albatross/work-shape';
 import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -84,7 +109,15 @@ export interface WorkDetailData {
     primaryProjectId?: string;
     updatedAt: number;
     horizon?: WorkHorizon | null;
+    shape?: WorkShape | null;
+    listItems?: ListItem[] | null;
+    metric?: MetricLike | null;
+    milestones?: Milestone[] | null;
+    lastUserTouchAt?: number | null;
   };
+  /** Shape-owned data. Entries are newest first. */
+  metricEntries?: MetricEntry[];
+  metricSummary?: MetricSummary | null;
   plan: null | {
     _id: string;
     outcome?: string;
@@ -155,6 +188,34 @@ export function visibleHorizon(
 ): WorkHorizon | null {
   if (optimistic && !sameHorizon(server, optimistic.value)) return optimistic.value;
   return server ?? null;
+}
+
+/** The shape the page shows: the user's last pick until the server row agrees. */
+export function visibleShape(
+  server: string | null | undefined,
+  optimistic: { value: WorkShape } | null,
+): WorkShape {
+  const stored = resolveShape(server);
+  if (optimistic && optimistic.value !== stored) return optimistic.value;
+  return stored;
+}
+
+/** The server milestones with the user's last toggles laid over them. */
+export function visibleMilestones(
+  server: Milestone[] | null | undefined,
+  optimistic: ReadonlyMap<string, { done: boolean; at: number }>,
+): Milestone[] {
+  return (server ?? []).map((milestone) => {
+    const choice = optimistic.get(milestone.id);
+    if (!choice || choice.done === milestone.done) return milestone;
+    return { ...milestone, done: choice.done, doneAt: choice.done ? choice.at : undefined };
+  });
+}
+
+/** Server entries plus the logs written on this page that the server has not sent back yet. */
+export function mergeMetricEntries(server: MetricEntry[], pending: MetricEntry[]): MetricEntry[] {
+  const seen = new Set(server.map((entry) => entry._id));
+  return [...server, ...pending.filter((entry) => !seen.has(entry._id))];
 }
 
 export function guideStepsWithOptimisticCompletion(
@@ -232,9 +293,208 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [horizonSaving, setHorizonSaving] = useState(false);
   const [horizonError, setHorizonError] = useState<string | null>(null);
 
+  // Shape-owned state. Each choice is shown until the server row agrees.
+  const setShapeMutation = useMutation(api.albatrossWorkV2.setShape);
+  const addListItemMutation = useMutation(api.albatrossWorkV2.addListItem);
+  const toggleListItemMutation = useMutation(api.albatrossWorkV2.toggleListItem);
+  const removeListItemMutation = useMutation(api.albatrossWorkV2.removeListItem);
+  const logMetricMutation = useMutation(api.albatrossWorkV2.logMetric);
+  const setMilestonesMutation = useMutation(api.albatrossWorkV2.setMilestones);
+  const toggleMilestoneMutation = useMutation(api.albatrossWorkV2.toggleMilestone);
+  const [shapeChoice, setShapeChoice] = useState<{ value: WorkShape } | null>(null);
+  const [shapeSaving, setShapeSaving] = useState(false);
+  const [shapeError, setShapeError] = useState<string | null>(null);
+  const [listChoices, setListChoices] = useState<ReadonlyMap<string, { done: boolean; at: number }>>(
+    () => new Map(),
+  );
+  const [pendingListItems, setPendingListItems] = useState<ListItem[]>([]);
+  const [removedListIds, setRemovedListIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [listBusyIds, setListBusyIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [listError, setListError] = useState<string | null>(null);
+  const [pendingEntries, setPendingEntries] = useState<MetricEntry[]>([]);
+  const [freshEntryId, setFreshEntryId] = useState<string | null>(null);
+  const [metricSaving, setMetricSaving] = useState(false);
+  const [metricError, setMetricError] = useState<string | null>(null);
+  const [milestoneChoices, setMilestoneChoices] = useState<
+    ReadonlyMap<string, { done: boolean; at: number }>
+  >(() => new Map());
+  const [milestoneBusyIds, setMilestoneBusyIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [milestonesSaving, setMilestonesSaving] = useState(false);
+  const [milestoneError, setMilestoneError] = useState<string | null>(null);
+
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
   }, [detail?.work.primaryAreaId, setSelectedAreaId]);
+
+  // Drop each optimistic choice once the server row carries it.
+  useEffect(() => {
+    if (!detail) return;
+    const serverItems = detail.work.listItems ?? [];
+    setListChoices((current) => {
+      const next = new Map(current);
+      for (const [id, choice] of current) {
+        const item = serverItems.find((row) => row.id === id);
+        if (!item || item.done === choice.done) next.delete(id);
+      }
+      return next.size === current.size ? current : next;
+    });
+    setRemovedListIds((current) => {
+      const kept = [...current].filter((id) => serverItems.some((row) => row.id === id));
+      return kept.length === current.size ? current : new Set(kept);
+    });
+    const serverMilestones = detail.work.milestones ?? [];
+    setMilestoneChoices((current) => {
+      const next = new Map(current);
+      for (const [id, choice] of current) {
+        const milestone = serverMilestones.find((row) => row.id === id);
+        if (!milestone || milestone.done === choice.done) next.delete(id);
+      }
+      return next.size === current.size ? current : next;
+    });
+    const serverEntryIds = new Set((detail.metricEntries ?? []).map((entry) => entry._id));
+    setPendingEntries((current) => {
+      const kept = current.filter((entry) => !serverEntryIds.has(entry._id));
+      return kept.length === current.length ? current : kept;
+    });
+  }, [detail]);
+
+  const saveShape = async (next: WorkShape) => {
+    setShapeChoice({ value: next });
+    setShapeSaving(true);
+    setShapeError(null);
+    try {
+      await setShapeMutation({ workId: workId as Id<'albatrossIntents'>, shape: next });
+    } catch {
+      setShapeChoice(null);
+      setShapeError(SHAPE_SAVE_ERROR);
+    } finally {
+      setShapeSaving(false);
+    }
+  };
+
+  const addListItems = async (texts: string[]) => {
+    const at = Date.now();
+    const drafts = texts.map((text, index) => ({
+      id: `pending:${at}:${index}`,
+      text,
+      done: false,
+      addedAt: at + index,
+    }));
+    setPendingListItems((current) => [...current, ...drafts]);
+    setListError(null);
+    for (const draft of drafts) {
+      try {
+        await addListItemMutation({ workId: workId as Id<'albatrossIntents'>, text: draft.text });
+      } catch {
+        setListError(LIST_SAVE_ERROR);
+      } finally {
+        setPendingListItems((current) => current.filter((row) => row.id !== draft.id));
+      }
+    }
+  };
+
+  const toggleListItem = async (itemId: string) => {
+    const item = (detail?.work.listItems ?? []).find((row) => row.id === itemId);
+    if (!item) return;
+    const shownDone = listChoices.get(itemId)?.done ?? item.done;
+    setListChoices((current) => new Map(current).set(itemId, { done: !shownDone, at: Date.now() }));
+    setListError(null);
+    try {
+      await toggleListItemMutation({ workId: workId as Id<'albatrossIntents'>, itemId });
+    } catch {
+      setListChoices((current) => {
+        const next = new Map(current);
+        next.delete(itemId);
+        return next;
+      });
+      setListError(LIST_SAVE_ERROR);
+    }
+  };
+
+  const removeListItem = async (itemId: string) => {
+    setRemovedListIds((current) => new Set([...current, itemId]));
+    setListBusyIds((current) => new Set([...current, itemId]));
+    setListError(null);
+    try {
+      await removeListItemMutation({ workId: workId as Id<'albatrossIntents'>, itemId });
+    } catch {
+      setRemovedListIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+      setListError(LIST_SAVE_ERROR);
+    } finally {
+      setListBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
+
+  const logMetric = async (value: number, note?: string) => {
+    setMetricSaving(true);
+    setMetricError(null);
+    try {
+      const result = await logMetricMutation({
+        workId: workId as Id<'albatrossIntents'>,
+        value,
+        ...(note ? { note } : {}),
+      });
+      const entry: MetricEntry = {
+        _id: String(result.entry._id),
+        at: result.entry.at,
+        value: result.entry.value,
+        note: result.entry.note ?? null,
+      };
+      setPendingEntries((current) => [...current, entry]);
+      setFreshEntryId(entry._id);
+    } catch {
+      setMetricError(METRIC_SAVE_ERROR);
+    } finally {
+      setMetricSaving(false);
+    }
+  };
+
+  const toggleMilestone = async (milestoneId: string) => {
+    const milestone = (detail?.work.milestones ?? []).find((row) => row.id === milestoneId);
+    if (!milestone) return;
+    const shownDone = milestoneChoices.get(milestoneId)?.done ?? milestone.done;
+    setMilestoneChoices((current) => new Map(current).set(milestoneId, { done: !shownDone, at: Date.now() }));
+    setMilestoneBusyIds((current) => new Set([...current, milestoneId]));
+    setMilestoneError(null);
+    try {
+      await toggleMilestoneMutation({ workId: workId as Id<'albatrossIntents'>, milestoneId });
+    } catch {
+      setMilestoneChoices((current) => {
+        const next = new Map(current);
+        next.delete(milestoneId);
+        return next;
+      });
+      setMilestoneError(MILESTONES_SAVE_ERROR);
+    } finally {
+      setMilestoneBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(milestoneId);
+        return next;
+      });
+    }
+  };
+
+  const saveMilestones = async (rows: MilestoneRow[]): Promise<boolean> => {
+    setMilestonesSaving(true);
+    setMilestoneError(null);
+    try {
+      await setMilestonesMutation({ workId: workId as Id<'albatrossIntents'>, milestones: rows });
+      return true;
+    } catch {
+      setMilestoneError(MILESTONES_SAVE_ERROR);
+      return false;
+    } finally {
+      setMilestonesSaving(false);
+    }
+  };
 
   useEffect(() => {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -413,6 +673,26 @@ export function WorkDetail({ workId }: { workId: string }) {
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
   const horizon = visibleHorizon(work.horizon, horizonChoice);
+  const shape = visibleShape(work.shape, shapeChoice);
+  const showsPlan = shapeShowsPlan(shape);
+  const finishes = shapeFinishes(shape);
+  const listItems = visibleListItems(
+    [...(work.listItems ?? []), ...pendingListItems].filter((item) => !removedListIds.has(item.id)),
+    listChoices,
+  );
+  const milestones = visibleMilestones(work.milestones, milestoneChoices);
+  const metricEntries = mergeMetricEntries(detail.metricEntries ?? [], pendingEntries);
+  const facts = shapeFacts(
+    shape,
+    {
+      listItems,
+      metric: work.metric ?? null,
+      metricSummary: metricSummary(metricEntries, nowMs),
+      milestones,
+      lastUserTouchAt: work.lastUserTouchAt ?? null,
+    },
+    nowMs,
+  );
   const openAttachedChat = () => {
     setChatScope({
       kind: 'work',
@@ -472,13 +752,22 @@ export function WorkDetail({ workId }: { workId: string }) {
             work={{ ...work, openQuestions: pendingQuestions.length }}
             evidence={detail.evidence || []}
             state={workStateKey({ ...work, openQuestions: pendingQuestions.length })}
+            eyebrow={
+              <ShapePicker
+                value={shape}
+                onChange={(next) => void saveShape(next)}
+                saving={shapeSaving}
+                error={shapeError}
+              />
+            }
+            facts={facts ? <ShapeFactsRow facts={facts} /> : undefined}
             actions={
               <div className="flex flex-col items-end gap-2">
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button type="button" size="sm" variant="outline" onClick={openAttachedChat}>
                     Discuss
                   </Button>
-                  {detail.execution.currentStep ? (
+                  {!showsPlan ? null : detail.execution.currentStep ? (
                     <Button type="button" size="sm" onClick={() => setGuided(true)}>
                       Open guided work
                     </Button>
@@ -572,176 +861,238 @@ export function WorkDetail({ workId }: { workId: string }) {
             </section>
           ) : null}
 
-          {detail.execution.currentStep ? (
-            <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-              <p className="text-[11.5px] text-[var(--color-text-faint)]">Current step</p>
-              <h2 className="mt-1 font-serif text-[18px] font-semibold">
-                {detail.execution.currentStep.title}
-              </h2>
-              {detail.execution.currentStep.detail ? (
-                <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                  {detail.execution.currentStep.detail}
-                </p>
-              ) : null}
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)]/70 pt-3">
-                <span className="text-[12px] text-[var(--color-text-muted)]">
-                  {detail.execution.remainingSteps} of {detail.execution.totalSteps} steps remain
-                </span>
-                <Button type="button" size="sm" onClick={() => setGuided(true)}>
-                  Start this step
-                </Button>
-              </div>
-            </section>
-          ) : null}
-
-          {document ? (
-            // The page is the plan. The document flows in the page scroll —
-            // no frame, no fixed height, no second scrollbar.
-            <section className="mt-6">
-              <BriefCanvas value={document} embedded />
-              <p className="mt-4 text-[11.5px] text-[var(--color-text-faint)]">
-                This is Albatross&apos;s best guess at the way through. Tell it if the plan is wrong and it
-                will find another one.
-              </p>
-            </section>
-          ) : legacyPlan ? (
-            <LegacyPlanNotice workId={workId} onError={setError} />
-          ) : null}
-
-          {!document && plan?.digitalActions?.length ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">The proposed steps</h2>
-              <div className="mt-2 divide-y divide-[var(--color-border)]/60">
-                {(plan.digitalActions || []).map((action) => {
-                  const done = detail.execution.guideSteps.some(
-                    (step) => step.key === action.key && step.done,
-                  );
-                  return (
-                    <div
-                      key={action.actionKey || action.key || action.title}
-                      className="flex items-center gap-3 py-2.5"
-                    >
-                      <span
-                        role="img"
-                        aria-label={done ? 'Applied' : 'Not applied'}
-                        className={cn(
-                          'size-4 shrink-0 rounded-full border',
-                          done
-                            ? 'border-[var(--color-success)] bg-[var(--color-success)]/15'
-                            : 'border-[var(--color-border-strong)]',
-                        )}
-                      />
-                      <span className="min-w-0 flex-1 text-[13px]">{action.title}</span>
-                    </div>
-                  );
-                })}
-                {(plan.physicalActions || []).map((action) => (
-                  <div key={action.title} className="py-2.5">
-                    <p className="text-[13px]">{action.title}</p>
-                    {action.detail ? (
-                      <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">{action.detail}</p>
+          <ShapeBodySwap shape={shape}>
+            {(shown, kind) => (
+              <>
+                {SHAPE_STATUS_LINE[shown] ? (
+                  <p data-shape-status className="mt-5 text-[13px] text-[var(--color-text-muted)]">
+                    {SHAPE_STATUS_LINE[shown]}
+                  </p>
+                ) : null}
+                {kind === 'list' ? (
+                  <ListBody
+                    items={listItems}
+                    onAdd={(texts) => void addListItems(texts)}
+                    onToggle={(itemId) => void toggleListItem(itemId)}
+                    onRemove={(itemId) => void removeListItem(itemId)}
+                    busyIds={listBusyIds}
+                    error={listError}
+                  />
+                ) : kind === 'practice' ? (
+                  <PracticeBody
+                    metric={work.metric ?? null}
+                    entries={metricEntries}
+                    nowMs={nowMs}
+                    onLog={(value, note) => void logMetric(value, note)}
+                    saving={metricSaving}
+                    error={metricError}
+                    freshId={freshEntryId}
+                  />
+                ) : kind === 'milestones' ? (
+                  <ProjectBody
+                    milestones={milestones}
+                    evidence={detail.evidence || []}
+                    artifacts={detail.application?.artifacts ?? []}
+                    lastUserTouchAt={work.lastUserTouchAt ?? null}
+                    nowMs={nowMs}
+                    onToggle={(milestoneId) => void toggleMilestone(milestoneId)}
+                    onSetMilestones={saveMilestones}
+                    busyIds={milestoneBusyIds}
+                    saving={milestonesSaving}
+                    error={milestoneError}
+                  />
+                ) : null}
+                {kind === 'list' || kind === 'practice' ? null : (
+                  <>
+                    {showsPlan && detail.execution.currentStep ? (
+                      <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+                        <p className="text-[11.5px] text-[var(--color-text-faint)]">Current step</p>
+                        <h2 className="mt-1 font-serif text-[18px] font-semibold">
+                          {detail.execution.currentStep.title}
+                        </h2>
+                        {detail.execution.currentStep.detail ? (
+                          <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                            {detail.execution.currentStep.detail}
+                          </p>
+                        ) : null}
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)]/70 pt-3">
+                          <span className="text-[12px] text-[var(--color-text-muted)]">
+                            {detail.execution.remainingSteps} of {detail.execution.totalSteps} steps remain
+                          </span>
+                          <Button type="button" size="sm" onClick={() => setGuided(true)}>
+                            Start this step
+                          </Button>
+                        </div>
+                      </section>
                     ) : null}
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
 
-          {detail.application?.artifacts.length ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What changed</h2>
-              <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
-                Albatross created these in your accounts. Each one can be undone while the provider allows it.
-              </p>
-              <div className="mt-2 divide-y divide-[var(--color-border)]/60">
-                {detail.application.artifacts.map((artifact) => {
-                  const undone = Boolean(artifact.operationId && undoneOperations.has(artifact.operationId));
-                  return (
-                    <div
-                      key={`${artifact.kind}:${artifact.id}`}
-                      className={cn('flex items-center gap-3 py-2', undone && 'opacity-55')}
-                    >
-                      <span className={cn('min-w-0 flex-1 truncate text-[13px]', undone && 'line-through')}>
-                        {artifact.title || artifact.id}
-                      </span>
-                      <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
-                        {undone ? 'undone' : artifact.kind.replaceAll('_', ' ')}
-                      </span>
-                      {artifact.operationId && !undone ? (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          disabled={Boolean(undoing)}
-                          onClick={async () => {
-                            setUndoing(artifact.operationId!);
-                            setError(null);
-                            try {
-                              await callTool('undo_operation', { operationId: artifact.operationId });
-                              setUndoneOperations(
-                                (previous) => new Set([...previous, artifact.operationId!]),
-                              );
-                            } catch (cause) {
-                              setError(
-                                cause instanceof Error
-                                  ? cause.message
-                                  : 'This change can no longer be undone.',
-                              );
-                            } finally {
-                              setUndoing(null);
-                            }
-                          }}
-                        >
-                          {undoing === artifact.operationId ? 'Undoing…' : 'Undo'}
-                        </Button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
+                    {!showsPlan ? null : document ? (
+                      // The page is the plan. The document flows in the page scroll —
+                      // no frame, no fixed height, no second scrollbar.
+                      <section className="mt-6">
+                        <BriefCanvas value={document} embedded />
+                        <p className="mt-4 text-[11.5px] text-[var(--color-text-faint)]">
+                          This is Albatross&apos;s best guess at the way through. Tell it if the plan is wrong
+                          and it will find another one.
+                        </p>
+                      </section>
+                    ) : legacyPlan ? (
+                      <LegacyPlanNotice workId={workId} onError={setError} />
+                    ) : null}
 
-          {detail.contract ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <OutcomeContractCard contract={detail.contract} evidence={detail.evidence || []} />
-            </section>
-          ) : null}
+                    {showsPlan && !document && plan?.digitalActions?.length ? (
+                      <section className="border-b border-[var(--color-border)] py-5">
+                        <h2 className="text-[13px] font-semibold text-[var(--color-text)]">
+                          The proposed steps
+                        </h2>
+                        <div className="mt-2 divide-y divide-[var(--color-border)]/60">
+                          {(plan.digitalActions || []).map((action) => {
+                            const done = detail.execution.guideSteps.some(
+                              (step) => step.key === action.key && step.done,
+                            );
+                            return (
+                              <div
+                                key={action.actionKey || action.key || action.title}
+                                className="flex items-center gap-3 py-2.5"
+                              >
+                                <span
+                                  role="img"
+                                  aria-label={done ? 'Applied' : 'Not applied'}
+                                  className={cn(
+                                    'size-4 shrink-0 rounded-full border',
+                                    done
+                                      ? 'border-[var(--color-success)] bg-[var(--color-success)]/15'
+                                      : 'border-[var(--color-border-strong)]',
+                                  )}
+                                />
+                                <span className="min-w-0 flex-1 text-[13px]">{action.title}</span>
+                              </div>
+                            );
+                          })}
+                          {(plan.physicalActions || []).map((action) => (
+                            <div key={action.title} className="py-2.5">
+                              <p className="text-[13px]">{action.title}</p>
+                              {action.detail ? (
+                                <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                                  {action.detail}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
 
-          {detail.evidence?.length ? (
-            <section className="border-b border-[var(--color-border)] py-5">
-              <ProofTimeline evidence={detail.evidence} contract={detail.contract} />
-            </section>
-          ) : null}
+                    {kind !== 'milestones' && detail.application?.artifacts.length ? (
+                      <section className="border-b border-[var(--color-border)] py-5">
+                        <h2 className="text-[13px] font-semibold text-[var(--color-text)]">What changed</h2>
+                        <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
+                          Albatross created these in your accounts. Each one can be undone while the provider
+                          allows it.
+                        </p>
+                        <div className="mt-2 divide-y divide-[var(--color-border)]/60">
+                          {detail.application.artifacts.map((artifact) => {
+                            const undone = Boolean(
+                              artifact.operationId && undoneOperations.has(artifact.operationId),
+                            );
+                            return (
+                              <div
+                                key={`${artifact.kind}:${artifact.id}`}
+                                className={cn('flex items-center gap-3 py-2', undone && 'opacity-55')}
+                              >
+                                <span
+                                  className={cn(
+                                    'min-w-0 flex-1 truncate text-[13px]',
+                                    undone && 'line-through',
+                                  )}
+                                >
+                                  {artifact.title || artifact.id}
+                                </span>
+                                <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
+                                  {undone ? 'undone' : artifact.kind.replaceAll('_', ' ')}
+                                </span>
+                                {artifact.operationId && !undone ? (
+                                  <Button
+                                    type="button"
+                                    size="xs"
+                                    variant="ghost"
+                                    disabled={Boolean(undoing)}
+                                    onClick={async () => {
+                                      setUndoing(artifact.operationId!);
+                                      setError(null);
+                                      try {
+                                        await callTool('undo_operation', {
+                                          operationId: artifact.operationId,
+                                        });
+                                        setUndoneOperations(
+                                          (previous) => new Set([...previous, artifact.operationId!]),
+                                        );
+                                      } catch (cause) {
+                                        setError(
+                                          cause instanceof Error
+                                            ? cause.message
+                                            : 'This change can no longer be undone.',
+                                        );
+                                      } finally {
+                                        setUndoing(null);
+                                      }
+                                    }}
+                                  >
+                                    {undoing === artifact.operationId ? 'Undoing…' : 'Undo'}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
 
-          {plan?.assumptions?.length || plan?.sourceRefs?.length ? (
-            <section className="border-b border-[var(--color-border)] py-5 text-[12px] text-[var(--color-text-muted)]">
-              {plan.assumptions?.length ? (
-                <div>
-                  <h2 className="font-medium text-[var(--color-text)]">Assumptions</h2>
-                  <ul className="mt-1 list-disc space-y-1 pl-4">
-                    {plan.assumptions.map((assumption) => (
-                      <li key={assumption}>{assumption}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-              {plan.sourceRefs?.length ? (
-                <div className="mt-4">
-                  <h2 className="font-medium text-[var(--color-text)]">Sources</h2>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                    {plan.sourceRefs.map((source) => (
-                      <span key={`${source.kind}:${source.id}`}>
-                        {source.label || `${source.kind} ${source.id}`}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
+                    {detail.contract ? (
+                      <section className="border-b border-[var(--color-border)] py-5">
+                        <OutcomeContractCard contract={detail.contract} evidence={detail.evidence || []} />
+                      </section>
+                    ) : null}
 
-          {open ? (
+                    {kind !== 'milestones' && detail.evidence?.length ? (
+                      <section className="border-b border-[var(--color-border)] py-5">
+                        <ProofTimeline evidence={detail.evidence} contract={detail.contract} />
+                      </section>
+                    ) : null}
+
+                    {showsPlan && (plan?.assumptions?.length || plan?.sourceRefs?.length) ? (
+                      <section className="border-b border-[var(--color-border)] py-5 text-[12px] text-[var(--color-text-muted)]">
+                        {plan.assumptions?.length ? (
+                          <div>
+                            <h2 className="font-medium text-[var(--color-text)]">Assumptions</h2>
+                            <ul className="mt-1 list-disc space-y-1 pl-4">
+                              {plan.assumptions.map((assumption) => (
+                                <li key={assumption}>{assumption}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {plan.sourceRefs?.length ? (
+                          <div className="mt-4">
+                            <h2 className="font-medium text-[var(--color-text)]">Sources</h2>
+                            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                              {plan.sourceRefs.map((source) => (
+                                <span key={`${source.kind}:${source.id}`}>
+                                  {source.label || `${source.kind} ${source.id}`}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </section>
+                    ) : null}
+                  </>
+                )}
+              </>
+            )}
+          </ShapeBodySwap>
+
+          {open && finishes ? (
             <section className="mt-8 rounded-xl border border-[var(--color-border)] p-4">
               <h2 className="font-serif text-[17px] font-semibold">Is this albatross complete?</h2>
               <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">

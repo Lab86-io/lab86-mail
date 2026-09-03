@@ -3,7 +3,7 @@
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DefaultChatTransport } from 'ai';
-import { ArrowUp, Paperclip, Plus, Square, X } from 'lucide-react';
+import { Paperclip, Plus, X } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -11,6 +11,8 @@ import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-pro
 import { HitlPart } from '@/components/ai-elements/hitl-parts';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
+import { AskHoldComposer, type DoorRequest } from '@/components/shell/AskHoldComposer';
+import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { BorderBeam } from '@/components/ui/border-beam';
@@ -30,18 +32,12 @@ import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
 import { PlusIcon } from '@/components/ui/plus';
-import {
-  PromptInput,
-  PromptInputAction,
-  PromptInputActions,
-  PromptInputTextarea,
-} from '@/components/ui/prompt-input';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
-import { useSidebar } from '@/components/ui/sidebar';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
+import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
 import {
   createHitlAutoContinueGuard,
   isHitlToolName,
@@ -49,12 +45,7 @@ import {
   toolActivityState,
   toolPartName,
 } from '@/lib/albatross/teach-ui';
-import {
-  assistantLauncherPlacement,
-  capturePillHidden,
-  isAssistantShortcut,
-  useClientStore,
-} from '@/lib/client-state';
+import { assistantLauncherPlacement, isAssistantShortcut, useClientStore } from '@/lib/client-state';
 import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
@@ -106,14 +97,13 @@ const ORB_COLORS = {
 
 // ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
 // Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
-// around the border so it reads as the live AI entry point. The same door the
-// Mac app has as its corner chat bubble; ⌘K is the keyboard twin on both.
+// around the border so it reads as the live assistant entry point. The same
+// door the Mac app has as its corner chat bubble; ⌘K is the keyboard twin.
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
   const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
-  const { open: railOpen, isMobile } = useSidebar();
 
   // ⌘K toggles the assistant panel from anywhere in the shell, including
   // while the button itself is hidden behind the open panel.
@@ -130,12 +120,13 @@ export function AIBarTrigger() {
 
   // The open panel owns its own pane and Close button, and the fullscreen
   // reader popout owns the whole window — no floating chrome above either.
-  // The New Intent pill and an open reader's action bar share this corner,
-  // so the launcher stacks above them rather than overlapping.
+  // An open reader's action bar shares this corner, so the launcher stacks
+  // above it rather than overlapping. The capture pill is gone: the bar is
+  // the one door for Hold.
   const placement = assistantLauncherPlacement({
     aiBarOpen,
     threadFullscreen,
-    capturePillVisible: !capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen),
+    capturePillVisible: false,
     readerOpen,
   });
   if (placement === 'hidden') return null;
@@ -382,6 +373,31 @@ export function AssistantChat() {
     if (aiBarOpen) requestAnimationFrame(() => inputWrapRef.current?.querySelector('textarea')?.focus());
   }, [aiBarOpen]);
 
+  // The capture door. The rail button, the "n" shortcut, a selection, and
+  // the empty states all raise `captureOpen`. The bar opens with the chip
+  // preset to Hold and the seed text in the field. The takeover is gone.
+  const captureOpen = useClientStore((s) => s.captureOpen);
+  const captureSeed = useClientStore((s) => s.captureSeed);
+  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+  const [door, setDoor] = useState<DoorRequest | null>(null);
+  useEffect(() => {
+    if (!captureOpen) return;
+    setDoor((current) => ({ seed: captureSeed, nonce: (current?.nonce ?? 0) + 1 }));
+    setAiBarOpen(true);
+    setCaptureOpen(false);
+  }, [captureOpen, captureSeed, setAiBarOpen, setCaptureOpen]);
+
+  // Hold from the bar: one capture with the chat conversation as its source.
+  // The response carries the parsed cards for the landing. New Work gets its
+  // plan kick after the landing, never before the user saw the card.
+  const holdFromBar = useCallback(async (text: string): Promise<HoldCard[]> => {
+    const result = await holdText({ text, conversationId: sessionIdRef.current || newChatId() });
+    return result.cards;
+  }, []);
+  const afterHeld = useCallback((cards: HoldCard[]) => {
+    void kickAdvance(cards.map((card) => card.id));
+  }, []);
+
   // Esc dismisses the floating panel — even from the composer (the field is
   // auto-focused, so a typing exception would leave Esc dead). Radix layers
   // (menus, dropdowns) preventDefault their own Escape, so they close first.
@@ -566,11 +582,7 @@ export function AssistantChat() {
   };
 
   const submit = () => {
-    if (streaming) {
-      stop();
-      return;
-    }
-    if (uploadingFiles) return;
+    if (streaming || uploadingFiles) return;
     void send(input);
   };
 
@@ -765,7 +777,19 @@ export function AssistantChat() {
                         reduceMotion={reduceMotion}
                         delay={i < staggerFloor ? 0 : Math.min((i - staggerFloor) * 0.05, 0.3)}
                       >
-                        <MessageView message={m} streaming={streaming && i === messages.length - 1} />
+                        <MessageView
+                          message={m}
+                          streaming={streaming && i === messages.length - 1}
+                          hold={
+                            m.role === 'assistant' && sessionIdRef.current
+                              ? {
+                                  conversationId: sessionIdRef.current,
+                                  userText: precedingUserText(messages, i),
+                                  onKept: afterHeld,
+                                }
+                              : undefined
+                          }
+                        />
                       </MessageFloat>
                     ))}
                   </ChatPartContext.Provider>
@@ -798,98 +822,92 @@ export function AssistantChat() {
 
             {/* Composer: a rounded floating field pinned to the panel bottom —
             no hard border-t seam, it hovers over the translucent surface. */}
-            <div ref={inputWrapRef} className="p-3 pt-1.5">
-              <PromptInput
+            <div ref={inputWrapRef}>
+              <AskHoldComposer
                 value={input}
                 onValueChange={setInput}
-                isLoading={busy}
-                onSubmit={submit}
-                maxHeight={176}
-                className="rounded-2xl border-[var(--color-control-border)] bg-[var(--color-control)]/95 shadow-[var(--shadow-pop)]"
-              >
-                {chatScopeKind !== 'global' ? (
-                  <div className="flex px-1 pt-1">
-                    <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
-                      <span className="truncate">
-                        {chatScopeKind === 'work' ? 'Work' : 'Area'}: {chatScopeLabel || 'Current context'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setChatScope({ kind: 'global' })}
-                        disabled={busy}
-                        aria-label={`Detach ${chatScopeKind}`}
-                        title={`Detach ${chatScopeKind}`}
-                        className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <X className="size-2.5" />
-                      </button>
-                    </span>
-                  </div>
-                ) : null}
-                <PromptInputTextarea
-                  placeholder="Find, draft, schedule, label, anything…"
-                  className="text-[13px] leading-relaxed text-[var(--color-text)]"
-                />
-                {pendingFiles.length ? (
-                  <div className="flex flex-wrap gap-1 px-1 pb-1">
-                    {pendingFiles.map((file, index) => (
-                      <span
-                        key={`${file.name}-${file.size}-${file.lastModified}`}
-                        className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
-                      >
-                        {file.name}
-                        <button
-                          type="button"
-                          onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
-                          aria-label={`Remove ${file.name}`}
-                          title={`Remove ${file.name}`}
-                          className="hover:text-[var(--color-danger)]"
-                        >
-                          <X className="size-2.5" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                <PromptInputActions className="justify-end pt-1">
-                  <PromptInputAction tooltip="Attach a file for the assistant">
+                busy={busy}
+                streaming={streaming}
+                canSend={Boolean(input.trim()) || pendingFiles.length > 0}
+                onSend={submit}
+                onStop={stop}
+                onHold={holdFromBar}
+                onHeld={afterHeld}
+                door={door}
+                reduceMotion={reduceMotion}
+                before={
+                  <>
+                    {chatScopeKind !== 'global' ? (
+                      <div className="flex px-1 pt-1">
+                        <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
+                          <span className="truncate">
+                            {chatScopeKind === 'work' ? 'Work' : 'Area'}:{' '}
+                            {chatScopeLabel || 'Current context'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setChatScope({ kind: 'global' })}
+                            disabled={busy}
+                            aria-label={`Detach ${chatScopeKind}`}
+                            title={`Detach ${chatScopeKind}`}
+                            className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <X className="size-2.5" />
+                          </button>
+                        </span>
+                      </div>
+                    ) : null}
+                    {pendingFiles.length ? (
+                      <div className="flex flex-wrap gap-1 px-1 pb-1">
+                        {pendingFiles.map((file, index) => (
+                          <span
+                            key={`${file.name}-${file.size}-${file.lastModified}`}
+                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                          >
+                            {file.name}
+                            <button
+                              type="button"
+                              onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                              aria-label={`Remove ${file.name}`}
+                              title={`Remove ${file.name}`}
+                              className="hover:text-[var(--color-danger)]"
+                            >
+                              <X className="size-2.5" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                }
+                leading={
+                  <>
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={busy}
+                      title="Attach a file for the assistant"
                       className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
                     >
                       <Paperclip className="size-3.5" />
                       <span className="sr-only">Attach file</span>
                     </Button>
-                  </PromptInputAction>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept="image/*,application/pdf,text/plain,text/csv"
-                    className="hidden"
-                    onChange={(event) => {
-                      const picked = Array.from(event.target.files || []);
-                      if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
-                      event.target.value = '';
-                    }}
-                  />
-                  <PromptInputAction tooltip={busy ? 'Stop' : 'Send'}>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      onClick={submit}
-                      disabled={!busy && !input.trim() && !pendingFiles.length}
-                      className="rounded-full"
-                      aria-label={busy ? 'Stop' : 'Send'}
-                    >
-                      {busy ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
-                    </Button>
-                  </PromptInputAction>
-                </PromptInputActions>
-              </PromptInput>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*,application/pdf,text/plain,text/csv"
+                      className="hidden"
+                      onChange={(event) => {
+                        const picked = Array.from(event.target.files || []);
+                        if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
+                        event.target.value = '';
+                      }}
+                    />
+                  </>
+                }
+              />
             </div>
           </motion.section>
         </>
@@ -952,7 +970,21 @@ function hasVisibleContent(message: any): boolean {
   return false;
 }
 
-function MessageView({ message, streaming = false }: { message: any; streaming?: boolean }) {
+interface HoldReplyContext {
+  conversationId: string;
+  userText: string;
+  onKept?: (cards: HoldCard[]) => void;
+}
+
+function MessageView({
+  message,
+  streaming = false,
+  hold,
+}: {
+  message: any;
+  streaming?: boolean;
+  hold?: HoldReplyContext;
+}) {
   const isUser = message.role === 'user';
   if (isUser) {
     const text = userTextFromMessage(message);
@@ -964,6 +996,7 @@ function MessageView({ message, streaming = false }: { message: any; streaming?:
       </Message>
     );
   }
+  const replyText = streaming ? '' : replyTextFromMessage(message);
   return (
     <Message className="justify-start">
       <div className="flex w-full min-w-0 flex-col gap-2">
@@ -971,9 +1004,37 @@ function MessageView({ message, streaming = false }: { message: any; streaming?:
           // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
           <Part key={`${message.id}-${i}`} part={part} streaming={streaming} />
         ))}
+        {hold && replyText ? (
+          <HoldThisControl
+            messageId={String(message.id)}
+            conversationId={hold.conversationId}
+            userText={hold.userText}
+            replyText={replyText}
+            onKept={(result) => hold.onKept?.(result.existing ? [] : result.cards)}
+            className="-mt-0.5"
+          />
+        ) : null}
       </div>
     </Message>
   );
+}
+
+/** The text of an assistant reply: its text parts, joined. Empty for tool-only turns. */
+export function replyTextFromMessage(message: any): string {
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  return parts
+    .filter((part: any) => part && part.type === 'text')
+    .map((part: any) => String(part.text || ''))
+    .join('\n')
+    .trim();
+}
+
+/** The user's message the reply at `index` answers: the nearest one above it. */
+export function precedingUserText(messages: any[], index: number): string {
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return userTextFromMessage(messages[i]);
+  }
+  return '';
 }
 
 function userTextFromMessage(message: any): string {

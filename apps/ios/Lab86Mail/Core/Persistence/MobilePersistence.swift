@@ -22,6 +22,12 @@ enum MobileCommandKind: String, Codable, CaseIterable, Sendable {
     case taskSetCompleted = "task.setCompleted"
     case workCapture = "work.capture"
     case workSetHorizon = "work.setHorizon"
+    case workListAdd = "work.listAdd"
+    case workListToggle = "work.listToggle"
+    case workListRemove = "work.listRemove"
+    case workMetricLog = "work.metricLog"
+    case workMilestoneToggle = "work.milestoneToggle"
+    case workSetShape = "work.setShape"
     case approvalApprove = "approval.approve"
     case approvalReject = "approval.reject"
 }
@@ -177,6 +183,43 @@ struct WorkSetHorizonCommandPayload: Codable, Equatable, Sendable {
     var horizonCleared: Bool { horizon == nil }
 }
 
+// The shape commands. Each one names the Work and the one thing it changes.
+// The server answers every one with a `workShape` sync change.
+struct WorkListAddCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let text: String
+}
+
+struct WorkListItemCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let itemID: String
+}
+
+// `at` is an ISO timestamp on the wire, like every client-written time.
+struct WorkMetricLogCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let value: Double
+    let at: Date?
+    let note: String?
+
+    init(workID: String, value: Double, at: Date? = nil, note: String? = nil) {
+        self.workID = workID
+        self.value = value
+        self.at = at
+        self.note = note
+    }
+}
+
+struct WorkMilestoneToggleCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let milestoneID: String
+}
+
+struct WorkSetShapeCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let shape: WorkShape
+}
+
 struct ApprovalApproveCommandPayload: Codable, Equatable, Sendable {
     let approvalID: String
 }
@@ -207,6 +250,12 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case taskSetCompleted(TaskCompletionCommandPayload)
     case workCapture(WorkCaptureCommandPayload)
     case workSetHorizon(WorkSetHorizonCommandPayload)
+    case workListAdd(WorkListAddCommandPayload)
+    case workListToggle(WorkListItemCommandPayload)
+    case workListRemove(WorkListItemCommandPayload)
+    case workMetricLog(WorkMetricLogCommandPayload)
+    case workMilestoneToggle(WorkMilestoneToggleCommandPayload)
+    case workSetShape(WorkSetShapeCommandPayload)
     case approvalApprove(ApprovalApproveCommandPayload)
     case approvalReject(ApprovalRejectCommandPayload)
 
@@ -232,6 +281,12 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
         case .taskSetCompleted: .taskSetCompleted
         case .workCapture: .workCapture
         case .workSetHorizon: .workSetHorizon
+        case .workListAdd: .workListAdd
+        case .workListToggle: .workListToggle
+        case .workListRemove: .workListRemove
+        case .workMetricLog: .workMetricLog
+        case .workMilestoneToggle: .workMilestoneToggle
+        case .workSetShape: .workSetShape
         case .approvalApprove: .approvalApprove
         case .approvalReject: .approvalReject
         }

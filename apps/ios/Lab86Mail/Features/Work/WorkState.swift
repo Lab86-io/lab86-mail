@@ -19,6 +19,14 @@ struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
     // The horizon: now, later, or someday. Optional so cached snapshots from
     // older servers keep decoding.
     private(set) var horizon: WorkHorizon?
+    // The shape and the data it owns. Optional for the same reason.
+    private(set) var shape: WorkShape?
+    private(set) var listItems: [WorkListEntry]?
+    private(set) var metric: WorkMetric?
+    private(set) var milestones: [WorkMilestone]?
+    private(set) var metricSummary: WorkMetricSummary?
+
+    var resolvedShape: WorkShape { shape ?? .default }
 
     /// What the row calls itself. Never an id, never a blank line.
     var displayTitle: String {
@@ -44,6 +52,11 @@ struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
         scheduledStartAt = CalendarDateParser.date(json["scheduledStartAt"])
         scheduledEndAt = CalendarDateParser.date(json["scheduledEndAt"])
         horizon = WorkHorizon(json: json["horizon"])
+        shape = json["shape"]?.stringValue.flatMap(WorkShape.init(rawValue:))
+        listItems = json["listItems"]?.arrayValue.map { $0.compactMap(WorkListEntry.init) }
+        metric = WorkMetric(json: json["metric"])
+        milestones = json["milestones"]?.arrayValue.map { $0.compactMap(WorkMilestone.init) }
+        metricSummary = WorkMetricSummary(json: json["metricSummary"])
     }
 
     /// The same row with a new horizon. Used for the optimistic write while
@@ -51,6 +64,30 @@ struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
     func withHorizon(_ horizon: WorkHorizon?) -> WorkListItem {
         var copy = self
         copy.horizon = horizon
+        return copy
+    }
+
+    func withShape(_ shape: WorkShape) -> WorkListItem {
+        var copy = self
+        copy.shape = shape
+        return copy
+    }
+
+    func withListItems(_ items: [WorkListEntry]) -> WorkListItem {
+        var copy = self
+        copy.listItems = items
+        return copy
+    }
+
+    func withMilestones(_ milestones: [WorkMilestone]) -> WorkListItem {
+        var copy = self
+        copy.milestones = milestones
+        return copy
+    }
+
+    func withMetricSummary(_ summary: WorkMetricSummary?) -> WorkListItem {
+        var copy = self
+        copy.metricSummary = summary
         return copy
     }
 }

@@ -123,6 +123,51 @@ struct WorkHorizonSyncPatch: Equatable, Sendable {
     }
 }
 
+// Shape-owned data of one Work changed. Every field is optional: the server
+// sends only what the command touched. A nil field says nothing.
+struct WorkShapeSyncPatch: Equatable, Sendable {
+    let entityID: String
+    let revision: Int
+    let workID: String
+    let shape: WorkShape?
+    let listItems: [WorkListEntry]?
+    let milestones: [WorkMilestone]?
+    let metric: WorkMetric?
+    let metricEntry: WorkMetricEntry?
+    let metricSummary: WorkMetricSummary?
+
+    init(
+        entityID: String,
+        revision: Int,
+        workID: String,
+        shape: WorkShape? = nil,
+        listItems: [WorkListEntry]? = nil,
+        milestones: [WorkMilestone]? = nil,
+        metric: WorkMetric? = nil,
+        metricEntry: WorkMetricEntry? = nil,
+        metricSummary: WorkMetricSummary? = nil
+    ) {
+        self.entityID = entityID
+        self.revision = revision
+        self.workID = workID
+        self.shape = shape
+        self.listItems = listItems
+        self.milestones = milestones
+        self.metric = metric
+        self.metricEntry = metricEntry
+        self.metricSummary = metricSummary
+    }
+}
+
+// Work captured from chat (Wave E). Carried here so the sync switch stays
+// exhaustive; the Ask/Hold surface reads it.
+struct WorkCapturedSyncPatch: Equatable, Sendable {
+    let entityID: String
+    let revision: Int
+    let workIDs: [String]
+    let existing: Bool
+}
+
 enum ApprovalSyncState: Equatable, Sendable {
     case requested(commandKind: String)
     case resolved(status: ApprovalResolution)
@@ -156,6 +201,8 @@ enum MobileSyncChange: Equatable, Sendable {
     case task(TaskSyncPatch)
     case work(WorkSyncReference)
     case workHorizon(WorkHorizonSyncPatch)
+    case workShape(WorkShapeSyncPatch)
+    case workCaptured(WorkCapturedSyncPatch)
     case approval(ApprovalSyncPatch)
     case operation(OperationSyncPatch)
 
@@ -164,7 +211,7 @@ enum MobileSyncChange: Equatable, Sendable {
         case .mailThread, .mailMessage, .mailDraft: .mail
         case .calendarEvent: .calendar
         case .task: .tasks
-        case .work, .workHorizon: .work
+        case .work, .workHorizon, .workShape, .workCaptured: .work
         case .approval: .activity
         case .operation(let patch): patch.domain
         }
@@ -179,6 +226,8 @@ enum MobileSyncChange: Equatable, Sendable {
         case .task(let patch): patch.revision
         case .work(let reference): reference.revision
         case .workHorizon(let patch): patch.revision
+        case .workShape(let patch): patch.revision
+        case .workCaptured(let patch): patch.revision
         case .approval(let patch): patch.revision
         case .operation(let patch): patch.revision
         }

@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
+  appendTranscript,
   CAPTURE_BUTTON_LABEL,
-  type CaptureState,
   looksLikeMultipleIntents,
-  nextCaptureState,
-  requestPipBeforePersist,
-  resolveCapturePieces,
+  speechRecognitionAvailable,
   splitIntentText,
+  transcriptOf,
 } from '../components/albatross/IntentCapture';
 
-describe('the capture launcher name', () => {
+describe('the capture door name', () => {
   // It used to rotate through five labels, so the most important control in
   // the product had no fixed name and its accessible name drifted from the
   // visible one.
@@ -24,130 +24,46 @@ describe('the capture launcher name', () => {
   });
 });
 
-describe('nextCaptureState', () => {
-  test('opens only from closed', () => {
-    expect(nextCaptureState('closed', { type: 'open' })).toBe('editing');
-    expect(nextCaptureState('editing', { type: 'open' })).toBe('editing');
-    expect(nextCaptureState('saving', { type: 'open' })).toBe('saving');
+describe('the takeover is retired', () => {
+  const source = readFileSync('components/albatross/IntentCapture.tsx', 'utf8');
+
+  test('no full-screen dialog, no floating pill, no state machine', () => {
+    expect(source).not.toContain('role="dialog"');
+    expect(source).not.toContain('fixed bottom-6 right-6');
+    expect(source).not.toContain('nextCaptureState');
+    expect(source).not.toContain('openPipWindow');
+    expect(source).not.toContain('captureOpen');
   });
 
-  test('submit routes single dumps straight to saving', () => {
-    expect(nextCaptureState('editing', { type: 'submit', multi: false })).toBe('saving');
+  test('the shell mounts no launcher', () => {
+    const shell = readFileSync('components/shell/AppShell.tsx', 'utf8');
+    expect(shell).not.toContain('IntentCaptureLauncher');
   });
 
-  test('submit routes multi dumps to the split question first', () => {
-    expect(nextCaptureState('editing', { type: 'submit', multi: true })).toBe('split');
-  });
-
-  test('split question resolves to saving on either choice', () => {
-    expect(nextCaptureState('split', { type: 'split' })).toBe('saving');
-    expect(nextCaptureState('split', { type: 'keep' })).toBe('saving');
-  });
-
-  test('back-to-editing works from split and discard', () => {
-    expect(nextCaptureState('split', { type: 'edit' })).toBe('editing');
-    expect(nextCaptureState('discard', { type: 'edit' })).toBe('editing');
-  });
-
-  test('dismiss closes immediately when empty, asks first when text exists', () => {
-    expect(nextCaptureState('editing', { type: 'dismiss', hasText: false })).toBe('closed');
-    expect(nextCaptureState('editing', { type: 'dismiss', hasText: true })).toBe('discard');
-    expect(nextCaptureState('split', { type: 'dismiss', hasText: true })).toBe('discard');
-    expect(nextCaptureState('discard', { type: 'dismiss', hasText: true })).toBe('closed');
-  });
-
-  test('confirmed discard closes', () => {
-    expect(nextCaptureState('discard', { type: 'discard' })).toBe('closed');
-  });
-
-  test('saving cannot be dismissed and resolves via saved -> finish', () => {
-    expect(nextCaptureState('saving', { type: 'dismiss', hasText: true })).toBe('saving');
-    expect(nextCaptureState('saved', { type: 'dismiss', hasText: true })).toBe('saved');
-    expect(nextCaptureState('saving', { type: 'saved' })).toBe('saved');
-    expect(nextCaptureState('saved', { type: 'finish' })).toBe('closed');
-  });
-
-  test('save errors return to editing so the dump is not lost', () => {
-    expect(nextCaptureState('saving', { type: 'error' })).toBe('editing');
-  });
-
-  test('stray events never move unrelated states', () => {
-    const states: CaptureState[] = ['closed', 'editing', 'split', 'discard', 'saving', 'saved'];
-    for (const state of states) {
-      expect(nextCaptureState(state, { type: 'finish' })).toBe(state === 'saved' ? 'closed' : state);
-      expect(nextCaptureState(state, { type: 'saved' })).toBe(state === 'saving' ? 'saved' : state);
-    }
+  test('the split helpers still pass through', () => {
+    expect(looksLikeMultipleIntents('renew passport\nfile taxes\ncall the dentist')).toBe(true);
+    expect(splitIntentText('one loose thought')).toEqual(['one loose thought']);
   });
 });
 
-describe('resolveCapturePieces', () => {
-  test('keep returns a single end-trimmed piece', () => {
-    expect(resolveCapturePieces('  renew passport  ', 'keep')).toEqual(['renew passport']);
-  });
-
-  test('keep preserves the dump verbatim beyond end trimming', () => {
-    const raw = '  renew  passport...  ASAP!!  and taxes\nalso the shower idea ';
-    expect(resolveCapturePieces(raw, 'keep')).toEqual([raw.trim()]);
-  });
-
-  test('split shapes each piece into its own intent', () => {
-    const raw = 'renew passport\nfile taxes\ncall the dentist';
-    expect(looksLikeMultipleIntents(raw)).toBe(true);
-    expect(resolveCapturePieces(raw, 'split')).toEqual(['renew passport', 'file taxes', 'call the dentist']);
-  });
-
-  test('split matches splitIntentText exactly', () => {
-    const raw = 'book flights; email landlord and then pack boxes';
-    expect(resolveCapturePieces(raw, 'split')).toEqual(splitIntentText(raw.trim()));
-  });
-
-  test('single-thought dumps do not read as multiple intents', () => {
-    const raw = 'that idea from the shower about the garden lights';
-    expect(looksLikeMultipleIntents(raw)).toBe(false);
-    expect(resolveCapturePieces(raw, 'split')).toEqual([raw]);
-  });
-
-  test('empty and whitespace-only dumps produce nothing to save', () => {
-    expect(resolveCapturePieces('', 'keep')).toEqual([]);
-    expect(resolveCapturePieces('   \n  ', 'split')).toEqual([]);
-  });
-});
-
-describe('capture persistence ordering', () => {
-  test('requests PiP before beginning persistence', () => {
-    const order: string[] = [];
-    requestPipBeforePersist(
-      () => {
-        order.push('pip');
-        return Promise.resolve();
-      },
-      () => order.push('persist'),
+describe('voice capture', () => {
+  test('joins the results of one recognition event', () => {
+    expect(transcriptOf({ results: [[{ transcript: 'book the ' }], [{ transcript: 'dentist' }]] })).toBe(
+      'book the dentist',
     );
-    expect(order).toEqual(['pip', 'persist']);
+    expect(transcriptOf({ results: [] })).toBe('');
   });
 
-  test('a synchronous PiP denial never drops the capture', () => {
-    let persisted = false;
-    requestPipBeforePersist(
-      () => {
-        throw new Error('denied');
-      },
-      () => {
-        persisted = true;
-      },
-    );
-    expect(persisted).toBe(true);
+  test('the spoken tail follows the typed text and replaces itself as it grows', () => {
+    expect(appendTranscript('', 'book the dentist')).toBe('book the dentist');
+    expect(appendTranscript('  Tomorrow: ', 'book')).toBe('Tomorrow: book');
+    expect(appendTranscript('Tomorrow:', 'book the dentist')).toBe('Tomorrow: book the dentist');
   });
 
-  test('an asynchronous PiP denial never drops the capture', async () => {
-    let persisted = false;
-    requestPipBeforePersist(
-      () => Promise.reject(new Error('denied later')),
-      () => {
-        persisted = true;
-      },
-    );
-    await Promise.resolve();
-    expect(persisted).toBe(true);
+  test('support needs a SpeechRecognition constructor', () => {
+    expect(speechRecognitionAvailable(undefined)).toBe(false);
+    expect(speechRecognitionAvailable({})).toBe(false);
+    expect(speechRecognitionAvailable({ webkitSpeechRecognition: class {} })).toBe(true);
+    expect(speechRecognitionAvailable({ SpeechRecognition: class {} })).toBe(true);
   });
 });
