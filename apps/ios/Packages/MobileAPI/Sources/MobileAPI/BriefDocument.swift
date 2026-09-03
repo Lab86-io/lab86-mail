@@ -707,11 +707,15 @@ public struct BriefFraming: Codable, Hashable, Sendable {
     public let reason: String?
     public let lane: String?
     public let prep: String?
+    // The sender's display name (2026-09-03 budget brief). Optional so older
+    // editions and unknown keys decode unchanged.
+    public let sender: String?
 
-    public init(reason: String? = nil, lane: String? = nil, prep: String? = nil) {
+    public init(reason: String? = nil, lane: String? = nil, prep: String? = nil, sender: String? = nil) {
         self.reason = reason
         self.lane = lane
         self.prep = prep
+        self.sender = sender
     }
 }
 

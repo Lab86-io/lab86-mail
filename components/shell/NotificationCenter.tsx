@@ -24,9 +24,14 @@ interface NotificationRow {
   createdAt: number;
 }
 
-/** Mail has its own primary surface; the bell is reserved for execution and decisions. */
+/**
+ * Mail has its own primary surface; the bell is reserved for execution and
+ * decisions. A wake has its own nudge in the shell, so it does not repeat here.
+ */
 export function visibleExecutionNotifications<T extends Pick<NotificationRow, 'type'>>(rows: T[]): T[] {
-  return rows.filter((row) => row.type !== 'mail_message' && row.type !== 'urgent_mail');
+  return rows.filter(
+    (row) => row.type !== 'mail_message' && row.type !== 'urgent_mail' && row.type !== 'work_wake',
+  );
 }
 
 interface CenterData {

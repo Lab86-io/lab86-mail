@@ -197,6 +197,136 @@ export const WorkSyncChangeSchema = z
   })
   .strict();
 
+// The horizon of one Work: now, later, or someday. Epoch ms, like every
+// other server-owned timestamp in a sync payload.
+export const WorkHorizonSchema = z
+  .object({
+    kind: z.enum(['now', 'later', 'someday']),
+    notBefore: z.number().int().nonnegative().optional(),
+    by: z.number().int().nonnegative().optional(),
+    label: z.string().trim().min(1).max(120).optional(),
+    wokeAt: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type WorkHorizon = z.infer<typeof WorkHorizonSchema>;
+
+export const WorkHorizonSyncChangeSchema = z
+  .object({
+    ...syncChangeBase,
+    domain: z.literal('work'),
+    entityKind: z.literal('workHorizon'),
+    payload: z
+      .object({
+        workID: identifier,
+        horizon: WorkHorizonSchema.optional(),
+        // Explicit clear (mirrors `snoozeCleared`): the Work is back on "now".
+        horizonCleared: z.literal(true).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+// Work held from the chat bar or from one chat reply. `existing` is true
+// when the reply was already held and the server returned the first result.
+export const WorkCapturedSyncChangeSchema = z
+  .object({
+    ...syncChangeBase,
+    domain: z.literal('work'),
+    entityKind: z.literal('workCaptured'),
+    payload: z
+      .object({
+        workIDs: z.array(identifier).max(500),
+        existing: z.boolean().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+// Shape-owned data on one Work. Mirrors the validators in `convex/schema.ts`.
+// Epoch ms, like every other server-owned timestamp in a sync payload.
+export const WorkShapeSchema = z.enum([
+  'quick',
+  'list',
+  'project',
+  'practice',
+  'decision',
+  'monitor',
+  'recurring',
+]);
+export type WorkShape = z.infer<typeof WorkShapeSchema>;
+
+export const WorkListItemSchema = z
+  .object({
+    id: identifier,
+    text: z.string().min(1).max(500),
+    done: z.boolean(),
+    addedAt: z.number().int().nonnegative(),
+    doneAt: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const WorkMetricSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    unit: z.string().max(24),
+    target: z.number().optional(),
+    direction: z.enum(['down', 'up']).optional(),
+  })
+  .strict();
+
+export const WorkMetricEntrySchema = z
+  .object({
+    id: identifier,
+    at: z.number().int().nonnegative(),
+    value: z.number(),
+    // Optional, not nullable: the Swift generator drops anyOf[x, null] fields.
+    note: z.string().max(500).optional(),
+  })
+  .strict();
+
+export const WorkMetricSummarySchema = z
+  .object({
+    // Optional, not nullable: the Swift generator drops anyOf[x, null] fields.
+    latest: z.number().optional(),
+    latestAt: z.number().int().nonnegative().optional(),
+    count: z.number().int().nonnegative(),
+    weeksWithEntry: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const WorkMilestoneSchema = z
+  .object({
+    id: identifier,
+    title: z.string().min(1).max(200),
+    done: z.boolean(),
+    doneAt: z.number().int().nonnegative().optional(),
+    order: z.number().int().nonnegative(),
+  })
+  .strict();
+
+// A shape-owned field of one Work changed. The payload carries only the
+// fields the command touched: the shape word, the whole item list, the
+// whole milestone rail, or the metric with its newest entry and summary.
+export const WorkShapeSyncChangeSchema = z
+  .object({
+    ...syncChangeBase,
+    domain: z.literal('work'),
+    entityKind: z.literal('workShape'),
+    payload: z
+      .object({
+        workID: identifier,
+        shape: WorkShapeSchema.optional(),
+        listItems: z.array(WorkListItemSchema).max(500).optional(),
+        milestones: z.array(WorkMilestoneSchema).max(60).optional(),
+        metric: WorkMetricSchema.optional(),
+        metricEntry: WorkMetricEntrySchema.optional(),
+        metricSummary: WorkMetricSummarySchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const ApprovalSyncChangeSchema = z
   .object({
     ...syncChangeBase,
@@ -225,6 +355,9 @@ export const MobileSyncChangeVariantSchemas = {
   CalendarEventSyncChange: CalendarEventSyncChangeSchema,
   TaskSyncChange: TaskSyncChangeSchema,
   WorkSyncChange: WorkSyncChangeSchema,
+  WorkHorizonSyncChange: WorkHorizonSyncChangeSchema,
+  WorkCapturedSyncChange: WorkCapturedSyncChangeSchema,
+  WorkShapeSyncChange: WorkShapeSyncChangeSchema,
   ApprovalSyncChange: ApprovalSyncChangeSchema,
   OperationSyncChange: OperationSyncChangeSchema,
 } as const;
@@ -236,6 +369,9 @@ export const SyncChangeSchema = z.discriminatedUnion('entityKind', [
   MobileSyncChangeVariantSchemas.CalendarEventSyncChange,
   MobileSyncChangeVariantSchemas.TaskSyncChange,
   MobileSyncChangeVariantSchemas.WorkSyncChange,
+  MobileSyncChangeVariantSchemas.WorkHorizonSyncChange,
+  MobileSyncChangeVariantSchemas.WorkCapturedSyncChange,
+  MobileSyncChangeVariantSchemas.WorkShapeSyncChange,
   MobileSyncChangeVariantSchemas.ApprovalSyncChange,
   MobileSyncChangeVariantSchemas.OperationSyncChange,
 ]);
@@ -545,6 +681,22 @@ export const MailDeleteDraftCommandSchema = z
 export const CalendarCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('calendar.create'), payload: calendarCreatePayload })
   .strict();
+// Asks the server to sync the calendar mirror. `view_open` is skipped when the
+// last sync finished under two minutes ago. `pull` and `manual_http` always
+// sync. The receipt carries no sync change; the calendar feed updates as the
+// sync writes events.
+export const CalendarResyncCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('calendar.resync'),
+    payload: z
+      .object({
+        accountID: optionalIdentifier,
+        reason: z.enum(['view_open', 'pull', 'manual_http']),
+      })
+      .strict(),
+  })
+  .strict();
 export const TaskCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('task.create'), payload: taskCreatePayload })
   .strict();
@@ -567,6 +719,106 @@ export const WorkCaptureCommandSchema = z
         areaID: optionalIdentifier,
       })
       .strict(),
+  })
+  .strict();
+// Set or clear the horizon of one Work. Dates are ISO timestamps, like every
+// other client-written time in a command. Exactly one of `horizon` and
+// `horizonCleared` is present.
+export const WorkSetHorizonCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.setHorizon'),
+    payload: z
+      .object({
+        workID: identifier,
+        horizon: z
+          .object({
+            kind: z.enum(['now', 'later', 'someday']),
+            notBeforeAt: isoTimestamp.optional(),
+            byAt: isoTimestamp.optional(),
+            label: z.string().trim().min(1).max(120).optional(),
+          })
+          .strict()
+          .optional(),
+        horizonCleared: z.literal(true).optional(),
+      })
+      .strict()
+      .superRefine((value, ctx) => {
+        if (Boolean(value.horizon) === Boolean(value.horizonCleared)) {
+          ctx.addIssue({ code: 'custom', message: 'Provide horizon or horizonCleared, not both.' });
+        }
+      }),
+  })
+  .strict();
+// Hold text from the chat bar or from one chat reply as Work. `text` is the
+// user message. `replyText` is the assistant reply the user chose to hold.
+// A second command for the same `(conversationID, sourceMessageID)` returns
+// the Work that already exists.
+export const WorkCaptureFromChatCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.captureFromChat'),
+    payload: z
+      .object({
+        text: z.string().trim().min(1).max(20_000),
+        conversationID: identifier,
+        sourceMessageID: optionalIdentifier,
+        replyText: z.string().max(20_000).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+// Shape commands. Each one is a user touch on the Work. The receipt carries a
+// `workShape` sync change with the fields the command changed.
+export const WorkListAddCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.listAdd'),
+    payload: z.object({ workID: identifier, text: z.string().trim().min(1).max(500) }).strict(),
+  })
+  .strict();
+export const WorkListToggleCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.listToggle'),
+    payload: z.object({ workID: identifier, itemID: identifier }).strict(),
+  })
+  .strict();
+export const WorkListRemoveCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.listRemove'),
+    payload: z.object({ workID: identifier, itemID: identifier }).strict(),
+  })
+  .strict();
+// `at` is an ISO timestamp, like every other client-written time in a
+// command. Absent means now.
+export const WorkMetricLogCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.metricLog'),
+    payload: z
+      .object({
+        workID: identifier,
+        value: z.number().finite(),
+        at: isoTimestamp.optional(),
+        note: z.string().trim().min(1).max(500).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export const WorkMilestoneToggleCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.milestoneToggle'),
+    payload: z.object({ workID: identifier, milestoneID: identifier }).strict(),
+  })
+  .strict();
+export const WorkSetShapeCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.setShape'),
+    payload: z.object({ workID: identifier, shape: WorkShapeSchema }).strict(),
   })
   .strict();
 export const ApprovalApproveCommandSchema = z
@@ -606,9 +858,18 @@ export const MobileCommandVariantSchemas = {
   MailSaveDraftCommand: MailSaveDraftCommandSchema,
   MailDeleteDraftCommand: MailDeleteDraftCommandSchema,
   CalendarCreateCommand: CalendarCreateCommandSchema,
+  CalendarResyncCommand: CalendarResyncCommandSchema,
   TaskCreateCommand: TaskCreateCommandSchema,
   TaskSetCompletedCommand: TaskSetCompletedCommandSchema,
   WorkCaptureCommand: WorkCaptureCommandSchema,
+  WorkSetHorizonCommand: WorkSetHorizonCommandSchema,
+  WorkCaptureFromChatCommand: WorkCaptureFromChatCommandSchema,
+  WorkListAddCommand: WorkListAddCommandSchema,
+  WorkListToggleCommand: WorkListToggleCommandSchema,
+  WorkListRemoveCommand: WorkListRemoveCommandSchema,
+  WorkMetricLogCommand: WorkMetricLogCommandSchema,
+  WorkMilestoneToggleCommand: WorkMilestoneToggleCommandSchema,
+  WorkSetShapeCommand: WorkSetShapeCommandSchema,
   ApprovalApproveCommand: ApprovalApproveCommandSchema,
   ApprovalRejectCommand: ApprovalRejectCommandSchema,
 } as const;
@@ -630,9 +891,18 @@ const commandSchemas = Object.values(MobileCommandVariantSchemas) as [
   typeof MailSaveDraftCommandSchema,
   typeof MailDeleteDraftCommandSchema,
   typeof CalendarCreateCommandSchema,
+  typeof CalendarResyncCommandSchema,
   typeof TaskCreateCommandSchema,
   typeof TaskSetCompletedCommandSchema,
   typeof WorkCaptureCommandSchema,
+  typeof WorkSetHorizonCommandSchema,
+  typeof WorkCaptureFromChatCommandSchema,
+  typeof WorkListAddCommandSchema,
+  typeof WorkListToggleCommandSchema,
+  typeof WorkListRemoveCommandSchema,
+  typeof WorkMetricLogCommandSchema,
+  typeof WorkMilestoneToggleCommandSchema,
+  typeof WorkSetShapeCommandSchema,
   typeof ApprovalApproveCommandSchema,
   typeof ApprovalRejectCommandSchema,
 ];
@@ -670,6 +940,20 @@ export const MobileErrorEnvelopeSchema = z
     error: RecoverableMobileErrorSchema,
   })
   .strict();
+
+// The Ask / Hold bar. A receipt carries no data, so the route is a query:
+// `POST /api/mobile/v1/assistant/route` with `{ text }`. A model failure or
+// timeout returns `ask` with confidence 0.
+export const AssistantRouteRequestSchema = z.object({ text: z.string().trim().min(1).max(2_000) }).strict();
+
+export const AssistantRouteVerdictSchema = z
+  .object({
+    route: z.enum(['ask', 'hold']),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict();
+
+export type AssistantRouteVerdict = z.infer<typeof AssistantRouteVerdictSchema>;
 
 export const AssistantEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('messageDelta'), text: z.string() }).strict(),
@@ -710,6 +994,8 @@ export const MobileContractV1 = {
   version: 1 as const,
   schemas: {
     AssistantEvent: AssistantEventSchema,
+    AssistantRouteRequest: AssistantRouteRequestSchema,
+    AssistantRouteVerdict: AssistantRouteVerdictSchema,
     CommandReceipt: CommandReceiptSchema,
     MailAttachment: MailAttachmentSchema,
     MailMessage: MailMessageSchema,
@@ -723,6 +1009,13 @@ export const MobileContractV1 = {
     PushEnvelope: PushEnvelopeSchema,
     SyncChange: SyncChangeSchema,
     SyncEnvelope: SyncEnvelopeSchema,
+    WorkHorizon: WorkHorizonSchema,
+    WorkShape: WorkShapeSchema,
+    WorkListItem: WorkListItemSchema,
+    WorkMetric: WorkMetricSchema,
+    WorkMetricEntry: WorkMetricEntrySchema,
+    WorkMetricSummary: WorkMetricSummarySchema,
+    WorkMilestone: WorkMilestoneSchema,
     ...MobileSyncChangeVariantSchemas,
     ...MobileCommandVariantSchemas,
   },

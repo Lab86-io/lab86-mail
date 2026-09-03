@@ -30,6 +30,7 @@ const work = (over: Partial<ExecutionWorkRow>): ExecutionWorkRow => ({
   totalSteps: over.totalSteps ?? 3,
   scheduledStartAt: over.scheduledStartAt ?? null,
   scheduledEndAt: over.scheduledEndAt ?? null,
+  horizon: over.horizon ?? null,
 });
 
 describe('the scheduling conductor', () => {
@@ -153,6 +154,37 @@ describe('the authoritative current move', () => {
     );
     expect(snapshot.currentMove).toBeNull();
     expect(snapshot.missedMoves).toEqual([]);
+  });
+});
+
+describe('dormant Work and the execution projection', () => {
+  const DAY = 24 * 60 * 60_000;
+
+  test('dormant Work names no move, is never missed, and asks for nothing', () => {
+    const snapshot = selectExecutionSnapshot(
+      [
+        work({ _id: 'sleeping', horizon: { kind: 'later', notBefore: NOW + 30 * DAY } }),
+        work({
+          _id: 'sleeping-missed',
+          horizon: { kind: 'someday' },
+          scheduledStartAt: NOW - 3 * 60 * 60_000,
+          scheduledEndAt: NOW - 2 * 60 * 60_000,
+        }),
+        work({ _id: 'sleeping-question', horizon: { kind: 'later' }, openQuestions: 2 }),
+      ],
+      NOW,
+    );
+    expect(snapshot.currentMove).toBeNull();
+    expect(snapshot.missedMoves).toEqual([]);
+    expect(snapshot.needsYou).toEqual([]);
+  });
+
+  test('woken Work is carried again', () => {
+    const snapshot = selectExecutionSnapshot(
+      [work({ _id: 'awake', horizon: { kind: 'now', notBefore: NOW - DAY, wokeAt: NOW - DAY } })],
+      NOW,
+    );
+    expect(snapshot.currentMove?.workId).toBe('awake');
   });
 });
 

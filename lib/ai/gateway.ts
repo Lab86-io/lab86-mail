@@ -31,6 +31,10 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   daily_report_insight: 1500,
   daily_report_narrative: 4000,
   daily_report_artifact: 32000,
+  // The budget brief writes a lede, one line per item, and a week-ahead
+  // paragraph in one JSON reply. The area pulse is four short fields.
+  daily_brief_prose: 2500,
+  albatross_area_pulse: 900,
   albatross_area_artifact: 32000,
   albatross_plan: 8000,
   albatross_plan_artifact: 24000,
@@ -43,6 +47,8 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   // evidence strings. Deliberately tight — a verdict that needs more room than
   // this is a verdict that stopped being grounded.
   albatross_area_route: 1200,
+  // One route word and one number for the Ask / Hold bar.
+  albatross_route: 60,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;

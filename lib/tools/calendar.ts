@@ -7,7 +7,8 @@ import {
   unsubscribeCalendar,
   updateCalendarEvent,
 } from '@/lib/calendar/mutate';
-import { maybeKickCalendarSync, syncAllCalendarAccounts, syncCalendarAccount } from '@/lib/calendar/sync';
+import { startCalendarResync } from '@/lib/calendar/resync';
+import { maybeKickCalendarSync } from '@/lib/calendar/sync';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { requireConnectedAccount } from '@/lib/nylas/provider';
 import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
@@ -220,10 +221,13 @@ export const calendarSyncNow = defineTool({
   output: z.object({ results: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const results = args.account
-      ? [await syncCalendarAccount({ userId, accountId: args.account, force: true, reason: 'manual_tool' })]
-      : await syncAllCalendarAccounts(userId, { force: true, reason: 'manual_tool' });
-    return { results };
+    const outcome = await startCalendarResync({
+      userId,
+      accountId: args.account,
+      reason: 'manual_tool',
+      wait: true,
+    });
+    return { results: outcome.results ?? [] };
   },
 });
 

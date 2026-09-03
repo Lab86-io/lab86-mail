@@ -395,6 +395,13 @@ export function contrastTextColor(hex: string): string {
   return luma > 165 ? '#1f1f1f' : '#ffffff';
 }
 
+// A copy the app wrote itself, before the server copy arrived: the mirror
+// row flagged by the surface, or the optimistic local event. The block wears
+// a dashed border until the next sync completes.
+export function isPendingEvent(event: Pick<IEvent, 'id' | 'pending'>): boolean {
+  return Boolean(event.pending) || event.id.startsWith('local_');
+}
+
 // Pull a joinable meeting URL out of a Nylas conferencing blob, if any.
 export function extractConferencingUrl(conferencing: any): string | null {
   if (!conferencing) return null;

@@ -180,8 +180,10 @@ describe('staleness is per shape, not a flat ninety days', () => {
   });
 
   test('a small errand is asked about sooner than a long project', () => {
-    expect(STALE_AFTER_DAYS.quick).toBeLessThan(STALE_AFTER_DAYS.project);
-    expect(STALE_AFTER_DAYS.project).toBeLessThan(STALE_AFTER_DAYS.practice);
+    expect(STALE_AFTER_DAYS.quick).toBeLessThan(STALE_AFTER_DAYS.project as number);
+    // A practice has no finish line. The policy says it is never stale.
+    expect(STALE_AFTER_DAYS.practice).toBeNull();
+    expect(isStale(work({ shape: 'practice', updatedAt: NOW - 400 * DAY }), NOW)).toBe(false);
     expect(isStale(work({ shape: 'quick', updatedAt: NOW - 20 * DAY }), NOW)).toBe(true);
     expect(isStale(work({ shape: 'project', updatedAt: NOW - 20 * DAY }), NOW)).toBe(false);
   });
@@ -196,6 +198,25 @@ describe('staleness is per shape, not a flat ninety days', () => {
     for (const state of ['released', 'done', 'archived']) {
       expect(isStale(work({ workState: state, updatedAt: NOW - 400 * DAY }), NOW)).toBe(false);
     }
+  });
+
+  test('dormant Work sits still on purpose and is never reviewed', () => {
+    const sleeping = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'later' as const, notBefore: NOW + DAY },
+    };
+    const someday = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'someday' as const },
+    };
+    const woken = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'now' as const, notBefore: NOW - 2 * DAY, wokeAt: NOW - 2 * DAY },
+    };
+    expect(isStale(sleeping, NOW)).toBe(false);
+    expect(isStale(someday, NOW)).toBe(false);
+    expect(isStale(woken, NOW)).toBe(true);
+    expect(reviewBatch([sleeping, someday, woken], NOW)).toEqual([woken]);
   });
 
   test('a pause-until date is honoured exactly', () => {
@@ -252,11 +273,13 @@ describe('the surfaces use it', () => {
     expect(detail).toContain('Put it down');
   });
 
-  test('Today carries the review and the return, above everything else', () => {
+  test('the Work page carries the review, and Today does not', () => {
+    const list = readFileSync('components/albatross/AlbatrossesSurface.tsx', 'utf8');
     const today = readFileSync('components/report/TodaySurface.tsx', 'utf8');
-    expect(today).toContain('ReviewBatch');
-    expect(today).toContain('ReEntry');
-    expect(today.indexOf('<ReEntry')).toBeLessThan(today.indexOf('Needs you'));
+    expect(list).toContain('<ReviewBatch');
+    expect(list.indexOf('<ReviewBatch')).toBeLessThan(list.indexOf('visibleGroups.map'));
+    expect(today).not.toContain('ReviewBatch');
+    expect(today).not.toContain('ReEntry');
   });
 
   test('the lapse record survives account deletion policy', () => {

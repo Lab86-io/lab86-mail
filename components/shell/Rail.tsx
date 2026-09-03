@@ -318,6 +318,7 @@ export function Rail({
                   <SidebarMenuButton
                     isActive={visiblePrimaryView === view}
                     tooltip={label}
+                    data-rail-target={view}
                     onClick={() => {
                       if (view === 'albatrosses') setSelectedWorkId(null);
                       setPrimaryView(view);

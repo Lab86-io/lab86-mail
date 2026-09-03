@@ -8,6 +8,11 @@ const user = {
   source: 'clerk' as const,
 };
 
+// Wednesday 2026-09-02, 09:00 local time.
+const NOW = new Date(2026, 8, 2, 9, 0, 0, 0).getTime();
+const localDay = (year: number, month: number, day: number) =>
+  new Date(year, month, day, 0, 0, 0, 0).getTime();
+
 const areas = [
   { _id: 'area-1', name: 'Home Care', kind: 'life', description: 'The house.' },
   { _id: 'area-2', name: 'Consulting', kind: 'work', description: 'Client work.' },
@@ -53,6 +58,7 @@ function makeDependencies(options: DependencyOptions = {}) {
       if (options.queriesFail) throw new Error('convex down');
       return 'status' in args ? (options.areas ?? []) : (options.facts ?? []);
     },
+    now: () => NOW,
   } as any;
   return { deps, mutations, generateCalls };
 }
@@ -125,7 +131,80 @@ describe('captureWork', () => {
     // The prompt contract: the splitter is taught the shape taxonomy and the
     // schema names the field, so a lost import cannot fail silently.
     expect(generateCalls[0].system).toContain('Classify the shape of each outcome');
-    expect(generateCalls[0].system).toContain('"shape":"quick"|"project"|"practice"');
+    expect(generateCalls[0].system).toContain('"shape":"quick"|"list"|"project"|"practice"');
+  });
+
+  test('the splitter horizon wins and the deterministic parse is the fallback', async () => {
+    const { deps, mutations, generateCalls } = makeDependencies({
+      areas,
+      facts,
+      text: JSON.stringify({
+        work: [
+          {
+            title: 'Renew the passport',
+            rawText: 'renew the passport, not before November',
+            horizon: {
+              kind: 'later',
+              notBeforeIso: '2026-12-01T00:00:00.000Z',
+              label: 'not before December',
+            },
+          },
+          { title: 'Book the cabin', rawText: 'book the cabin after Thanksgiving', horizon: null },
+          { title: 'Learn to sail', rawText: 'learn to sail someday', horizon: { kind: 'bogus' } },
+          { title: 'Send the invoice', rawText: 'send the invoice', horizon: { kind: 'now' } },
+        ],
+      }),
+    });
+    await captureWork({ rawText: 'brain dump', source: 'text' }, user, deps);
+    const items = mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items;
+    // The model's read is kept as given.
+    expect(items[0].horizon).toEqual({
+      kind: 'later',
+      notBefore: Date.parse('2026-12-01T00:00:00.000Z'),
+      label: 'not before December',
+    });
+    // A null or unusable horizon falls back to the words of the item.
+    expect(items[1].horizon).toEqual({ kind: 'later', label: 'after thanksgiving' });
+    expect(items[2].horizon).toEqual({ kind: 'someday', label: 'someday' });
+    // "now" with no date and no label is no horizon at all.
+    expect(items[3].horizon).toBeUndefined();
+    expect(generateCalls[0].system).toContain('"horizon":{"kind":"now"|"later"|"someday"');
+    expect(generateCalls[0].system).toContain('Today is 2026-09-02');
+  });
+
+  test('reviewed items and the verbatim fallback parse the horizon from the text', async () => {
+    const reviewed = makeDependencies({});
+    await captureWork(
+      {
+        rawText: 'dump',
+        source: 'text',
+        reviewedItems: [{ title: 'Budget', rawText: 'Look at the budget next month' }],
+      },
+      user,
+      reviewed.deps,
+    );
+    expect(
+      reviewed.mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items[0].horizon,
+    ).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 9, 1),
+      label: 'next month',
+    });
+
+    const fallback = makeDependencies({ generateError: new Error('model down') });
+    const result = await captureWork(
+      { rawText: 'Fix the shed door in two weeks', source: 'text' },
+      user,
+      fallback.deps,
+    );
+    expect(result.fallback).toBe(true);
+    expect(
+      fallback.mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items[0].horizon,
+    ).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 8, 16),
+      label: 'in two weeks',
+    });
   });
 
   test('splits a dump into Work and resolves model area names against active Areas', async () => {
@@ -299,6 +378,83 @@ describe('captureWork', () => {
       userId: user.userId,
       captureId: 'capture-1',
       error: 'model offline',
+    });
+  });
+});
+
+describe('captureWork and shapes', () => {
+  test('the splitter carries list items and the metric onto the committed items', async () => {
+    const { deps, mutations, generateCalls } = makeDependencies({
+      text: JSON.stringify({
+        work: [
+          {
+            title: 'Movie list',
+            rawText: 'Movie list: Heat, Alien, Dune part two',
+            shape: 'list',
+            listItems: ['Heat', 'Alien', 'Dune part two'],
+          },
+          {
+            title: 'Lose fifteen pounds',
+            rawText: 'Lose fifteen pounds by spring',
+            shape: 'practice',
+            metric: { name: 'weight', unit: 'lb', target: null, direction: 'down' },
+          },
+        ],
+      }),
+    });
+    await captureWork(
+      { rawText: 'Movie list: Heat, Alien, Dune part two. Lose fifteen pounds by spring.', source: 'text' },
+      user,
+      deps,
+    );
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0]).toMatchObject({
+      shape: 'list',
+      listItems: ['Heat', 'Alien', 'Dune part two'],
+    });
+    expect(finish.args.items[0].metric).toBeUndefined();
+    expect(finish.args.items[1]).toMatchObject({
+      shape: 'practice',
+      metric: { name: 'weight', unit: 'lb', direction: 'down' },
+    });
+    // The metric phrase carried "by spring", so the practice has a target date.
+    expect(finish.args.items[1].horizon?.kind).toBe('now');
+    expect(finish.args.items[1].horizon?.by).toBeGreaterThan(NOW);
+    expect(generateCalls[0].system).toContain('For a list, return listItems');
+    expect(generateCalls[0].system).toContain('For a practice with a number, return metric');
+  });
+
+  test('a model that names the shape but no data is filled by the parsers', async () => {
+    const { deps, mutations } = makeDependencies({
+      text: JSON.stringify({
+        work: [{ title: 'Movie list', rawText: 'Movie list: Heat, Alien', shape: 'list' }],
+      }),
+    });
+    await captureWork({ rawText: 'Movie list: Heat, Alien', source: 'text' }, user, deps);
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0].listItems).toEqual(['Heat', 'Alien']);
+  });
+
+  test('the fallback path and reviewed items read the shape from the text', async () => {
+    const failed = makeDependencies({ generateError: new Error('model offline') });
+    await captureWork({ rawText: 'Movie list: Heat, Alien', source: 'text' }, user, failed.deps);
+    const fallback = failed.mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(fallback.args.items[0]).toMatchObject({ shape: 'list', listItems: ['Heat', 'Alien'] });
+
+    const reviewed = makeDependencies();
+    await captureWork(
+      {
+        rawText: 'dump',
+        source: 'text',
+        reviewedItems: [{ title: 'Weight', rawText: 'Lose fifteen pounds by spring' }],
+      },
+      user,
+      reviewed.deps,
+    );
+    const finish = reviewed.mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0]).toMatchObject({
+      shape: 'practice',
+      metric: { name: 'weight', unit: 'lb', direction: 'down' },
     });
   });
 });

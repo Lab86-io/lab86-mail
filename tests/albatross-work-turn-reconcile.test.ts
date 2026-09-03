@@ -90,6 +90,62 @@ describe('harvestTurnArtifacts', () => {
     ]);
   });
 
+  test('collects shape writes and held Work from chat', () => {
+    const artifacts = harvestTurnArtifacts(
+      toolCallsFromSteps([
+        step([
+          call('c1', 'albatross_list_add', { text: 'Blade Runner' }),
+          result('c1', { ok: true, workId: 'w9', item: { id: 'item_1', text: 'Blade Runner' } }),
+          call('c2', 'albatross_metric_log', { value: 182.4 }),
+          result('c2', {
+            ok: true,
+            workId: 'w9',
+            entry: { id: 'entry_1' },
+            summary: '182.4 lb logged',
+          }),
+          call('c3', 'albatross_capture_work', { text: 'renew the passport' }),
+          result('c3', {
+            ok: true,
+            work: [
+              { id: 'w10', title: 'Renew the passport' },
+              { id: 'w11', title: 'Book the photo' },
+            ],
+          }),
+        ]),
+      ]),
+    );
+    expect(artifacts).toEqual([
+      {
+        kind: 'listItem',
+        id: 'item_1',
+        title: 'Blade Runner',
+        sourceKind: 'chat',
+        workId: 'w9',
+      },
+      {
+        kind: 'metricEntry',
+        id: 'entry_1',
+        title: '182.4 lb logged',
+        sourceKind: 'chat',
+        workId: 'w9',
+      },
+      { kind: 'workCaptured', id: 'w10', title: 'Renew the passport', sourceKind: 'chat' },
+      { kind: 'workCaptured', id: 'w11', title: 'Book the photo', sourceKind: 'chat' },
+    ]);
+  });
+
+  test('skips a held Work row without an id', () => {
+    const artifacts = harvestTurnArtifacts(
+      toolCallsFromSteps([
+        step([
+          call('c1', 'albatross_capture_work', { text: 'something' }),
+          result('c1', { ok: true, work: [{ title: 'No id' }] }),
+        ]),
+      ]),
+    );
+    expect(artifacts).toEqual([]);
+  });
+
   test('skips failed creations', () => {
     const artifacts = harvestTurnArtifacts(
       toolCallsFromSteps([
@@ -517,6 +573,88 @@ describe('reconcileWorkTurn', () => {
       const outcome = await reconcileWorkTurn({ ...baseInput, steps: [], uiMessages: [] });
       expect(outcome.status).toBe('error');
       expect(errors.length).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  test('counts shape writes but never replans on them', async () => {
+    const state = harness();
+    try {
+      const outcome = await reconcileWorkTurn({
+        ...baseInput,
+        steps: [
+          step([
+            call('c1', 'albatross_list_add', { text: 'Blade Runner' }),
+            result('c1', { ok: true, workId: 'w1', item: { id: 'item_1', text: 'Blade Runner' } }),
+          ]),
+        ],
+        uiMessages: [],
+      });
+      // The item is already on the Work, so nothing is appended or advanced.
+      expect(outcome.artifactsRecorded).toBe(1);
+      expect(outcome.advanced).toBe(false);
+      expect(state.mutations.find((entry) => entry.args.artifacts)).toBeUndefined();
+      expect(state.advances).toHaveLength(0);
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('reports a held Work as an artifact and replans', async () => {
+    const state = harness();
+    try {
+      const outcome = await reconcileWorkTurn({
+        ...baseInput,
+        steps: [
+          step([
+            call('c1', 'albatross_capture_work', { text: 'renew the passport' }),
+            result('c1', { ok: true, work: [{ id: 'w10', title: 'Renew the passport' }] }),
+          ]),
+        ],
+        uiMessages: [],
+      });
+      expect(outcome.artifactsRecorded).toBe(1);
+      expect(outcome.advanced).toBe(true);
+      const proof = state.mutations.find((entry) => entry.args.summary);
+      expect(proof?.args.summary).toContain('Chat-created Work.');
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('does not advance when the Work closed during the turn', async () => {
+    let reads = 0;
+    const mutations: Array<{ name: string; args: any }> = [];
+    const advances: any[] = [];
+    const restore = setWorkTurnReconcileDependenciesForTest({
+      convexQuery: (async () => {
+        reads += 1;
+        // The second read is the fresh one, after the artifact writes.
+        return reads === 1
+          ? { work: { _id: 'w1', workState: 'active', lastEvidenceAt: 111 }, questions: [] }
+          : { work: { _id: 'w1', workState: 'done', lastEvidenceAt: 222 }, questions: [] };
+      }) as any,
+      convexMutation: (async (ref: any, args: any) => {
+        mutations.push({ name: refName(ref), args });
+        return undefined;
+      }) as any,
+      generateTextForCurrentUser: (async () => ({ text: '{"answers": []}' })) as any,
+      advanceWork: (async (input: any) => {
+        advances.push(input);
+        return { status: 'ready', workId: input.workId };
+      }) as any,
+      reportError: () => undefined,
+    });
+    try {
+      const outcome = await reconcileWorkTurn({ ...baseInput, steps: artifactSteps, uiMessages: [] });
+      expect(outcome).toEqual({
+        status: 'ok',
+        artifactsRecorded: 1,
+        questionsAnswered: 0,
+        advanced: false,
+      });
+      expect(advances).toHaveLength(0);
     } finally {
       restore();
     }

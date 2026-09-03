@@ -656,6 +656,32 @@ describe('calendar commands', () => {
 
     expect(approvalInput?.detail).toBe('2 attendees will be notified.');
   });
+
+  test('calendar.resync hands the reason to the shared resync helper without a sync change', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const deps = dependencies({
+      resyncCalendar: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return { started: true, lastSyncedAt: null };
+      },
+    });
+
+    const result = await executeMobileCommand(
+      command('calendar.resync', { accountID: 'account-1', reason: 'pull' }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([{ userId: user.userId, accountId: 'account-1', reason: 'pull' }]);
+    expect(result).toEqual({ status: 'applied', syncDomain: 'calendar' });
+    expect(mobileCommandDomain(command('calendar.resync', { reason: 'view_open' }))).toBe('calendar');
+  });
+
+  test('calendar.resync accepts the three client reasons only', () => {
+    expect(() => command('calendar.resync', { reason: 'post_mutation' })).toThrow();
+    expect(() => command('calendar.resync', { reason: 'view_open', extra: true })).toThrow();
+    expect(command('calendar.resync', { reason: 'manual_http' }).payload).toEqual({ reason: 'manual_http' });
+  });
 });
 
 describe('task commands', () => {
@@ -765,6 +791,85 @@ describe('work capture command', () => {
       entityKind: 'work',
       entityID: 'work-7',
       syncPayload: { captureID: 'capture-7', workIDs: ['work-7', 'work-8'], fallback: false },
+    });
+  });
+
+  test('work.setHorizon converts ISO dates to epoch ms and reports the stored horizon', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const deps = dependencies({
+      setWorkHorizon: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return { horizon: { ...(input.horizon as object), wokeAt: undefined }, dormant: true };
+      },
+    });
+
+    const result = await executeMobileCommand(
+      command('work.setHorizon', {
+        workID: 'work-9',
+        horizon: { kind: 'later', notBeforeAt: '2026-11-01T00:00:00.000Z', label: 'not before November' },
+      }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([
+      {
+        userId: user.userId,
+        workId: 'work-9',
+        horizon: {
+          kind: 'later',
+          notBefore: Date.parse('2026-11-01T00:00:00.000Z'),
+          label: 'not before November',
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      status: 'applied',
+      syncDomain: 'work',
+      entityKind: 'workHorizon',
+      entityID: 'work-9',
+      syncPayload: {
+        workID: 'work-9',
+        horizon: {
+          kind: 'later',
+          notBefore: Date.parse('2026-11-01T00:00:00.000Z'),
+          label: 'not before November',
+        },
+      },
+    });
+    expect(mobileCommandDomain(command('work.setHorizon', { workID: 'w', horizonCleared: true }))).toBe(
+      'work',
+    );
+  });
+
+  test('work.setHorizon with horizonCleared puts the Work back on now', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const deps = dependencies({
+      setWorkHorizon: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return { horizon: null, dormant: false };
+      },
+    });
+    const result = await executeMobileCommand(
+      command('work.setHorizon', { workID: 'work-9', horizonCleared: true }),
+      user,
+      deps,
+    );
+    expect(calls).toEqual([{ userId: user.userId, workId: 'work-9', horizon: null }]);
+    expect(result.syncPayload).toEqual({ workID: 'work-9', horizonCleared: true });
+  });
+
+  test('work.setHorizon needs exactly one of horizon and horizonCleared', () => {
+    expect(() => command('work.setHorizon', { workID: 'w' })).toThrow();
+    expect(() =>
+      command('work.setHorizon', { workID: 'w', horizon: { kind: 'someday' }, horizonCleared: true }),
+    ).toThrow();
+    expect(() =>
+      command('work.setHorizon', { workID: 'w', horizon: { kind: 'later', notBeforeAt: 'soon' } }),
+    ).toThrow();
+    expect(command('work.setHorizon', { workID: 'w', horizon: { kind: 'someday' } }).payload).toEqual({
+      workID: 'w',
+      horizon: { kind: 'someday' },
     });
   });
 

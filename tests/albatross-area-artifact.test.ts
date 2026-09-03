@@ -6,10 +6,9 @@ import {
   encodedAreaArtifactDocumentSize,
 } from '../lib/albatross/area-artifact-storage';
 import {
-  AREA_ARTIFACT_SYSTEM,
+  AREA_PULSE_SYSTEM_PROMPT,
   areaArtifactRevision,
   buildAreaArtifactContext,
-  extractAreaArtifactHtml,
   generateAreaLivingBrief,
   normalizeAreaArtifactHtml,
   setAreaLivingBriefDependenciesForTest,
@@ -169,28 +168,16 @@ describe('Area artifact data contract', () => {
     expect(areaArtifactRevision(changed)).not.toBe(areaArtifactRevision(one));
   });
 
-  test('prompt makes creativity, intent priority, uncertainty, and no-inferred-completion explicit', () => {
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Be creative');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Treat the whole page as a canvas');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Do not output a generic dashboard');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Declared Work');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Never say work is done unless');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('context.candidates are uncertain hypotheses');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('data-area-capture');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Do not write any JavaScript');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('Never hardcode a font-family');
-    expect(AREA_ARTIFACT_SYSTEM).toContain('data-brief-display');
+  test('pulse prompt keeps intent priority, uncertainty, and no-inferred-completion explicit', () => {
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Declared Work');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never say work is done unless');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Candidate context is uncertain');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('prose: at most 3 sentences');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never write the word "AI"');
   });
 });
 
 describe('Area artifact HTML boundary', () => {
-  test('extracts complete documents from raw or fenced model output', () => {
-    const document = `<!doctype html><html><head><title>Area</title></head><body>${'x'.repeat(180)}</body></html>`;
-    expect(extractAreaArtifactHtml(document)).toBe(document);
-    expect(extractAreaArtifactHtml(`preface\n\`\`\`html\n${document}\n\`\`\``)).toBe(document);
-    expect(extractAreaArtifactHtml('<html><body>short</body>')).toBeNull();
-  });
-
   test('strips model executable surfaces and installs a restrictive CSP', () => {
     const raw = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><meta http-equiv="refresh" content="0;url=https://evil.test"></head><body onload="steal()"><script>steal()</script><iframe src="https://evil.test"></iframe><a href="javascript:steal()">x</a><button formaction="data:text/html,evil">go</button>${'x'.repeat(220)}</body></html>`;
     const normalized = normalizeAreaArtifactHtml(raw);
@@ -239,35 +226,27 @@ describe('Area artifact persistence boundary', () => {
   });
 });
 
-describe('Area artifact composition pipeline', () => {
-  test('publishes progressive native documents and a safe legacy fallback when v2 is enabled', async () => {
-    const writes: any[] = [];
-    const previousFlag = process.env.BRIEF_DOCUMENT_V2;
-    process.env.BRIEF_DOCUMENT_V2 = 'true';
+describe('Area pulse pipeline', () => {
+  test('writes generating, then the ready document, HTML fallback, and pulse', async () => {
+    const writes: Array<{ args: any }> = [];
     const restore = setAreaLivingBriefDependenciesForTest({
       convexQuery: (async () => ({
         ...home,
         area: { ...home.area, name: `Studio & <Lab> "A" 'B'` },
       })) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
-        writes.push(args);
+        writes.push({ args });
       }) as any,
       generateTextForCurrentUser: (async (options: any) => {
-        await options.tools.place_region.execute({
-          region: {
-            id: 'lead',
-            summary: 'The next useful move.',
-            tree: {
-              kind: 'hero',
-              children: [{ kind: 'text', role: 'lede', text: 'Ship the native brief.' }],
-            },
-          },
-        });
-        await options.tools.finalize_brief.execute({
-          title: 'Studio brief',
-          summary: 'A native Area brief ready to review.',
-        });
-        return { text: '' };
+        expect(options.feature).toBe('albatross_area_pulse');
+        return {
+          text: JSON.stringify({
+            lastChange: 'Review was booked for the studio.',
+            nextMove: 'Write the artifact.',
+            openQuestion: '',
+            prose: 'The studio is moving. One task is open. Ship the intent layer next.',
+          }),
+        };
       }) as any,
     });
     try {
@@ -280,20 +259,24 @@ describe('Area artifact composition pipeline', () => {
       expect(result).toMatchObject({
         status: 'ready',
         artifactSource: 'document-v2',
-        document: {
-          version: 2,
-          title: 'Studio brief',
-          summary: 'A native Area brief ready to review.',
-        },
+        lede: 'Review was booked for the studio.',
+        summary: 'The studio is moving. One task is open. Ship the intent layer next.',
+        pulse: { nextMove: 'Write the artifact.', openQuestion: '' },
       });
-      expect(writes.map((write) => write.status)).toEqual(['generating', 'generating', 'ready']);
-      expect(writes[1].document.regions[0].id).toBe('lead');
-      expect(writes[2].artifactHtml).toContain('Studio &amp; &lt;Lab&gt; &quot;A&quot; &#39;B&#39;');
-      expect(writes[2].artifactHtml).toContain('Content-Security-Policy');
+      expect(result.document.regions.map((region: any) => region.id)).toEqual([
+        'lede',
+        'pulse',
+        'ask',
+        'open-work',
+      ]);
+      expect(writes.map((write) => write.args.status ?? 'pulse')).toEqual(['generating', 'ready', 'pulse']);
+      expect(writes[1].args.artifactHtml).toContain('Studio &amp; &lt;Lab&gt; &quot;A&quot; &#39;B&#39;');
+      expect(writes[1].args.artifactHtml).toContain('Content-Security-Policy');
+      expect(writes[2].args.pulse.prose).toBe(
+        'The studio is moving. One task is open. Ship the intent layer next.',
+      );
     } finally {
       restore();
-      if (previousFlag === undefined) delete process.env.BRIEF_DOCUMENT_V2;
-      else process.env.BRIEF_DOCUMENT_V2 = previousFlag;
     }
   });
 
@@ -329,28 +312,21 @@ describe('Area artifact composition pipeline', () => {
     }
   });
 
-  test('persists generating then ready for a complete creative edition', async () => {
+  test('a bad model reply degrades to the deterministic pulse and still lands ready', async () => {
     const writes: any[] = [];
-    const document = `<!doctype html><html><head><title>Studio</title></head><body>${'edition '.repeat(40)}</body></html>`;
     const restore = setAreaLivingBriefDependenciesForTest({
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);
       }) as any,
-      generateTextForCurrentUser: (async () => ({ text: document })) as any,
+      generateTextForCurrentUser: (async () => ({ text: 'not JSON' })) as any,
     });
     try {
-      const result = await generateAreaLivingBrief({
-        userId: 'user_1',
-        userEmail: 'owner@example.test',
-        userName: 'Owner',
-        areaId: 'area_1',
-        force: true,
-      });
+      const result = await generateAreaLivingBrief({ userId: 'user_1', areaId: 'area_1', force: true });
       expect(result.status).toBe('ready');
-      expect(result.artifactHtml).toContain('Content-Security-Policy');
-      expect(writes.map((write) => write.status)).toEqual(['generating', 'ready']);
-      expect(writes[1].artifactHtml).toContain('<title>Studio</title>');
+      expect(result.pulse.model).toBe('local');
+      expect(result.pulse.prose).toBe('Studio has 1 active Work item and 1 open task.');
+      expect(writes.map((write) => write.status ?? 'pulse')).toEqual(['generating', 'ready', 'pulse']);
     } finally {
       restore();
     }
@@ -379,21 +355,22 @@ describe('Area artifact composition pipeline', () => {
     }
   });
 
-  test('records an error while preserving the original generation failure', async () => {
+  test('records an error when the ready write fails', async () => {
     const writes: any[] = [];
     const restore = setAreaLivingBriefDependenciesForTest({
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);
+        if (args.status === 'ready') throw new Error('store full');
       }) as any,
-      generateTextForCurrentUser: (async () => ({ text: 'not an HTML document' })) as any,
+      generateTextForCurrentUser: (async () => ({ text: '{}' })) as any,
     });
     try {
       await expect(
         generateAreaLivingBrief({ userId: 'user_1', areaId: 'area_1', force: true }),
-      ).rejects.toThrow('complete Area HTML document');
-      expect(writes.map((write) => write.status)).toEqual(['generating', 'error']);
-      expect(writes[1].error).toContain('complete Area HTML document');
+      ).rejects.toThrow('store full');
+      expect(writes.map((write) => write.status)).toEqual(['generating', 'ready', 'error']);
+      expect(writes[2].error).toContain('store full');
     } finally {
       restore();
     }

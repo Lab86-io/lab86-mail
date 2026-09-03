@@ -11,6 +11,7 @@ export const CONTINUOUS_EXECUTION_CRON_NAMES = {
   mailWatch: 'step mail watch conductor',
   recovery: 'passed block recovery',
   review: 'shape-aware Work review',
+  wake: 'horizon wake',
 } as const;
 
 // Classify corpus threads that predate write-time classification (and any row
@@ -99,6 +100,15 @@ crons.hourly(
   CONTINUOUS_EXECUTION_CRON_NAMES.review,
   { minuteUTC: 23 },
   internal.albatrossNotifications.stalenessReviewTick,
+  {},
+);
+
+// Dormant Work wakes once, on its own date, with one calm line. The daily
+// pass runs at 12:00 UTC so a "November 1" sleep ends in the US morning.
+crons.daily(
+  CONTINUOUS_EXECUTION_CRON_NAMES.wake,
+  { hourUTC: 12, minuteUTC: 0 },
+  internal.albatrossWorkV2.horizonWakeTick,
   {},
 );
 

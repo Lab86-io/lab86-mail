@@ -2,6 +2,7 @@
 
 import { Plus, ZoomIn, ZoomOut } from 'lucide-react';
 import { motion } from 'motion/react';
+import type { ReactNode } from 'react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { slideFromLeft, slideFromRight, transition } from '@/components/calendar/engine/animations';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
@@ -11,7 +12,8 @@ import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
 import Views from './view-tabs';
 
-export function CalendarHeader() {
+// `status` renders right of the date navigator: the sync sentence.
+export function CalendarHeader({ status }: { status?: ReactNode } = {}) {
   const { view, events, hourHeight, setHourHeight } = useCalendar();
 
   return (
@@ -25,6 +27,7 @@ export function CalendarHeader() {
       >
         <TodayButton />
         <DateNavigator view={view} events={events} />
+        {status ? <div className="ml-1 min-w-0 truncate">{status}</div> : null}
       </motion.div>
 
       <motion.div

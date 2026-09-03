@@ -34,6 +34,11 @@ struct MacShellView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 12)
         }
+        .overlay(alignment: .topTrailing) {
+            MacWakeNudgeOverlay()
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+        }
         .overlay {
             MacChatOverlay()
         }

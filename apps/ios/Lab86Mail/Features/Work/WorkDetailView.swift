@@ -42,6 +42,11 @@ struct WorkDetailView: View {
     // never discards text typed for another step.
     @State private var stepNotes: [String: String] = [:]
     @State private var browserStep: WorkDetail.ExecutionStep?
+    @State private var showsHorizonSheet = false
+    @State private var showsShapeSheet = false
+    #if os(macOS)
+    @State private var showsHorizonPopover = false
+    #endif
 
     var body: some View {
         Group {
@@ -84,6 +89,7 @@ struct WorkDetailView: View {
                     Button("Mark Complete", systemImage: "checkmark.circle") {
                         Task { await changeState("done") }
                     }
+                    Button("Set horizon") { showsHorizonSheet = true }
                     Divider()
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
                         showsArchiveConfirmation = true
@@ -95,6 +101,11 @@ struct WorkDetailView: View {
             }
         }
         .task(id: route.id) { await load(initial: true) }
+        #if os(macOS)
+        .onChange(of: MacRequests.shared.openHorizonToken) { _, _ in
+            showsHorizonPopover = true
+        }
+        #endif
         .confirmationDialog(
             "Archive this Work?",
             isPresented: $showsArchiveConfirmation,
@@ -120,6 +131,71 @@ struct WorkDetailView: View {
                 await load(initial: false)
             }
         }
+        .sheet(isPresented: $showsShapeSheet) {
+            ShapePickerSheet(current: detail?.work.resolvedShape ?? .default) { shape in
+                await setShape(shape)
+            }
+        }
+        .sheet(isPresented: $showsHorizonSheet) {
+            HorizonSheet(
+                title: detail?.plan?.outcome ?? detail?.work.title ?? route.title ?? "Work",
+                initial: detail?.work.horizon
+            ) { horizon in
+                await setHorizon(horizon)
+            }
+        }
+    }
+
+    /// Write the shape. The body swaps to the one the new shape owns.
+    private func setShape(_ shape: WorkShape) async -> Bool {
+        let ok = await WorkShapeWriter.setShape(shape, for: route.workID, environment: environment)
+        if ok { await load(initial: false) }
+        return ok
+    }
+
+    /// Write the horizon. The lead crossfades to the horizon line at once.
+    /// Work that now sleeps leaves this page: it belongs on the shelf.
+    private func setHorizon(_ horizon: WorkHorizon?) async -> Bool {
+        let ok = await WorkHorizonWriter.set(horizon, for: route.workID, environment: environment)
+        guard ok else { return false }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            detail = detail?.withHorizon(horizon)
+        }
+        if horizon?.isDormant(at: .now) == true {
+            environment.navigation.workRoute = nil
+        }
+        return true
+    }
+
+    /// The body a shape owns. A list keeps items, a practice keeps a metric,
+    /// a project keeps milestones. Every other shape keeps the guided plan.
+    @ViewBuilder private func shapeBody(_ detail: WorkDetail) -> some View {
+        switch detail.work.resolvedShape.detail {
+        case .list:
+            bareSection {
+                ListBody(workID: route.workID, items: detail.work.listItems ?? [])
+            }
+        case .practice:
+            bareSection {
+                PracticeBody(
+                    workID: route.workID,
+                    metric: detail.work.metric,
+                    entries: detail.metricEntries
+                )
+            }
+        case .milestones:
+            bareSection {
+                ProjectBody(
+                    workID: route.workID,
+                    milestones: detail.work.milestones ?? [],
+                    evidence: detail.evidence,
+                    lastUserTouchAt: detail.work.lastUserTouchAt,
+                    updatedAt: detail.work.updatedAt
+                )
+            }
+        case .guided, .decision, .monitor, .routine:
+            EmptyView()
+        }
     }
 
     private func loadedBody(_ detail: WorkDetail) -> some View {
@@ -136,6 +212,8 @@ struct WorkDetailView: View {
 
                 workLead(detail)
 
+                shapeBody(detail)
+
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     if let move = passedWorkExecutionMove(detail, at: context.date) {
                         bareSection {
@@ -146,7 +224,7 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if let step = detail.execution.currentStep {
+                if detail.work.resolvedShape.plans, let step = detail.execution.currentStep {
                     currentStepSection(step, execution: detail.execution)
                 }
 
@@ -214,7 +292,7 @@ struct WorkDetailView: View {
                     }
                 }
 
-                if !detail.execution.guideSteps.isEmpty {
+                if detail.work.resolvedShape.plans, !detail.execution.guideSteps.isEmpty {
                     documentSection("The plan") {
                         VStack(spacing: 0) {
                             ForEach(Array(detail.execution.guideSteps.enumerated()), id: \.element.id) { offset, step in
@@ -334,9 +412,34 @@ struct WorkDetailView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(detail.work.stateLabel)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                // The state label opens the horizon sheet. Once a horizon is
+                // set, the label reads the horizon line instead.
+                Button {
+                    #if os(macOS)
+                    showsHorizonPopover = true
+                    #else
+                    showsHorizonSheet = true
+                    #endif
+                } label: {
+                    Text(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(detail.work.horizon?.isDormant(at: .now) == true
+                            ? environment.theme.accentColor : Color.secondary)
+                        .contentTransition(.opacity)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
+                .accessibilityHint("Opens the horizon control")
+                #if os(macOS)
+                // The Mac answers from a popover on the button, not a sheet.
+                .popover(isPresented: $showsHorizonPopover, arrowEdge: .bottom) {
+                    MacHorizonPopover(initial: detail.work.horizon) { horizon in
+                        await setHorizon(horizon)
+                    } onClose: {
+                        showsHorizonPopover = false
+                    }
+                }
+                #endif
             }
 
             Text(detail.plan?.outcome ?? detail.work.title)
@@ -356,6 +459,21 @@ struct WorkDetailView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // The shape word. It says what kind of outcome this is, and it
+            // opens the picker.
+            Button {
+                showsShapeSheet = true
+            } label: {
+                Text(detail.work.resolvedShape.label)
+                    .font(.subheadline)
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Shape: \(detail.work.resolvedShape.label)")
+            .accessibilityHint("Opens the shape picker")
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)

@@ -101,6 +101,12 @@ final class ProductStore {
     var calendarError: String?
     var isSyncingCalendar = false
     var calendarDidLoad = false
+    // Calendar sync kicks: the phase and freshness the Calendar view shows,
+    // the follow task that waits for a server copy, and the client creation
+    // time of each event that still waits for its server copy.
+    var calendarSync = CalendarSyncState()
+    private var calendarSyncFollowTask: Task<Void, Never>?
+    private(set) var pendingCalendarEventCreations: [String: Date] = [:]
     var briefError: String?
     var taskError: String?
     var isLoadingTasks = false
@@ -123,6 +129,10 @@ final class ProductStore {
     /// shows; areas are how they are filed, not what they are.
     private(set) var allWork: [WorkListItem] = []
     private(set) var workExecution = WorkExecutionSnapshot(json: nil)
+    /// The "Later" shelf: dormant Work in wake order. The server sends it on
+    /// `work_list`; the store recomputes it from `allWork` after a local
+    /// horizon write and on a cache restore, so there is one rule on both sides.
+    private(set) var laterWork: [WorkListItem] = []
     private var mailSearchGeneration = 0
     private var projectPaneLoadGeneration: [String: Int] = [:]
     private var projectPaneSessionGeneration = 0
@@ -409,6 +419,122 @@ final class ProductStore {
             await persistCache()
         } catch {
             calendarError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Calendar sync kicks
+
+    // One user-triggered resync through `POST /api/calendar/resync`. The
+    // server debounces `view_open` and rate limits `pull` and `manual_http`.
+    // When the server starts a sync, this call follows the sync states until
+    // the server copy lands, then reads the mirror. A `pull` therefore holds
+    // the refresh spinner until the calendar is current.
+    func resyncCalendar(reason: CalendarResyncReason, accountID: String? = nil) async {
+        let request = CalendarResyncRequest(accountID: accountID, reason: reason)
+        do {
+            let json = try await backend.post(path: CalendarResyncRequest.path, body: request.body)
+            guard let response = CalendarResyncResponse(json: json) else { throw BackendError.invalidResponse }
+            if let lastSyncedAt = response.lastSyncedAt { calendarSync.lastSyncedAt = lastSyncedAt }
+            calendarSync.failureMessage = nil
+            guard response.started else {
+                // A fresh calendar shows no line. The mirror read is still
+                // cheap, and a pull expects the list to move.
+                if reason != .viewOpen { await refreshCalendar(sync: false) }
+                if calendarSync.phase == .failed { calendarSync.phase = .idle }
+                return
+            }
+            // One follow loop at a time. A background follow from a mutation
+            // yields to the explicit one.
+            calendarSyncFollowTask?.cancel()
+            calendarSyncFollowTask = nil
+            await followCalendarSync(since: response.lastSyncedAt)
+        } catch {
+            // 429 and every other failure read the same on the surface. The
+            // subtitle tells the user what to do next.
+            calendarSyncFollowTask?.cancel()
+            calendarSyncFollowTask = nil
+            calendarSync.phase = .failed
+            calendarSync.failureMessage = CalendarSyncState.failureCopy
+        }
+    }
+
+    // A mirror write shows the local copy at once. The server kicks a forced
+    // sync after the write. This records the event so the surface can draw
+    // the dashed border, then follows the sync in the background.
+    func noteCalendarMutation(eventID: String?, at date: Date = .now) {
+        if let eventID = eventID?.nilIfBlank {
+            pendingCalendarEventCreations[eventID] = date
+        }
+        calendarSyncFollowTask?.cancel()
+        // The server copy lands with a sync that completes after the write.
+        calendarSyncFollowTask = Task { [weak self] in
+            await self?.followCalendarSync(since: date)
+        }
+    }
+
+    // The dashed-border rule for one event on the screen.
+    func isPendingServerCopy(_ event: CalendarEventSummary, now: Date = .now) -> Bool {
+        guard let createdAt = pendingCalendarEventCreations[event.id] else { return false }
+        return CalendarPendingEvents.isPending(
+            createdAt: createdAt,
+            lastSyncedAt: calendarSync.lastSyncedAt(forAccount: event.accountID),
+            now: now
+        )
+    }
+
+    // Reads the per-account sync states once. `calendar_list_calendars` is
+    // the one authenticated read that returns them.
+    func readCalendarSyncStates() async throws -> [CalendarSyncStateRow] {
+        let result = try await tools.invoke("calendar_list_calendars")
+        return (result["syncStates"]?.arrayValue ?? []).compactMap(CalendarSyncStateRow.init)
+    }
+
+    // Polls the sync states while a sync runs. Stops on a newer completed
+    // sync, on an error row, or after the deadline. A deadline is not a
+    // failure: the line fades, and the subtitle keeps the last known time.
+    private func followCalendarSync(
+        since: Date?,
+        interval: Duration = .seconds(1),
+        deadline: Duration = .seconds(60)
+    ) async {
+        calendarSync.phase = .running
+        calendarSync.failureMessage = nil
+        let startedAt = ContinuousClock.now
+        while !Task.isCancelled {
+            let rows = (try? await readCalendarSyncStates()) ?? []
+            if !rows.isEmpty { calendarSync.rows = rows }
+            switch CalendarSyncFollow.outcome(rows: rows, since: since) {
+            case .done(let lastSyncedAt):
+                calendarSync.lastSyncedAt = lastSyncedAt ?? calendarSync.lastSyncedAt
+                await refreshCalendar(sync: false)
+                guard !Task.isCancelled else { return }
+                pruneSettledCalendarEvents()
+                calendarSync.phase = .done
+                calendarSync.completionToken += 1
+                PlatformAccessibility.announce("Calendar updated")
+                return
+            case .failed:
+                calendarSync.phase = .failed
+                calendarSync.failureMessage = CalendarSyncState.failureCopy
+                return
+            case .waiting:
+                break
+            }
+            if ContinuousClock.now - startedAt >= deadline {
+                await refreshCalendar(sync: false)
+                if calendarSync.phase == .running { calendarSync.phase = .idle }
+                return
+            }
+            try? await Task.sleep(for: interval)
+        }
+    }
+
+    private func pruneSettledCalendarEvents() {
+        let now = Date.now
+        pendingCalendarEventCreations = pendingCalendarEventCreations.filter { eventID, createdAt in
+            let accountID = events.first(where: { $0.id == eventID })?.accountID
+            let lastSyncedAt = accountID.map { calendarSync.lastSyncedAt(forAccount: $0) } ?? calendarSync.lastSyncedAt
+            return CalendarPendingEvents.isPending(createdAt: createdAt, lastSyncedAt: lastSyncedAt, now: now)
         }
     }
 
@@ -1192,8 +1318,94 @@ final class ProductStore {
               sessionGeneration == accountSessionGeneration else { return }
         allWork = (listed["work"]?.arrayValue ?? []).compactMap(WorkListItem.init)
         workExecution = WorkExecutionSnapshot(json: listed["execution"])
+        if let later = listed["later"]?.arrayValue {
+            laterWork = later.compactMap(WorkListItem.init)
+        } else {
+            laterWork = WorkGrouping.split(allWork, now: .now).later
+        }
         workDidLoad = true
         workError = nil
+    }
+
+    /// Apply a horizon locally before the server confirms it. The row moves
+    /// between the open groups and the "Later" shelf at once; the next
+    /// `refreshWork` settles it against the server.
+    func applyWorkHorizon(_ workID: String, horizon: WorkHorizon?) {
+        allWork = allWork.map { $0.id == workID ? $0.withHorizon(horizon) : $0 }
+        laterWork = WorkGrouping.split(allWork, now: .now).later
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withHorizon(horizon)
+        }
+    }
+
+    // MARK: - Shape writes
+    //
+    // Each shape command is applied locally first. The row and the cached
+    // detail change at once; the next `work_home` read settles them.
+
+    func applyWorkShape(_ workID: String, shape: WorkShape) {
+        allWork = allWork.map { $0.id == workID ? $0.withShape(shape) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withShape(shape)
+        }
+    }
+
+    func applyWorkListItems(_ workID: String, items: [WorkListEntry]) {
+        allWork = allWork.map { $0.id == workID ? $0.withListItems(items) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withListItems(items)
+        }
+    }
+
+    func applyWorkMilestones(_ workID: String, milestones: [WorkMilestone]) {
+        allWork = allWork.map { $0.id == workID ? $0.withMilestones(milestones) : $0 }
+        if let detail = workDetails[workID] {
+            workDetails[workID] = detail.withMilestones(milestones)
+        }
+    }
+
+    func applyWorkMetricEntry(_ workID: String, entry: WorkMetricEntry, now: Date = .now) {
+        if let detail = workDetails[workID] {
+            let next = detail.appendingMetricEntry(entry, now: now)
+            workDetails[workID] = next
+            allWork = allWork.map { $0.id == workID ? $0.withMetricSummary(next.metricSummary) : $0 }
+        }
+    }
+
+    /// Replace the milestone set. There is no durable command for this: the
+    /// Mac and the phone call the same mutation the web calls. Ids are kept
+    /// when they are sent, so a rename never reopens a done milestone.
+    func setWorkMilestones(_ workID: String, milestones: [WorkMilestone]) async -> Bool {
+        guard let convex else {
+            workError = "Live connection unavailable — try again shortly."
+            return false
+        }
+        let previous = workDetails[workID]?.work.milestones
+        applyWorkMilestones(workID, milestones: milestones)
+        nonisolated(unsafe) let client = convex
+        do {
+            let rows: [ConvexEncodable?] = milestones.map { milestone in
+                var row: [String: ConvexEncodable?] = ["title": milestone.title]
+                if !milestone.id.hasPrefix("local-") { row["id"] = milestone.id }
+                return row
+            }
+            try await client.mutation(
+                "albatrossWorkV2:setMilestones",
+                with: ["workId": workID, "milestones": rows]
+            )
+            _ = try? await loadWorkDetail(workID)
+            return true
+        } catch {
+            if let previous { applyWorkMilestones(workID, milestones: previous) }
+            workError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Refresh one cached detail after a shape command. A failure keeps the
+    /// optimistic state; the next open settles it.
+    func settleWorkDetail(_ workID: String) async {
+        _ = try? await loadWorkDetail(workID)
     }
 
     func answerWorkQuestion(_ question: WorkDetail.Question, answer: String, optionID: String?) async -> Bool {
@@ -1951,6 +2163,7 @@ final class ProductStore {
         let result = try await tools.invoke("calendar_create_event", arguments: arguments)
         captureUndoNotice(result, summary: "Created “\(title)”")
         await refreshToday()
+        noteCalendarMutation(eventID: result["eventId"]?.stringValue)
     }
 
     func createEvent(
@@ -1984,6 +2197,7 @@ final class ProductStore {
         let result = try await tools.invoke("calendar_create_event", arguments: arguments)
         captureUndoNotice(result, summary: "Created “\(title)”")
         await refreshCalendar(sync: false)
+        noteCalendarMutation(eventID: result["eventId"]?.stringValue)
     }
 
     func updateEvent(
@@ -2020,6 +2234,7 @@ final class ProductStore {
         let result = try await tools.invoke("calendar_update_event", arguments: arguments)
         captureUndoNotice(result, summary: "Updated calendar event")
         await refreshCalendar(sync: false)
+        noteCalendarMutation(eventID: nil)
     }
 
     func rescheduleEvent(_ event: CalendarEventSummary, start: Date, end: Date) async {
@@ -2062,8 +2277,13 @@ final class ProductStore {
             ]
         )
         captureUndoNotice(result, summary: "Deleted calendar event")
-        events.removeAll { $0.id == eventID && $0.accountID == accountID }
+        // Deleted events fade at once.
+        withAnimation(.easeInOut(duration: 0.18)) {
+            events.removeAll { $0.id == eventID && $0.accountID == accountID }
+        }
+        pendingCalendarEventCreations.removeValue(forKey: eventID)
         await refreshCalendar(sync: false)
+        noteCalendarMutation(eventID: nil)
     }
 
     func refreshCalendarChoices() async {
@@ -2541,12 +2761,17 @@ final class ProductStore {
         areaDetails = [:]
         workDetails = [:]
         allWork = []
+        laterWork = []
         workExecution = WorkExecutionSnapshot(json: nil)
         errorMessage = nil
         mailErrorMessage = nil
         calendarError = nil
         isSyncingCalendar = false
         calendarDidLoad = false
+        calendarSyncFollowTask?.cancel()
+        calendarSyncFollowTask = nil
+        calendarSync = CalendarSyncState()
+        pendingCalendarEventCreations = [:]
         briefError = nil
         workError = nil
         workProjectionLoads = 0
@@ -2732,6 +2957,7 @@ final class ProductStore {
         areaDetails = snapshot.areaDetails ?? [:]
         workDetails = snapshot.workDetails ?? [:]
         allWork = snapshot.allWork ?? []
+        laterWork = WorkGrouping.split(allWork, now: .now).later
         workExecution = snapshot.workExecution ?? WorkExecutionSnapshot(json: nil)
         // A nonempty cached Area list is immediately useful: treat it as last-good
         // so Work shows the list (not a loading/empty state) before the first

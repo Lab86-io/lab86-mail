@@ -87,12 +87,26 @@ describe('the product names itself', () => {
     expect(rail).not.toContain('openComposeNew');
   });
 
-  test('one capture door per screen: the pill yields to the expanded rail', () => {
+  test('one capture door: the rail button opens the bar with the chip on Hold', () => {
+    // The full-screen takeover and its floating pill are gone. The rail button
+    // raises `captureOpen`; the assistant bar answers it with a Hold preset.
     const capture = read('components/albatross/IntentCapture.tsx');
-    // Expanded desktop rail shows its own capture button, so the pill hides;
-    // a collapsed rail or the mobile off-canvas drawer brings the pill back.
-    expect(capture).toContain('useSidebar');
-    expect(capture).toContain('capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen)');
+    expect(capture).not.toContain('capturePillHidden');
+    expect(capture).not.toContain('IntentCaptureLauncher');
+    const bar = read('components/shell/AIBar.tsx');
+    expect(bar).toContain('useClientStore((s) => s.captureOpen)');
+    expect(bar).toMatch(
+      /setDoor\(\(current\) => \(\{ seed: captureSeed, nonce: \(current\?\.nonce \?\? 0\) \+ 1 \}\)\);\s*setAiBarOpen\(true\);\s*setCaptureOpen\(false\);/,
+    );
+    const composer = read('components/shell/AskHoldComposer.tsx');
+    expect(composer).toContain("prediction.preset('hold')");
+    // The bar is the one bottom-right control; no second capture pill.
+    expect(bar).toContain('capturePillVisible: false');
+  });
+
+  test('the rail marks the Work row the Hold card moves toward', () => {
+    const rail = read('components/shell/Rail.tsx');
+    expect(rail).toContain('data-rail-target={view}');
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {
@@ -119,9 +133,12 @@ describe('Mail tells the truth when nothing is connected', () => {
 });
 
 describe('Today puts responsibility above decoration', () => {
-  test('the surface leads with what needs the user, not with the weather', () => {
+  test('the surface leads with the next move, and carries no stack of Work', () => {
     const today = read('components/report/TodaySurface.tsx');
-    expect(today.indexOf('Needs you')).toBeLessThan(today.indexOf('Your day'));
+    expect(today.indexOf('Do this next')).toBeLessThan(today.indexOf('Your day'));
+    expect(today).not.toContain('Needs you');
+    expect(today).not.toContain('Waiting, not forgotten');
+    expect(today).not.toContain('Ongoing practices');
     expect(today).not.toContain('weather');
   });
 

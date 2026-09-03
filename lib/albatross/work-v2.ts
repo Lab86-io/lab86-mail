@@ -1,6 +1,79 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { WORK_SHAPES } from '@/lib/albatross/work-shape';
+import { HORIZON_KINDS, parseHorizonHint, type WorkHorizon } from '@/lib/albatross/horizon';
+import type { MetricLike } from '@/lib/albatross/practice-review';
+import { parseListHint, parseMetricHint } from '@/lib/albatross/shape-hints';
+import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
+
+// The splitter's read of the horizon. Dates arrive as ISO strings because a
+// model writes those more reliably than epoch numbers.
+export const splitHorizonSchema = z
+  .object({
+    kind: z.enum(HORIZON_KINDS),
+    notBeforeIso: z.string().max(40).nullish(),
+    byIso: z.string().max(40).nullish(),
+    label: z.string().max(120).nullish(),
+  })
+  .nullish()
+  .catch(undefined);
+
+export type SplitHorizon = z.infer<typeof splitHorizonSchema>;
+
+// The splitter's read of a practice metric.
+export const splitMetricSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    unit: z
+      .string()
+      .max(24)
+      .nullish()
+      .transform((value) => value ?? ''),
+    target: z
+      .number()
+      .finite()
+      .nullish()
+      .transform((value) => value ?? undefined),
+    direction: z
+      .enum(['down', 'up'])
+      .nullish()
+      .transform((value) => value ?? undefined),
+  })
+  .nullish()
+  .catch(undefined);
+
+export type SplitMetric = z.infer<typeof splitMetricSchema>;
+
+function isoToMs(value: string | null | undefined): number | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * The stored horizon for one split item. The model's read wins when it is
+ * usable. The deterministic parse of the item's own words is the fallback.
+ * "now" with no date and no label means no horizon at all.
+ */
+export function horizonForSplitItem(
+  horizon: SplitHorizon,
+  rawText: string,
+  nowMs: number,
+): WorkHorizon | undefined {
+  if (horizon) {
+    const notBefore = isoToMs(horizon.notBeforeIso);
+    const by = isoToMs(horizon.byIso);
+    const label = horizon.label?.trim() || undefined;
+    if (horizon.kind !== 'now' || notBefore !== undefined || by !== undefined) {
+      return {
+        kind: horizon.kind,
+        ...(notBefore !== undefined ? { notBefore } : {}),
+        ...(by !== undefined ? { by } : {}),
+        ...(label ? { label } : {}),
+      };
+    }
+  }
+  return parseHorizonHint(rawText, nowMs) ?? undefined;
+}
 
 export const workSplitSchema = z.object({
   work: z
@@ -14,11 +87,67 @@ export const workSplitSchema = z.object({
         // planner refines it later with more context; capture must not block
         // on it, so an unrecognised value simply drops to undefined.
         shape: z.enum(WORK_SHAPES).optional().catch(undefined),
+        // Now, later, or someday, in the splitter's read. Optional; the
+        // deterministic parse fills the gap.
+        horizon: splitHorizonSchema,
+        // Shape-owned data. A list names its items; a practice names its
+        // metric. Both are optional, and both fall back to the parsers.
+        listItems: z.array(z.string().max(500)).max(500).nullish().catch(undefined),
+        metric: splitMetricSchema,
       }),
     )
     .min(1)
     .max(20),
 });
+
+export interface ShapeReadInput {
+  shape?: WorkShape;
+  listItems?: string[] | null;
+  metric?: SplitMetric;
+}
+
+export interface ShapeRead {
+  shape?: WorkShape;
+  listItems?: string[];
+  metric?: MetricLike;
+  /** A horizon the metric phrase carried ("by spring"). Used only when the split gave none. */
+  horizon?: WorkHorizon;
+}
+
+/**
+ * The stored shape data for one split item. The model's read wins when it is
+ * usable. The deterministic parsers fill the gaps: a list phrase makes the
+ * item a list with its items, a metric phrase makes it a practice with its
+ * metric. An item the model called something else keeps that shape.
+ */
+export function shapeForSplitItem(read: ShapeReadInput, rawText: string, nowMs: number): ShapeRead {
+  const modelItems = (read.listItems || []).map((item) => item.trim()).filter(Boolean);
+  const modelMetric = read.metric
+    ? {
+        name: read.metric.name.trim(),
+        unit: (read.metric.unit || '').trim(),
+        ...(typeof read.metric.target === 'number' ? { target: read.metric.target } : {}),
+        ...(read.metric.direction ? { direction: read.metric.direction } : {}),
+      }
+    : undefined;
+  const listHint = read.shape === undefined || read.shape === 'list' ? parseListHint(rawText) : null;
+  const metricHint =
+    read.shape === undefined || read.shape === 'practice' ? parseMetricHint(rawText, nowMs) : null;
+
+  if (read.shape === 'list' || (read.shape === undefined && listHint)) {
+    const listItems = modelItems.length ? modelItems : listHint?.items || [];
+    return { shape: 'list', ...(listItems.length ? { listItems } : {}) };
+  }
+  if (read.shape === 'practice' || (read.shape === undefined && metricHint)) {
+    const metric = modelMetric?.name ? modelMetric : metricHint?.metric;
+    return {
+      shape: 'practice',
+      ...(metric ? { metric } : {}),
+      ...(metricHint?.horizon ? { horizon: metricHint.horizon } : {}),
+    };
+  }
+  return { shape: read.shape };
+}
 
 export type WorkSplit = z.infer<typeof workSplitSchema>;
 

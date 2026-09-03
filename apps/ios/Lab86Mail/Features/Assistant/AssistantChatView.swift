@@ -28,7 +28,13 @@ struct AssistantChatView: View {
             }
         }
         .background(environment.theme.paperColor)
-        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.holdCards.isEmpty {
+                composer
+            } else {
+                holdLanding
+            }
+        }
         .navigationTitle("Albatross")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -67,6 +73,16 @@ struct AssistantChatView: View {
             LazyVStack(alignment: .leading, spacing: 20) {
                 ForEach(model.messages) { message in
                     messageRow(message)
+                }
+                ForEach(model.receipts) { receipt in
+                    HoldReceiptRow(model: receipt) {
+                        environment.navigation.openWork(id: receipt.id, title: receipt.title)
+                    }
+                }
+                if let holdError = model.holdError {
+                    Text(holdError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 }
                 if let error = model.errorMessage {
                     VStack(alignment: .leading, spacing: 8) {
@@ -127,8 +143,39 @@ struct AssistantChatView: View {
                 } else if model.isStreaming, message.id == model.messages.last?.id, message.parts.isEmpty {
                     activityRow("Thinking")
                 }
+                if holdThisApplies(to: message) {
+                    HoldThisButton(
+                        isHeld: model.heldMessageIDs.contains(message.id),
+                        isWorking: model.holdingMessageID == message.id
+                    ) {
+                        Task {
+                            await model.holdReply(
+                                messageID: message.id,
+                                userText: userTextBefore(message),
+                                replyText: message.text
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// The action shows under a finished reply that carries text.
+    private func holdThisApplies(to message: AssistantChatMessage) -> Bool {
+        guard message.role == .assistant, !message.isVisuallyEmpty else { return false }
+        if model.isStreaming, message.id == model.messages.last?.id { return false }
+        return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The person's message that produced this reply. It gives the capture the
+    /// request as well as the answer.
+    private func userTextBefore(_ message: AssistantChatMessage) -> String {
+        guard let index = model.messages.firstIndex(where: { $0.id == message.id }) else { return "" }
+        for candidate in model.messages[..<index].reversed() where candidate.role == .user {
+            return candidate.text
+        }
+        return ""
     }
 
     private func activityRow(_ label: String) -> some View {
@@ -240,7 +287,7 @@ struct AssistantChatView: View {
                 .disabled(model.isStreaming || model.isUploading || pendingFiles.count >= 5)
                 .accessibilityLabel("Attach files")
 
-                TextField("Message Albatross", text: $draft, axis: .vertical)
+                TextField("Ask or hold", text: $draft, axis: .vertical)
                 // Plain style and an explicit flexible width: AppKit's default
                 // field hugs its content, which collapsed the whole glass
                 // composer to a pill on the Mac.
@@ -251,7 +298,22 @@ struct AssistantChatView: View {
                 .padding(.leading, 16)
                 .padding(.trailing, 4)
                 .padding(.vertical, 10)
-                .onSubmit(sendDraft)
+                .onSubmit(submitDraft)
+                .onChange(of: draft) { _, next in model.updateDraft(next) }
+                .onKeyPress(.tab) {
+                    guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        return .ignored
+                    }
+                    model.flipRoute()
+                    return .handled
+                }
+
+                RouteChip(
+                    route: model.route,
+                    isPinned: model.routePinned,
+                    isEnabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    onFlip: model.flipRoute
+                )
 
                 if model.isStreaming {
                     Button(action: model.stop) {
@@ -265,14 +327,14 @@ struct AssistantChatView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Stop responding")
                 } else {
-                    Button(action: sendDraft) {
+                    Button(action: submitDraft) {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 34, height: 34)
                         .background(
                             Circle().fill(
-                                canSend ? environment.theme.accentColor : Color.secondary.opacity(0.4)
+                                canSend ? routeTint : Color.secondary.opacity(0.4)
                             )
                         )
                         .contentShape(Circle())
@@ -290,9 +352,42 @@ struct AssistantChatView: View {
         .padding(.bottom, 8)
     }
 
+    /// The cards stand where the composer was, then travel to the Work rail.
+    private var holdLanding: some View {
+        VStack(spacing: 6) {
+            ForEach(Array(model.holdCards.enumerated()), id: \.element.id) { index, card in
+                HoldCard(model: card, phase: model.holdPhase, isWorking: model.isHolding)
+                    .animation(
+                        .easeIn(duration: HoldPhase.travelDuration).delay(Double(index) * 0.06),
+                        value: model.holdPhase
+                    )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
     private var canSend: Bool {
         (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingFiles.isEmpty)
             && !model.isUploading
+    }
+
+    private var routeTint: Color {
+        model.route == .ask ? environment.theme.accentColor : environment.theme.accent2Color
+    }
+
+    /// Return follows the chip. Ask sends to the chat. Hold makes Work and
+    /// produces no reply.
+    private func submitDraft() {
+        guard canSend, !model.isStreaming, !model.isHolding else { return }
+        if model.route == .hold, pendingFiles.isEmpty {
+            let text = draft
+            draft = ""
+            Task { await model.hold(text) }
+            return
+        }
+        sendDraft()
     }
 
     private func sendDraft() {

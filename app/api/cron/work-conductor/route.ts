@@ -30,7 +30,7 @@ export function createWorkConductorPost(deps: WorkConductorDependencies = defaul
       return NextResponse.json({ ok: false, error: 'userId and workId are required.' }, { status: 400 });
     }
     try {
-      const result = await deps.advanceWork({ userId, workId });
+      const result = await deps.advanceWork({ userId, workId, trigger: 'conductor' });
       return NextResponse.json({ ok: true, ...result });
     } catch (error) {
       deps.reportError('[cron/work-conductor] advance failed', workId, error);

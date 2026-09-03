@@ -1,6 +1,12 @@
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { parseHorizonHint } from '@/lib/albatross/horizon';
 import { WORK_SHAPE_GUIDE } from '@/lib/albatross/work-shape';
-import { captureFallbackItem, parseWorkSplit } from '@/lib/albatross/work-v2';
+import {
+  captureFallbackItem,
+  horizonForSplitItem,
+  parseWorkSplit,
+  shapeForSplitItem,
+} from '@/lib/albatross/work-v2';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 
@@ -23,12 +29,14 @@ interface CaptureWorkDependencies {
   generate: typeof generateTextForCurrentUser;
   mutate: typeof convexMutation;
   query: typeof convexQuery;
+  now: () => number;
 }
 
 const defaultDependencies: CaptureWorkDependencies = {
   generate: generateTextForCurrentUser,
   mutate: convexMutation,
   query: convexQuery,
+  now: () => Date.now(),
 };
 
 function normalizedName(value: unknown) {
@@ -63,6 +71,8 @@ export async function captureWork(
           .slice(0, 20_000),
         primaryAreaId: input.areaId || undefined,
         relatedAreaIds: [],
+        horizon: parseHorizonHint(item.rawText, dependencies.now()) ?? undefined,
+        ...shapeForSplitItem({}, item.rawText, dependencies.now()),
       }));
       if (items.some((item) => !item.rawText)) throw new Error('Reviewed Work cannot be empty.');
       const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
@@ -109,8 +119,14 @@ Rules:
 
 ${WORK_SHAPE_GUIDE}
 
+Shape data:
+- For a list, return listItems: the items the user named, one string each, in the user's order. "Movie list: Heat, Alien, Dune part two" gives ["Heat","Alien","Dune part two"]. Otherwise null.
+- For a practice with a number, return metric: {"name": what is measured (weight, distance, steps, savings), "unit": a short unit (lb, kg, km, mi, steps, usd) or "", "target": the absolute target number or null, "direction": "down" or "up" or null}. "Lose fifteen pounds by spring" gives {"name":"weight","unit":"lb","target":null,"direction":"down"}. Never put a relative amount in target. Otherwise null.
+
+Horizon: when the user names a time, return it. "later" with notBeforeIso when the user gives a start date or delay ("in two weeks", "not before November"). "later" with only a label when the user names a moment without a date ("after the wedding"). "someday" when the user says someday or no rush. "now" with byIso when the user gives a target date ("by Friday"). Otherwise null. Dates are ISO 8601 at local midnight. Today is ${new Date(dependencies.now()).toISOString().slice(0, 10)}.
+
 Return one JSON object only:
-{"work":[{"title":string,"rawText":string,"primaryAreaName":string|null,"relatedAreaNames":string[],"shape":"quick"|"project"|"practice"|"decision"|"monitor"|"recurring"}]}`,
+{"work":[{"title":string,"rawText":string,"primaryAreaName":string|null,"relatedAreaNames":string[],"shape":"quick"|"list"|"project"|"practice"|"decision"|"monitor"|"recurring","horizon":{"kind":"now"|"later"|"someday","notBeforeIso":string|null,"byIso":string|null,"label":string|null}|null,"listItems":string[]|null,"metric":{"name":string,"unit":string,"target":number|null,"direction":"down"|"up"|null}|null}]}`,
       prompt: `Active Areas:\n${JSON.stringify(areaContext, null, 2)}\n\nBrain dump:\n${rawText}`,
     });
     const split = parseWorkSplit(text, rawText);
@@ -125,12 +141,16 @@ Return one JSON object only:
       const related = item.relatedAreaNames
         .map((name) => areaByName.get(normalizedName(name)))
         .filter((area): area is any => Boolean(area) && String(area._id) !== String(primary?._id));
+      const read = shapeForSplitItem(item, item.rawText, dependencies.now());
       return {
         title: item.title,
         rawText: item.rawText,
         primaryAreaId: primary?._id,
         relatedAreaIds: [...new Set(related.map((area) => area._id))],
-        shape: item.shape,
+        shape: read.shape,
+        horizon: horizonForSplitItem(item.horizon, item.rawText, dependencies.now()) ?? read.horizon,
+        ...(read.listItems ? { listItems: read.listItems } : {}),
+        ...(read.metric ? { metric: read.metric } : {}),
       };
     });
     const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
@@ -146,7 +166,13 @@ Return one JSON object only:
       .mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
-        items: [captureFallbackItem(rawText, input.areaId)],
+        items: [
+          {
+            ...captureFallbackItem(rawText, input.areaId),
+            horizon: parseHorizonHint(rawText, dependencies.now()) ?? undefined,
+            ...shapeForSplitItem({}, rawText, dependencies.now()),
+          },
+        ],
       })
       .catch(async () => {
         await dependencies.mutate((api as any).albatrossWorkV2.failCapture, {

@@ -2,12 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
 import './tools/harness';
 import {
-  buildDataPrompt,
-  gatherBriefExtras,
-  HTML_ARTIFACT_BRIEF,
+  gatherBriefWeather,
   toBriefWeather,
   weatherLocationCandidates,
-} from '../lib/mail/agent-report';
+  weatherSentence,
+} from '../lib/mail/brief-weather';
 import type { DailyReport, DailyReportCalendarItem } from '../lib/shared/types';
 import type { BriefWeather } from '../lib/weather/open-meteo';
 import { withToolContext } from './tools/harness';
@@ -102,6 +101,13 @@ describe('toBriefWeather', () => {
     expect(pack.daily[0]).toEqual({ day: 'Today', condition: 'rain', high: 78, low: 61, precipChance: 65 });
     expect(pack.daily[1].precipChance).toBeUndefined();
   });
+
+  test('weatherSentence is one plain sentence with rainy days named', () => {
+    expect(weatherSentence(toBriefWeather(WEATHER))).toBe(
+      'Rochester, New York: rain, 71°F now, high 78°F, low 61°F. Rain likely Today.',
+    );
+    expect(weatherSentence(null)).toBeNull();
+  });
 });
 
 describe('weatherLocationCandidates', () => {
@@ -133,10 +139,10 @@ describe('weatherLocationCandidates', () => {
   });
 });
 
-describe('brief weather in the data pack', () => {
-  test('gatherBriefExtras fetches weather from the timezone city (injected fetch)', async () => {
-    const extras = await withToolContext(async () =>
-      gatherBriefExtras(reportFixture(), null, {
+describe('brief weather gathering', () => {
+  test('gatherBriefWeather fetches weather from the timezone city (injected fetch)', async () => {
+    const weather = await withToolContext(async () =>
+      gatherBriefWeather(reportFixture(), null, {
         weatherFetch: async (url: string) => ({
           ok: true,
           status: 200,
@@ -162,15 +168,15 @@ describe('brief weather in the data pack', () => {
         }),
       }),
     );
-    expect(extras.weather?.location).toBe('New York');
-    expect(extras.weather?.unit).toBe('°F');
-    expect(extras.weather?.current.temp).toBe(71);
+    expect(weather?.location).toBe('New York');
+    expect(weather?.unit).toBe('°F');
+    expect(weather?.current.temp).toBe(71);
   });
 
-  test('gatherBriefExtras uses WeatherKit for an explicitly shared iPhone location', async () => {
+  test('gatherBriefWeather uses WeatherKit for an explicitly shared iPhone location', async () => {
     const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    const extras = await withToolContext(async () =>
-      gatherBriefExtras(reportFixture(), null, {
+    const weather = await withToolContext(async () =>
+      gatherBriefWeather(reportFixture(), null, {
         storedLocation: {
           latitude: 43.15,
           longitude: -77.62,
@@ -220,7 +226,7 @@ describe('brief weather in the data pack', () => {
       }),
     );
 
-    expect(extras.weather).toMatchObject({
+    expect(weather).toMatchObject({
       location: 'Rochester, New York',
       source: 'Apple Weather',
       attributionURL: 'https://weatherkit.apple.com/legal-attribution.html',
@@ -230,8 +236,8 @@ describe('brief weather in the data pack', () => {
   test('loads only an explicitly opted-in stored location through mobile preferences', async () => {
     const queriedUsers: string[] = [];
     const requestedURLs: string[] = [];
-    const extras = await withToolContext(async () =>
-      gatherBriefExtras(reportFixture(), 'weather_user', {
+    const weather = await withToolContext(async () =>
+      gatherBriefWeather(reportFixture(), 'weather_user', {
         mobilePreferencesQuery: async (userId) => {
           queriedUsers.push(userId);
           return {
@@ -252,13 +258,13 @@ describe('brief weather in the data pack', () => {
     expect(queriedUsers).toEqual(['weather_user']);
     expect(requestedURLs).toHaveLength(1);
     expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
-    expect(extras.weather?.location).toBe('Rochester, New York');
+    expect(weather?.location).toBe('Rochester, New York');
   });
 
   test('ignores stored coordinates when location consent is disabled', async () => {
     const requestedURLs: string[] = [];
     await withToolContext(async () =>
-      gatherBriefExtras(reportFixture(), 'weather_user', {
+      gatherBriefWeather(reportFixture(), 'weather_user', {
         mobilePreferencesQuery: async () => ({
           briefLocationEnabled: false,
           briefLatitude: 43.15,
@@ -296,8 +302,8 @@ describe('brief weather in the data pack', () => {
   test('falls back to Open-Meteo without resolving the same location twice when WeatherKit fails', async () => {
     const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const requestedURLs: string[] = [];
-    const extras = await withToolContext(async () =>
-      gatherBriefExtras(reportFixture(), null, {
+    const weather = await withToolContext(async () =>
+      gatherBriefWeather(reportFixture(), null, {
         storedLocation: {
           latitude: 43.15,
           longitude: -77.62,
@@ -322,256 +328,6 @@ describe('brief weather in the data pack', () => {
 
     expect(requestedURLs).toHaveLength(1);
     expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
-    expect(extras.weather).toMatchObject({ location: 'Rochester, New York', current: { temp: 72 } });
-  });
-
-  test('buildDataPrompt carries weather (and null when unresolved)', async () => {
-    await withToolContext(async () => {
-      const withWeather = buildDataPrompt(reportFixture(), {
-        digests: [],
-        voiceSamples: [],
-        services: ['gmail'],
-        weather: toBriefWeather(WEATHER),
-      } as any);
-      expect(withWeather).toContain('"weather"');
-      expect(withWeather).toContain('Rochester, New York');
-
-      const without = buildDataPrompt(reportFixture(), {
-        digests: [],
-        voiceSamples: [],
-        services: ['gmail'],
-        weather: null,
-      } as any);
-      expect(without).toContain('"weather": null');
-    });
-  });
-
-  test('buildDataPrompt carries daily alignment and prioritizes matching handoffs', async () => {
-    await withToolContext(async () => {
-      const handoff = (id: string, situation: string) =>
-        ({
-          version: 1,
-          id,
-          source: 'test',
-          sourceKey: id,
-          kind: 'work',
-          lane: 'focus',
-          status: 'open',
-          priority: 'normal',
-          protected: false,
-          situation,
-          background: [],
-          assessment: situation,
-          recommendation: situation,
-          evidence: [],
-          primaryRef: { kind: 'work', id },
-          relatedRefs: [],
-          items: [
-            {
-              sourceKey: id,
-              ref: { kind: 'work', id },
-              situation,
-              assessment: situation,
-              recommendation: situation,
-            },
-          ],
-          actions: [],
-          generatedAt: 1,
-        }) as any;
-      const prompt = buildDataPrompt(
-        reportFixture({
-          handoffs: [
-            handoff('billing', 'Review the billing launch'),
-            handoff('passport', 'Renew the passport before the trip'),
-          ],
-          sections: {
-            tasks: [
-              {
-                cardId: 'billing-task',
-                boardId: 'board-1',
-                columnId: 'column-1',
-                title: 'Review the billing launch',
-                scope: 'week',
-              },
-            ],
-            albatross: {
-              includedAreas: [],
-              askBeforeCentering: [],
-              activeIntents: [],
-              activeProjects: [],
-              contextReview: [],
-              completions: [],
-              dailyAlignment: {
-                localDate: '2026-07-06',
-                reflection: 'Shipped the migration.',
-                tomorrowIntent: 'Finish passport renewal.',
-              },
-            },
-          } as any,
-        }),
-        {
-          digests: [],
-          voiceSamples: [],
-          services: ['gmail'],
-          weather: null,
-        } as any,
-      );
-      expect(prompt).toContain('"tomorrowIntent": "Finish passport renewal."');
-      expect(prompt).toContain('"id": "passport"');
-      expect(prompt).not.toContain('"id": "billing"');
-      expect(prompt).not.toContain('"cardId": "billing-task"');
-      expect(prompt).toContain('"suppressUnrelated": true');
-      expect(prompt).toContain("the user's stated plan is the spine of the brief");
-    });
-  });
-
-  test('accountless legacy refs never pull a colliding thread from another account', async () => {
-    await withToolContext(async () => {
-      const prompt = buildDataPrompt(
-        reportFixture({
-          handoffs: [
-            {
-              version: 1,
-              id: 'selected-thread',
-              source: 'mail',
-              sourceKey: 'selected-thread',
-              kind: 'conversation',
-              lane: 'focus',
-              status: 'open',
-              priority: 'normal',
-              protected: false,
-              situation: 'Review selected thread',
-              background: [],
-              assessment: 'The selected account needs a reply.',
-              recommendation: 'Review selected thread',
-              evidence: [],
-              primaryRef: { kind: 'thread', id: 'shared-thread', account: 'selected@example.test' },
-              relatedRefs: [{ kind: 'thread', id: 'shared-thread' }],
-              items: [
-                {
-                  sourceKey: 'selected-thread',
-                  ref: { kind: 'thread', id: 'shared-thread', account: 'selected@example.test' },
-                  situation: 'Review selected thread',
-                  assessment: 'The selected account needs a reply.',
-                  recommendation: 'Review selected thread',
-                },
-              ],
-              actions: [],
-              generatedAt: 1,
-            },
-          ] as any,
-          sections: {
-            albatross: {
-              includedAreas: [],
-              askBeforeCentering: [],
-              activeIntents: [],
-              activeProjects: [],
-              contextReview: [],
-              completions: [],
-              dailyAlignment: {
-                localDate: '2026-07-06',
-                tomorrowIntent: 'Review selected thread.',
-              },
-            },
-          } as any,
-        }),
-        {
-          digests: [
-            {
-              threadKey: 'selected@example.test:shared-thread',
-              account: 'selected@example.test',
-              threadId: 'shared-thread',
-              subject: 'Selected account subject',
-              people: [],
-              unread: true,
-              lastReceivedAt: 1,
-              messages: [],
-            },
-            {
-              threadKey: 'other@example.test:shared-thread',
-              account: 'other@example.test',
-              threadId: 'shared-thread',
-              subject: 'Other account secret',
-              people: [],
-              unread: true,
-              lastReceivedAt: 1,
-              messages: [],
-            },
-          ],
-          voiceSamples: [],
-          services: ['gmail'],
-          weather: null,
-        } as any,
-      );
-      const data = JSON.parse(prompt.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
-      expect(data.threads.map((thread: any) => thread.subject)).toEqual(['Selected account subject']);
-    });
-  });
-});
-
-describe('artifact brief prompt', () => {
-  test('asks for one weather line, not a weather instrument', () => {
-    // The brief used to mandate a weather module as front matter, which is how
-    // the largest data graphic in the product came to be a temperature chart
-    // for something that carries no responsibility.
-    expect(HTML_ARTIFACT_BRIEF).toContain('WEATHER LINE');
-    expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.current.temp');
-    expect(HTML_ARTIFACT_BRIEF).toContain('ONE quiet line');
-    expect(HTML_ARTIFACT_BRIEF).toContain('never invent weather');
-    expect(HTML_ARTIFACT_BRIEF).toContain('Weather data by Apple Weather');
-  });
-
-  test('forbids the chart shapes that made weather the loudest thing on the page', () => {
-    expect(HTML_ARTIFACT_BRIEF).not.toContain('WEATHER MODULE');
-    expect(HTML_ARTIFACT_BRIEF).toContain('No temperature chart');
-    expect(HTML_ARTIFACT_BRIEF).toContain('no seven-day grid');
-    expect(HTML_ARTIFACT_BRIEF).not.toContain('slim horizontal range bars');
-  });
-
-  test('puts what the reader owes above everything else', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('WHAT THE READER OWES');
-    expect(HTML_ARTIFACT_BRIEF).toContain('largest type in the body');
-    // A day with nothing owing should say so, not grow a section to fill space.
-    expect(HTML_ARTIFACT_BRIEF).toContain('Do not\n  manufacture a section');
-  });
-
-  test('uses the second accent for headers and rules, with a safe fallback', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('--brief-accent-2');
-    expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-accent-2, var(--brief-accent))');
-    expect(HTML_ARTIFACT_BRIEF).toContain('section header');
-  });
-
-  test('carries the chart standard (clean axes, token strokes)', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('CHART STANDARD');
-    expect(HTML_ARTIFACT_BRIEF).toContain('var(--brief-hairline)');
-  });
-
-  test('bans ALL-CAPS letter-spaced labels and demands sentence case', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('Do NOT set text in ALL CAPS');
-    expect(HTML_ARTIFACT_BRIEF).toContain('text-transform: uppercase');
-    expect(HTML_ARTIFACT_BRIEF).toContain('Sentence case everywhere');
-  });
-
-  test('dateline honesty: no city derived from timezone; weather location is the only place name', () => {
-    expect(HTML_ARTIFACT_BRIEF).toContain('Dateline honesty');
-    expect(HTML_ARTIFACT_BRIEF).toContain('never derive or print a city');
-    expect(HTML_ARTIFACT_BRIEF).toContain('data.weather.location');
-    expect(HTML_ARTIFACT_BRIEF).toContain('no city');
-  });
-
-  test('buildDataPrompt datelines in sentence case, in the context timezone', async () => {
-    await withToolContext(async () => {
-      const prompt = buildDataPrompt(reportFixture(), {
-        digests: [],
-        voiceSamples: [],
-        services: ['gmail'],
-        weather: null,
-      } as any);
-      // 2026-07-07T13:00Z in America/New_York (harness context) is 9:00 AM.
-      expect(prompt).toContain('"localDate": "Jul 07, 2026"');
-      expect(prompt).not.toContain('JUL 07');
-      expect(prompt).toContain('"localTime": "9:00 AM"');
-      expect(prompt).toContain('"timezone": "America/New_York"');
-    });
+    expect(weather).toMatchObject({ location: 'Rochester, New York', current: { temp: 72 } });
   });
 });

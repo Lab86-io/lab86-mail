@@ -39,7 +39,8 @@ describe('Work conductor route', () => {
     const response = await createWorkConductorPost(deps as any)(request({ userId: 'u', workId: 'w' }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, status: 'ready' });
-    expect(deps.advanceWork).toHaveBeenCalledWith({ userId: 'u', workId: 'w' });
+    // The cron is the conductor. The quiet rule reads this trigger.
+    expect(deps.advanceWork).toHaveBeenCalledWith({ userId: 'u', workId: 'w', trigger: 'conductor' });
   });
 
   test('returns a controlled execution error', async () => {

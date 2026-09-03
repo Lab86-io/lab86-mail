@@ -1,22 +1,51 @@
+import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { captureWork } from '@/lib/albatross/capture-work';
+import type { WorkHorizon as StoredWorkHorizon } from '@/lib/albatross/horizon';
 import type { CurrentUser } from '@/lib/auth/current-user';
+import { startCalendarResync } from '@/lib/calendar/resync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { getTool } from '@/lib/tools';
 import { invokeTool } from '@/lib/tools/registry';
 import type { MobileCommand, MobileDomain, MobileSyncExecution } from './contract';
+
+// A command that changes no entity (for example `calendar.resync`) records
+// no sync change. It still names its domain for the command row.
+export type MobileSilentExecution = {
+  syncDomain: MobileDomain;
+  entityKind?: undefined;
+  entityID?: undefined;
+  syncPayload?: undefined;
+};
 
 export type MobileCommandExecution = {
   status: 'applied' | 'needsApproval';
   operationID?: string;
   approvalID?: string;
   undoExpiresAt?: number;
-} & MobileSyncExecution;
+} & (MobileSyncExecution | MobileSilentExecution);
 
 interface MobileCommandExecutorDependencies {
   invoke: (name: string, argumentsValue: Record<string, unknown>, user: CurrentUser) => Promise<any>;
   enqueueApproval: (input: Record<string, unknown>) => Promise<string>;
   capture: typeof captureWork;
+  captureFromChat: typeof captureFromChat;
+  resyncCalendar: typeof startCalendarResync;
+  setWorkHorizon: (input: {
+    userId: string;
+    workId: string;
+    horizon: StoredWorkHorizon | null;
+  }) => Promise<{ horizon: StoredWorkHorizon | null; dormant: boolean }>;
+  /** One seam for every shape mutation in `albatrossWorkV2`. */
+  workShapeMutation: (name: WorkShapeMutationName, input: Record<string, unknown>) => Promise<any>;
 }
+
+export type WorkShapeMutationName =
+  | 'addListItem'
+  | 'toggleListItem'
+  | 'removeListItem'
+  | 'logMetric'
+  | 'toggleMilestone'
+  | 'setShape';
 
 const defaultDependencies: MobileCommandExecutorDependencies = {
   async invoke(name, argumentsValue, user) {
@@ -34,7 +63,44 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
     return convexMutation<string>((api as any).albatrossWork.enqueueApproval, input);
   },
   capture: captureWork,
+  captureFromChat,
+  resyncCalendar: startCalendarResync,
+  setWorkHorizon(input) {
+    return convexMutation((api as any).albatrossWorkV2.setHorizon, input);
+  },
+  workShapeMutation(name, input) {
+    return convexMutation((api as any).albatrossWorkV2[name], input);
+  },
 };
+
+function listItemsPayload(items: any[] | undefined) {
+  return (items || []).map((item) => ({
+    id: String(item.id),
+    text: String(item.text),
+    done: Boolean(item.done),
+    addedAt: Number(item.addedAt),
+    ...(typeof item.doneAt === 'number' ? { doneAt: item.doneAt } : {}),
+  }));
+}
+
+function milestonesPayload(items: any[] | undefined) {
+  return (items || []).map((item) => ({
+    id: String(item.id),
+    title: String(item.title),
+    done: Boolean(item.done),
+    order: Number(item.order),
+    ...(typeof item.doneAt === 'number' ? { doneAt: item.doneAt } : {}),
+  }));
+}
+
+function metricPayload(metric: any) {
+  return {
+    name: String(metric?.name || 'value'),
+    unit: String(metric?.unit || ''),
+    ...(typeof metric?.target === 'number' ? { target: metric.target } : {}),
+    ...(metric?.direction === 'down' || metric?.direction === 'up' ? { direction: metric.direction } : {}),
+  };
+}
 
 export function mobileCommandDomain(command: MobileCommand): MobileDomain {
   const prefix = command.kind.split('.')[0];
@@ -406,6 +472,14 @@ export async function executeMobileCommand(
         syncPayload: { accountID: command.payload.accountID, eventID: entityID },
       };
     }
+    case 'calendar.resync': {
+      await dependencies.resyncCalendar({
+        userId: user.userId,
+        accountId: command.payload.accountID,
+        reason: command.payload.reason,
+      });
+      return { status: 'applied', syncDomain: 'calendar' };
+    }
     case 'task.create': {
       const result = await dependencies.invoke(
         'tasks_create_card',
@@ -466,6 +540,139 @@ export async function executeMobileCommand(
           workIDs: result.workIds,
           fallback: result.fallback ?? false,
         },
+      };
+    }
+    case 'work.captureFromChat': {
+      const result = await dependencies.captureFromChat(
+        {
+          text: command.payload.text,
+          replyText: command.payload.replyText,
+          conversationId: command.payload.conversationID,
+          sourceMessageId: command.payload.sourceMessageID,
+        },
+        user,
+      );
+      const entityID = result.workIds[0] || result.captureId || command.idempotencyKey;
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workCaptured',
+        entityID,
+        syncPayload: { workIDs: result.workIds, existing: result.existing },
+      };
+    }
+    case 'work.setHorizon': {
+      const requested = command.payload.horizon;
+      const horizon: StoredWorkHorizon | null = requested
+        ? {
+            kind: requested.kind,
+            ...(requested.notBeforeAt ? { notBefore: Date.parse(requested.notBeforeAt) } : {}),
+            ...(requested.byAt ? { by: Date.parse(requested.byAt) } : {}),
+            ...(requested.label ? { label: requested.label } : {}),
+          }
+        : null;
+      const result = await dependencies.setWorkHorizon({
+        userId: user.userId,
+        workId: command.payload.workID,
+        horizon,
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workHorizon',
+        entityID: command.payload.workID,
+        syncPayload: {
+          workID: command.payload.workID,
+          ...(result?.horizon ? { horizon: result.horizon } : { horizonCleared: true as const }),
+        },
+      };
+    }
+    case 'work.listAdd':
+    case 'work.listToggle':
+    case 'work.listRemove': {
+      const name =
+        command.kind === 'work.listAdd'
+          ? 'addListItem'
+          : command.kind === 'work.listToggle'
+            ? 'toggleListItem'
+            : 'removeListItem';
+      const result = await dependencies.workShapeMutation(name, {
+        userId: user.userId,
+        workId: command.payload.workID,
+        ...(command.kind === 'work.listAdd'
+          ? { text: command.payload.text }
+          : { itemId: command.payload.itemID }),
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workShape',
+        entityID: command.payload.workID,
+        syncPayload: { workID: command.payload.workID, listItems: listItemsPayload(result?.listItems) },
+      };
+    }
+    case 'work.metricLog': {
+      const at = command.payload.at ? Date.parse(command.payload.at) : undefined;
+      const result = await dependencies.workShapeMutation('logMetric', {
+        userId: user.userId,
+        workId: command.payload.workID,
+        value: command.payload.value,
+        ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}),
+        ...(command.payload.note ? { note: command.payload.note } : {}),
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workShape',
+        entityID: command.payload.workID,
+        syncPayload: {
+          workID: command.payload.workID,
+          metric: metricPayload(result?.metric),
+          metricEntry: {
+            id: String(result?.entry?._id || command.idempotencyKey),
+            at: Number(result?.entry?.at ?? at ?? Date.now()),
+            value: Number(result?.entry?.value ?? command.payload.value),
+            note: result?.entry?.note ?? null,
+          },
+          ...(result?.summary
+            ? {
+                metricSummary: {
+                  latest: result.summary.latest ?? null,
+                  latestAt: result.summary.latestAt ?? null,
+                  count: Number(result.summary.count || 0),
+                  weeksWithEntry: Number(result.summary.weeksWithEntry || 0),
+                },
+              }
+            : {}),
+        },
+      };
+    }
+    case 'work.milestoneToggle': {
+      const result = await dependencies.workShapeMutation('toggleMilestone', {
+        userId: user.userId,
+        workId: command.payload.workID,
+        milestoneId: command.payload.milestoneID,
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workShape',
+        entityID: command.payload.workID,
+        syncPayload: { workID: command.payload.workID, milestones: milestonesPayload(result?.milestones) },
+      };
+    }
+    case 'work.setShape': {
+      const result = await dependencies.workShapeMutation('setShape', {
+        userId: user.userId,
+        workId: command.payload.workID,
+        shape: command.payload.shape,
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workShape',
+        entityID: command.payload.workID,
+        syncPayload: { workID: command.payload.workID, shape: result?.shape ?? command.payload.shape },
       };
     }
     case 'approval.approve': {

@@ -15,10 +15,22 @@ struct AlbatrossCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
 
-            Button("Ask Albatross") {
+            Button("Ask or Hold…") {
                 environment.toggleAssistantChatPanel()
             }
             .keyboardShortcut("k", modifiers: .command)
+
+            #if os(macOS)
+            Button("Sync Calendar") {
+                MacRequests.shared.requestCalendarSync()
+            }
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button("Horizon…") {
+                MacRequests.shared.requestHorizonPopover()
+            }
+            .keyboardShortcut("h", modifiers: [.command, .shift])
+            #endif
 
             Button("Search Mail") {
                 environment.navigation.selectPrimary(.mail)

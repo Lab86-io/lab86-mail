@@ -270,6 +270,7 @@ const USER_BULK_TABLES = [
   'albatrossRoutineRuns',
   'albatrossEvidence',
   'albatrossLapses',
+  'albatrossMetricEntries',
   'mobileCommands',
   'mobileSyncChanges',
   'mobileSyncTombstones',

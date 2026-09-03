@@ -73,6 +73,8 @@ export function OutcomeHeader({
   evidence,
   state,
   actions,
+  eyebrow,
+  facts,
 }: {
   outcome: string;
   summary?: string | null;
@@ -80,12 +82,16 @@ export function OutcomeHeader({
   evidence: EvidenceLike[];
   state: WorkStateKey;
   actions?: ReactNode;
+  /** Replaces the "Outcome" word above the title. The shape button sits here. */
+  eyebrow?: ReactNode;
+  /** Replaces the three default facts. A shape supplies its own three. */
+  facts?: ReactNode;
 }) {
   return (
     <header className="border-b border-[var(--color-border)] pb-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 max-w-2xl">
-          <p className="text-[11.5px] text-[var(--color-text-faint)]">Outcome</p>
+          {eyebrow ?? <p className="text-[11.5px] text-[var(--color-text-faint)]">Outcome</p>}
           {/* Display type is for headlines. A long outcome is machine prose —
               acceptance criteria, not a title — so it drops out of hero scale
               instead of filling the viewport with five lines of 38px serif. */}
@@ -109,28 +115,32 @@ export function OutcomeHeader({
       </div>
 
       <dl className="mt-5 flex flex-wrap items-baseline gap-x-8 gap-y-2">
-        <Fact label="State">
-          <StateChip state={state} />
-        </Fact>
-        <Fact label="Next move">
-          <span className="text-[13px] text-[var(--color-text)]">{nextMoveLine(work)}</span>
-        </Fact>
-        <Fact label="Last proof">
-          <span
-            className={cn(
-              'text-[13px]',
-              evidence.length ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]',
-            )}
-          >
-            {proofSummary(evidence)}
-          </span>
-        </Fact>
+        {facts ?? (
+          <>
+            <Fact label="State">
+              <StateChip state={state} />
+            </Fact>
+            <Fact label="Next move">
+              <span className="text-[13px] text-[var(--color-text)]">{nextMoveLine(work)}</span>
+            </Fact>
+            <Fact label="Last proof">
+              <span
+                className={cn(
+                  'text-[13px]',
+                  evidence.length ? 'text-[var(--color-text)]' : 'text-[var(--color-text-faint)]',
+                )}
+              >
+                {proofSummary(evidence)}
+              </span>
+            </Fact>
+          </>
+        )}
       </dl>
     </header>
   );
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+export function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-[11.5px] text-[var(--color-text-faint)]">{label}</dt>

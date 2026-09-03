@@ -6,7 +6,9 @@ import {
 import { mayCloseAutomatically } from '../lib/albatross/contract';
 import { type ExecutionWorkRow, selectExecutionSnapshot } from '../lib/albatross/execution';
 import { isStale } from '../lib/albatross/forgiveness';
+import { isDormant, wakeIsDue, wokenHorizon } from '../lib/albatross/horizon';
 import { bindFrontierQuestionId } from '../lib/albatross/plan-frontier';
+import { metricSummary } from '../lib/albatross/practice-review';
 import {
   INTERACTIVE_CARD_READ_BUDGET,
   RECOVERY_CARD_READ_BUDGET_PER_USER,
@@ -14,6 +16,7 @@ import {
 } from '../lib/albatross/projection-budget';
 import { matchingProofId } from '../lib/albatross/proof-match';
 import { questionDedupeKey, shouldAdvanceWorkAfterAnswer } from '../lib/albatross/question-dedupe';
+import { shapeAllows } from '../lib/albatross/shape-policy';
 import {
   mergeStepProgress,
   planStepsForProgress,
@@ -21,8 +24,10 @@ import {
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
 import {
+  hasConfirmedEvidence,
   type StepEvidenceLike,
   type StepVerification,
+  stepNeedsCheck,
   stepVerification,
 } from '../lib/albatross/step-verification';
 import { api, internal } from './_generated/api';
@@ -32,6 +37,11 @@ import { internalAction, internalMutation, internalQuery, mutation, query } from
 import { recordCompletionEvent } from './albatrossWork';
 import { completeCardForWork } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import {
+  albatrossHorizonValidator,
+  albatrossMetricValidator,
+  albatrossWorkShapeValidator as workShapeValidator,
+} from './schema';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -48,15 +58,6 @@ const sourceRefValidator = v.object({
   accountId: v.optional(v.string()),
   url: v.optional(v.string()),
 });
-
-const workShapeValidator = v.union(
-  v.literal('quick'),
-  v.literal('project'),
-  v.literal('practice'),
-  v.literal('decision'),
-  v.literal('monitor'),
-  v.literal('recurring'),
-);
 
 async function resolveUserId(
   ctx: QueryCtx | MutationCtx,
@@ -87,6 +88,11 @@ async function requireArea(ctx: QueryCtx | MutationCtx, areaId: Id<'areas'>, use
 function bounded(value: string | undefined | null, max: number) {
   const clean = String(value || '').trim();
   return clean ? clean.slice(0, max) : undefined;
+}
+
+/** The patch every user-driven mutation adds. The conductor never writes it. */
+function userTouch(ts: number) {
+  return { lastUserTouchAt: ts, updatedAt: ts };
 }
 
 type PlanStepAction = {
@@ -227,7 +233,7 @@ export const updateWorkState = mutation({
             status: 'ready' as const,
           }
         : {}),
-      updatedAt: ts,
+      ...userTouch(ts),
     });
     // The user's check is the completion. Record it once, on the transition.
     if (args.state === 'done' && work.workState !== 'done') {
@@ -264,7 +270,7 @@ export const releaseWork = mutation({
       releaseProposedBy: args.proposedBy ?? 'user',
       releasedAt: ts,
       reviewAt: args.reviewAt,
-      updatedAt: ts,
+      ...((args.proposedBy ?? 'user') === 'user' ? userTouch(ts) : { updatedAt: ts }),
     });
     return { releasedAt: ts };
   },
@@ -313,9 +319,274 @@ export const reopenWork = mutation({
       releaseProposedBy: undefined,
       releasedAt: undefined,
       reviewAt: undefined,
-      updatedAt: ts,
+      ...userTouch(ts),
     });
     return { reopenedAt: ts };
+  },
+});
+
+/**
+ * Set or clear the horizon. Null puts the Work back on "now". A new sleep
+ * date clears an old wake, so the Work can wake again on the new date.
+ */
+export const setHorizon = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    horizon: v.union(albatrossHorizonValidator, v.null()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const previous = work.horizon;
+    const next = args.horizon
+      ? {
+          kind: args.horizon.kind,
+          notBefore: args.horizon.notBefore,
+          by: args.horizon.by,
+          label: bounded(args.horizon.label, 120),
+          // A wake belongs to one sleep date. A changed date starts a new sleep.
+          wokeAt:
+            args.horizon.notBefore !== undefined && args.horizon.notBefore === previous?.notBefore
+              ? previous?.wokeAt
+              : undefined,
+        }
+      : undefined;
+    await ctx.db.patch(args.workId, {
+      horizon: next,
+      horizonWakeAt: next && !next.wokeAt ? next.notBefore : undefined,
+      ...userTouch(ts),
+    });
+    return { horizon: next ?? null, dormant: isDormant({ horizon: next }, ts) };
+  },
+});
+
+// Shape-owned data -------------------------------------------------------------
+//
+// A list keeps items. A practice tracks one metric. A project holds
+// milestones. Each mutation below counts as a user touch, so the conductor
+// quiet rule treats a list add or a metric log as the user at work.
+
+const LIST_ITEM_MAX = 500;
+const MILESTONE_MAX = 60;
+const METRIC_ENTRY_READ_MAX = 1_000;
+
+function shapeId(prefix: string, ts: number) {
+  return `${prefix}_${ts.toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+function newListItems(texts: string[], ts: number) {
+  return texts
+    .map((text) => bounded(text, 500))
+    .filter((text): text is string => Boolean(text))
+    .slice(0, LIST_ITEM_MAX)
+    .map((text, index) => ({ id: shapeId('li', ts + index), text, done: false, addedAt: ts }));
+}
+
+function normalizedMetric(metric: {
+  name: string;
+  unit: string;
+  target?: number;
+  direction?: 'down' | 'up';
+}) {
+  return {
+    name: bounded(metric.name, 80) || 'value',
+    unit: bounded(metric.unit, 24) || '',
+    ...(typeof metric.target === 'number' && Number.isFinite(metric.target) ? { target: metric.target } : {}),
+    ...(metric.direction ? { direction: metric.direction } : {}),
+  };
+}
+
+/** Add one item to a list-shaped Work. Any shape may hold items; the list view is where they show. */
+export const addListItem = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), text: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const text = bounded(args.text, 500);
+    if (!text) throw new Error('An item needs text.');
+    const ts = now();
+    const items = work.listItems || [];
+    if (items.length >= LIST_ITEM_MAX) throw new Error('The list is full.');
+    const item = { id: shapeId('li', ts), text, done: false, addedAt: ts };
+    // Items keep their add order. The clients move done items to the bottom.
+    const listItems = [...items, item];
+    await ctx.db.patch(args.workId, { listItems, ...userTouch(ts) });
+    return { item, listItems };
+  },
+});
+
+/** Check or uncheck one list item. */
+export const toggleListItem = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), itemId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const items = work.listItems || [];
+    const current = items.find((entry) => entry.id === args.itemId);
+    if (!current) throw new Error('List item not found.');
+    const ts = now();
+    const done = !current.done;
+    const listItems = items.map((entry) =>
+      entry.id === args.itemId ? { ...entry, done, doneAt: done ? ts : undefined } : entry,
+    );
+    await ctx.db.patch(args.workId, { listItems, ...userTouch(ts) });
+    return { item: listItems.find((entry) => entry.id === args.itemId)!, listItems };
+  },
+});
+
+/** Remove one list item. */
+export const removeListItem = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), itemId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const items = work.listItems || [];
+    if (!items.some((entry) => entry.id === args.itemId)) throw new Error('List item not found.');
+    const ts = now();
+    const listItems = items.filter((entry) => entry.id !== args.itemId);
+    await ctx.db.patch(args.workId, { listItems, ...userTouch(ts) });
+    return { removed: args.itemId, listItems };
+  },
+});
+
+async function metricEntriesForWork(ctx: QueryCtx | MutationCtx, workId: Id<'albatrossIntents'>) {
+  return ctx.db
+    .query('albatrossMetricEntries')
+    .withIndex('by_work_at', (q) => q.eq('workId', workId))
+    .order('desc')
+    .take(METRIC_ENTRY_READ_MAX);
+}
+
+/**
+ * Log one value for a practice. A Work with no metric yet gets a plain one, so
+ * the first log never fails on a missing name.
+ */
+export const logMetric = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    value: v.number(),
+    at: v.optional(v.number()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    if (!Number.isFinite(args.value)) throw new Error('A log needs a number.');
+    const ts = now();
+    const at = typeof args.at === 'number' && Number.isFinite(args.at) && args.at <= ts ? args.at : ts;
+    const entryId = await ctx.db.insert('albatrossMetricEntries', {
+      userId,
+      workId: args.workId,
+      at,
+      value: args.value,
+      note: bounded(args.note, 500),
+    });
+    const metric = work.metric ?? normalizedMetric({ name: 'value', unit: '' });
+    await ctx.db.patch(args.workId, { metric, ...userTouch(ts) });
+    const entries = await metricEntriesForWork(ctx, args.workId);
+    return {
+      entry: { _id: String(entryId), at, value: args.value, note: bounded(args.note, 500) ?? null },
+      metric,
+      summary: metricSummary(entries, ts),
+    };
+  },
+});
+
+/** The logged values of one practice, newest first. */
+export const metricEntries = query({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    await requireWork(ctx, args.workId, userId);
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), METRIC_ENTRY_READ_MAX);
+    const rows = await ctx.db
+      .query('albatrossMetricEntries')
+      .withIndex('by_work_at', (q) => q.eq('workId', args.workId))
+      .order('desc')
+      .take(limit);
+    return rows.map((row) => ({
+      _id: String(row._id),
+      at: row.at,
+      value: row.value,
+      note: row.note ?? null,
+    }));
+  },
+});
+
+/**
+ * Replace the milestone rail. Titles that match an existing milestone keep
+ * their id and done state, so an edit of the text does not reopen anything.
+ */
+export const setMilestones = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.id('albatrossIntents'),
+    milestones: v.array(v.object({ id: v.optional(v.string()), title: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    const existing = work.milestones || [];
+    const byId = new Map(existing.map((entry) => [entry.id, entry]));
+    const byTitle = new Map(existing.map((entry) => [entry.title.trim().toLowerCase(), entry]));
+    const used = new Set<string>();
+    const milestones = args.milestones
+      .map((entry) => ({ id: entry.id, title: bounded(entry.title, 200) }))
+      .filter((entry): entry is { id: string | undefined; title: string } => Boolean(entry.title))
+      .slice(0, MILESTONE_MAX)
+      .map((entry, order) => {
+        const prior =
+          (entry.id ? byId.get(entry.id) : undefined) ?? byTitle.get(entry.title.trim().toLowerCase());
+        const keep = prior && !used.has(prior.id) ? prior : undefined;
+        if (keep) used.add(keep.id);
+        return {
+          id: keep?.id ?? shapeId('ms', ts + order),
+          title: entry.title,
+          done: keep?.done ?? false,
+          doneAt: keep?.doneAt,
+          order,
+        };
+      });
+    await ctx.db.patch(args.workId, { milestones, ...userTouch(ts) });
+    return { milestones };
+  },
+});
+
+/** Mark one milestone done, or reopen it. */
+export const toggleMilestone = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), milestoneId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const existing = work.milestones || [];
+    const current = existing.find((entry) => entry.id === args.milestoneId);
+    if (!current) throw new Error('Milestone not found.');
+    const ts = now();
+    const done = !current.done;
+    const milestones = existing.map((entry) =>
+      entry.id === args.milestoneId ? { ...entry, done, doneAt: done ? ts : undefined } : entry,
+    );
+    await ctx.db.patch(args.workId, { milestones, ...userTouch(ts) });
+    return { milestone: milestones.find((entry) => entry.id === args.milestoneId)!, milestones };
+  },
+});
+
+/**
+ * Change the shape. Shape-owned data stays: a list that becomes a project
+ * keeps its items, and back again keeps them too. Only the policy changes.
+ */
+export const setShape = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), shape: workShapeValidator },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const ts = now();
+    await ctx.db.patch(args.workId, { shape: args.shape, ...userTouch(ts) });
+    return { shape: args.shape, previous: work.shape ?? null };
   },
 });
 
@@ -379,9 +650,9 @@ export const recordLapse = mutation({
     // The recovery the user picked is a statement about the work's state, so
     // apply it rather than only writing it down.
     if (args.recovery === 'pause') {
-      await ctx.db.patch(args.workId, { workState: 'paused', updatedAt: ts });
+      await ctx.db.patch(args.workId, { workState: 'paused', ...userTouch(ts) });
     } else if (args.recovery === 'wait') {
-      await ctx.db.patch(args.workId, { workState: 'waiting', updatedAt: ts });
+      await ctx.db.patch(args.workId, { workState: 'waiting', ...userTouch(ts) });
     } else if (args.recovery === 'release') {
       await ctx.db.patch(args.workId, {
         workState: 'released',
@@ -389,8 +660,10 @@ export const recordLapse = mutation({
         releaseReason: bounded(args.reason, 400),
         releaseProposedBy: 'user',
         releasedAt: ts,
-        updatedAt: ts,
+        ...userTouch(ts),
       });
+    } else if ((args.reasonSource ?? 'user') === 'user') {
+      await ctx.db.patch(args.workId, userTouch(ts));
     }
     return lapseId;
   },
@@ -457,8 +730,10 @@ export const completeStep = mutation({
       await ctx.db.patch(args.workId, {
         stepProgress: nextProgress,
         stepProgressMigratedAt: work.stepProgressMigratedAt ?? ts,
-        updatedAt: ts,
+        ...(source === 'user' ? userTouch(ts) : { updatedAt: ts }),
       });
+    } else if (source === 'user') {
+      await ctx.db.patch(args.workId, userTouch(ts));
     }
     if (!completedSteps.some((step) => step.stepKey === args.stepKey)) {
       await ctx.db.patch(plan._id, {
@@ -895,6 +1170,11 @@ export const finishCapture = mutation({
         primaryAreaId: v.optional(v.id('areas')),
         relatedAreaIds: v.optional(v.array(v.id('areas'))),
         shape: v.optional(workShapeValidator),
+        horizon: v.optional(albatrossHorizonValidator),
+        // Shape-owned data the splitter read from the text. Items arrive as
+        // plain lines; the mutation gives them ids and times.
+        listItems: v.optional(v.array(v.string())),
+        metric: v.optional(albatrossMetricValidator),
       }),
     ),
   },
@@ -925,9 +1205,14 @@ export const finishCapture = mutation({
         captureId: args.captureId,
         primaryAreaId,
         shape: item.shape,
+        listItems: item.shape === 'list' ? newListItems(item.listItems || [], ts) : undefined,
+        metric: item.shape === 'practice' && item.metric ? normalizedMetric(item.metric) : undefined,
         workState: 'active',
         agentState: 'researching',
         lastAgentRunAt: ts,
+        horizon: item.horizon,
+        horizonWakeAt: item.horizon?.notBefore,
+        lastUserTouchAt: ts,
         createdAt: ts,
         updatedAt: ts,
       });
@@ -1195,7 +1480,7 @@ export const answerQuestion = mutation({
           status: 'done',
           agentState: 'idle',
           questions: legacyQuestions,
-          updatedAt: ts,
+          ...userTouch(ts),
         });
         if (work.workState !== 'done') await recordWorkCompletion(ctx, work, ts);
       } else {
@@ -1204,7 +1489,7 @@ export const answerQuestion = mutation({
           agentState: 'researching',
           status: work.status === 'needs_answers' ? 'captured' : work.status,
           questions: legacyQuestions,
-          updatedAt: ts,
+          ...userTouch(ts),
         });
       }
     }
@@ -1374,6 +1659,10 @@ function projectedPlanSteps(
   // verification renders as nothing, never as an understated level.
   const verificationFor = (identity: string, done: boolean) =>
     stepEvidence ? stepVerification(identity, done, stepEvidence) : null;
+  // A confirmed verification is final. The step reads as done everywhere,
+  // so no watcher or gate spends another check on it.
+  const confirmedFor = (identity: string) =>
+    Boolean(stepEvidence && hasConfirmedEvidence(identity, stepEvidence));
   const contractFields = (action: PlanStepAction) => ({
     stepMode: action.stepMode || null,
     doneWhen: bounded(action.doneWhen, 300) || null,
@@ -1385,7 +1674,9 @@ function projectedPlanSteps(
     .map(({ action, key, identity }) => {
       const applied = appliedByKey.get(key);
       const done =
-        completedIdentities.has(identity) || Boolean(applied?.cardId && completedCardIds.has(applied.cardId));
+        completedIdentities.has(identity) ||
+        Boolean(applied?.cardId && completedCardIds.has(applied.cardId)) ||
+        confirmedFor(identity);
       return {
         key,
         identity,
@@ -1402,7 +1693,7 @@ function projectedPlanSteps(
   const physical = planSteps
     .filter((step) => step.kind === 'physical')
     .map(({ action, key, identity }) => {
-      const done = completedIdentities.has(identity);
+      const done = completedIdentities.has(identity) || confirmedFor(identity);
       return {
         key,
         identity,
@@ -1481,6 +1772,14 @@ async function projectedWorkRows(
   );
   const selectedWorkIds = new Set(boundedProjection.items.map(({ row }) => String(row._id)));
   const projectedEntries = rowPlans.filter(({ row }) => selectedWorkIds.has(String(row._id)));
+  // A practice carries a small summary of its logs, so the Work list can show
+  // the latest value and the streak without a second query per row.
+  const ts = now();
+  const metricSummaries = new Map<string, ReturnType<typeof metricSummary>>();
+  for (const { row } of projectedEntries) {
+    if (!row.metric && row.shape !== 'practice') continue;
+    metricSummaries.set(String(row._id), metricSummary(await metricEntriesForWork(ctx, row._id), ts));
+  }
 
   const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
   const planByWork = new Map(
@@ -1545,6 +1844,13 @@ async function projectedWorkRows(
       guideSteps: steps,
       scheduledStartAt,
       scheduledEndAt,
+      horizon: row.horizon ?? null,
+      lastUserTouchAt: row.lastUserTouchAt ?? null,
+      shape: row.shape ?? null,
+      listItems: row.listItems ?? null,
+      metric: row.metric ?? null,
+      milestones: row.milestones ?? null,
+      metricSummary: metricSummaries.get(String(row._id)) ?? null,
     };
   });
 }
@@ -1576,10 +1882,12 @@ export const executionSnapshot = query({
 });
 
 async function recentOpenWork(ctx: QueryCtx, limit = 500) {
+  const ts = now();
   const rows = await ctx.db.query('albatrossIntents').withIndex('by_updatedAt').order('desc').take(limit);
   return rows.filter((row) => {
     const state = row.workState || row.status;
-    return !['done', 'released', 'archived'].includes(state);
+    // Dormant Work is kept, not carried. No conductor pass reads it.
+    return !['done', 'released', 'archived'].includes(state) && !isDormant(row, ts);
   });
 }
 
@@ -1632,15 +1940,18 @@ export const stalenessReviewCandidates = internalQuery({
   handler: async (ctx) => {
     const ts = now();
     const rows = await recentOpenWork(ctx);
-    return rows
-      .filter((row) => isStale(row, ts))
-      .map((row) => ({
-        userId: row.userId,
-        workId: String(row._id),
-        workTitle: row.title || row.rawText.slice(0, 180),
-        updatedAt: row.updatedAt,
-      }))
-      .slice(0, 100);
+    return (
+      rows
+        // `isStale` reads the shape policy: a list or a practice is never stale.
+        .filter((row) => shapeAllows(row.shape, 'staleness') && isStale(row, ts))
+        .map((row) => ({
+          userId: row.userId,
+          workId: String(row._id),
+          workTitle: row.title || row.rawText.slice(0, 180),
+          updatedAt: row.updatedAt,
+        }))
+        .slice(0, 100)
+    );
   },
 });
 
@@ -1695,6 +2006,30 @@ export const clearPendingStepEvidence = internalMutation({
 
 const MAIL_WATCH_LEASE_MS = 10 * 60 * 1000;
 
+/**
+ * True while the applied plan holds a mail-confirmation step that is neither
+ * done nor already confirmed. A confirmed step is final and never watched again.
+ */
+async function openMailStepRemains(ctx: QueryCtx, work: Doc<'albatrossIntents'>) {
+  if (!work.latestPlanId) return false;
+  const plan = await ctx.db.get(work.latestPlanId);
+  if (!plan || plan.userId !== work.userId) return false;
+  const evidence = await ctx.db
+    .query('albatrossEvidence')
+    .withIndex('by_user_target', (q) =>
+      q.eq('userId', work.userId).eq('targetKind', 'work').eq('targetId', String(work._id)),
+    )
+    .order('desc')
+    .take(40);
+  const steps = projectedPlanSteps(
+    plan,
+    new Set(),
+    work.stepProgress as StepProgressEntry[] | undefined,
+    evidence as StepEvidenceLike[],
+  );
+  return steps.some((step) => step.evidenceKind === 'mail_confirmation' && stepNeedsCheck(step));
+}
+
 /** Works whose applied plan still expects a mail confirmation for a step. */
 export const mailWatchCandidates = internalQuery({
   args: {},
@@ -1704,14 +2039,21 @@ export const mailWatchCandidates = internalQuery({
       .query('albatrossIntents')
       .withIndex('by_mail_watch', (q) => q.gt('mailWatchAt', 0))
       .take(25);
-    return rows
-      .filter(
-        (row) =>
-          ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
-          (!row.mailWatchClaimedAt || ts - row.mailWatchClaimedAt >= MAIL_WATCH_LEASE_MS),
-      )
-      .slice(0, 4)
-      .map((row) => ({ userId: row.userId, workId: String(row._id) }));
+    const open = rows.filter(
+      (row) =>
+        ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
+        !isDormant(row, ts) &&
+        // The shape policy decides which shapes the watcher may poll.
+        shapeAllows(row.shape, 'mailWatch') &&
+        (!row.mailWatchClaimedAt || ts - row.mailWatchClaimedAt >= MAIL_WATCH_LEASE_MS),
+    );
+    const candidates: Array<{ userId: string; workId: string }> = [];
+    for (const row of open) {
+      if (candidates.length >= 4) break;
+      if (!(await openMailStepRemains(ctx, row))) continue;
+      candidates.push({ userId: row.userId, workId: String(row._id) });
+    }
+    return candidates;
   },
 });
 
@@ -1872,6 +2214,69 @@ export const evidenceReconcileTick = internalAction({
   },
 });
 
+/** Dormant Work whose sleep date passed and whose wake has not fired. */
+export const horizonWakeCandidates = internalQuery({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const ts = now();
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_horizon_wake', (q) => q.gt('horizonWakeAt', 0).lte('horizonWakeAt', ts))
+      .take(Math.min(Math.max(args.limit ?? 50, 1), 200));
+    return rows
+      .filter(
+        (row) => wakeIsDue(row, ts) && !['done', 'released', 'archived'].includes(row.workState || 'active'),
+      )
+      .map((row) => ({
+        userId: row.userId,
+        workId: String(row._id),
+        title: row.title || row.rawText.slice(0, 180),
+        notBefore: row.horizon?.notBefore ?? 0,
+      }));
+  },
+});
+
+/** Wake one Work: the kind moves to "now" and the wake is recorded once. */
+export const wakeHorizon = internalMutation({
+  args: { workId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const ts = now();
+    const work = await ctx.db.get(args.workId);
+    if (!work?.horizon || !wakeIsDue(work, ts)) return null;
+    const horizon = wokenHorizon(work.horizon, ts);
+    // The wake is not a user touch. `updatedAt` moves so the Work page shows it.
+    await ctx.db.patch(args.workId, { horizon, horizonWakeAt: undefined, updatedAt: ts });
+    return {
+      userId: work.userId,
+      workId: String(args.workId),
+      title: work.title || work.rawText.slice(0, 180),
+      notBefore: horizon.notBefore ?? 0,
+    };
+  },
+});
+
+/** The daily wake. One calm line per Work, once. */
+export const horizonWakeTick = internalAction({
+  args: {},
+  handler: async (ctx: ActionCtx) => {
+    const refs = (internal as any).albatrossWorkV2;
+    const candidates = await ctx.runQuery(refs.horizonWakeCandidates, {});
+    let woken = 0;
+    for (const candidate of candidates) {
+      const wake = await ctx.runMutation(refs.wakeHorizon, { workId: candidate.workId });
+      if (!wake) continue;
+      woken += 1;
+      await ctx.runMutation((internal as any).albatrossNotifications.queueHorizonWake, {
+        userId: wake.userId,
+        workId: wake.workId,
+        title: wake.title,
+        notBefore: wake.notBefore,
+      });
+    }
+    if (candidates.length) console.log(`[horizon wake] woke ${woken}/${candidates.length}`);
+  },
+});
+
 export const workDetail = query({
   args: {
     ...callerArgs,
@@ -1930,6 +2335,8 @@ export const workDetail = query({
     );
     const { scheduledStartAt, scheduledEndAt } = scheduledWindow(plan);
     const application = applications.sort((a, b) => b.createdAt - a.createdAt)[0] || null;
+    const entries =
+      work.metric || work.shape === 'practice' ? await metricEntriesForWork(ctx, args.workId) : [];
     return {
       work,
       plan,
@@ -1937,6 +2344,14 @@ export const workDetail = query({
       questions,
       areaLinks,
       application,
+      // Shape-owned data for the detail body. Entries are newest first.
+      metricEntries: entries.map((row) => ({
+        _id: String(row._id),
+        at: row.at,
+        value: row.value,
+        note: row.note ?? null,
+      })),
+      metricSummary: work.metric || work.shape === 'practice' ? metricSummary(entries, now()) : null,
       execution: {
         currentStep: guideSteps.find((step) => !step.done) || null,
         guideSteps,

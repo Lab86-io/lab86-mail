@@ -1,115 +1,24 @@
 'use client';
 
-/* Research refs — Mobbin: Superlist "Capture with voice" gradient card + pillowtalk transcribe
- * (calm full-screen wash, borderless input), Meta AI orb + Tolan glowing blob (listening state),
- * Threads glowing compose border + Cosmos blob wash + Jitter full-bleed prompt (takeover tone).
- * Built from fully-designed registry pieces: SmoothUI Dot Morph Button (squish spring 600/22)
- * + SmoothUI Siri Orb as the "dot", @victorwelander's 21st.dev Gooey Text Morphing for the
- * cycling label, and Chamaac UI DancingLetters for the
- * capture takeover. Buttons stay text-only — no decorative icons. */
-
 import { Mic } from 'lucide-react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
-import { Button } from '@/components/ui/button';
-import { DotGridGlow } from '@/components/ui/dot-grid-glow';
-import { useSidebar } from '@/components/ui/sidebar';
-import { openPipWindow } from '@/lib/albatross/pip-window';
-import { capturePillHidden, useClientStore } from '@/lib/client-state';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };
 
-// Lazy Chamaac piece: DancingLetters pulls in
-// next/font, so neither may sit on the button's initial bundle path. They only
-// download the first time the takeover opens.
-const DancingLetters = dynamic(() => import('@/components/dancing-letters'), { ssr: false });
+// The full-screen capture takeover is retired. The Ask / Hold bar is the one
+// door: the rail button opens the bar with the chip preset to Hold. What
+// survives here is the name of that door and the voice capture the bar reuses.
 
-/* ------------------------------------------------------------------ */
-/* Pure helpers (exported for bun:test - keep them DOM-free)           */
-/* ------------------------------------------------------------------ */
-
-/** The one name for the one door into the product. It used to rotate through
- *  five labels, so the most important control in the app had no fixed name. */
+/** The one name for the one door into the product. */
 export const CAPTURE_BUTTON_LABEL = 'Get this off my mind';
 
-export type CaptureState = 'closed' | 'editing' | 'split' | 'discard' | 'saving' | 'saved';
-
-interface CaptureArea {
-  _id: string;
-  name: string;
-  kind?: string | null;
-  description?: string | null;
-  externalId?: string | null;
-  primaryDomain?: string | null;
-}
-
-export type CaptureEvent =
-  | { type: 'open' }
-  | { type: 'submit'; multi: boolean }
-  | { type: 'split' }
-  | { type: 'keep' }
-  | { type: 'edit' }
-  | { type: 'dismiss'; hasText: boolean }
-  | { type: 'discard' }
-  | { type: 'saved' }
-  | { type: 'error' }
-  | { type: 'finish' };
-
-/** Capture overlay state machine. Invalid transitions return the current state
- *  unchanged so stray timers/keystrokes can never wedge the overlay. */
-export function nextCaptureState(state: CaptureState, event: CaptureEvent): CaptureState {
-  switch (event.type) {
-    case 'open':
-      return state === 'closed' ? 'editing' : state;
-    case 'submit':
-      return state === 'editing' ? (event.multi ? 'split' : 'saving') : state;
-    case 'split':
-    case 'keep':
-      return state === 'split' ? 'saving' : state;
-    case 'edit':
-      return state === 'split' || state === 'discard' ? 'editing' : state;
-    case 'dismiss':
-      // Saving/saved can't be dismissed - the confirmation beat always lands.
-      if (state === 'editing' || state === 'split') return event.hasText ? 'discard' : 'closed';
-      if (state === 'discard') return 'closed';
-      return state;
-    case 'discard':
-      return state === 'discard' ? 'closed' : state;
-    case 'saved':
-      return state === 'saving' ? 'saved' : state;
-    case 'error':
-      return state === 'saving' ? 'editing' : state;
-    case 'finish':
-      return state === 'saved' ? 'closed' : state;
-  }
-}
-
-/** Shape the pieces to persist from a raw dump + the user's split decision.
- *  Verbatim contract: only the ends are trimmed, inner text is untouched. */
-export function resolveCapturePieces(rawText: string, decision: 'split' | 'keep'): string[] {
-  const trimmed = rawText.trim();
-  if (!trimmed) return [];
-  return decision === 'split' ? splitIntentText(trimmed) : [trimmed];
-}
-
-/** Request document PiP synchronously inside the click gesture, then begin persistence. */
-export function requestPipBeforePersist<T>(requestPip: () => unknown, persist: () => T): T {
-  try {
-    void Promise.resolve(requestPip()).catch(() => undefined);
-  } catch {
-    // PiP is an enhancement. A browser denial must never lose the capture.
-  }
-  return persist();
-}
-
 /* ------------------------------------------------------------------ */
-/* Voice (SpeechRecognition, same approach as the old capture dialog)  */
+/* Voice (SpeechRecognition)                                           */
 /* ------------------------------------------------------------------ */
 
-type SpeechRecognitionLike = {
+export type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
@@ -120,250 +29,74 @@ type SpeechRecognitionLike = {
   onerror: (() => void) | null;
   onend: (() => void) | null;
 };
-type SpeechResultEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
+export type SpeechResultEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
 type SpeechWindow = Window & {
   SpeechRecognition?: new () => SpeechRecognitionLike;
   webkitSpeechRecognition?: new () => SpeechRecognitionLike;
 };
 
-const CAPTURE_PROMPT = 'What are you trying to get out of your head?';
-
-type CaptureGeo = { latitude: number; longitude: number };
-
-/** Best-effort location for the plan kick. Resolves null on denial, error, or
- *  after timeoutMs - it never rejects and never blocks the close beat. */
-function resolveGeo(timeoutMs = 2500): Promise<CaptureGeo | null> {
-  return new Promise((resolve) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      resolve(null);
-      return;
-    }
-    let settled = false;
-    const finish = (value: CaptureGeo | null) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    const timer = window.setTimeout(() => finish(null), timeoutMs);
-    try {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          window.clearTimeout(timer);
-          finish({ latitude: position.coords.latitude, longitude: position.coords.longitude });
-        },
-        () => {
-          window.clearTimeout(timer);
-          finish(null);
-        },
-        { timeout: timeoutMs, maximumAge: 600_000 },
-      );
-    } catch {
-      window.clearTimeout(timer);
-      finish(null);
-    }
-  });
+/** The running transcript of one recognition event. */
+export function transcriptOf(event: SpeechResultEvent): string {
+  let transcript = '';
+  for (let i = 0; i < event.results.length; i += 1) {
+    transcript += event.results[i][0]?.transcript ?? '';
+  }
+  return transcript;
 }
 
-function _CaptureAreaPicker({
-  areas,
-  selectedAreaId,
-  suggestedAreaId,
-  prompted,
-  onSelect,
-}: {
-  areas: CaptureArea[];
-  selectedAreaId: string | null;
-  suggestedAreaId: string | null;
-  prompted: boolean;
-  onSelect: (areaId: string) => void;
-}) {
-  if (areas.length === 0) return null;
-  const visible = areas.slice(0, 7);
-  const overflow = areas.slice(7);
-  const effectiveAreaId = selectedAreaId || suggestedAreaId;
-  const effectiveArea = areas.find((area) => area._id === effectiveAreaId) ?? null;
-  return (
-    <div
-      className={cn(
-        'mx-auto flex max-w-xl flex-col items-center gap-2 rounded-xl px-3 py-2 text-center transition-colors',
-        prompted && 'bg-[var(--color-warning-soft)]',
-      )}
-    >
-      <p
-        className={cn(
-          'text-[11.5px]',
-          prompted ? 'font-medium text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
-        )}
-      >
-        {prompted
-          ? 'Which area should this become part of?'
-          : effectiveArea
-            ? `${selectedAreaId ? 'Area' : 'Suggested area'} / ${effectiveArea.name}`
-            : 'Choose an area for this intent'}
-      </p>
-      <div className="flex max-w-full flex-wrap justify-center gap-1.5">
-        {visible.map((area) => {
-          const active = effectiveAreaId === area._id;
-          return (
-            <button
-              key={area._id}
-              type="button"
-              onClick={() => onSelect(area._id)}
-              className={cn(
-                'max-w-36 truncate rounded-full border px-2.5 py-1 text-[11.5px] transition-colors',
-                active
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]/70 text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-              )}
-            >
-              {area.name}
-            </button>
-          );
-        })}
-        {overflow.length ? (
-          <select
-            value={overflow.some((area) => area._id === effectiveAreaId) ? effectiveAreaId || '' : ''}
-            onChange={(event) => {
-              if (event.target.value) onSelect(event.target.value);
-            }}
-            className="max-w-36 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/70 px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] outline-none focus:border-[var(--color-accent)]"
-          >
-            <option value="">More areas</option>
-            {overflow.map((area) => (
-              <option key={area._id} value={area._id}>
-                {area.name}
-              </option>
-            ))}
-          </select>
-        ) : null}
-      </div>
-    </div>
-  );
+/** The typed text with the spoken tail after it. The tail replaces itself as it grows. */
+export function appendTranscript(base: string, transcript: string): string {
+  const anchor = base.trim();
+  if (!anchor) return transcript;
+  return `${anchor} ${transcript}`;
 }
 
-/* ------------------------------------------------------------------ */
-/* Launcher (button + full-screen capture takeover)                    */
-/* ------------------------------------------------------------------ */
+export function speechRecognitionAvailable(win: unknown): boolean {
+  const speechWindow = win as SpeechWindow | undefined;
+  return Boolean(speechWindow?.SpeechRecognition || speechWindow?.webkitSpeechRecognition);
+}
 
-export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: string) => void }) {
-  const reduceMotion = useReducedMotion() ?? false;
-  // The floating assistant panel (Cmd+K) shares the bottom-right slot; the
-  // launcher yields while it is open, exactly like Ask Assistant used to.
-  const aiBarOpen = useClientStore((s) => s.aiBarOpen);
-  // With the rail expanded, its capture button is the door; the pill only
-  // floats when that button is collapsed to an icon or off-canvas (mobile).
-  const { open: railOpen, isMobile } = useSidebar();
-  // An open thread shows "This is an Albatross" in its own action bar, in the
-  // same corner this pill occupies.
-  const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
-  const captureOpen = useClientStore((s) => s.captureOpen);
-  const captureSeed = useClientStore((s) => s.captureSeed);
-  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+export interface VoiceCapture {
+  supported: boolean;
+  listening: boolean;
+  start: () => void;
+  stop: () => void;
+}
 
-  const [state, setState] = useState<CaptureState>('closed');
-  const [text, setText] = useState('');
-  const [source, setSource] = useState<'text' | 'voice'>('text');
-  const [savedCount, setSavedCount] = useState(1);
+/**
+ * Voice into a text field. `read()` gives the text at the moment the user
+ * starts to talk; `write(text)` receives the text with the spoken tail. The
+ * recognition stops on its own at the end of a phrase.
+ */
+export function useVoiceCapture(read: () => string, write: (text: string) => void): VoiceCapture {
+  const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const [hoverDevice, setHoverDevice] = useState(false);
-
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const textRef = useRef(text);
-  const launcherRef = useRef<HTMLButtonElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  textRef.current = text;
-
-  const send = useCallback((event: CaptureEvent) => {
-    setState((current) => nextCaptureState(current, event));
-  }, []);
-
-  const overlayOpen = state !== 'closed';
-
-  // The rail button and the empty states open capture through the store.
-  useEffect(() => {
-    if (!captureOpen) return;
-    setCaptureOpen(false);
-    // A thread or a selection arrives as the starting text; the user still
-    // edits it in their own words before handing it over.
-    if (captureSeed) setText(captureSeed);
-    send({ type: 'open' });
-  }, [captureOpen, captureSeed, send, setCaptureOpen]);
-
-  // Dot-morph squish only makes sense on hover-capable pointers (SmoothUI).
-  useEffect(() => {
-    const query = window.matchMedia('(hover: hover) and (pointer: fine)');
-    setHoverDevice(query.matches);
-    const onChange = (event: MediaQueryListEvent) => setHoverDevice(event.matches);
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
+  const readRef = useRef(read);
+  readRef.current = read;
+  const writeRef = useRef(write);
+  writeRef.current = write;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const speechWindow = window as SpeechWindow;
-    setVoiceSupported(Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition));
+    setSupported(speechRecognitionAvailable(window));
   }, []);
 
-  // Overlay lifecycle: lock body scroll, wire Escape, focus the textarea on
-  // open, reset + return focus on close. Capture can open from the rail
-  // button while the pill is hidden, so the element that had focus at open is
-  // recorded and restored — the launcher is only a fallback while visible.
-  const openerRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!overlayOpen) return;
-    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      send({ type: 'dismiss', hasText: textRef.current.trim().length > 0 });
-    };
-    window.addEventListener('keydown', onKey);
-    const focusId = window.setTimeout(() => textareaRef.current?.focus(), 60);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKey);
-      window.clearTimeout(focusId);
-    };
-  }, [overlayOpen, send]);
+  useEffect(
+    () => () => {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+    },
+    [],
+  );
 
-  const wasOpenRef = useRef(false);
-  useEffect(() => {
-    if (overlayOpen) {
-      wasOpenRef.current = true;
-      return;
-    }
-    recognitionRef.current?.abort();
-    recognitionRef.current = null;
-    setListening(false);
-    setText('');
-    setSource('text');
-    setSavedCount(1);
-    setSaveError(null);
-    // Only a real dismissal moves focus; the initial mount restores nothing.
-    if (!wasOpenRef.current) return;
-    wasOpenRef.current = false;
-    const opener = openerRef.current;
-    openerRef.current = null;
-    const launcher = launcherRef.current;
-    if (opener?.isConnected && opener !== document.body) {
-      opener.focus({ preventScroll: true });
-    } else if (launcher && launcher.offsetParent !== null) {
-      // offsetParent is null while the pill wrapper is hidden.
-      launcher.focus({ preventScroll: true });
-    }
-  }, [overlayOpen]);
-
-  const stopListening = () => {
+  const stop = useCallback(() => {
     recognitionRef.current?.stop();
     setListening(false);
-  };
+  }, []);
 
-  const startListening = () => {
+  const start = useCallback(() => {
+    if (typeof window === 'undefined') return;
     const speechWindow = window as SpeechWindow;
     const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (!Recognition) return;
@@ -371,323 +104,57 @@ export function IntentCaptureLauncher({ onCaptured }: { onCaptured: (intentId: s
     recognition.lang = 'en-US';
     recognition.interimResults = true;
     recognition.continuous = false;
-    // Anchor to whatever was already typed, then live-replace the spoken tail
-    // as interim results grow - updates never duplicate the running transcript.
-    const base = textRef.current.trim();
-    const joiner = base ? ' ' : '';
-    recognition.onresult = (event) => {
-      let transcript = '';
-      for (let i = 0; i < event.results.length; i += 1) {
-        transcript += event.results[i][0]?.transcript ?? '';
-      }
-      setSource('voice');
-      setText(`${base}${joiner}${transcript}`);
-    };
+    const base = readRef.current();
+    recognition.onresult = (event) => writeRef.current(appendTranscript(base, transcriptOf(event)));
     recognition.onerror = () => setListening(false);
     recognition.onend = () => setListening(false);
     recognitionRef.current = recognition;
     setListening(true);
     recognition.start();
-  };
+  }, []);
 
-  const advanceWork = (workId: string, geo: CaptureGeo | null) => {
-    try {
-      void fetch(`/api/albatross/work/${encodeURIComponent(workId)}/advance`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          ...(geo ? { geo } : {}),
-        }),
-      }).catch(() => {});
-    } catch {
-      /* ignore - plan kick is best-effort */
-    }
-  };
+  return { supported, listening, start, stop };
+}
 
-  const persist = async (rawText: string, captureSource: 'text' | 'voice') => {
-    // Start the (bounded, silent) geo lookup in parallel with the save so it
-    // usually resolves before the kicks fire.
-    const geoPromise = resolveGeo();
-    try {
-      const response = await fetch('/api/albatross/capture', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          rawText,
-          transcript: captureSource === 'voice' ? rawText : undefined,
-          source: captureSource,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || 'Capture failed.');
-      const ids = Array.isArray(body.workIds) ? body.workIds.map(String) : [];
-      setSavedCount(Math.max(ids.length, 1));
-      if (ids[0]) onCaptured(ids[0]);
-      send({ type: 'saved' });
-      window.setTimeout(() => send({ type: 'finish' }), 900);
-      // Kicks wait for geo (max 2.5s) but the close beat above never does.
-      void geoPromise.then((geo) => {
-        for (const id of ids) advanceWork(id, geo);
-      });
-    } catch {
-      setSaveError("Couldn't save that. It's still here - try again.");
-      send({ type: 'error' });
-    }
-  };
-
-  const handleSave = () => {
-    if (listening) stopListening();
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    // Document PiP requires the original click gesture. Open it before the
-    // request so planning and questions may continue outside the app window.
-    setSaveError(null);
-    send({ type: 'submit', multi: false });
-    void requestPipBeforePersist(openPipWindow, () => persist(trimmed, source));
-  };
-
-  const decide = (decision: 'split' | 'keep') => {
-    send({ type: decision });
-    void requestPipBeforePersist(openPipWindow, () => persist(text.trim(), source));
-  };
-
-  const pieces = state === 'split' ? splitIntentText(text.trim()) : [];
-  const squished = hovered && hoverDevice && !reduceMotion;
-
+/** The microphone toggle. Renders nothing when the browser has no speech recognition. */
+export function VoiceCaptureButton({
+  voice,
+  disabled = false,
+  className,
+}: {
+  voice: VoiceCapture;
+  disabled?: boolean;
+  className?: string;
+}) {
+  if (!voice.supported) return null;
   return (
-    <>
-      {/* Bottom-right, and the only floating control in the app. One name,
-          one door: while the expanded rail already shows the capture button,
-          the pill stays away instead of doubling the entry on screen. Ghost
-          until hovered: a transparent pill that fills with the accent. No
-          glyph before the text. */}
-      <div
-        className={cn(
-          'pointer-events-none fixed bottom-6 right-6 z-50',
-          capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen) && 'hidden',
-        )}
-      >
-        <button
-          ref={launcherRef}
-          type="button"
-          onClick={() => send({ type: 'open' })}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
-          aria-haspopup="dialog"
-          aria-label={CAPTURE_BUTTON_LABEL}
-          className={cn(
-            'group pointer-events-auto flex h-10 cursor-pointer items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-4 text-[13px] font-medium leading-5 text-[var(--color-text)] shadow-[var(--shadow-soft)] backdrop-blur-sm transition-[colors,transform] duration-150 ease-out hover:border-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)] hover:shadow-[var(--shadow-pop)] focus-visible:border-[var(--color-accent)] focus-visible:bg-[var(--color-accent)] focus-visible:text-[var(--color-accent-foreground)] focus-visible:outline-none active:scale-[0.97]',
-            squished && 'scale-[1.03]',
-          )}
-        >
-          {CAPTURE_BUTTON_LABEL}
-        </button>
-      </div>
-
-      <AnimatePresence>
-        {overlayOpen ? (
-          <motion.div
-            key="intent-capture"
-            className="fixed inset-0 z-[60]"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.22 }}
-          >
-            {/* Backdrop: the app's own paper + dot grid, near-opaque so the
-                dump text sits on a clean page (no shader washes — they read
-                gray and die with the WebGL context). */}
-            <div
-              aria-hidden
-              className="absolute inset-0 overflow-hidden bg-[var(--color-bg)]/97"
-              onClick={() => send({ type: 'dismiss', hasText: text.trim().length > 0 })}
-            >
-              <DotGridGlow />
-            </div>
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-              <motion.div
-                role="dialog"
-                aria-modal="true"
-                aria-label="New Work"
-                className="pointer-events-auto w-full max-w-2xl"
-                initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 14 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 8 }}
-                transition={{ duration: reduceMotion ? 0 : 0.26, ease: 'easeOut' }}
-              >
-                {state === 'saved' ? (
-                  <div className="flex min-h-64 flex-col items-center justify-center gap-5 text-center">
-                    {/* The dump tucks away - the opening note of the transformation. */}
-                    <motion.p
-                      initial={{ opacity: 1, y: 0, scale: 1 }}
-                      animate={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -30, scale: 0.93 }}
-                      transition={{ duration: 0.55, delay: 0.15, ease: 'easeIn' }}
-                      className="max-h-40 max-w-xl overflow-hidden whitespace-pre-wrap text-lg text-[var(--color-text-muted)]"
-                    >
-                      {text.trim()}
-                    </motion.p>
-                    <motion.p
-                      initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.35, delay: 0.3 }}
-                      className="font-display text-2xl text-[var(--color-text)]"
-                    >
-                      {savedCount === 1
-                        ? 'Got it. Making Work.'
-                        : `Got it. I found ${savedCount} Work items.`}
-                    </motion.p>
-                  </div>
-                ) : state === 'discard' ? (
-                  <div className="flex flex-col items-center gap-4 text-center">
-                    <p className="font-display text-2xl text-[var(--color-text)]">Discard this thought?</p>
-                    <p className="max-w-md text-[13px] text-[var(--color-text-muted)]">
-                      It hasn't been saved yet.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => send({ type: 'discard' })}
-                      >
-                        Discard
-                      </Button>
-                      <Button type="button" size="sm" onClick={() => send({ type: 'edit' })}>
-                        Keep writing
-                      </Button>
-                    </div>
-                  </div>
-                ) : state === 'split' ? (
-                  <div className="flex flex-col gap-4">
-                    <p className="font-display text-2xl text-[var(--color-text)]">
-                      This looks like {pieces.length} separate things - split them?
-                    </p>
-                    <ul className="flex flex-col gap-2">
-                      {pieces.map((piece, index) => (
-                        <li key={piece} className="flex gap-3 text-[14px] text-[var(--color-text)]">
-                          <span className="tabular-nums text-[var(--color-text-faint)]">{index + 1}.</span>
-                          <span className="min-w-0 flex-1">{piece}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" size="sm" onClick={() => decide('split')}>
-                        Split into {pieces.length}
-                      </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={() => decide('keep')}>
-                        Keep as one
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => send({ type: 'edit' })}>
-                        Back to editing
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-6">
-                    {/* Chamaac DancingLetters heading, split per word so lines
-                        wrap on word boundaries. aria-label keeps the prompt
-                        readable as one sentence for screen readers. */}
-                    <h2 aria-label={CAPTURE_PROMPT} className="text-center">
-                      {reduceMotion ? (
-                        <span className="font-display text-2xl text-[var(--color-text)] sm:text-3xl">
-                          {CAPTURE_PROMPT}
-                        </span>
-                      ) : (
-                        <span
-                          aria-hidden
-                          className="flex flex-wrap items-baseline justify-center gap-x-[0.3em] gap-y-1"
-                        >
-                          {CAPTURE_PROMPT.split(' ').map((word, index) => (
-                            <DancingLetters
-                              // biome-ignore lint/suspicious/noArrayIndexKey: static prompt, order never changes
-                              key={`${word}-${index}`}
-                              text={word}
-                              letterClassName="font-display font-medium text-2xl sm:text-3xl md:text-3xl lg:text-3xl text-[var(--color-text)] dark:text-[var(--color-text)]"
-                            />
-                          ))}
-                        </span>
-                      )}
-                    </h2>
-                    {/* Borderless dump field: writing on the wash, not a form. */}
-                    <textarea
-                      ref={textareaRef}
-                      value={text}
-                      disabled={state === 'saving'}
-                      onChange={(event) => {
-                        setText(event.target.value);
-                        if (source !== 'text') setSource('text');
-                      }}
-                      onKeyDown={(event) => {
-                        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                          event.preventDefault();
-                          handleSave();
-                        }
-                      }}
-                      placeholder="the thing you keep carrying around…"
-                      className="min-h-40 w-full resize-none bg-transparent text-center text-lg leading-relaxed text-[var(--color-text)] caret-[var(--color-accent)] placeholder:text-[var(--color-text-faint)] focus:outline-none sm:text-xl"
-                    />
-                    <div className="flex items-center justify-center gap-3">
-                      {voiceSupported ? (
-                        <button
-                          type="button"
-                          onClick={() => (listening ? stopListening() : startListening())}
-                          aria-pressed={listening}
-                          aria-label={listening ? 'Stop voice capture' : 'Capture with voice'}
-                          className={cn(
-                            'inline-flex size-11 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40',
-                            listening
-                              ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)]'
-                              : 'border-[var(--color-control-border)] bg-[var(--color-bg-elevated)]/70 text-[var(--color-text-muted)] hover:text-[var(--color-accent)]',
-                          )}
-                        >
-                          {listening ? (
-                            /* Pulsing accent blob (Meta AI orb / Tolan), never a red dot. */
-                            <motion.span
-                              className="size-5 rounded-full"
-                              style={{
-                                background:
-                                  'radial-gradient(circle at 35% 35%, var(--color-accent-shine-2), var(--color-accent-shine-1) 70%, transparent)',
-                              }}
-                              animate={
-                                reduceMotion ? undefined : { scale: [1, 1.3, 1], opacity: [0.75, 1, 0.75] }
-                              }
-                              transition={{
-                                duration: 1.8,
-                                repeat: Number.POSITIVE_INFINITY,
-                                ease: 'easeInOut',
-                              }}
-                            />
-                          ) : (
-                            <Mic className="size-4" />
-                          )}
-                        </button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={!text.trim() || state === 'saving'}
-                        className="rounded-full px-6"
-                      >
-                        {state === 'saving' ? 'Saving...' : 'Get it out'}
-                      </Button>
-                    </div>
-                    <p className="text-center text-[11.5px] text-[var(--color-text-faint)]">
-                      {listening
-                        ? 'Listening - just talk, it lands here.'
-                        : `${source === 'voice' ? 'Voice' : 'Text'} / Cmd+Enter to save / Esc to close`}
-                    </p>
-                    {saveError ? (
-                      <p className="text-center text-[12.5px] text-[var(--color-danger)]">{saveError}</p>
-                    ) : null}
-                  </div>
-                )}
-              </motion.div>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </>
+    <button
+      type="button"
+      onClick={() => (voice.listening ? voice.stop() : voice.start())}
+      disabled={disabled}
+      aria-pressed={voice.listening}
+      aria-label={voice.listening ? 'Stop voice capture' : 'Capture with voice'}
+      title={voice.listening ? 'Stop voice capture' : 'Capture with voice'}
+      className={cn(
+        'inline-flex size-7 items-center justify-center rounded-md transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/40 disabled:opacity-40',
+        voice.listening
+          ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+          : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]',
+        className,
+      )}
+    >
+      {voice.listening ? (
+        <span
+          aria-hidden
+          className="size-3.5 animate-pulse rounded-full motion-reduce:animate-none"
+          style={{
+            background:
+              'radial-gradient(circle at 35% 35%, var(--color-accent-shine-2), var(--color-accent-shine-1) 70%, transparent)',
+          }}
+        />
+      ) : (
+        <Mic className="size-3.5" />
+      )}
+    </button>
   );
 }

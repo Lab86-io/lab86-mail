@@ -335,10 +335,14 @@ struct AreaDetailView: View {
         if let document = detail.livingBrief?.document,
            detail.livingBrief?.artifactSource == "document-v2" {
             ScrollView {
+                // The area pulse document: the lede, then the pulse lines,
+                // then one prompt, then the live open work. The document
+                // renders its own lede here; there is no masthead above it.
                 BriefDocumentView(
                     document: document,
                     isComposing: detail.livingBrief?.status == "generating",
                     scopeAreaID: detail.identity.id,
+                    rendersLede: true,
                     onReview: { artifactReview = $0 }
                 )
                 .padding(.top, 50)

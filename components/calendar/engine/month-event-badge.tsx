@@ -5,7 +5,7 @@ import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DraggableEvent } from '@/components/calendar/engine/draggable-event';
 import { EventBullet } from '@/components/calendar/engine/event-bullet';
 import { EventDetailsDialog } from '@/components/calendar/engine/event-details-dialog';
-import { contrastTextColor, formatTime } from '@/components/calendar/engine/helpers';
+import { contrastTextColor, formatTime, isPendingEvent } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { cn } from '@/lib/utils';
 
@@ -94,7 +94,12 @@ export function MonthEventBadge({
     typeof eventBadgeVariants
   >['color'];
 
-  const eventBadgeClasses = cn(eventBadgeVariants({ color, multiDayPosition: position, className }));
+  const eventBadgeClasses = cn(
+    eventBadgeVariants({ color, multiDayPosition: position, className }),
+    'transition-colors duration-150',
+  );
+  // A copy the app wrote itself, before the server copy arrived.
+  const pending = isPendingEvent(event);
 
   const marginClass = {
     first: 'ml-1 mr-0',
@@ -108,16 +113,18 @@ export function MonthEventBadge({
       <EventDetailsDialog event={event}>
         <button
           type="button"
+          data-pending={pending ? 'true' : undefined}
           className={eventBadgeClasses}
-          style={
-            event.colorHex
+          style={{
+            ...(event.colorHex
               ? {
                   backgroundColor: event.colorHex,
                   borderColor: event.colorHex,
                   color: contrastTextColor(event.colorHex),
                 }
-              : undefined
-          }
+              : {}),
+            ...(pending ? { borderStyle: 'dashed' } : {}),
+          }}
         >
           <div className="flex items-center gap-1.5 truncate">
             {!['middle', 'last'].includes(position) && badgeVariant === 'dot' && (

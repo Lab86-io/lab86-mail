@@ -6,7 +6,12 @@ import type { HTMLAttributes } from 'react';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DraggableEvent } from '@/components/calendar/engine/draggable-event';
 import { EventDetailsDialog } from '@/components/calendar/engine/event-details-dialog';
-import { contrastTextColor, extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
+import {
+  contrastTextColor,
+  extractConferencingUrl,
+  formatTime,
+  isPendingEvent,
+} from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import { ResizableEvent } from '@/components/calendar/engine/resizable-event';
 import { Avatar } from '@/components/ui/avatar';
@@ -78,6 +83,9 @@ export function EventBlock({ event, className }: IProps) {
   // a free/transparent block should each *look* like what they are.
   const conferencingUrl = extractConferencingUrl(event.conferencing);
   const tentative = event.status === 'tentative';
+  // A copy the app wrote itself, before the server copy arrived. Dashed
+  // border, no hatch: the slot is real, the details are not final.
+  const pending = isPendingEvent(event);
   const free = event.busy === false;
   const participants = event.participants || [];
   const showAvatars = showTime && heightInPixels >= 72 && participants.length > 1;
@@ -102,11 +110,12 @@ export function EventBlock({ event, className }: IProps) {
           <EventDetailsDialog event={event}>
             <button
               type="button"
-              className={calendarWeekEventCardClasses}
+              data-pending={pending ? 'true' : undefined}
+              className={cn(calendarWeekEventCardClasses, 'transition-colors duration-150')}
               style={{
                 height: `${heightInPixels}px`,
                 ...colorStyle,
-                ...(tentative ? { borderStyle: 'dashed' } : {}),
+                ...(tentative || pending ? { borderStyle: 'dashed' } : {}),
               }}
             >
               {/* Tentative events get a diagonal hatch — the universal calendar

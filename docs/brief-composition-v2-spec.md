@@ -191,3 +191,70 @@ Action vocabulary is unchanged from v1 `BRIEF_ACTION_TYPES` + area actions
    for the canvas-promotion signal?
 5. Undo semantics for `archive_thread` on iOS offline queue (`CommandOutbox`) — undo = enqueue
    inverse command, or cancel pending?
+
+## 11. 2026-09-03 budget
+
+Decided by Jakob on 2026-09-03 (refinement round, Wave C). The Daily Brief and the Area brief
+now compose from a fixed budget. The v2 node tree stays. The tool-loop composer, the HTML
+artifact model call, and the month pass are gone.
+
+### Daily Brief
+
+- Budget by plan tier: `BRIEF_ITEM_BUDGET = { free: 5, pro: 7, team: 9 }`
+  (`lib/mail/brief-score.ts`). The tier comes from the stored entitlement
+  (`lib/mail/brief-plan.ts`); unknown plans default to `pro`. `admin` maps to `team`.
+- Three lanes replace the seven: `answer` (max 3), `today`, `know` (max 3). Calendar events
+  for today sit in the `today` lane and do not count against the budget (max 4 events).
+- Deterministic score before any model call (`scoreBriefCandidate`): direct-to-you +3,
+  sender the user has written to before +3, thread the user took part in +2, due date inside
+  48 hours +3, `needs_reply` in the Smart Category primary or secondary +2, list or bulk or
+  automated sender -4. Items under score 1 are noise. `selectBriefItems` fills the budget
+  top-K by score, then `receivedAt` descending, then key, one entry per thread.
+- `CANDIDATE_LIMIT` is 120. The enrich cap is 12 (`LAB86_MAIL_REPORT_MAX_ENRICH` still
+  lowers it). Enrichment runs in score order.
+- One prose model call (`lib/mail/brief-prose.ts`, feature `daily_brief_prose`) writes the
+  lede (max 4 sentences), one line per item (max 20 words, may be empty), and the week ahead
+  (max 4 sentences with weekday names and dates from the user's timezone and the forward
+  7-day calendar). The prompt forbids the word "AI", emoji, and ALL-CAPS words; the parser
+  removes any sentence that names "AI". Without a model the letter is deterministic.
+- The document (`lib/mail/brief-budget-document.ts`) is:
+
+  | region id | tree | when |
+  |---|---|---|
+  | `lede` | `hero { text role:lede }` | always |
+  | `answer` | `entity_list title:"Answer" variant:rows` | items |
+  | `today` | `entity_list title:"Today" variant:rows` (event refs, then thread refs) | items or events today |
+  | `know` | `entity_list title:"Know" variant:rows` | items |
+  | `week-ahead` | `text role:body` | prose present |
+  | `areas` | `entity_list title:"Areas" variant:compact` (area refs, max 3) | areas |
+
+  Each thread item: `ref {kind:"thread", id, account, label: subject}`,
+  `framing {lane, reason?: the line, sender?: display name}`, `actions: [open_thread]`.
+  Each event item: `ref {kind:"event", id, account, label: title}`,
+  `framing {lane:"today", reason: time range and location}`, `actions: [open_event]`.
+  Each area item: `ref {kind:"area", id, label: name}`, `framing {reason?: one line}`,
+  `actions: [open_area]`. `framing.sender` is new and optional.
+- Stored edition (`dailyReports`): new `sections.answer`, `sections.today`, `sections.know`
+  (items carry `score`, `budgetLane`, `sender`, `line?`), `stats.noise`, `stats.selected`,
+  `prose { lede, weekAhead, model }`, and `tier`. `newPeople`, `fyi`, and `bulkTail` are
+  written empty; `noiseSummary` is no longer written. Old editions still read and render.
+
+### Area brief
+
+- The area brief is a pulse `{ lastChange, nextMove, openQuestion, prose }` (`prose` max 3
+  sentences) from one fast model call (feature `albatross_area_pulse`). It is stored on
+  `albatrossAreaBriefs.pulse` with `pulseUpdatedAt` (`convex/albatrossAreaPulse.ts`).
+- The document is deterministic: `lede` (hero), `pulse` (stack of body lines), `ask`
+  (`prompt` variant `question` with the pending question id, else `capture`), and
+  `open-work` (`query_list area_open_work`). A small HTML fallback is kept in
+  `artifactHtml` and `artifactSource` stays `document-v2`, so `area_home` readers work
+  without change.
+- The Daily Brief embeds at most 3 areas, 1 line each, from the pulse (`nextMove`, then
+  `openQuestion`, then `lastChange`) or the report's area context.
+
+### Model calls per brief
+
+Before (week pass, v2 flag on): up to 3 classify + 15 enrich + 1 narrative + up to 14
+tool-loop steps, about 33. With the flag off the legacy path added a month pass (8 classify +
+30 enrich + 1 narrative + 1 HTML) on top of 1 HTML call: about 60. After: up to 3 classify +
+up to 12 enrich + 1 prose call, at most 16. Area brief: 1 call, down from up to 14 tool-loop steps.

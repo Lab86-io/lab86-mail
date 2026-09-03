@@ -331,6 +331,80 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     fallback: change.payload.fallback
                 )
             )
+        case .workHorizon(let change):
+            return .workHorizon(
+                WorkHorizonSyncPatch(
+                    entityID: change.entityID,
+                    revision: change.revision,
+                    workID: change.payload.workID,
+                    horizon: change.payload.horizon.map(workHorizon),
+                    horizonCleared: change.payload.horizonCleared ?? false
+                )
+            )
+        case .workCaptured(let change):
+            return .workCaptured(
+                WorkCapturedSyncPatch(
+                    entityID: change.entityID,
+                    revision: change.revision,
+                    workIDs: change.payload.workIDs,
+                    existing: change.payload.existing ?? false
+                )
+            )
+        case .workShape(let change):
+            return .workShape(
+                WorkShapeSyncPatch(
+                    entityID: change.entityID,
+                    revision: change.revision,
+                    workID: change.payload.workID,
+                    shape: change.payload.shape.flatMap { WorkShape(rawValue: $0.rawValue) },
+                    listItems: change.payload.listItems.map { items in
+                        items.map { item in
+                            WorkListEntry(
+                                id: item.id,
+                                text: item.text,
+                                done: item.done,
+                                addedAt: Date(timeIntervalSince1970: Double(item.addedAt) / 1000),
+                                doneAt: item.doneAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
+                            )
+                        }
+                    },
+                    milestones: change.payload.milestones.map { rows in
+                        rows.enumerated().map { index, row in
+                            WorkMilestone(
+                                id: row.id,
+                                title: row.title,
+                                done: row.done,
+                                doneAt: row.doneAt.map { Date(timeIntervalSince1970: Double($0) / 1000) },
+                                order: row.order ?? index
+                            )
+                        }
+                    },
+                    metric: change.payload.metric.map { metric in
+                        WorkMetric(
+                            name: metric.name,
+                            unit: metric.unit,
+                            target: metric.target,
+                            direction: metric.direction.flatMap { WorkMetric.Direction(rawValue: $0.rawValue) }
+                        )
+                    },
+                    metricEntry: change.payload.metricEntry.map { entry in
+                        WorkMetricEntry(
+                            id: entry.id,
+                            at: Date(timeIntervalSince1970: Double(entry.at) / 1000),
+                            value: entry.value,
+                            note: entry.note
+                        )
+                    },
+                    metricSummary: change.payload.metricSummary.map { summary in
+                        WorkMetricSummary(
+                            latest: summary.latest,
+                            latestAt: summary.latestAt.map { Date(timeIntervalSince1970: Double($0) / 1000) },
+                            count: summary.count,
+                            weeksWithEntry: summary.weeksWithEntry
+                        )
+                    }
+                )
+            )
         case .approval(let change):
             if let requested = change.payload.value1 {
                 return .approval(
@@ -723,6 +797,95 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
+        case .workSetHorizon(let payload):
+            .work_setHorizon(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_setHorizon,
+                    payload: .init(
+                        workID: payload.workID,
+                        horizon: payload.horizon.map { request in
+                            .init(
+                                kind: horizonKind(request.kind),
+                                notBeforeAt: request.notBeforeAt,
+                                byAt: request.byAt,
+                                label: request.label
+                            )
+                        },
+                        horizonCleared: payload.horizonCleared ? true : nil
+                    )
+                )
+            )
+        case .workListAdd(let payload):
+            .work_listAdd(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_listAdd,
+                    payload: .init(workID: payload.workID, text: payload.text)
+                )
+            )
+        case .workListToggle(let payload):
+            .work_listToggle(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_listToggle,
+                    payload: .init(workID: payload.workID, itemID: payload.itemID)
+                )
+            )
+        case .workListRemove(let payload):
+            .work_listRemove(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_listRemove,
+                    payload: .init(workID: payload.workID, itemID: payload.itemID)
+                )
+            )
+        case .workMetricLog(let payload):
+            .work_metricLog(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_metricLog,
+                    payload: .init(
+                        workID: payload.workID,
+                        value: payload.value,
+                        at: payload.at,
+                        note: payload.note
+                    )
+                )
+            )
+        case .workMilestoneToggle(let payload):
+            .work_milestoneToggle(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_milestoneToggle,
+                    payload: .init(workID: payload.workID, milestoneID: payload.milestoneID)
+                )
+            )
+        case .workSetShape(let payload):
+            .work_setShape(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_setShape,
+                    payload: .init(
+                        workID: payload.workID,
+                        shape: .init(rawValue: payload.shape.rawValue) ?? .quick
+                    )
+                )
+            )
         case .approvalApprove(let payload):
             .approval_approve(
                 .init(
@@ -776,5 +939,28 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
         case .voice: .voice
         case .chat: .chat
         }
+    }
+
+    private static func horizonKind(
+        _ kind: WorkHorizonKind
+    ) -> Components.Schemas.WorkSetHorizonCommand.PayloadPayload.HorizonPayload.KindPayload {
+        switch kind {
+        case .now: .now
+        case .later: .later
+        case .someday: .someday
+        }
+    }
+
+    // Sync payloads carry epoch milliseconds, like every server-owned time.
+    private static func workHorizon(
+        _ value: Components.Schemas.WorkHorizonSyncChange.PayloadPayload.HorizonPayload
+    ) -> WorkHorizon {
+        WorkHorizon(
+            kind: WorkHorizonKind(rawValue: value.kind.rawValue) ?? .now,
+            notBefore: value.notBefore.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
+            by: value.by.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
+            label: value.label,
+            wokeAt: value.wokeAt.flatMap { CalendarDateParser.date(fromNumber: Double($0)) }
+        )
     }
 }

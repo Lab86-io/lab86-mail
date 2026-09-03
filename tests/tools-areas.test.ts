@@ -80,6 +80,20 @@ beforeEach(() => {
         return [
           { _id: 'work_1', title: 'Set up a gold allocation', openQuestions: 3, areaName: 'Money' },
           { _id: 'work_2', title: 'Renew the passport', openQuestions: 0, areaName: null },
+          {
+            _id: 'work_3',
+            title: 'Repaint the shed',
+            openQuestions: 0,
+            areaName: null,
+            horizon: { kind: 'someday' },
+          },
+          {
+            _id: 'work_4',
+            title: 'Book the winter tyres',
+            openQuestions: 0,
+            areaName: null,
+            horizon: { kind: 'later', notBefore: Date.now() + 30 * 24 * 60 * 60_000 },
+          },
         ];
       }
       if (fn === apiMock.albatrossWorkV2.executionSnapshot) {
@@ -520,7 +534,9 @@ describe('work_list', () => {
       fn: apiMock.albatrossWorkV2.executionSnapshot,
       args: { userId: TEST_USER.userId, limit: 60 },
     });
-    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2', 'work_3', 'work_4']);
+    // The "Later" shelf comes with the list: dated sleeps first, someday last.
+    expect(result.later.map((row: any) => row._id)).toEqual(['work_4', 'work_3']);
     expect(result.execution.currentMove.stepTitle).toBe('Book the passport appointment');
     expect(workList.mutating).toBe(false);
     // The description has to match what comes back. It returns every state, so
@@ -549,7 +565,7 @@ describe('work_list', () => {
     failExecution = true;
     const result: any = await runTool(workList.handler, {});
 
-    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2']);
+    expect(result.work.map((row: any) => row._id)).toEqual(['work_1', 'work_2', 'work_3', 'work_4']);
     expect(result.execution).toBeNull();
   });
 

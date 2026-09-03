@@ -1,24 +1,24 @@
 'use client';
 
-import {
-  useConvexAuth,
-  useMutation as useConvexMutation,
-  useQuery_experimental as useConvexQuery,
-  useQuery,
-} from 'convex/react';
+import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { LapsePrompt } from '@/components/albatross/Forgiveness';
 import { CalendarBody } from '@/components/calendar/engine/calendar-body';
 import { type CalendarPersistence, CalendarProvider } from '@/components/calendar/engine/calendar-context';
 import { CalendarHeader } from '@/components/calendar/engine/calendar-header';
 import { DndProvider } from '@/components/calendar/engine/dnd-context';
 import type { IEvent, IUser } from '@/components/calendar/engine/interfaces';
+import { SyncLine } from '@/components/calendar/SyncLine';
+import { SyncStatus } from '@/components/calendar/SyncStatus';
+import { usePullToResync } from '@/components/calendar/usePullToResync';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
+import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
+import { useCalendarResync } from '@/lib/calendar/use-calendar-resync';
 import { TABLEAU10 } from '@/lib/shared/format';
 
 // Tableau-10 categorical palette now lives in lib/shared/format (re-exported
@@ -42,8 +42,8 @@ const WINDOW_PAST_MS = 92 * 86_400_000;
 const WINDOW_FUTURE_MS = 366 * 86_400_000;
 
 export function CalendarSurface() {
-  const { isAuthenticated } = useConvexAuth();
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const reduceMotion = useReducedMotion() ?? false;
   // Stable bounds: recomputing per render would resubscribe the live query.
   const [window] = useState(() => ({
     startAt: Date.now() - WINDOW_PAST_MS,
@@ -64,29 +64,10 @@ export function CalendarSurface() {
     args: window,
   });
   const updateCard = useConvexMutation((api as any).boards.updateCard);
-  const execution = useQuery(api.albatrossWorkV2.executionSnapshot, isAuthenticated ? { nowMs } : 'skip') as
-    | {
-        missedMoves: Array<{
-          workId: string;
-          stepKey: string | null;
-          stepTitle: string;
-          scheduledStartAt: number | null;
-        }>;
-      }
-    | undefined;
 
   useEffect(() => {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => globalThis.clearInterval(timer);
-  }, []);
-
-  // One nudge per mount: kicks a debounced resync for stale/never-synced
-  // accounts (the tool no-ops when everything is fresh).
-  const kicked = useRef(false);
-  useEffect(() => {
-    if (kicked.current) return;
-    kicked.current = true;
-    void callTool('calendar_list_calendars', {}).catch(() => undefined);
   }, []);
 
   // Stable empty fallbacks: `data || []` minting a fresh [] every render
@@ -98,6 +79,24 @@ export function CalendarSurface() {
   const syncStates: any[] =
     liveCalendars.status === 'success' ? liveCalendars.data?.syncStates || EMPTY_ARRAY : EMPTY_ARRAY;
   const eventRows: any[] = liveEvents.status === 'success' ? liveEvents.data || EMPTY_ARRAY : EMPTY_ARRAY;
+
+  // View open posts `view_open` once per mount and on window focus. The
+  // sentence is the manual control. Pull on touch posts `pull`.
+  const sync = useCalendarResync({
+    syncStates,
+    nowMs,
+    enabled: liveCalendars.status === 'success',
+  });
+  const onPull = useCallback(() => {
+    void sync.resync('pull');
+  }, [sync.resync]);
+  const pull = usePullToResync({ onPull });
+  const onManualResync = useCallback(() => {
+    void sync.resync('manual_http');
+  }, [sync.resync]);
+
+  // A row the app wrote itself is pending until its account syncs again.
+  const syncedAt = useMemo(() => syncedAtByAccount(syncStates), [syncStates]);
 
   const colorByCalendar = useMemo(() => {
     const map = new Map<string, string>();
@@ -154,6 +153,7 @@ export function CalendarSurface() {
           allDay: row.allDay,
           status: row.status,
           busy: row.busy,
+          pending: isPendingEventRow(row, syncedAt),
           location: row.location,
           masterEventId: row.masterEventId,
           participants: row.participants,
@@ -163,7 +163,7 @@ export function CalendarSurface() {
           htmlLink: row.htmlLink,
         })),
     );
-  }, [eventRows, users, calendars, colorByCalendar, dueCards]);
+  }, [eventRows, users, calendars, colorByCalendar, dueCards, syncedAt]);
 
   const unauthorizedAccountIDs = useMemo(
     () =>
@@ -279,15 +279,25 @@ export function CalendarSurface() {
   );
 
   const unauthorized = syncStates.filter((state) => state.status === 'unauthorized');
-  const syncing = syncStates.filter((state) => state.status === 'syncing');
   const loading = liveCalendars.status !== 'success' || liveEvents.status !== 'success';
   const nothingSynced = !loading && calendars.length === 0;
-  const passedMove = execution?.missedMoves.find((move) => Boolean(move.stepKey));
+
+  const syncStatus = (
+    <SyncStatus
+      lastSyncedAt={sync.lastSyncedAt}
+      syncing={sync.active}
+      error={sync.error}
+      nowMs={nowMs}
+      busy={sync.busy}
+      onResync={onManualResync}
+    />
+  );
 
   if (nothingSynced) {
     return (
-      <div className="flex h-full min-w-0 flex-col overflow-hidden">
-        <SurfaceHeader />
+      <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
+        <SyncLine active={sync.active} reduceMotion={reduceMotion} />
+        <SurfaceHeader status={syncStatus} />
         <div className="grid flex-1 place-items-center px-6">
           <div className="flex max-w-md flex-col items-center gap-3 text-center">
             <span className="grid size-12 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
@@ -308,7 +318,8 @@ export function CalendarSurface() {
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+    <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
+      <SyncLine active={sync.active} reduceMotion={reduceMotion} />
       {unauthorized.length ? (
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
           <span>Missing calendar access:</span>
@@ -325,29 +336,6 @@ export function CalendarSurface() {
           ))}
         </div>
       ) : null}
-      {syncing.length ? (
-        <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 text-[12px] text-[var(--color-text-muted)]">
-          <span className="size-1.5 animate-pulse rounded-full bg-[var(--color-accent)]" />
-          {syncing
-            .map(
-              (state) =>
-                `${state.email || 'calendar'} syncing · ${state.eventsSynced ?? 0} events${
-                  state.calendarsSynced ? ` · calendar ${state.calendarsSynced}` : ''
-                }`,
-            )
-            .join('  ·  ')}
-        </div>
-      ) : null}
-      {passedMove?.stepKey ? (
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3">
-          <LapsePrompt
-            workId={passedMove.workId}
-            stepKey={passedMove.stepKey}
-            stepTitle={passedMove.stepTitle}
-            plannedAt={passedMove.scheduledStartAt || undefined}
-          />
-        </div>
-      ) : null}
       {/* font-display so the calendar's headings, dates, and event titles
           follow the user's chosen display font (theme customization). */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden font-display">
@@ -359,9 +347,18 @@ export function CalendarSurface() {
           writableCalendars={writableCalendars}
         >
           <DndProvider>
-            <CalendarHeader />
+            <CalendarHeader status={syncStatus} />
             <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} />
-            <CalendarBody />
+            {/* Pull on touch: the body offsets with resistance and springs
+                back. A pull past the threshold posts a resync. */}
+            <div
+              data-pull-offset={pull.offset || undefined}
+              className="flex min-h-0 flex-1 flex-col"
+              style={pull.style}
+              {...pull.handlers}
+            >
+              <CalendarBody />
+            </div>
           </DndProvider>
         </CalendarProvider>
       </div>
@@ -464,12 +461,13 @@ function CalendarColorBar({
   );
 }
 
-function SurfaceHeader() {
+function SurfaceHeader({ status }: { status?: ReactNode }) {
   return (
     <header className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 pb-4 pt-12 md:pt-5">
       <h1 className="font-display text-[20px] font-semibold tracking-tight text-[var(--color-text)]">
         Calendar
       </h1>
+      {status ? <div className="min-w-0 truncate">{status}</div> : null}
     </header>
   );
 }

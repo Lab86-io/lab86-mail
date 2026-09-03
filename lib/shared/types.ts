@@ -398,6 +398,28 @@ export interface DailyReportItem {
   lane?: ReportLane;
   // Timestamp of the newest message — drives the "received N days ago" framing.
   receivedAt?: number | null;
+  // Budget brief fields (2026-09-03). The score is deterministic and computed
+  // before any model call. `budgetLane` is the lane the item was selected into.
+  // `line` is the model's one line for the item (max 20 words); it may be empty.
+  score?: number;
+  budgetLane?: BriefBudgetLane;
+  line?: string;
+  // The display name of the newest sender, for renderers that show the item
+  // before hydration completes.
+  sender?: string;
+}
+
+export type BriefBudgetLane = 'answer' | 'today' | 'know';
+
+// The model-written prose of a budget brief. Everything else in the edition is
+// deterministic.
+export interface DailyReportProse {
+  // The opening paragraph, at most four sentences.
+  lede: string;
+  // The forward look, at most four sentences, with concrete weekday names.
+  weekAhead: string;
+  // Which model wrote the prose, or 'local' for the deterministic fallback.
+  model: string;
 }
 
 export interface DailyReportTaskItem {
@@ -516,7 +538,15 @@ export interface DailyReport {
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];
+  // The plan tier that sized this edition's item budget.
+  tier?: 'free' | 'pro' | 'team';
+  // Model-written prose for the budget brief (2026-09-03).
+  prose?: DailyReportProse;
   sections: {
+    // Legacy lanes. Editions written from 2026-09-03 keep replyOwed,
+    // followUpOwed, timeSensitive, and tracked for old readers and the handoff
+    // index. newPeople, fyi, and bulkTail are written empty; their count lives
+    // in stats.noise.
     replyOwed: DailyReportItem[];
     followUpOwed: DailyReportItem[];
     newPeople: DailyReportItem[];
@@ -524,6 +554,12 @@ export interface DailyReport {
     tracked: DailyReportItem[];
     fyi: DailyReportItem[];
     bulkTail: DailyReportItem[];
+    // Budget lanes. `answer` holds at most 3, `know` at most 3, and the three
+    // together hold at most the tier budget. Absent on editions older than
+    // 2026-09-03.
+    answer?: DailyReportItem[];
+    today?: DailyReportItem[];
+    know?: DailyReportItem[];
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
     mcp?: DailyReportMcpItem[];
@@ -538,6 +574,10 @@ export interface DailyReport {
     dueSoon: number;
     bulkTailCount: number;
     unread: number;
+    // Scanned threads that did not earn a place in the brief.
+    noise?: number;
+    // Mail items the edition selected across the three budget lanes.
+    selected?: number;
     openTasks?: number;
     completedTasks?: number;
     calendarEvents?: number;

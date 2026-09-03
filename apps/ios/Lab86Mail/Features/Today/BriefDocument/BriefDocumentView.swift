@@ -9,6 +9,9 @@ struct BriefDocumentView: View {
     let document: BriefDocumentV2
     let isComposing: Bool
     var scopeAreaID: String? = nil
+    // Today draws the lede above the document. The area page does not, so it
+    // asks the document to render its own `lede` region.
+    var rendersLede: Bool = false
     let onReview: (ArtifactReviewRequest) -> Void
 
     @Environment(AppEnvironment.self) private var environment
@@ -21,18 +24,12 @@ struct BriefDocumentView: View {
     @State private var actionError: String?
 
     var body: some View {
+        let sections = BriefLetterLayout.sections(for: document, includeLede: rendersLede)
         LazyVStack(alignment: .leading, spacing: 22) {
             statusLine
-            ForEach(visibleRegions, id: \.id) { region in
-                BriefNodeView(
-                    node: region.tree,
-                    regionSummary: region.summary,
-                    entities: entities,
-                    hiddenRefs: hiddenRefs,
-                    completedRefs: completedRefs,
-                    onAction: perform
-                )
-                .id(region.id)
+            ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
+                sectionView(section)
+                    .id(BriefLetterLayout.key(for: section, at: index))
             }
         }
         .padding(.horizontal)
@@ -65,27 +62,54 @@ struct BriefDocumentView: View {
         }
     }
 
+    // The letter sections render with their own views. Anything the layout
+    // did not recognise (older editions, Work plans, tool nodes) goes through
+    // the node renderer unchanged.
+    @ViewBuilder private func sectionView(_ section: BriefLetterSection) -> some View {
+        switch section {
+        case .lede(let text):
+            BriefLedeText(text: text)
+        case .lane(let lane, let items):
+            BriefLaneSection(
+                lane: lane,
+                items: items,
+                entities: entities,
+                hiddenRefs: hiddenRefs,
+                editionKey: editionKey,
+                onAction: perform
+            )
+        case .weekAhead(let text):
+            WeekAheadText(text: text)
+        case .areas(let items):
+            BriefAreaLines(items: items, onAction: perform)
+        case .pulse(let lines):
+            BriefPulseLines(lines: lines)
+        case .node(let region):
+            BriefNodeView(
+                node: region.tree,
+                regionSummary: region.summary,
+                entities: entities,
+                hiddenRefs: hiddenRefs,
+                completedRefs: completedRefs,
+                onAction: perform
+            )
+        }
+    }
+
+    // Rows rise once per edition, not on every hydration pass.
+    private var editionKey: String { "\(document.generatedAt)" }
+
     // The only chrome the shared renderer keeps: transient status that belongs
     // to the document body itself (still composing, or hydration fell back to
     // saved details). The former title/date/Regenerate header is owner chrome.
     @ViewBuilder private var statusLine: some View {
         switch BriefDocumentStatus.make(isComposing: isComposing, hydrationFailed: hydrationFailed) {
         case .composing:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Adding regions…")
-            }
-            .font(.caption2.weight(.medium))
-            .textCase(.uppercase)
-            .foregroundStyle(.secondary)
+            BriefPlaceholderBars()
         case .savedDetails:
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                Text("Saved details")
-            }
-            .font(.caption2.weight(.medium))
-            .textCase(.uppercase)
-            .foregroundStyle(.secondary)
+            Text("Saved details. Some rows may be out of date.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         case nil:
             EmptyView()
         }
@@ -627,9 +651,10 @@ private struct BriefNodeView: View {
         switch node.variant {
         case "space": Color.clear.frame(height: 12)
         case "flourish":
-            Text("✦")
-                .font(.body)
-                .foregroundStyle(.tertiary)
+            // A short centred rule. No ornament glyphs in the product.
+            Rectangle()
+                .fill(Color.secondary.opacity(0.45))
+                .frame(width: 36, height: 1)
                 .frame(maxWidth: .infinity)
         default: Divider()
         }
@@ -800,7 +825,6 @@ private struct BriefEntityRow: View {
             if let lane = item.framing?.lane {
                 Text(lane)
                     .font(.caption2.weight(.semibold))
-                    .textCase(.uppercase)
                     .foregroundStyle(.tint)
             }
             HStack(alignment: .firstTextBaseline, spacing: 7) {

@@ -525,6 +525,83 @@
         }
       }
     },
+    "/api/mobile/v1/assistant/route": {
+      "post": {
+        "operationId": "postAssistantRoute",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssistantRouteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ask or hold, with confidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistantRouteVerdict"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mobile/v1/commands/{id}/undo": {
       "post": {
         "operationId": "undoMobileCommand",
@@ -768,6 +845,34 @@
             "additionalProperties": false
           }
         ]
+      },
+      "AssistantRouteRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "AssistantRouteVerdict": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string",
+            "enum": ["ask", "hold"]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": ["route", "confidence"],
+        "additionalProperties": false
       },
       "CommandReceipt": {
         "type": "object",
@@ -1566,6 +1671,9 @@
             "$ref": "#/components/schemas/CalendarCreateCommand"
           },
           {
+            "$ref": "#/components/schemas/CalendarResyncCommand"
+          },
+          {
             "$ref": "#/components/schemas/TaskCreateCommand"
           },
           {
@@ -1573,6 +1681,30 @@
           },
           {
             "$ref": "#/components/schemas/WorkCaptureCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkSetHorizonCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkCaptureFromChatCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkListAddCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkListToggleCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkListRemoveCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkMetricLogCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkMilestoneToggleCommand"
+          },
+          {
+            "$ref": "#/components/schemas/WorkSetShapeCommand"
           },
           {
             "$ref": "#/components/schemas/ApprovalApproveCommand"
@@ -1600,9 +1732,18 @@
             "mail.saveDraft": "#/components/schemas/MailSaveDraftCommand",
             "mail.deleteDraft": "#/components/schemas/MailDeleteDraftCommand",
             "calendar.create": "#/components/schemas/CalendarCreateCommand",
+            "calendar.resync": "#/components/schemas/CalendarResyncCommand",
             "task.create": "#/components/schemas/TaskCreateCommand",
             "task.setCompleted": "#/components/schemas/TaskSetCompletedCommand",
             "work.capture": "#/components/schemas/WorkCaptureCommand",
+            "work.setHorizon": "#/components/schemas/WorkSetHorizonCommand",
+            "work.captureFromChat": "#/components/schemas/WorkCaptureFromChatCommand",
+            "work.listAdd": "#/components/schemas/WorkListAddCommand",
+            "work.listToggle": "#/components/schemas/WorkListToggleCommand",
+            "work.listRemove": "#/components/schemas/WorkListRemoveCommand",
+            "work.metricLog": "#/components/schemas/WorkMetricLogCommand",
+            "work.milestoneToggle": "#/components/schemas/WorkMilestoneToggleCommand",
+            "work.setShape": "#/components/schemas/WorkSetShapeCommand",
             "approval.approve": "#/components/schemas/ApprovalApproveCommand",
             "approval.reject": "#/components/schemas/ApprovalRejectCommand"
           }
@@ -1782,6 +1923,15 @@
             "$ref": "#/components/schemas/WorkSyncChange"
           },
           {
+            "$ref": "#/components/schemas/WorkHorizonSyncChange"
+          },
+          {
+            "$ref": "#/components/schemas/WorkCapturedSyncChange"
+          },
+          {
+            "$ref": "#/components/schemas/WorkShapeSyncChange"
+          },
+          {
             "$ref": "#/components/schemas/ApprovalSyncChange"
           },
           {
@@ -1797,6 +1947,9 @@
             "event": "#/components/schemas/CalendarEventSyncChange",
             "task": "#/components/schemas/TaskSyncChange",
             "work": "#/components/schemas/WorkSyncChange",
+            "workHorizon": "#/components/schemas/WorkHorizonSyncChange",
+            "workCaptured": "#/components/schemas/WorkCapturedSyncChange",
+            "workShape": "#/components/schemas/WorkShapeSyncChange",
             "approval": "#/components/schemas/ApprovalSyncChange",
             "operation": "#/components/schemas/OperationSyncChange"
           }
@@ -1832,6 +1985,173 @@
             "type": "boolean"
           }
         }
+      },
+      "WorkHorizon": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["now", "later", "someday"]
+          },
+          "notBefore": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "by": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "wokeAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["kind"],
+        "additionalProperties": false
+      },
+      "WorkShape": {
+        "type": "string",
+        "enum": ["quick", "list", "project", "practice", "decision", "monitor", "recurring"]
+      },
+      "WorkListItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "addedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "doneAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["id", "text", "done", "addedAt"],
+        "additionalProperties": false
+      },
+      "WorkMetric": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "target": {
+            "type": "number"
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["down", "up"]
+          }
+        },
+        "required": ["name", "unit"],
+        "additionalProperties": false
+      },
+      "WorkMetricEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "at": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "value": {
+            "type": "number"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": ["id", "at", "value"],
+        "additionalProperties": false
+      },
+      "WorkMetricSummary": {
+        "type": "object",
+        "properties": {
+          "latest": {
+            "type": "number"
+          },
+          "latestAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "weeksWithEntry": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["count", "weeksWithEntry"],
+        "additionalProperties": false
+      },
+      "WorkMilestone": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "doneAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["id", "title", "done", "order"],
+        "additionalProperties": false
       },
       "MailThreadSyncChange": {
         "type": "object",
@@ -2152,6 +2472,315 @@
               }
             },
             "required": ["captureID", "workIDs", "fallback"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkHorizonSyncChange": {
+        "type": "object",
+        "properties": {
+          "entityID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "operation": {
+            "type": "string",
+            "const": "upsert"
+          },
+          "domain": {
+            "type": "string",
+            "const": "work"
+          },
+          "entityKind": {
+            "type": "string",
+            "const": "workHorizon"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "horizon": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["now", "later", "someday"]
+                  },
+                  "notBefore": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "by": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "wokeAt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+              },
+              "horizonCleared": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": ["workID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkCapturedSyncChange": {
+        "type": "object",
+        "properties": {
+          "entityID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "operation": {
+            "type": "string",
+            "const": "upsert"
+          },
+          "domain": {
+            "type": "string",
+            "const": "work"
+          },
+          "entityKind": {
+            "type": "string",
+            "const": "workCaptured"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workIDs": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
+              },
+              "existing": {
+                "type": "boolean"
+              }
+            },
+            "required": ["workIDs"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["entityID", "revision", "operation", "domain", "entityKind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkShapeSyncChange": {
+        "type": "object",
+        "properties": {
+          "entityID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "operation": {
+            "type": "string",
+            "const": "upsert"
+          },
+          "domain": {
+            "type": "string",
+            "const": "work"
+          },
+          "entityKind": {
+            "type": "string",
+            "const": "workShape"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "shape": {
+                "type": "string",
+                "enum": ["quick", "list", "project", "practice", "decision", "monitor", "recurring"]
+              },
+              "listItems": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 240
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "done": {
+                      "type": "boolean"
+                    },
+                    "addedAt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "doneAt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["id", "text", "done", "addedAt"],
+                  "additionalProperties": false
+                }
+              },
+              "milestones": {
+                "maxItems": 60,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 240
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "done": {
+                      "type": "boolean"
+                    },
+                    "doneAt": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "order": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["id", "title", "done", "order"],
+                  "additionalProperties": false
+                }
+              },
+              "metric": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "unit": {
+                    "type": "string",
+                    "maxLength": 24
+                  },
+                  "target": {
+                    "type": "number"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": ["down", "up"]
+                  }
+                },
+                "required": ["name", "unit"],
+                "additionalProperties": false
+              },
+              "metricEntry": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "at": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": ["id", "at", "value"],
+                "additionalProperties": false
+              },
+              "metricSummary": {
+                "type": "object",
+                "properties": {
+                  "latest": {
+                    "type": "number"
+                  },
+                  "latestAt": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "weeksWithEntry": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": ["count", "weeksWithEntry"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["workID"],
             "additionalProperties": false
           }
         },
@@ -3125,6 +3754,48 @@
         "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
         "additionalProperties": false
       },
+      "CalendarResyncCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "calendar.resync"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "reason": {
+                "type": "string",
+                "enum": ["view_open", "pull", "manual_http"]
+              }
+            },
+            "required": ["reason"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
       "TaskCreateCommand": {
         "type": "object",
         "properties": {
@@ -3272,6 +3943,391 @@
               }
             },
             "required": ["rawText", "source"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkSetHorizonCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.setHorizon"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "horizon": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["now", "later", "someday"]
+                  },
+                  "notBeforeAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "byAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": ["kind"],
+                "additionalProperties": false
+              },
+              "horizonCleared": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": ["workID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkCaptureFromChatCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.captureFromChat"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000
+              },
+              "conversationID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "sourceMessageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "replyText": {
+                "type": "string",
+                "maxLength": 20000
+              }
+            },
+            "required": ["text", "conversationID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkListAddCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.listAdd"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            },
+            "required": ["workID", "text"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkListToggleCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.listToggle"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "itemID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": ["workID", "itemID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkListRemoveCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.listRemove"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "itemID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": ["workID", "itemID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkMetricLogCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.metricLog"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "value": {
+                "type": "number"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "note": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              }
+            },
+            "required": ["workID", "value"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkMilestoneToggleCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.milestoneToggle"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "milestoneID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": ["workID", "milestoneID"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["idempotencyKey", "clientCreatedAt", "kind", "payload"],
+        "additionalProperties": false
+      },
+      "WorkSetShapeCommand": {
+        "type": "object",
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "baseRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "clientCreatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "kind": {
+            "type": "string",
+            "const": "work.setShape"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "workID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "shape": {
+                "type": "string",
+                "enum": ["quick", "list", "project", "practice", "decision", "monitor", "recurring"]
+              }
+            },
+            "required": ["workID", "shape"],
             "additionalProperties": false
           }
         },

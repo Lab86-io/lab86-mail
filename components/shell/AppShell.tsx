@@ -15,7 +15,6 @@ import { ActivitySurface } from '@/components/albatross/ActivitySurface';
 import { AlbatrossCompanion } from '@/components/albatross/AlbatrossCompanion';
 import { AlbatrossesSurface } from '@/components/albatross/AlbatrossesSurface';
 import { AreaHome } from '@/components/albatross/AreaHome';
-import { IntentCaptureLauncher } from '@/components/albatross/IntentCapture';
 import { WorkDetail } from '@/components/albatross/WorkDetail';
 import { CalendarSurface } from '@/components/calendar/CalendarSurface';
 import { FilesSurface } from '@/components/files/FilesSurface';
@@ -43,6 +42,7 @@ import { AIBarTrigger, AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
+import { WakeNudgeHost } from './WakeNudge';
 
 // Each visible-pane permutation gets its own persisted layout so the inbox
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
@@ -276,8 +276,8 @@ export function AppShell({
             </div>
             <AssistantChat />
             <AIBarTrigger />
-            <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
             <AlbatrossCompanion />
+            <WakeNudgeHost />
           </main>
         </SidebarProvider>
 
@@ -358,8 +358,8 @@ export function AppShell({
           </TooltipProvider>
           <AssistantChat />
           <AIBarTrigger />
-          <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
           <AlbatrossCompanion />
+          <WakeNudgeHost />
         </main>
       </SidebarProvider>
 

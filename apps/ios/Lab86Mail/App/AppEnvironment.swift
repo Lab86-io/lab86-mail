@@ -141,12 +141,14 @@ final class AppEnvironment {
         }
     }
 
-    func startAssistantChat(scope: AssistantChatScope = .global) {
-        assistantChat = AssistantChatModel(
+    func startAssistantChat(scope: AssistantChatScope = .global, route: BarRoute = .ask) {
+        let model = AssistantChatModel(
             backend: backend,
             baseURL: configuration.apiBaseURL,
             scope: scope
         )
+        if route == .hold { model.presetRoute(.hold) }
+        assistantChat = model
         #if os(macOS)
         navigation.chatPanelPresented = true
         #else

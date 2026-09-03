@@ -23,6 +23,8 @@ struct AppShellView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, max(windowSafeAreaInsets.bottom, 12))
         }
+        // The wake nudge sits under the navigation bar, at the trailing edge.
+        .shellWakeNudge(topInset: windowSafeAreaInsets.top + 52)
         .task {
             BackgroundRefreshCoordinator.shared.install {
                 let ownerID = environment.sessionStore.ownerID

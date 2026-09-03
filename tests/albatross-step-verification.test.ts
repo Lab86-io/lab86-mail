@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { parsePlanGeneration } from '../lib/albatross/intent-plan';
-import { stepVerification } from '../lib/albatross/step-verification';
+import {
+  hasConfirmedEvidence,
+  isFinalVerification,
+  stepNeedsCheck,
+  stepVerification,
+} from '../lib/albatross/step-verification';
 
 describe('stepVerification', () => {
   const identity = 'step:physical:submit the packet';
@@ -112,5 +117,46 @@ describe('plan generation step contract', () => {
     expect(generation.physicalActions[0].stepMode).toBeUndefined();
     expect(generation.physicalActions[0].doneWhen).toBeUndefined();
     expect(generation.physicalActions[0].evidence).toBeUndefined();
+  });
+});
+
+describe('terminal verification', () => {
+  const identity = 'step:physical:book the venue';
+
+  test('confirmed is final; every other level is not', () => {
+    expect(isFinalVerification({ level: 'confirmed' })).toBe(true);
+    expect(isFinalVerification({ level: 'observed' })).toBe(false);
+    expect(isFinalVerification({ level: 'artifact' })).toBe(false);
+    expect(isFinalVerification({ level: 'reported' })).toBe(false);
+    expect(isFinalVerification(null)).toBe(false);
+    expect(isFinalVerification(undefined)).toBe(false);
+  });
+
+  test('a calendar record or mail receipt bound to the step confirms it, even before it is marked done', () => {
+    expect(hasConfirmedEvidence(identity, [{ stepIdentity: identity, sourceKind: 'calendar_event' }])).toBe(
+      true,
+    );
+    expect(hasConfirmedEvidence(identity, [{ stepIdentity: identity, sourceKind: 'mail_thread' }])).toBe(
+      true,
+    );
+    expect(hasConfirmedEvidence(identity, [{ stepIdentity: identity, sourceKind: 'browser_session' }])).toBe(
+      false,
+    );
+    expect(hasConfirmedEvidence(identity, [{ stepIdentity: 'other', sourceKind: 'mail_thread' }])).toBe(
+      false,
+    );
+    expect(
+      hasConfirmedEvidence(identity, [
+        { stepIdentity: identity, sourceKind: 'mail_thread', trust: 'rejected' },
+      ]),
+    ).toBe(false);
+  });
+
+  test('a watcher spends a check only on an open step without a confirmed verification', () => {
+    expect(stepNeedsCheck({ done: false })).toBe(true);
+    expect(stepNeedsCheck({ done: false, verification: null })).toBe(true);
+    expect(stepNeedsCheck({ done: false, verification: { level: 'observed' } })).toBe(true);
+    expect(stepNeedsCheck({ done: false, verification: { level: 'confirmed' } })).toBe(false);
+    expect(stepNeedsCheck({ done: true })).toBe(false);
   });
 });

@@ -111,36 +111,48 @@ struct DailyBriefMasthead: View {
     }
 }
 
+// The lede: the letter's opening paragraph in the display face at 21 pt.
+// No drop cap, no card. Today places it above the document body.
 struct DailyBriefLede: View {
-    @Environment(AppEnvironment.self) private var environment
     let text: String
 
     var body: some View {
-        let copy = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let initial = String(copy.prefix(1))
-        let remainder = String(copy.dropFirst())
-        let lead = Text(initial)
-            .font(environment.theme.displayType.displayFont(size: 48))
-            .fontWeight(.semibold)
-            .foregroundColor(environment.theme.accent2Color)
-        let rest = Text(remainder)
-            .font(environment.theme.displayType.displayFont(size: 20))
-            .foregroundColor(.secondary)
-        Text("\(lead)\(rest)")
-            .lineSpacing(5)
-            .fixedSize(horizontal: false, vertical: true)
+        BriefLedeText(text: text)
             .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(copy)
+            .padding(.top, 16)
     }
 }
 
-// The desktop footer's semantics, native: "Made for you by Lab86 using your
-// Gmail, Calendar, and Tasks." Service ids come from the report payload plus
-// actual section content; marks are compact SF Symbols with plain-text
-// fallback, and VoiceOver reads the sentence in order.
+// The footer. A budget edition ends with one sentence from `stats`:
+// "38 other messages arrived. None needed you." Older editions keep the
+// service sentence: "Made for you by Lab86 using your Gmail and Calendar."
 struct DailyBriefFooter: View {
+    let report: DailyReportModel
+
+    var body: some View {
+        if let noise = report.stats.noise, let selected = report.stats.selected {
+            let sentence = DailyBriefFooterCopy.sentence(noise: noise, selected: selected)
+            VStack(alignment: .leading, spacing: 0) {
+                Divider()
+                    .padding(.bottom, 12)
+                Text(sentence)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(sentence)
+        } else {
+            DailyBriefServiceFooter(report: report)
+        }
+    }
+}
+
+// The pre-budget footer, kept for older editions.
+struct DailyBriefServiceFooter: View {
     let report: DailyReportModel
 
     var body: some View {

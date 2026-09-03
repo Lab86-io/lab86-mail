@@ -334,9 +334,273 @@ export const futureBriefDocumentFixture = {
   regions: [],
 } as const;
 
+// The letter (2026-09-03): lede, three lanes as mail rows, the week ahead,
+// three area lines. This is the shape the composer now writes.
+function letterThread(
+  id: string,
+  subject: string,
+  lane: 'answer' | 'today' | 'know',
+  sender: string,
+  reason?: string,
+) {
+  return {
+    ref: { kind: 'thread' as const, id, account: 'jakob@example.com', label: subject },
+    framing: { lane, sender, ...(reason ? { reason } : {}) },
+    actions: [
+      {
+        action: 'open_thread',
+        label: 'Open',
+        payload: { account: 'jakob@example.com', threadId: id },
+        style: 'quiet' as const,
+      },
+    ],
+  };
+}
+
+export const letterBriefDocumentFixture: BriefDocumentV2 = {
+  version: 2,
+  title: 'The Thursday Brief',
+  summary:
+    'Two replies wait on you before the review at ten. The passport form can go out this week. The afternoon is open.',
+  generatedAt: now,
+  timezone: 'UTC',
+  regions: [
+    {
+      id: 'lede',
+      summary: 'Two replies wait on you before the review at ten.',
+      tree: {
+        kind: 'hero',
+        emphasis: 'primary',
+        tone: 'neutral',
+        surface: 'plain',
+        children: [
+          {
+            kind: 'text',
+            emphasis: 'primary',
+            tone: 'neutral',
+            role: 'lede',
+            text: 'Two replies wait on you before the review at ten. The passport form can go out this week. The afternoon is open.',
+          },
+        ],
+      },
+    },
+    {
+      id: 'answer',
+      summary: 'Answer: 2 replies owed.',
+      tree: {
+        kind: 'entity_list',
+        emphasis: 'primary',
+        tone: 'neutral',
+        title: 'Answer',
+        variant: 'rows',
+        items: [
+          letterThread(
+            'thread-review-deck',
+            'Review deck for Thursday',
+            'answer',
+            'Maya Chen',
+            'Maya sent the deck on Tuesday and asked for your notes before the review.',
+          ),
+          letterThread(
+            'thread-lease',
+            'Lease renewal: two options',
+            'answer',
+            'Daniel Ortiz',
+            'The landlord needs a choice by Friday. Both options are in the last message.',
+          ),
+        ],
+      },
+    },
+    {
+      id: 'today',
+      summary: 'Today: 1 event; 1 deadline.',
+      tree: {
+        kind: 'entity_list',
+        emphasis: 'standard',
+        tone: 'neutral',
+        title: 'Today',
+        variant: 'rows',
+        items: [
+          {
+            ref: {
+              kind: 'event',
+              id: 'event-product-review',
+              account: 'jakob@example.com',
+              label: 'Product review',
+            },
+            framing: { lane: 'today', reason: '10:00 AM to 10:45 AM, Room 2' },
+            actions: [
+              {
+                action: 'open_event',
+                label: 'Open',
+                payload: { account: 'jakob@example.com', eventId: 'event-product-review' },
+                style: 'quiet',
+              },
+            ],
+          },
+          letterThread(
+            'thread-passport',
+            'Passport renewal: form due',
+            'today',
+            'Passport Office',
+            'The form is due today. The attachment in the first message is the one to send.',
+          ),
+        ],
+      },
+    },
+    {
+      id: 'know',
+      summary: 'Know: 1 thread.',
+      tree: {
+        kind: 'entity_list',
+        emphasis: 'standard',
+        tone: 'neutral',
+        title: 'Know',
+        variant: 'rows',
+        items: [
+          letterThread(
+            'thread-vendor',
+            'Vendor contract signed',
+            'know',
+            'Priya Raman',
+            'Priya confirmed the signature. No reply is needed.',
+          ),
+        ],
+      },
+    },
+    {
+      id: 'week-ahead',
+      summary: 'This Thursday you can send the passport form. Friday is open.',
+      tree: {
+        kind: 'text',
+        emphasis: 'standard',
+        tone: 'neutral',
+        role: 'body',
+        text: 'This Thursday you can send the passport form. The lease answer goes out on Friday morning. Saturday and Sunday are open.',
+      },
+    },
+    {
+      id: 'areas',
+      summary: 'Areas: Home, Product.',
+      tree: {
+        kind: 'entity_list',
+        emphasis: 'muted',
+        tone: 'neutral',
+        title: 'Areas',
+        variant: 'compact',
+        items: [
+          {
+            ref: { kind: 'area', id: 'area-home', label: 'Home' },
+            framing: { reason: 'Choose the lease option before Friday.' },
+            actions: [
+              { action: 'open_area', label: 'Open', payload: { areaId: 'area-home' }, style: 'quiet' },
+            ],
+          },
+          {
+            ref: { kind: 'area', id: 'area-product', label: 'Product' },
+            framing: { reason: 'Notes for the review deck are the next move.' },
+            actions: [
+              { action: 'open_area', label: 'Open', payload: { areaId: 'area-product' }, style: 'quiet' },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+// The area pulse (2026-09-03): lede, three pulse lines, one prompt, live open work.
+export const areaPulseDocumentFixture: BriefDocumentV2 = {
+  version: 2,
+  title: 'Home',
+  summary: 'The lease is the only open decision. Nothing else changed this week.',
+  generatedAt: now,
+  regions: [
+    {
+      id: 'lede',
+      summary: 'The lease is the only open decision.',
+      tree: {
+        kind: 'hero',
+        emphasis: 'primary',
+        tone: 'neutral',
+        surface: 'plain',
+        children: [
+          {
+            kind: 'text',
+            emphasis: 'primary',
+            tone: 'neutral',
+            role: 'lede',
+            text: 'The lease is the only open decision. Nothing else changed this week.',
+          },
+        ],
+      },
+    },
+    {
+      id: 'pulse',
+      summary: 'Last change: Daniel sent two lease options. Next move: choose one.',
+      tree: {
+        kind: 'stack',
+        emphasis: 'standard',
+        tone: 'neutral',
+        density: 'standard',
+        children: [
+          {
+            kind: 'text',
+            emphasis: 'standard',
+            tone: 'neutral',
+            role: 'body',
+            text: 'Last change: Daniel sent two lease options on Tuesday.',
+          },
+          {
+            kind: 'text',
+            emphasis: 'standard',
+            tone: 'neutral',
+            role: 'body',
+            text: 'Next move: choose one option and reply before Friday.',
+          },
+          {
+            kind: 'text',
+            emphasis: 'standard',
+            tone: 'neutral',
+            role: 'body',
+            text: 'Open question: does the longer term include the parking space?',
+          },
+        ],
+      },
+    },
+    {
+      id: 'ask',
+      summary: 'Add a thought to this area.',
+      tree: {
+        kind: 'prompt',
+        emphasis: 'muted',
+        tone: 'neutral',
+        variant: 'capture',
+        placeholder: 'Get this out of my head',
+      },
+    },
+    {
+      id: 'open-work',
+      summary: 'Open work in this area.',
+      tree: {
+        kind: 'query_list',
+        emphasis: 'standard',
+        tone: 'neutral',
+        title: 'Open work',
+        query: { name: 'area_open_work', areaId: 'area-home' },
+        limit: 6,
+        variant: 'rows',
+        emptyText: 'No open work.',
+      },
+    },
+  ],
+};
+
 export const briefDocumentFixtures = {
   rich: richBriefDocumentFixture,
   quiet: quietBriefDocumentFixture,
   degenerate: degenerateBriefDocumentFixture,
   future: futureBriefDocumentFixture,
+  letter: letterBriefDocumentFixture,
+  areaPulse: areaPulseDocumentFixture,
 } as const;

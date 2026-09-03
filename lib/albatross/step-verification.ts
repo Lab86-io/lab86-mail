@@ -45,6 +45,32 @@ function levelForSource(sourceKind: string): StepVerificationLevel {
   return 'artifact';
 }
 
+/** A confirmed verification is final. Nothing checks that step again. */
+export function isFinalVerification(
+  verification: Pick<StepVerification, 'level'> | null | undefined,
+): boolean {
+  return verification?.level === 'confirmed';
+}
+
+/** True when step-bound evidence already confirms this step, done or not. */
+export function hasConfirmedEvidence(identity: string, evidence: readonly StepEvidenceLike[]): boolean {
+  return isFinalVerification(stepVerification(identity, true, evidence));
+}
+
+export interface CheckableStepLike {
+  done: boolean;
+  verification?: Pick<StepVerification, 'level'> | null;
+}
+
+/**
+ * Whether a watcher or gate may still spend a check on this step. A done step
+ * needs nothing. A confirmed step is closed for good.
+ */
+export function stepNeedsCheck(step: CheckableStepLike): boolean {
+  if (step.done) return false;
+  return !isFinalVerification(step.verification);
+}
+
 /** The strongest step-bound evidence wins; no evidence means reported. */
 export function stepVerification(
   identity: string,

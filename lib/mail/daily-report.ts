@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describeProvider } from '../ai/client';
-import { contextFirstName, getAiRequestContext } from '../ai/context';
+import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { intentTerms } from '../albatross/daily-intent';
 import {
@@ -43,6 +43,18 @@ import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { classifyThreadsBatched } from '../tools/ai';
+import { resolveBriefPlanTier } from './brief-plan';
+import {
+  assignBriefLane,
+  type BriefItemCandidate,
+  type BriefPlanTier,
+  type BriefScoreSignals,
+  briefScoreSignals,
+  budgetForTier,
+  DEADLINE_WINDOW_MS,
+  scoreBriefCandidate,
+  selectBriefItems,
+} from './brief-score';
 import { briefServiceFromProvider } from './brief-services';
 import {
   deterministicRecommendation,
@@ -76,17 +88,22 @@ const RECENT_QUERIES: Array<{ q: string; max: number; human?: boolean }> = [
 // old thread the user is still waiting on is not silently dropped.
 const SENT_QUERY = { q: 'in:sent -in:trash -in:spam', max: 200 };
 
-const CANDIDATE_LIMIT = 320;
+// Refinement round 2026-09-03: fewer candidates, fewer model calls. The budget
+// brief scores every candidate deterministically and enriches only the top 12.
+export const CANDIDATE_LIMIT = 120;
+export const ENRICH_CAP = 12;
 const TIME_SENSITIVE_WINDOW = 14 * 86400_000;
+// Legacy lane caps. These lanes still feed the handoff index and the
+// deterministic HTML fallback; the budget lanes (answer/today/know) are what
+// the v2 document renders.
 const REPORT_LANE_LIMITS: Record<Exclude<ReportLane, 'bulk'>, number> = {
   reply_owed: 5,
   follow_up_owed: 5,
-  new_people: 3,
+  new_people: 0,
   time_sensitive: 3,
   tracked: 5,
-  fyi: 3,
+  fyi: 0,
 };
-const BULK_TAIL_LIMIT = 8;
 const WEEK_CONTEXT_WINDOW = 7 * 86400_000;
 const MONTH_CONTEXT_WINDOW = 30 * 86400_000;
 const FUTURE_CONTEXT_WINDOW = 14 * 86400_000;
@@ -132,10 +149,15 @@ function scopeProfile(scope: 'week' | 'full' = 'full') {
       ] as typeof RECENT_QUERIES,
       sentMax: 100,
       candidateLimit: 90,
-      enrichCap: 15,
+      enrichCap: ENRICH_CAP,
     };
   }
-  return { queries: RECENT_QUERIES, sentMax: SENT_QUERY.max, candidateLimit: CANDIDATE_LIMIT, enrichCap: 30 };
+  return {
+    queries: RECENT_QUERIES,
+    sentMax: SENT_QUERY.max,
+    candidateLimit: CANDIDATE_LIMIT,
+    enrichCap: ENRICH_CAP,
+  };
 }
 
 export async function generateDailyReport(input: {
@@ -153,9 +175,13 @@ export async function generateDailyReport(input: {
   // it doesn't churn an already-rendered edition back to a "generating" state).
   silent?: boolean;
   isFirstOpenOfMonth?: boolean;
+  // The plan tier that sizes the item budget. Resolved from the stored
+  // entitlement when absent.
+  tier?: BriefPlanTier;
 }) {
   const now = input.now || Date.now();
   const profile = scopeProfile(input.scope);
+  const tier = input.tier ?? (await resolveBriefPlanTier(input.userId));
   const connected = await listNylasAccounts(input.userId).catch(() => []);
   const authed = connected.filter((account) => account.authed);
   const selectedAccounts = new Set((input.accounts ?? []).map((value) => String(value).toLowerCase()));
@@ -316,8 +342,37 @@ export async function generateDailyReport(input: {
     );
   }
 
+  // ---- Stage 1b: deterministic brief score for every candidate --------------
+  // The score runs before any model call. It orders enrichment and fills the
+  // budget lanes in composeReport.
+  const signalsByKey = new Map<string, BriefScoreSignals>();
+  const scores = new Map<string, number>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const floor = floors.get(key)!;
+    const smart = smartByKey.get(thread._id) || null;
+    const signals = briefScoreSignals({
+      newestInboundTo: floor.newestInboundTo,
+      selfAddresses: self,
+      counterparty: floor.counterparty,
+      sentAllowlist,
+      outboundCount: floor.outboundCount,
+      dueAts: [...floor.commitments.map((c) => c.dueAt), trackedByKey.get(key)?.dueAt],
+      now,
+      smartPrimary: smart?.primary,
+      smartSecondary: smart?.secondary,
+      bulkReasons: floor.bulkReasons,
+      automated: floor.automated,
+    });
+    signalsByKey.set(key, signals);
+    scores.set(key, scoreBriefCandidate(signals));
+  }
+
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
-  const enrichCap = Math.min(Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || 30), profile.enrichCap);
+  const enrichCap = Math.min(
+    Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || ENRICH_CAP),
+    profile.enrichCap,
+  );
   const aiAvailable = await hasAiForCurrentUser();
   const enrichKeys = new Set<string>(
     bounded
@@ -334,9 +389,11 @@ export async function generateDailyReport(input: {
         );
       })
       .sort((a, b) => {
-        const fa = floors.get(`${a.account}:${a._id}`)!;
-        const fb = floors.get(`${b.account}:${b._id}`)!;
-        return LANE_PRIORITY[fb.lane] - LANE_PRIORITY[fa.lane];
+        const ka = `${a.account}:${a._id}`;
+        const kb = `${b.account}:${b._id}`;
+        const byScore = (scores.get(kb) ?? 0) - (scores.get(ka) ?? 0);
+        if (byScore !== 0) return byScore;
+        return LANE_PRIORITY[floors.get(kb)!.lane] - LANE_PRIORITY[floors.get(ka)!.lane];
       })
       .slice(0, enrichCap)
       .map((thread) => `${thread.account}:${thread._id}`),
@@ -380,6 +437,9 @@ export async function generateDailyReport(input: {
         status: 'partial',
         progress: { stage, done, total },
         skipNarrative: true,
+        scores,
+        signals: signalsByKey,
+        tier,
       });
       await saveDailyReport(partial);
     } catch {
@@ -473,10 +533,12 @@ export async function generateDailyReport(input: {
     albatrossContext,
     errors,
     reportId,
+    scores,
+    signals: signalsByKey,
+    tier,
   });
-  // Silent callers (the background month pass) persist the composed artifact
-  // themselves; saving the bare structured doc here would wipe the rendered
-  // edition mid-pass.
+  // Silent callers persist the composed artifact themselves; saving the bare
+  // structured doc here would wipe the rendered edition mid-pass.
   if (!input.silent) await saveDailyReport(report);
   return report;
 }
@@ -558,6 +620,25 @@ interface FloorSignals {
   protected: boolean;
   lane: ReportLane;
   demotionReason: string | null;
+  // Inputs for the deterministic brief score.
+  counterparty: string;
+  outboundCount: number;
+  newestInboundTo: string[];
+}
+
+// Lower-cased addresses in the To field of the newest inbound message.
+function newestInboundRecipients(messages: Message[], self: Set<string>): string[] {
+  const sorted = [...messages].sort((a, b) => Number(a.date || 0) - Number(b.date || 0));
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const message = sorted[index];
+    const from = (emailFromHeader(message.from) || '').toLowerCase();
+    if (!from || self.has(from)) continue;
+    return String(message.to || '')
+      .split(',')
+      .map((part) => emailFromHeader(part)?.toLowerCase() || '')
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function unionLabels(thread: Thread, messages: Message[]): string[] {
@@ -751,6 +832,9 @@ function computeFloor(
     protected: isProtected,
     lane,
     demotionReason,
+    counterparty,
+    outboundCount,
+    newestInboundTo: newestInboundRecipients(messages, ctx.self),
   };
 }
 
@@ -915,8 +999,14 @@ export async function composeReport(input: {
   reportId?: string;
   status?: DailyReport['status'];
   progress?: DailyReport['progress'];
-  // Partial editions skip the LLM narrative — it is written once at the end.
+  // Kept for callers; the narrative is deterministic since 2026-09-03. The
+  // model-written lede replaces it in agent-report.
   skipNarrative?: boolean;
+  // Deterministic brief scores and signals by thread key. When absent, the
+  // signals are derived from the insight so older callers still get lanes.
+  scores?: Map<string, number>;
+  signals?: Map<string, BriefScoreSignals>;
+  tier?: BriefPlanTier;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const threadDismissals = new Map(
@@ -960,12 +1050,6 @@ export async function composeReport(input: {
     };
   };
 
-  const activeTrackedKeys = new Set(
-    input.tracked
-      .filter((item) => item.status !== 'resolved' && item.status !== 'dismissed')
-      .map((item) => `${item.account}:${item.threadId}`),
-  );
-
   const byLane = (lane: Exclude<ReportLane, 'bulk'>) =>
     input.insights
       .filter((insight) => insight.lane === lane)
@@ -975,18 +1059,39 @@ export async function composeReport(input: {
 
   const replyOwed = byLane('reply_owed');
   const followUpOwed = byLane('follow_up_owed');
-  const newPeople = byLane('new_people');
   const timeSensitive = byLane('time_sensitive');
-  const fyi = byLane('fyi');
-  // Tracked threads are shown in their own section; never double-list them here.
-  const bulkTail = input.insights
-    .filter(
-      (insight) =>
-        insight.lane === 'bulk' && !activeTrackedKeys.has(`${insight.account}:${insight.threadId}`),
-    )
-    .map(toItem)
-    .filter((item) => !hiddenByUser(item))
-    .slice(0, BULK_TAIL_LIMIT);
+
+  // ---- Budget lanes (2026-09-03) -------------------------------------------
+  // Every insight becomes a scored candidate. The score is deterministic; the
+  // budget and the lane caps decide who gets in. Tracked threads compete like
+  // any other thread, so the brief never double-lists them.
+  const tier = input.tier ?? 'pro';
+  const budget = budgetForTier(tier);
+  const candidates: Array<BriefItemCandidate & { item: DailyReportItem }> = [];
+  for (const insight of input.insights) {
+    const key = `${insight.account}:${insight.threadId}`;
+    const item = toItem(insight);
+    if (hiddenByUser(item)) continue;
+    const signals = input.signals?.get(key) ?? signalsFromInsight(insight, input.now);
+    const score = input.scores?.get(key) ?? scoreBriefCandidate(signals);
+    const lane = assignBriefLane({
+      replyOwed: insight.needsReply,
+      deadlineWithin48h: signals.deadlineWithin48h,
+      needsReply: signals.needsReply && insight.floorProtected,
+    });
+    candidates.push({
+      key,
+      lane,
+      score,
+      receivedAt: item.receivedAt,
+      item: { ...item, score, budgetLane: lane, sender: personName(insight.people[0] || '') || undefined },
+    });
+  }
+  const selection = selectBriefItems(candidates, budget);
+  const answer = selection.answer.map((entry) => entry.item);
+  const today = selection.today.map((entry) => entry.item);
+  const know = selection.know.map((entry) => entry.item);
+  const selectedCount = answer.length + today.length + know.length;
 
   // Tracked section comes from the tracked-thread store (active only). Every
   // lane:'tracked' insight is represented here because that lane is only set
@@ -1021,17 +1126,20 @@ export async function composeReport(input: {
   const sections: DailyReport['sections'] = {
     replyOwed,
     followUpOwed,
-    newPeople,
+    // newPeople, fyi, and bulkTail are no longer written. The count of threads
+    // that did not earn a place is stats.noise.
+    newPeople: [],
     timeSensitive,
     tracked: visibleTrackedItems,
-    fyi,
-    bulkTail,
+    fyi: [],
+    bulkTail: [],
+    answer,
+    today,
+    know,
     tasks: reportTasks,
     calendar: reportCalendar,
     mcp: input.mcpContext ?? [],
     albatross: input.albatrossContext,
-    noiseSummary:
-      'Bulk, subscribed, platform, and promo mail is collapsed into the tail below. Real people are never hidden there.',
   };
   const stats: DailyReport['stats'] = {
     scannedThreads: input.insights.length,
@@ -1039,7 +1147,9 @@ export async function composeReport(input: {
     needsReply: replyOwed.length,
     replyOwed: replyOwed.length,
     dueSoon: timeSensitive.length,
-    bulkTailCount: bulkTail.length,
+    bulkTailCount: 0,
+    noise: Math.max(0, input.insights.length - selectedCount),
+    selected: selectedCount,
     unread: 0,
     openTasks: reportTasks.filter((task) => !task.completedAt).length,
     completedTasks: reportTasks.filter((task) => task.completedAt).length,
@@ -1070,36 +1180,10 @@ export async function composeReport(input: {
     ),
     input.albatrossContext.dailyAlignment?.tomorrowIntent,
   ).handoffs;
+  // The narrative is deterministic here. The single prose model call in
+  // agent-report writes the lede and replaces it.
   narrative = localHandoffNarrative(input.kind, handoffs);
-  let model = 'local';
-
-  if (!input.skipNarrative && (await hasAiForCurrentUser())) {
-    try {
-      const { text } = await generateTextForCurrentUser({
-        feature: 'daily_report_narrative',
-        speed: 'primary',
-        system: `Write ${contextFirstName() || 'the user'} a warm, narrative Daily Report from the supplied canonical SBAR handoff index — like a sharp chief of staff briefing them over coffee. Lead with the through-line of the day and rank the already-deduplicated handoffs; do not rebuild triage from raw source categories, split merged handoffs, or omit protected handoffs. When an explicit next-day intent is supplied, treat it as the user's authoritative attention signal: connect matching evidence, recommendations, and response drafts to it while retaining unrelated protected handoffs. Name people, tasks, projects, events, and tools when useful. Areas asking before centering must remain explicit questions. Use flowing prose in 2-3 short paragraphs, concrete and investigative. No emoji, greeting, bullet lists, clinical SBAR labels, or low-value noise. Around 170-230 words.`,
-        prompt: [
-          `Kind: ${input.kind}`,
-          `Now: ${new Date(input.now).toString()}`,
-          `Canonical handoffs: ${JSON.stringify(
-            handoffs.slice(0, 64).map((handoff) => ({
-              id: handoff.id,
-              protected: handoff.protected,
-              lane: handoff.lane,
-              situation: handoff.situation,
-              assessment: handoff.assessment,
-              recommendations: handoff.items.map((item) => item.recommendation),
-            })),
-          )}`,
-          `Memory context: ${input.memoryContext.join(' | ') || 'none'}`,
-          `Daily alignment: ${JSON.stringify(input.albatrossContext.dailyAlignment ?? null)}`,
-        ].join('\n\n'),
-      });
-      narrative = stripEmoji(text.trim()) || narrative;
-      model = describeProvider().primary || 'primary';
-    } catch {}
-  }
+  const model = 'local';
 
   const report: DailyReport = {
     _id: reportId,
@@ -1109,6 +1193,7 @@ export async function composeReport(input: {
     progress: input.progress,
     accounts: input.accounts,
     services: input.services,
+    tier,
     title,
     narrative: stripEmoji(narrative),
     handoffs,
@@ -1118,6 +1203,21 @@ export async function composeReport(input: {
     errors: input.errors,
   };
   return report;
+}
+
+// Signals for callers that compose from stored insights without the live
+// message context. Direct-to-you is unknown there, so it stays false.
+function signalsFromInsight(insight: ThreadInsight, now: number): BriefScoreSignals {
+  return {
+    directToYou: false,
+    repliedBefore: Boolean(insight.isPriorCorrespondent),
+    participated: Boolean(insight.waitingOnSomeone || insight.followUpOwed),
+    deadlineWithin48h: insight.commitments.some(
+      (c) => typeof c.dueAt === 'number' && c.dueAt >= now && c.dueAt < now + DEADLINE_WINDOW_MS,
+    ),
+    needsReply: Boolean(insight.needsReply),
+    bulkSender: insight.lane === 'bulk',
+  };
 }
 
 function localHandoffNarrative(

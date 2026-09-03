@@ -6,7 +6,13 @@ import SwiftUI
 // and a live now line, plus an agenda list mode for scanning ahead.
 struct CalendarView: View {
     @Environment(AppEnvironment.self) private var environment
+    @Environment(\.scenePhase) private var scenePhase
+    #if os(macOS)
+    @State private var macSyncCaption = MacCalendarSyncCaptionModel()
+    #endif
     @State private var showsNewEvent = false
+    // The freshness subtitle re-renders on this clock, not on every layout.
+    @State private var freshnessClock = Date.now
     @State private var selectedDay: Date = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var weekPage: Date = CalendarView.weekStart(for: .now)
     @State private var openTask: TaskSummary?
@@ -28,11 +34,12 @@ struct CalendarView: View {
     var body: some View {
         @Bindable var navigation = environment.navigation
         VStack(spacing: 0) {
-            if let move = store.workExecution.missedMoves.first(where: { $0.stepKey != nil }) {
-                MissedMoveRecoveryView(move: move)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                Divider()
+            // Missed moves live in the Work detail only. The calendar shows
+            // the day, not a recovery banner.
+            // Day mode carries the line under its week strip. The other modes
+            // have no strip, so the line sits at the top of the content.
+            if viewMode != "day" {
+                CalendarSyncLine(phase: store.calendarSync.phase)
             }
             Group {
                 switch viewMode {
@@ -45,7 +52,42 @@ struct CalendarView: View {
             }
         }
         .navigationTitle(navigationTitleText)
+        .navigationSubtitle(freshnessSubtitle)
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            // A passive open. The server skips the sync when the last one
+            // finished under two minutes ago, and then no line shows.
+            await store.resyncCalendar(reason: .viewOpen)
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                freshnessClock = .now
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            freshnessClock = .now
+            Task { await store.resyncCalendar(reason: .viewOpen) }
+        }
+        .onChange(of: store.calendarSync.phase) { freshnessClock = .now }
+        #if os(macOS)
+        // ⌘R runs a manual sync and writes one short caption after it.
+        .onChange(of: MacRequests.shared.syncCalendarToken) { _, _ in
+            Task { await macSyncCaption.manualKick(store: store) }
+        }
+        .onChange(of: store.calendarSync.phase) { _, phase in
+            macSyncCaption.phaseChanged(phase)
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                MacCalendarSyncCaptionView(model: macSyncCaption) {
+                    Task { await macSyncCaption.manualKick(store: store) }
+                }
+            }
+        }
+        #endif
+        .syncCompletionHaptic(trigger: store.calendarSync.completionToken)
         .onChange(of: viewMode) {
             // A title carried over from the previous mode would describe a
             // scroll position that no longer exists.
@@ -105,10 +147,11 @@ struct CalendarView: View {
     private var dayBody: some View {
         VStack(spacing: 0) {
             weekStrip
+            CalendarSyncLine(phase: store.calendarSync.phase)
             Divider()
             if let notice = store.calendarError {
                 CalendarNotice(message: notice) {
-                    Task { await store.refreshCalendar(sync: true) }
+                    Task { await store.resyncCalendar(reason: .manualHTTP) }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -150,7 +193,7 @@ struct CalendarView: View {
             #endif
         }
         .background(Color(uiColor: .systemBackground))
-        .refreshableIfAvailable { await store.refreshCalendar(sync: true) }
+        .refreshableIfAvailable { await store.resyncCalendar(reason: .pull) }
     }
 
     #if os(macOS)
@@ -425,7 +468,7 @@ struct CalendarView: View {
                 if let error = store.calendarError {
                     Section {
                         CalendarNotice(message: error) {
-                            Task { await store.refreshCalendar(sync: true) }
+                            Task { await store.resyncCalendar(reason: .manualHTTP) }
                         }
                     }
                 }
@@ -457,7 +500,7 @@ struct CalendarView: View {
                     .id(day)
                 }
             }
-            .refreshable { await store.refreshCalendar(sync: true) }
+            .refreshable { await store.resyncCalendar(reason: .pull) }
     }
 
     @ViewBuilder private var emptyOrErrorState: some View {
@@ -470,7 +513,7 @@ struct CalendarView: View {
                 } description: {
                     Text(error)
                 } actions: {
-                    Button("Sync Now") { Task { await store.refreshCalendar(sync: true) } }
+                    Button("Sync now") { Task { await store.resyncCalendar(reason: .manualHTTP) } }
                         .buttonStyle(.borderedProminent)
                 }
             } else {
@@ -479,7 +522,7 @@ struct CalendarView: View {
                 } description: {
                     Text("Pull down to sync your connected calendars.")
                 } actions: {
-                    Button("Sync Now") { Task { await store.refreshCalendar(sync: true) } }
+                    Button("Sync now") { Task { await store.resyncCalendar(reason: .manualHTTP) } }
                 }
             }
         } else if let error = store.calendarError {
@@ -488,7 +531,7 @@ struct CalendarView: View {
             } description: {
                 Text(error)
             } actions: {
-                Button("Sync Now") { Task { await store.refreshCalendar(sync: true) } }
+                Button("Sync now") { Task { await store.resyncCalendar(reason: .manualHTTP) } }
                     .buttonStyle(.borderedProminent)
             }
         } else {
@@ -561,6 +604,10 @@ struct CalendarView: View {
         selectedDay.formatted(.dateTime.month(.wide).year())
     }
 
+    private var freshnessSubtitle: String {
+        CalendarFreshness.subtitle(state: store.calendarSync, now: freshnessClock)
+    }
+
     private var defaultNewEventStart: Date {
         if calendar.isDateInToday(selectedDay) { return EventEditorView.defaultStart }
         return calendar.date(bySettingHour: 9, minute: 0, second: 0, of: selectedDay) ?? selectedDay
@@ -615,6 +662,16 @@ struct CalendarView: View {
 private extension View {
     func refreshableIfAvailable(_ action: @escaping @Sendable () async -> Void) -> some View {
         refreshable { await action() }
+    }
+
+    // A soft tap when a sync completes. The Mac stays silent.
+    @ViewBuilder
+    func syncCompletionHaptic(trigger: Int) -> some View {
+        #if os(iOS)
+        sensoryFeedback(.impact(flexibility: .soft), trigger: trigger)
+        #else
+        self
+        #endif
     }
 }
 
@@ -736,6 +793,7 @@ private struct DayTimelineView: View {
         let frame = blockFrame(placement)
         let width = max(44, laneWidth / CGFloat(placement.laneCount) - 3)
         let accent = environment.theme.accentColor
+        let isPending = environment.store.isPendingServerCopy(event)
         return Button {
             onOpen(event)
         } label: {
@@ -766,6 +824,7 @@ private struct DayTimelineView: View {
             }
             .frame(width: width, height: frame.height, alignment: .topLeading)
             .background(accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .pendingServerCopyBorder(isPending, accent: accent, cornerRadius: 6)
             .overlay(alignment: .bottomTrailing) {
                 Capsule()
                     .fill(accent.opacity(0.8))
@@ -1136,6 +1195,7 @@ private struct WeekTimelineView: View {
         )
         let laneWidth = (columnWidth - 2) / CGFloat(placement.laneCount)
         let tint = environment.theme.avatarColor(seed: DayChips.seed(for: event))
+        let isPending = environment.store.isPendingServerCopy(event)
         return Button {
             onOpen(event)
         } label: {
@@ -1147,6 +1207,7 @@ private struct WeekTimelineView: View {
                 .padding(.vertical, 1)
                 .frame(width: max(10, laneWidth - 1), height: height, alignment: .topLeading)
                 .background(tint.opacity(0.2), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .pendingServerCopyBorder(isPending, accent: tint, cornerRadius: 4)
                 .overlay(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1).fill(tint).frame(width: 2)
                 }
@@ -1192,6 +1253,19 @@ private struct WeekTimelineView: View {
     }
 }
 
+// A new event wears a dashed 1 pt border until the server copy lands. The
+// border then cross-fades away and the solid block remains.
+private extension View {
+    func pendingServerCopyBorder(_ isPending: Bool, accent: Color, cornerRadius: CGFloat) -> some View {
+        overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(accent, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .opacity(isPending ? 1 : 0)
+        }
+        .animation(.easeInOut(duration: 0.18), value: isPending)
+    }
+}
+
 struct CalendarNotice: View {
     let message: String
     let onSync: () -> Void
@@ -1205,7 +1279,7 @@ struct CalendarNotice: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Sync Now", action: onSync)
+                Button("Sync now", action: onSync)
                     .font(.caption.weight(.medium))
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)

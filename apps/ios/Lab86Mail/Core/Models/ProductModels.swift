@@ -992,6 +992,44 @@ struct DailyBriefArt: Hashable, Codable, Sendable {
     }
 }
 
+/// One mail thread the brief says matters today. Today shows at most four.
+struct ImportantMailItem: Identifiable, Hashable, Codable, Sendable {
+    let accountID: String
+    let threadID: String
+    let subject: String
+    let sender: String
+    /// Why it matters, in one line. The model's line first, then the reason.
+    let reason: String?
+
+    var id: String { "\(accountID):\(threadID)" }
+
+    init?(json: JSONValue) {
+        guard let accountID = json["account"]?.stringValue?.nilIfBlank,
+              let threadID = json["threadId"]?.stringValue?.nilIfBlank else { return nil }
+        self.accountID = accountID
+        self.threadID = threadID
+        subject = json["subject"]?.stringValue?.nilIfBlank ?? "Untitled"
+        let people = (json["people"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
+        sender = json["sender"]?.stringValue?.nilIfBlank ?? people.first ?? "Unknown sender"
+        reason = json["line"]?.stringValue?.nilIfBlank ?? json["whyItMatters"]?.stringValue?.nilIfBlank
+    }
+
+    /// The brief's own attention index: the "answer" lane on editions from
+    /// 2026-09-03, "replyOwed" on older ones. Today builds no second index.
+    static func fromSections(_ sections: JSONValue?, limit: Int = 4) -> [ImportantMailItem] {
+        let lane = sections?["answer"]?.arrayValue ?? sections?["replyOwed"]?.arrayValue ?? []
+        var seen = Set<String>()
+        var items: [ImportantMailItem] = []
+        for row in lane {
+            guard let item = ImportantMailItem(json: row), !seen.contains(item.id) else { continue }
+            seen.insert(item.id)
+            items.append(item)
+            if items.count == limit { break }
+        }
+        return items
+    }
+}
+
 struct DailyReportModel: Hashable, Codable, Sendable {
     enum Status: String, Codable, Sendable { case partial, ready }
 
@@ -1012,6 +1050,14 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         let openTasks: Int
         let completedTasks: Int
         let calendarEvents: Int
+        // Budget editions (2026-09-03) count the mail that did not earn a
+        // place (`noise`) and the items that did (`selected`). Optional so
+        // older editions and cached snapshots keep decoding.
+        var noise: Int? = nil
+        var selected: Int? = nil
+
+        // A budget edition writes both counts. Older editions write neither.
+        var isBudgetEdition: Bool { noise != nil && selected != nil }
     }
 
     struct SectionCounts: Hashable, Codable, Sendable {
@@ -1048,6 +1094,11 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     // keeps pre-existing cached snapshots decodable.
     let art: DailyBriefArt?
     private let services: [String]?
+    // Mail that matters today, from the brief's own attention index. Optional
+    // in the cache so editions saved before 2026-09-03 keep decoding.
+    private let importantMailItems: [ImportantMailItem]?
+
+    var importantMail: [ImportantMailItem] { importantMailItems ?? [] }
 
     // Raw service ids the edition drew from (mail providers, mcp servers…).
     // The footer derives its final list from these plus section content.
@@ -1094,6 +1145,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         artifactSource = json["artifactSource"]?.stringValue?.nilIfBlank
         let sections = json["sections"]
         hasAreaBrief = sections?["albatross"]?.objectValue != nil
+        importantMailItems = ImportantMailItem.fromSections(sections)
         let stats = json["stats"]
         self.stats = Stats(
             scannedThreads: Int(stats?["scannedThreads"]?.doubleValue ?? 0),
@@ -1103,7 +1155,9 @@ struct DailyReportModel: Hashable, Codable, Sendable {
             unread: Int(stats?["unread"]?.doubleValue ?? 0),
             openTasks: Int(stats?["openTasks"]?.doubleValue ?? 0),
             completedTasks: Int(stats?["completedTasks"]?.doubleValue ?? 0),
-            calendarEvents: Int(stats?["calendarEvents"]?.doubleValue ?? 0)
+            calendarEvents: Int(stats?["calendarEvents"]?.doubleValue ?? 0),
+            noise: stats?["noise"]?.doubleValue.map { Int($0) },
+            selected: stats?["selected"]?.doubleValue.map { Int($0) }
         )
         sectionCounts = SectionCounts(
             replyOwed: sections?["replyOwed"]?.arrayValue?.count ?? 0,
@@ -1466,6 +1520,49 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let agentState: String
         let planError: String?
         let updatedAt: Date?
+        // Optional so cached details from older servers keep decoding.
+        var horizon: WorkHorizon?
+        // The shape and the data it owns. All optional for the same reason.
+        // `shape` is the raw word; `resolvedShape` reads a missing one as quick.
+        var shape: WorkShape?
+        var listItems: [WorkListEntry]?
+        var metric: WorkMetric?
+        var milestones: [WorkMilestone]?
+        var lastUserTouchAt: Date?
+
+        init(
+            id: String,
+            title: String,
+            rawText: String,
+            status: String,
+            workState: String,
+            agentState: String,
+            planError: String?,
+            updatedAt: Date?,
+            horizon: WorkHorizon? = nil,
+            shape: WorkShape? = nil,
+            listItems: [WorkListEntry]? = nil,
+            metric: WorkMetric? = nil,
+            milestones: [WorkMilestone]? = nil,
+            lastUserTouchAt: Date? = nil
+        ) {
+            self.id = id
+            self.title = title
+            self.rawText = rawText
+            self.status = status
+            self.workState = workState
+            self.agentState = agentState
+            self.planError = planError
+            self.updatedAt = updatedAt
+            self.horizon = horizon
+            self.shape = shape
+            self.listItems = listItems
+            self.metric = metric
+            self.milestones = milestones
+            self.lastUserTouchAt = lastUserTouchAt
+        }
+
+        var resolvedShape: WorkShape { shape ?? .default }
 
         var stateLabel: String {
             switch agentState {
@@ -1753,9 +1850,13 @@ struct WorkDetail: Hashable, Codable, Sendable {
     let execution: Execution
     let contract: Contract?
     let evidence: [Evidence]
+    // Shape-owned data for the detail body. Entries are newest first.
+    let metricEntries: [WorkMetricEntry]
+    let metricSummary: WorkMetricSummary?
 
     private enum CodingKeys: String, CodingKey {
         case work, plan, project, questions, application, execution, contract, evidence
+        case metricEntries, metricSummary
     }
 
     private init(
@@ -1766,7 +1867,9 @@ struct WorkDetail: Hashable, Codable, Sendable {
         application: Application?,
         execution: Execution,
         contract: Contract?,
-        evidence: [Evidence]
+        evidence: [Evidence],
+        metricEntries: [WorkMetricEntry],
+        metricSummary: WorkMetricSummary?
     ) {
         self.work = work
         self.plan = plan
@@ -1776,19 +1879,67 @@ struct WorkDetail: Hashable, Codable, Sendable {
         self.execution = execution
         self.contract = contract
         self.evidence = evidence
+        self.metricEntries = metricEntries
+        self.metricSummary = metricSummary
     }
 
-    func completing(stepID: String) -> WorkDetail {
+    private func copy(
+        work: Work? = nil,
+        execution: Execution? = nil,
+        metricEntries: [WorkMetricEntry]? = nil,
+        metricSummary: WorkMetricSummary?? = nil
+    ) -> WorkDetail {
         WorkDetail(
-            work: work,
+            work: work ?? self.work,
             plan: plan,
             project: project,
             questions: questions,
             application: application,
-            execution: execution.completing(stepID: stepID),
+            execution: execution ?? self.execution,
             contract: contract,
-            evidence: evidence
+            evidence: evidence,
+            metricEntries: metricEntries ?? self.metricEntries,
+            metricSummary: metricSummary ?? self.metricSummary
         )
+    }
+
+    func completing(stepID: String) -> WorkDetail {
+        copy(execution: execution.completing(stepID: stepID))
+    }
+
+    /// The same detail with a new horizon. The optimistic write while the
+    /// server confirms.
+    func withHorizon(_ horizon: WorkHorizon?) -> WorkDetail {
+        var nextWork = work
+        nextWork.horizon = horizon
+        return copy(work: nextWork)
+    }
+
+    /// The same detail with a new shape. The body routes on it at once.
+    func withShape(_ shape: WorkShape) -> WorkDetail {
+        var nextWork = work
+        nextWork.shape = shape
+        return copy(work: nextWork)
+    }
+
+    func withListItems(_ items: [WorkListEntry]) -> WorkDetail {
+        var nextWork = work
+        nextWork.listItems = items
+        return copy(work: nextWork)
+    }
+
+    func withMilestones(_ milestones: [WorkMilestone]) -> WorkDetail {
+        var nextWork = work
+        nextWork.milestones = milestones
+        return copy(work: nextWork)
+    }
+
+    /// The same detail with one more log. Entries stay newest first and the
+    /// summary is recomputed on device, so the number ticks before the
+    /// server answers.
+    func appendingMetricEntry(_ entry: WorkMetricEntry, now: Date) -> WorkDetail {
+        let entries = (metricEntries + [entry]).sorted { $0.at > $1.at }
+        return copy(metricEntries: entries, metricSummary: .some(PracticeReview.summary(entries, now: now)))
     }
 
     // Snapshots written before guided execution carry no `execution` key.
@@ -1803,6 +1954,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
         execution = try container.decodeIfPresent(Execution.self, forKey: .execution) ?? Execution(json: nil)
         contract = try container.decodeIfPresent(Contract.self, forKey: .contract)
         evidence = try container.decodeIfPresent([Evidence].self, forKey: .evidence) ?? []
+        metricEntries = try container.decodeIfPresent([WorkMetricEntry].self, forKey: .metricEntries) ?? []
+        metricSummary = try container.decodeIfPresent(WorkMetricSummary.self, forKey: .metricSummary)
     }
 
     /// Where the outcome stands. This is a state, not a sentence: the views test
@@ -1868,9 +2021,19 @@ struct WorkDetail: Hashable, Codable, Sendable {
             workState: workJSON?["workState"]?.stringValue ?? "active",
             agentState: workJSON?["agentState"]?.stringValue ?? "idle",
             planError: workJSON?["planError"]?.stringValue?.nilIfBlank,
-            updatedAt: CalendarDateParser.date(workJSON?["updatedAt"])
+            updatedAt: CalendarDateParser.date(workJSON?["updatedAt"]),
+            horizon: WorkHorizon(json: workJSON?["horizon"]),
+            shape: workJSON?["shape"]?.stringValue.flatMap(WorkShape.init(rawValue:)),
+            listItems: workJSON?["listItems"]?.arrayValue.map { $0.compactMap(WorkListEntry.init) },
+            metric: WorkMetric(json: workJSON?["metric"]),
+            milestones: workJSON?["milestones"]?.arrayValue.map { $0.compactMap(WorkMilestone.init) },
+            lastUserTouchAt: CalendarDateParser.date(workJSON?["lastUserTouchAt"])
         )
         execution = Execution(json: json["execution"])
+        metricEntries = (json["metricEntries"]?.arrayValue ?? [])
+            .compactMap(WorkMetricEntry.init)
+            .sorted { $0.at > $1.at }
+        metricSummary = WorkMetricSummary(json: json["metricSummary"])
 
         if let planJSON = json["plan"], planJSON.objectValue != nil,
            let planID = planJSON["_id"]?.stringValue ?? planJSON["id"]?.stringValue {

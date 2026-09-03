@@ -975,3 +975,13 @@
     0 1px 2px rgb(0 0 0 / 0.06),
     0 6px 30px -8px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
+
+/* ---------------------------------------------------------------------------
+   The brief letter. Each entrance becomes a 0 ms state swap when the reader
+   asks for reduced motion.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  [data-brief-letter] .blur-in {
+    animation: none;
+  }
+}

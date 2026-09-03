@@ -1,21 +1,18 @@
 import { createHash } from 'node:crypto';
-import { stepCountIs, tool } from 'ai';
-import { z } from 'zod';
+import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
-import { briefDocumentV2Enabled } from '../brief/feature';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '../mail/brief-document-prompt';
-import {
-  type BriefDocumentV2,
-  type BriefRegion,
-  parseBriefDocument,
-  repairBriefDocument,
-} from '../shared/brief-document';
+import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
+import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
-const AREA_ARTIFACT_DEADLINE_MS = 180_000;
+// The area pulse (2026-09-03). One small model call writes four fields; the
+// document and the HTML fallback are rendered from them deterministically.
+const AREA_PULSE_DEADLINE_MS = 60_000;
+export const AREA_PULSE_MAX_SENTENCES = 3;
+export const AREA_PULSE_FIELD_MAX_WORDS = 28;
 
 interface AreaLivingBriefDependencies {
   convexMutation: typeof convexMutation;
@@ -292,19 +289,6 @@ export function areaArtifactRevision(context: unknown) {
   return createHash('sha256').update(JSON.stringify(revisionInput)).digest('hex').slice(0, 24);
 }
 
-export function extractAreaArtifactHtml(raw: string): string | null {
-  let text = String(raw || '').trim();
-  const fence = text.match(/```(?:html)?\s*([\s\S]*?)```/i);
-  if (fence) text = fence[1].trim();
-  const start = text.search(/<!doctype html|<html[\s>]/i);
-  if (start === -1) return null;
-  text = text.slice(start);
-  const end = text.toLowerCase().lastIndexOf('</html>');
-  if (end === -1) return null;
-  text = text.slice(0, end + 7).trim();
-  return text.length >= 200 ? text : null;
-}
-
 const AREA_CSP =
   "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; script-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
@@ -332,70 +316,238 @@ export function normalizeAreaArtifactHtml(html: string) {
   return injectAreaArtifactFontContract(next);
 }
 
-export const AREA_ARTIFACT_SYSTEM = `You are the user's chief of staff and a world-class editorial designer/front-end engineer. Compose one complete, self-contained HTML Area Brief from the supplied JSON.
+// ---- The pulse ---------------------------------------------------------------
 
-THIS DOCUMENT IS THE AREA SCREEN. It is not a widget inside a dashboard. Be creative. Treat the whole page as a canvas. Invent a visual grammar for THIS Area and THIS edition. Its structure should legitimately change with the Area's content and operating shape. Do not output a generic dashboard, admin page, card grid, or templated status report.
+export interface AreaPulse {
+  lastChange: string;
+  nextMove: string;
+  openQuestion: string;
+  // At most 3 sentences.
+  prose: string;
+  model?: string;
+}
 
-PRODUCT TRUTH:
-- Albatross is an intent layer. Declared Work and what the user explicitly said they are trying to do outrank the volume of mail, events, or tasks.
-- nextDayIntent is the user's explicit attention budget. When appliesToArea is true, fit this Area's optional work to its requestedItems/requestedMinutes and make that constraint visible in the composition. When false, compose this Area normally; do not let intent for another Area suppress it.
-- Projects/Epics are durable multi-week containers grouping tasks and Work. A plan is nested under the Work it implements; never create a standalone Plans destination or Plans section.
-- Evidence can support a read but cannot prove intent or completion. Never say work is done unless an explicit completed/completedAt state says so. Never infer completion from email silence or activity.
-- livingIndex.strength is bounded corroboration, not a completion score or probability. Use it only to explain how well-grounded the Area model is. More repeated evidence should make the read more confident, never louder or falsely certain.
-- projectPulse is the live layer for Projects/Epics and routines. A proposed routine is not active consent. Make recurring work and its next useful question visible without turning the page into a habit tracker.
-- context.verified may be stated as fact. context.candidates are uncertain hypotheses: phrase them as a quiet question with "Suggested" provenance, or omit them.
-- Use only supplied data. Never invent importance, progress, people, commitments, deadlines, dependencies, quotations, or metrics.
+export const AREA_PULSE_SYSTEM_PROMPT = `You keep a short pulse for one area of a person's life or work. Return only JSON:
+{"lastChange":"...","nextMove":"...","openQuestion":"...","prose":"..."}
 
-COMPOSITION:
-- Analyze and synthesize; do not mechanically transcribe the JSON keys into sections.
-- Answer through the composition: what this Area is, what matters now, what needs the user, what is moving, which Project/Epic owns longer-running work, and what evidence supports the read.
-- Omit empty ideas. A noisy mailbox must not dominate merely because it has more rows.
-- Build from real relationships: time, momentum, waiting, decisions, project nesting, and provenance. Use typography, rhythm, annotation, spatial grouping, responsive CSS, and restrained inline SVG where they genuinely explain real data.
-- When enough data exists, make at least one module memorable by form: perhaps a week rail, operating map, project constellation, decision ledger, momentum field, or annotated dossier. Those are inspiration, not a template. Never draw a decorative chart from meaningless numbers.
-- Integrate a compact "Get this out of my head" form when appropriate: a form with data-area-capture, one input/textarea carrying data-capture-input, and a submit control with data-action="capture_intent" and data-payload containing only {"areaId":"the supplied areaId"}. The host runtime supplies the typed text.
-- When projectPulse contains a pending question, the page may ask ONE highest-value question in context. Use a compact form with data-area-question and data-question-id="the supplied questionId", one input, textarea, or select carrying data-question-input, and a submit control with data-action="answer_question" and data-payload containing only {"questionId":"the supplied questionId"}. Use supplied options when finite. Never repeat the same question elsewhere in the document.
-- Reserve breathing room near the top corners for small floating host controls; do not draw app navigation, a toolbar, a sidebar, refresh controls, or settings inside the document.
+Rules:
+- lastChange: one sentence on the most recent real change in this area (a message, a task, a commit, an event). Use supplied dates. Empty string when nothing changed.
+- nextMove: one sentence naming the single next useful action. Empty string when there is none.
+- openQuestion: one question the person must answer to move this area forward. Use a supplied pending question when one exists. Empty string when there is none.
+- prose: at most 3 sentences on where this area stands. Declared Work and the person's stated intent outrank the volume of mail or tasks.
+- Use only supplied facts. Never say work is done unless a completed state says so. Candidate context is uncertain: phrase it as a question or leave it out.
+- Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Never write the word "AI".`;
 
-ANTI-SLOP CHECK:
-- No generic hero/subtitle/CTA formula, purple/blue SaaS gradients, glow blobs, glassmorphism, equal feature cards, counter/stat tiles, repeated bordered rectangles, icon/emoji decoration, fake metrics, generic headings, or a layout that would still make sense if a different Area's content were swapped in.
-- No assistant greeting, hype, exclamation marks, productivity advice, or first-person assistant voice.
-- Do not use ALL-CAPS letter-spaced micro-labels. Headings use sentence case.
+function firstString(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
 
-THEME AND ACCESSIBILITY:
-- Use semantic variables everywhere: --brief-bg (#faf9f6), --brief-ink (#1a1a1a), --brief-muted (#6b6b6b), --brief-hairline (#e6e3dc), --brief-accent (#276749), --brief-accent-soft (color-mix(in oklab,var(--brief-accent) 14%,transparent)), --brief-accent-2 (#8a4b20), --brief-font-display ('Fraunces',Georgia,serif), --brief-font-body ('Geist',system-ui,sans-serif), --brief-display-tracking (0em).
-- Include usable light :root fallbacks and @media(prefers-color-scheme:dark) that remaps only --brief-* tokens. The host posts live tokens later.
-- The host loads the approved fonts. Never hardcode a font-family. Use --brief-font-body for all body/UI copy and --brief-font-display for every heading or editorial display line; mark non-heading display text with data-brief-display so the live app font is enforced. The user's selected display face may change after this document is generated.
-- No external resources.
-- Responsive from 360px to 1200px; generous wide-pane composition without making mobile a shrunken desktop. Visible :focus-visible, semantic headings, real buttons/links for actions, and reduced-motion support are required.
-- Use tasteful entrance motion only when it clarifies hierarchy; honor prefers-reduced-motion.
+// A pulse from the context alone. Used when no model is available and as the
+// floor under a thin model reply.
+export function fallbackAreaPulse(context: Record<string, any>): AreaPulse {
+  const name = firstString(context.area?.name, 180) || 'This area';
+  const work = Array.isArray(context.work) ? context.work : [];
+  const tasks = Array.isArray(context.tasks) ? context.tasks : [];
+  const mail = Array.isArray(context.mail) ? context.mail : [];
+  const events = Array.isArray(context.events) ? context.events : [];
+  const questions = (Array.isArray(context.projectPulse) ? context.projectPulse : []).flatMap((row: any) =>
+    Array.isArray(row?.pendingQuestions) ? row.pendingQuestions : [],
+  );
+  const latest = [...work, ...tasks, ...mail]
+    .map((row: any) => ({
+      at:
+        Number(
+          row.updatedAt ?? row.receivedAt ?? (row.updatedAtIso ? Date.parse(String(row.updatedAtIso)) : 0),
+        ) || 0,
+      text: firstString(row.title || row.subject, 200),
+    }))
+    .filter((row) => row.text)
+    .sort((a, b) => b.at - a.at)[0];
+  const openTask = tasks.find((row: any) => row?.title && !row.completed);
+  const nextEvent = events.find((row: any) => row?.title);
+  const openWork = work.length;
+  const lastChange = latest ? `Latest: ${latest.text}.` : '';
+  const nextMove = openTask
+    ? `Next: ${firstString(openTask.title, 200)}.`
+    : nextEvent
+      ? `Next: ${firstString(nextEvent.title, 200)}.`
+      : '';
+  const openQuestion = questions[0]?.prompt ? firstString(questions[0].prompt, 300) : '';
+  const prose = `${name} has ${openWork} active Work ${openWork === 1 ? 'item' : 'items'} and ${tasks.filter((row: any) => !row.completed).length} open ${tasks.length === 1 ? 'task' : 'tasks'}.`;
+  return { lastChange, nextMove, openQuestion, prose, model: 'local' };
+}
 
-ACTIONS:
-- The host runtime is injected after generation. You only declare data-action and JSON data-payload attributes. Do not write any JavaScript.
-- open_work payload {"workId":"..."}
-- open_thread payload {"accountId":"...","threadId":"..."}
-- open_event payload {"accountId":"...","eventId":"..."}
-- open_tasks payload {}
-- discuss_area payload {"areaId":"..."}
-- capture_intent as described above. Never put invented or prefilled text in this action.
-- answer_question as described above. Use only a supplied pending questionId. The host supplies the typed or selected answer.
-- Use only IDs supplied in the corresponding records. Do not create actions when the ID is null.
-
-OUTPUT:
-- One complete <!doctype html> document, under 900 lines, with all CSS in one <style>. No JavaScript, iframe, object, embed, external image, app chrome, or prose outside the document.
-- Body fills the full pane edge-to-edge; use internal responsive padding. The host toolbar floats above it.
-- End with one quiet source note stating that the edition is composed from this Area's declared Work and linked evidence, with uncertain context labeled rather than asserted.
-- Output only the HTML document.`;
-
-function fallbackCopy(home: AreaHomeLike) {
-  const work = home.plans?.length || 0;
-  const projects = home.projects?.length || 0;
-  const name = clean(home.area?.name, 180) || 'This area';
+export function parseAreaPulse(text: string, fallback: AreaPulse): AreaPulse | null {
+  const match = String(text || '').match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const field = (value: unknown) =>
+    sanitizeLine(typeof value === 'string' ? value : '', AREA_PULSE_FIELD_MAX_WORDS);
   return {
-    lede: `${name} has ${work} active Work item${work === 1 ? '' : 's'} and ${projects} Project${projects === 1 ? '' : 's'}.`,
-    summary:
-      'The Area artifact is composed from declared Work, Projects, tasks, calendar, mail, and verified context.',
+    lastChange: field(parsed.lastChange) || fallback.lastChange,
+    nextMove: field(parsed.nextMove) || fallback.nextMove,
+    openQuestion: field(parsed.openQuestion) || fallback.openQuestion,
+    prose:
+      sanitizeProse(typeof parsed.prose === 'string' ? parsed.prose : '', AREA_PULSE_MAX_SENTENCES) ||
+      fallback.prose,
   };
 }
+
+export async function writeAreaPulse(
+  context: Record<string, any>,
+  input: { userId: string; userEmail?: string | null; userName?: string | null },
+): Promise<AreaPulse> {
+  const fallback = fallbackAreaPulse(context);
+  try {
+    const { text } = await withDeadline(
+      areaLivingBriefDependencies.generateTextForCurrentUser({
+        feature: 'albatross_area_pulse',
+        speed: 'fast',
+        userId: input.userId,
+        userEmail: input.userEmail,
+        userName: input.userName,
+        system: AREA_PULSE_SYSTEM_PROMPT,
+        prompt: JSON.stringify(context, null, 2),
+      }),
+      AREA_PULSE_DEADLINE_MS,
+      'Area pulse composition',
+    );
+    const parsed = parseAreaPulse(text, fallback);
+    if (!parsed) return fallback;
+    return { ...parsed, model: describeProvider().fast || describeProvider().primary || 'fast' };
+  } catch (error) {
+    console.warn('[area-living-brief] pulse model call failed; using the deterministic pulse:', error);
+    return fallback;
+  }
+}
+
+// ---- Deterministic renderers -------------------------------------------------
+
+// The area document: hero (prose) -> pulse lines -> one prompt -> live open work.
+export function composeAreaPulseDocument(
+  context: Record<string, any>,
+  pulse: AreaPulse,
+  generatedAt = Number(context.edition?.generatedAt) || Date.now(),
+): BriefDocumentV2 {
+  const areaId = String(context.area?.areaId || '');
+  const areaName = String(context.area?.name || 'Area');
+  const questions = (Array.isArray(context.projectPulse) ? context.projectPulse : []).flatMap((row: any) =>
+    Array.isArray(row?.pendingQuestions) ? row.pendingQuestions : [],
+  );
+  const questionId = questions[0]?.questionId ? String(questions[0].questionId) : undefined;
+  const lines = [
+    pulse.lastChange ? `Last change: ${pulse.lastChange}` : '',
+    pulse.nextMove ? `Next move: ${pulse.nextMove}` : '',
+    pulse.openQuestion ? `Open question: ${pulse.openQuestion}` : '',
+  ].filter(Boolean);
+  const regions: BriefRegion[] = [
+    {
+      id: 'lede',
+      summary: pulse.prose,
+      tree: {
+        kind: 'hero',
+        emphasis: 'primary',
+        tone: 'neutral',
+        surface: 'plain',
+        children: [{ kind: 'text', emphasis: 'primary', tone: 'neutral', role: 'lede', text: pulse.prose }],
+      },
+    },
+  ];
+  if (lines.length) {
+    regions.push({
+      id: 'pulse',
+      summary: lines.join(' '),
+      tree: {
+        kind: 'stack',
+        emphasis: 'standard',
+        tone: 'neutral',
+        density: 'standard',
+        children: lines.map((text) => ({
+          kind: 'text' as const,
+          emphasis: 'standard' as const,
+          tone: 'neutral' as const,
+          role: 'body' as const,
+          text,
+        })),
+      },
+    });
+  }
+  regions.push({
+    id: 'ask',
+    summary: pulse.openQuestion || 'Add a thought to this area.',
+    tree: questionId
+      ? {
+          kind: 'prompt',
+          emphasis: 'standard',
+          tone: 'neutral',
+          variant: 'question',
+          placeholder: pulse.openQuestion || 'Your answer',
+          questionId,
+        }
+      : {
+          kind: 'prompt',
+          emphasis: 'muted',
+          tone: 'neutral',
+          variant: 'capture',
+          placeholder: 'Get this out of my head',
+        },
+  });
+  if (areaId) {
+    regions.push({
+      id: 'open-work',
+      summary: 'Open work in this area.',
+      tree: {
+        kind: 'query_list',
+        emphasis: 'standard',
+        tone: 'neutral',
+        title: 'Open work',
+        query: { name: 'area_open_work', areaId },
+        limit: 6,
+        variant: 'rows',
+        emptyText: 'No open work.',
+      },
+    });
+  }
+  return parseBriefDocument({
+    version: 2,
+    title: areaName,
+    summary: pulse.prose,
+    generatedAt,
+    regions,
+  });
+}
+
+// The small HTML fallback for readers without the v2 renderer.
+export function renderAreaPulseHtml(areaName: string, pulse: AreaPulse): string {
+  const line = (label: string, value: string) =>
+    value ? `<p><strong>${escapeAreaHtml(label)}</strong> ${escapeAreaHtml(value)}</p>` : '';
+  return normalizeAreaArtifactHtml(`<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;padding:48px;font:16px/1.6 system-ui;background:#f7f5ef;color:#20231f}
+main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}p{max-width:62ch}strong{font-weight:650}
+</style></head><body><main><p>Area brief</p><h1>${escapeAreaHtml(areaName)}</h1>
+<p>${escapeAreaHtml(pulse.prose)}</p>
+${line('Last change.', pulse.lastChange)}${line('Next move.', pulse.nextMove)}${line('Open question.', pulse.openQuestion)}
+</main></body></html>`);
+}
+
+function escapeAreaHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    if (character === '&') return '&amp;';
+    if (character === '<') return '&lt;';
+    if (character === '>') return '&gt;';
+    if (character === '"') return '&quot;';
+    return '&#39;';
+  });
+}
+
+// ---- Generation --------------------------------------------------------------
 
 export async function generateAreaLivingBrief(input: {
   userId: string;
@@ -404,7 +556,7 @@ export async function generateAreaLivingBrief(input: {
   areaId: string;
   force?: boolean;
 }) {
-  const [home, pulse, evidenceIndex] = await Promise.all([
+  const [home, pulseContext, evidenceIndex] = await Promise.all([
     areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
       userId: input.userId,
       areaId: input.areaId,
@@ -422,99 +574,69 @@ export async function generateAreaLivingBrief(input: {
       },
     ),
   ]);
-  const context = buildAreaArtifactContext(home, Date.now(), pulse, evidenceIndex);
+  const context = buildAreaArtifactContext(home, Date.now(), pulseContext, evidenceIndex);
   const revision = areaArtifactRevision(context);
   if (
     !input.force &&
     home.livingBrief?.status === 'ready' &&
-    (home.livingBrief?.document || home.livingBrief?.artifactHtml) &&
+    (home.livingBrief?.pulse || home.livingBrief?.document || home.livingBrief?.artifactHtml) &&
     home.livingBrief?.basedOnRevision === revision
   ) {
     return home.livingBrief;
   }
 
-  const fallback = fallbackCopy(home);
+  const areaName = String(home.area?.name || 'Area');
+  const previous = fallbackAreaPulse(context);
   await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
     userId: input.userId,
     areaId: input.areaId,
     status: 'generating',
-    lede: home.livingBrief?.lede || fallback.lede,
-    summary: home.livingBrief?.summary || fallback.summary,
+    lede: home.livingBrief?.lede || previous.lastChange || previous.prose,
+    summary: home.livingBrief?.summary || previous.prose,
     sourceRefs: [],
     basedOnRevision: revision,
   });
 
   try {
-    if (briefDocumentV2Enabled()) {
-      const legacyHtml = buildAreaDocumentLegacyHtml(home, fallback);
-      const document = await composeAreaDocumentV2(context, fallback, input, async (partial) => {
-        await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
-          userId: input.userId,
-          areaId: input.areaId,
-          status: 'generating',
-          ...fallback,
-          document: partial,
-          artifactSource: 'document-v2',
-          artifactHtml: legacyHtml,
-          sourceRefs: [],
-          basedOnRevision: revision,
-        });
-      });
-      await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
-        userId: input.userId,
-        areaId: input.areaId,
-        status: 'ready',
-        ...fallback,
-        document,
-        artifactSource: 'document-v2',
-        artifactHtml: legacyHtml,
-        sourceRefs: [],
-        basedOnRevision: revision,
-      });
-      return {
-        ...fallback,
-        document,
-        artifactSource: 'document-v2',
-        artifactHtml: legacyHtml,
-        status: 'ready',
-        basedOnRevision: revision,
-      };
-    }
-
-    const { text } = await withDeadline(
-      areaLivingBriefDependencies.generateTextForCurrentUser({
-        feature: 'albatross_area_artifact',
-        speed: 'primary',
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        system: AREA_ARTIFACT_SYSTEM,
-        prompt: JSON.stringify(context, null, 2),
-      }),
-      AREA_ARTIFACT_DEADLINE_MS,
-      'Area artifact composition',
-    );
-    const extracted = extractAreaArtifactHtml(text);
-    if (!extracted) throw new Error('AI did not return a complete Area HTML document.');
-    const artifactHtml = normalizeAreaArtifactHtml(extracted);
+    const pulse = await writeAreaPulse(context, input);
+    const document = composeAreaPulseDocument(context, pulse);
+    const artifactHtml = renderAreaPulseHtml(areaName, pulse);
+    const lede = pulse.lastChange || pulse.nextMove || pulse.prose;
     await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
       userId: input.userId,
       areaId: input.areaId,
       status: 'ready',
-      ...fallback,
+      lede,
+      summary: pulse.prose,
+      document,
+      artifactSource: 'document-v2',
       artifactHtml,
       sourceRefs: [],
       basedOnRevision: revision,
     });
-    return { ...fallback, artifactHtml, status: 'ready', basedOnRevision: revision };
+    await areaLivingBriefDependencies.convexMutation((api as any).albatrossAreaPulse.saveAreaPulse, {
+      userId: input.userId,
+      areaId: input.areaId,
+      pulse,
+    });
+    return {
+      lede,
+      summary: pulse.prose,
+      pulse,
+      document,
+      artifactSource: 'document-v2',
+      artifactHtml,
+      status: 'ready',
+      basedOnRevision: revision,
+    };
   } catch (error) {
     await areaLivingBriefDependencies
       .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
         userId: input.userId,
         areaId: input.areaId,
         status: 'error',
-        lede: home.livingBrief?.lede || fallback.lede,
-        summary: home.livingBrief?.summary || fallback.summary,
+        lede: home.livingBrief?.lede || previous.prose,
+        summary: home.livingBrief?.summary || previous.prose,
         sourceRefs: [],
         basedOnRevision: revision,
         error: error instanceof Error ? error.message : String(error),
@@ -522,131 +644,4 @@ export async function generateAreaLivingBrief(input: {
       .catch(() => undefined);
     throw error;
   }
-}
-
-const AREA_DOCUMENT_SYSTEM = `${BRIEF_DOCUMENT_V2_SYSTEM_PROMPT}
-
-You are composing one Area living brief, not a Daily Brief.
-- Declared Work and the user's explicit intent outrank evidence volume.
-- nextDayIntent is authoritative only when appliesToArea is true. Honor its requested item/time budget as the Area's editorial scope. When false, render the Area normally.
-- Use query_list {name:"area_open_work",areaId:"<current area id>"} when the region should stay live.
-- Include areaId on open_area, discuss_area, and capture_intent payloads.
-- Plans are nested under Work; never invent a standalone Plans destination.
-- Candidate context is uncertain. Phrase it as a question or omit it.
-- Answer: what this Area is, what matters now, what needs the user, what is moving, and what evidence supports the read.
-- A prompt leaf is encouraged when one capture or pending question is the clearest next move.`;
-
-export async function composeAreaDocumentV2(
-  context: Record<string, any>,
-  fallback: { lede: string; summary: string },
-  input: { userId: string; userEmail?: string | null; userName?: string | null },
-  onRegion?: (document: BriefDocumentV2) => Promise<void>,
-): Promise<BriefDocumentV2> {
-  const regions: BriefRegion[] = [];
-  const finalized: { title?: string; summary?: string } = {};
-  const generatedAt = Number(context.edition?.generatedAt) || Date.now();
-  const areaName = String(context.area?.name || 'Area');
-
-  await withDeadline(
-    areaLivingBriefDependencies.generateTextForCurrentUser({
-      feature: 'albatross_area_artifact',
-      speed: 'primary',
-      userId: input.userId,
-      userEmail: input.userEmail,
-      userName: input.userName,
-      system: AREA_DOCUMENT_SYSTEM,
-      prompt: JSON.stringify(
-        {
-          ...context,
-          actions: {
-            ...context.actions,
-            // v2 has one cross-surface navigation verb. Keep the legacy
-            // open_tasks contract out of this prompt so the model cannot emit
-            // an action the native renderers intentionally hide.
-            openTasks: { action: 'open_view', payload: { view: 'tasks' } },
-          },
-        },
-        null,
-        2,
-      ),
-      tools: {
-        place_region: tool({
-          description: 'Validate, repair, and place one Area Brief region in reading order.',
-          inputSchema: z.object({ region: z.record(z.string(), z.unknown()) }),
-          execute: async ({ region }) => {
-            const candidate = parseBriefDocument({
-              version: 2,
-              title: finalized.title || areaName,
-              summary: finalized.summary || fallback.summary,
-              generatedAt,
-              regions: [...regions, region],
-            });
-            const placed = candidate.regions[candidate.regions.length - 1];
-            if (!placed) throw new Error('The Area region could not be repaired.');
-            const existing = regions.findIndex((entry) => entry.id === placed.id);
-            if (existing >= 0) regions[existing] = placed;
-            else if (regions.length < 12) regions.push(placed);
-            if (onRegion) {
-              await onRegion(
-                parseBriefDocument({
-                  version: 2,
-                  title: finalized.title || areaName,
-                  summary: finalized.summary || fallback.summary,
-                  generatedAt,
-                  regions,
-                }),
-              );
-            }
-            return { ok: true, id: placed.id, placed: regions.length };
-          },
-        }),
-        finalize_brief: tool({
-          description: 'Set the Area document title and accessible plain-text summary.',
-          inputSchema: z.object({
-            title: z.string().trim().min(1).max(160),
-            summary: z.string().trim().min(1).max(1_200),
-          }),
-          execute: async (value) => {
-            finalized.title = value.title;
-            finalized.summary = value.summary;
-            return { ok: true, regions: regions.length };
-          },
-        }),
-      },
-      stopWhen: stepCountIs(14),
-    }),
-    AREA_ARTIFACT_DEADLINE_MS,
-    'Area document composition',
-  );
-
-  if (!regions.length) throw new Error('AI did not place any Area Brief regions.');
-  return parseBriefDocument(
-    repairBriefDocument({
-      version: 2,
-      title: finalized.title || areaName,
-      summary: finalized.summary || fallback.summary,
-      generatedAt,
-      regions,
-    }),
-  );
-}
-
-function buildAreaDocumentLegacyHtml(home: AreaHomeLike, fallback: { lede: string; summary: string }) {
-  const areaName = escapeAreaHtml(clean(home.area?.name, 180) || 'Area');
-  return normalizeAreaArtifactHtml(`<!doctype html>
-<html><head><meta charset="utf-8"><style>
-body{margin:0;padding:48px;font:16px/1.6 system-ui;background:#f7f5ef;color:#20231f}
-main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}p{max-width:62ch}
-</style></head><body><main><p>Area brief</p><h1>${areaName}</h1>
-<p>${escapeAreaHtml(fallback.lede)}</p><p>${escapeAreaHtml(fallback.summary)}</p></main></body></html>`);
-}
-
-function escapeAreaHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => {
-    if (character === '&') return '&amp;';
-    if (character === '<') return '&lt;';
-    if (character === '>') return '&gt;';
-    if (character === '"') return '&quot;';
-    return '&#39;';
-  });
 }

@@ -7,6 +7,7 @@
 // all. Before this, the brief gave its biggest graphic to the weather and
 // rendered "3 Work questions need you" at roughly 12px.
 
+import { type HorizonWorkLike, isDormant } from './horizon';
 import { needsYou, type WorkStateInput } from './work-state';
 
 export type Capacity = 'low' | 'normal' | 'high';
@@ -27,7 +28,7 @@ export interface TodayEvent {
   status?: string | null;
 }
 
-export interface TodayWork extends WorkStateInput {
+export interface TodayWork extends WorkStateInput, HorizonWorkLike {
   _id: string;
   title: string | null;
   rawText: string;
@@ -76,8 +77,9 @@ export function eventWindowLabel(event: TodayEvent, locale = 'en-US'): string {
  * What Albatross cannot move without the user. Approvals rank above questions:
  * an approval is a decision already prepared and waiting on one word.
  */
-export function needsYouToday(work: TodayWork[], approvals: TodayApproval[]) {
-  const items = work.filter((row) => needsYou(row));
+export function needsYouToday(work: TodayWork[], approvals: TodayApproval[], nowMs = Date.now()) {
+  // Dormant Work asks for nothing until it wakes.
+  const items = work.filter((row) => !isDormant(row, nowMs) && needsYou(row));
   return {
     approvals: approvals.filter((row) => row.status === 'pending' || row.status === 'claiming'),
     work: items.sort((a, b) => b.openQuestions - a.openQuestions || b.updatedAt - a.updatedAt),
@@ -89,9 +91,10 @@ export function needsYouToday(work: TodayWork[], approvals: TodayApproval[]) {
  * reserved time is a different idea, and it does not exist yet. Calling these
  * "scheduled" would be a lie the calendar could not back up.
  */
-export function openWork(work: TodayWork[]): TodayWork[] {
+export function openWork(work: TodayWork[], nowMs = Date.now()): TodayWork[] {
   return work.filter(
     (row) =>
+      !isDormant(row, nowMs) &&
       !needsYou(row) &&
       row.workState !== 'waiting' &&
       row.workState !== 'blocked' &&
@@ -119,7 +122,7 @@ export function readyToMove(
   capacity: Capacity,
   nowMs = Date.now(),
 ): { items: TodayWork[]; heldBack: number } {
-  const sorted = openWork(work)
+  const sorted = openWork(work, nowMs)
     .filter((row) => !hasUpcomingBooking(row, nowMs))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const shown = sorted.slice(0, CAPACITY_SHOWN[capacity]);

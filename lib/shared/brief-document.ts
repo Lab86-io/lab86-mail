@@ -95,6 +95,9 @@ const framingSchema = z.object({
   reason: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
   lane: z.string().max(120).optional(),
   prep: z.string().max(BRIEF_DOCUMENT_LIMITS.shortText).optional(),
+  // Display name of the newest sender (budget brief, 2026-09-03). Renderers
+  // show it before hydration completes; hydration keeps the live address.
+  sender: z.string().max(200).optional(),
 });
 
 const handoffEvidenceSchema = z.object({
@@ -935,6 +938,9 @@ function repairLeaf(
                   ...(clippedString(framing.lane, 120) ? { lane: clippedString(framing.lane, 120) } : {}),
                   ...(clippedString(framing.prep, BRIEF_DOCUMENT_LIMITS.shortText)
                     ? { prep: clippedString(framing.prep, BRIEF_DOCUMENT_LIMITS.shortText) }
+                    : {}),
+                  ...(clippedString(framing.sender, 200)
+                    ? { sender: clippedString(framing.sender, 200) }
                     : {}),
                 },
                 ...(handoff ? { handoff } : {}),

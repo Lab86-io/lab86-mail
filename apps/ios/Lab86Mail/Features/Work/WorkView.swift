@@ -9,12 +9,20 @@ struct WorkView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var filter: WorkFilter = .all
     @State private var showsClosed = false
+    @State private var horizonTarget: WorkListItem?
 
     private var store: ProductStore { environment.store }
 
-    private var groups: [(state: WorkState, items: [WorkListItem])] {
-        WorkGrouping.group(WorkGrouping.filter(store.allWork, by: filter, areaID: nil))
+    /// Dormant Work leaves the state groups for the "Later" shelf.
+    private var split: (awake: [WorkListItem], later: [WorkListItem]) {
+        WorkGrouping.split(WorkGrouping.filter(store.allWork, by: filter, areaID: nil), now: .now)
     }
+
+    private var groups: [(state: WorkState, items: [WorkListItem])] {
+        WorkGrouping.group(split.awake)
+    }
+
+    private var laterItems: [WorkListItem] { split.later }
 
     private var openGroups: [(state: WorkState, items: [WorkListItem])] {
         groups.filter { !WorkState.closed.contains($0.state) }
@@ -40,9 +48,9 @@ struct WorkView: View {
                         .padding(.bottom, 12)
                 }
 
-                if openGroups.isEmpty && closedGroups.isEmpty {
+                if openGroups.isEmpty && closedGroups.isEmpty && laterItems.isEmpty {
                     emptyState
-                } else if openGroups.isEmpty && !showsClosed {
+                } else if openGroups.isEmpty && laterItems.isEmpty && !showsClosed {
                     // Everything left is finished and finished is hidden. Saying
                     // so beats a page that looks broken.
                     VStack(alignment: .leading, spacing: 10) {
@@ -58,6 +66,38 @@ struct WorkView: View {
                 } else {
                     ForEach(openGroups, id: \.state) { group in
                         workGroup(group.state, items: group.items)
+                    }
+                    if !laterItems.isEmpty {
+                        #if os(macOS)
+                        // The Mac reads the shelf as an ordinal ruler: equal
+                        // steps in wake order, with the elapsed time written
+                        // on the hairline between the cards.
+                        MacLaterRuler(
+                            items: laterItems,
+                            now: .now,
+                            onOpen: { item in
+                                environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                            },
+                            onWake: { item in
+                                Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
+                            },
+                            onSetHorizon: { item, horizon in
+                                await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
+                            }
+                        )
+                        #else
+                        LaterShelf(
+                            items: laterItems,
+                            now: .now,
+                            onOpen: { item in
+                                environment.navigation.openWork(id: item.id, title: item.displayTitle)
+                            },
+                            onWake: { item in
+                                Task { _ = await WorkHorizonWriter.set(nil, for: item.id, environment: environment) }
+                            },
+                            onChangeHorizon: { item in horizonTarget = item }
+                        )
+                        #endif
                     }
                     if showsClosed {
                         ForEach(closedGroups, id: \.state) { group in
@@ -76,6 +116,11 @@ struct WorkView: View {
         // to be reachable here and not only from inside an Area.
         .navigationDestination(item: $navigation.workRoute) { route in
             WorkDetailView(route: route)
+        }
+        .sheet(item: $horizonTarget) { item in
+            HorizonSheet(title: item.displayTitle, initial: item.horizon) { horizon in
+                await WorkHorizonWriter.set(horizon, for: item.id, environment: environment)
+            }
         }
         .navigationTitle("Albatrosses")
         .toolbar {

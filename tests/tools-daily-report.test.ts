@@ -200,6 +200,76 @@ describe('daily report tools', () => {
     );
   });
 
+  test('budget lanes carry the deterministic score and leave list mail out', async () => {
+    const human = await seedThreadMessage({
+      account: 'budget@example.test',
+      threadId: 'budget_human',
+      messageId: 'msg_budget_human',
+      subject: 'Venue for Friday',
+      from: 'Maya <maya@example.test>',
+      to: 'Jakob <budget@example.test>',
+      textBody: 'Can you confirm the venue by Friday?',
+      labels: ['INBOX', 'IMPORTANT', 'CATEGORY_PERSONAL'],
+    });
+    await withToolContext(() =>
+      upsertTrackedThread({
+        account: human.account,
+        threadId: human.threadId,
+        subject: 'Venue for Friday',
+        participants: ['Maya'],
+        status: 'open',
+      }),
+    );
+    const bulk = await seedThreadMessage({
+      account: 'budget@example.test',
+      threadId: 'budget_bulk',
+      messageId: 'msg_budget_bulk',
+      subject: 'Weekly deals',
+      from: 'Deals <no-reply@deals.example.test>',
+      to: 'Jakob <budget@example.test>',
+      textBody: 'Unsubscribe here.',
+      labels: ['INBOX', 'CATEGORY_PROMOTIONS'],
+    });
+    await withToolContext(() =>
+      upsertTrackedThread({
+        account: bulk.account,
+        threadId: bulk.threadId,
+        subject: 'Weekly deals',
+        status: 'open',
+      }),
+    );
+
+    const report = await withToolContext(() =>
+      generateDailyReport({
+        kind: 'manual',
+        accounts: [human.account],
+        includeCalendar: false,
+        maxRecentPerAccount: 1,
+        now: Date.parse('2026-06-10T15:00:00.000Z'),
+        tier: 'free',
+      }),
+    );
+
+    expect(report.tier).toBe('free');
+    const answer = report.sections.answer?.find((item) => item.threadId === human.threadId);
+    expect(answer).toBeDefined();
+    expect(answer?.budgetLane).toBe('answer');
+    expect(answer?.sender).toBe('Maya');
+    // direct-to-you (+3) at least; a reply-owed human thread never scores below that.
+    expect(answer?.score ?? 0).toBeGreaterThanOrEqual(3);
+    const everywhere = [
+      ...(report.sections.answer ?? []),
+      ...(report.sections.today ?? []),
+      ...(report.sections.know ?? []),
+    ];
+    expect(everywhere.some((item) => item.threadId === bulk.threadId)).toBe(false);
+    expect(report.sections.bulkTail).toEqual([]);
+    expect(report.sections.noiseSummary).toBeUndefined();
+    expect(report.stats.noise).toBeGreaterThanOrEqual(1);
+    expect(report.stats.selected).toBe(everywhere.length);
+    expect(report.stats.bulkTailCount).toBe(0);
+  });
+
   test('get_latest_daily_report returns the display artifact with the area brief injected, without mutating stored history', async () => {
     await withToolContext(async () => {
       const storedHtml =
@@ -297,14 +367,25 @@ describe('daily report tools', () => {
     expect(generated.started).toBeUndefined();
     expect(generated.report?.status).toBe('ready');
     expect(generated.report?.html).toContain('<');
+    // Without a model the budget document still composes deterministically:
+    // a plain lede, the selected items, and the week ahead.
+    expect(generated.report?.document?.version).toBe(2);
+    expect(generated.report?.document?.regions[0]?.id).toBe('lede');
+    expect(generated.report?.prose?.model).toBe('local');
+    expect(generated.report?.artifactErrors?.[0]?.stage).toBe('ai_availability');
 
     const persisted = await withToolContext(() => getDailyReport(generated.report._id));
     expect(persisted).toMatchObject({
       _id: generated.report._id,
       kind: 'manual',
       status: 'ready',
-      artifactStatus: 'rendered',
-      artifactSource: 'deterministic',
+      artifactStatus: 'ready',
+      artifactSource: 'document-v2',
     });
+    expect(Array.isArray(persisted?.sections.answer)).toBe(true);
+    expect(persisted?.sections.bulkTail).toEqual([]);
+    expect(persisted?.sections.newPeople).toEqual([]);
+    expect(persisted?.sections.fyi).toEqual([]);
+    expect(typeof persisted?.stats.noise).toBe('number');
   });
 });

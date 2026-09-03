@@ -2,6 +2,10 @@ import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 
 const AREA_BRIEF_MARKER = 'data-lab86-area-brief-host';
 
+// The daily brief embeds at most 3 areas, 1 line each (2026-09-03).
+export const REPORT_AREA_LIMIT = 3;
+export const REPORT_AREA_ROW_LIMIT = 1;
+
 interface AreaBriefCard {
   areaId: string;
   name: string;
@@ -76,7 +80,7 @@ function renderAreaBriefSection(cards: AreaBriefCard[], summary: string): string
 function renderAreaBriefCard(card: AreaBriefCard): string {
   const rows = card.rows.length
     ? `<ul class="area-brief-list">${card.rows
-        .slice(0, 4)
+        .slice(0, REPORT_AREA_ROW_LIMIT)
         .map((row) => `<li>${escapeHtml(row)}</li>`)
         .join('')}</ul>`
     : '';
@@ -156,7 +160,7 @@ function areaBriefCards(context: AlbatrossDailyReportContext): AreaBriefCard[] {
     card.rows.push(item.summary);
   }
 
-  return [...byArea.values()].slice(0, 6);
+  return [...byArea.values()].slice(0, REPORT_AREA_LIMIT);
 }
 
 function button(action: string, label: string, payload: Record<string, unknown>) {
