@@ -180,8 +180,10 @@ describe('staleness is per shape, not a flat ninety days', () => {
   });
 
   test('a small errand is asked about sooner than a long project', () => {
-    expect(STALE_AFTER_DAYS.quick).toBeLessThan(STALE_AFTER_DAYS.project);
-    expect(STALE_AFTER_DAYS.project).toBeLessThan(STALE_AFTER_DAYS.practice);
+    expect(STALE_AFTER_DAYS.quick).toBeLessThan(STALE_AFTER_DAYS.project as number);
+    // A practice has no finish line. The policy says it is never stale.
+    expect(STALE_AFTER_DAYS.practice).toBeNull();
+    expect(isStale(work({ shape: 'practice', updatedAt: NOW - 400 * DAY }), NOW)).toBe(false);
     expect(isStale(work({ shape: 'quick', updatedAt: NOW - 20 * DAY }), NOW)).toBe(true);
     expect(isStale(work({ shape: 'project', updatedAt: NOW - 20 * DAY }), NOW)).toBe(false);
   });

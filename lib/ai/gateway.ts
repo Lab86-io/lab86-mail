@@ -47,6 +47,8 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   // evidence strings. Deliberately tight — a verdict that needs more room than
   // this is a verdict that stopped being grounded.
   albatross_area_route: 1200,
+  // One route word and one number for the Ask / Hold bar.
+  albatross_route: 60,
   agent: 12000,
 };
 const DEFAULT_GENERATE_MAX_TOKENS = 4000;

@@ -5,11 +5,14 @@
 // rows, while every client receives the same already-decided projection.
 
 import { type HorizonWorkLike, isDormant } from './horizon';
+import { shapeAllows } from './shape-policy';
 
 export type ExecutionPhase = 'active' | 'upcoming' | 'unscheduled';
 
 export interface ExecutionWorkRow extends HorizonWorkLike {
   _id: string;
+  /** The Work shape. The policy decides whether a passed block is a missed move. */
+  shape?: string | null;
   title?: string | null;
   rawText: string;
   status: string;
@@ -136,7 +139,10 @@ export function selectExecutionSnapshot(allRows: ExecutionWorkRow[], nowMs: numb
     .filter(needsUser)
     .sort((a, b) => b.openQuestions - a.openQuestions || b.updatedAt - a.updatedAt);
   const candidates = rows.filter(movable);
+  // A passed block is a missed move only for shapes the policy says so. A
+  // project or a practice is never asked "what should happen now?".
   const missed = candidates
+    .filter((row) => shapeAllows(row.shape, 'missedMove'))
     .filter((row) => Boolean(row.scheduledStartAt && row.scheduledEndAt && row.scheduledEndAt <= nowMs))
     .sort((a, b) => Number(b.scheduledEndAt || 0) - Number(a.scheduledEndAt || 0));
   const missedIds = new Set(missed.map((row) => row._id));
@@ -164,8 +170,14 @@ export function selectExecutionSnapshot(allRows: ExecutionWorkRow[], nowMs: numb
         ),
     )
     .sort((a, b) => Number(a.scheduledStartAt) - Number(b.scheduledStartAt));
+  // A passed block on a shape without missed moves is simply unscheduled again.
   const unscheduled = candidates
-    .filter((row) => !row.scheduledStartAt || !row.scheduledEndAt)
+    .filter(
+      (row) =>
+        !row.scheduledStartAt ||
+        !row.scheduledEndAt ||
+        (row.scheduledEndAt <= nowMs && !missedIds.has(row._id)),
+    )
     .sort(
       (a, b) =>
         Number(a.priority || 2) - Number(b.priority || 2) ||

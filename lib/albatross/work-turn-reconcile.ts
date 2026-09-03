@@ -72,11 +72,21 @@ export function toolCallsFromSteps(steps: any[]): TurnToolCall[] {
 }
 
 export interface TurnArtifact {
-  kind: 'calendarEvent' | 'task' | 'document';
+  kind: 'calendarEvent' | 'task' | 'document' | 'workCaptured' | 'listItem' | 'metricEntry';
   id: string;
   title: string;
   operationId?: string;
-  sourceKind: 'calendar_event' | 'task' | 'manual';
+  sourceKind: 'calendar_event' | 'task' | 'manual' | 'chat';
+  /** The Work the artifact was written to, when it is not the attached Work. */
+  workId?: string;
+}
+
+/**
+ * A shape write lands on the Work itself: a list item or a metric entry. It
+ * is neither a plan artifact nor proof, so the reconcile counts it and stops.
+ */
+export function isShapeWrite(artifact: TurnArtifact): boolean {
+  return artifact.kind === 'listItem' || artifact.kind === 'metricEntry';
 }
 
 /** Artifacts the chat created directly, outside the plan-apply pipeline. */
@@ -108,6 +118,33 @@ export function harvestTurnArtifacts(calls: TurnToolCall[]): TurnArtifact[] {
         title: title || 'Document',
         sourceKind: 'manual',
       });
+    } else if (call.toolName === 'albatross_list_add' && call.output.item?.id) {
+      artifacts.push({
+        kind: 'listItem',
+        id: String(call.output.item.id),
+        title: String(call.output.item.text || call.input?.text || 'Item').slice(0, 300),
+        sourceKind: 'chat',
+        workId: call.output.workId ? String(call.output.workId) : undefined,
+      });
+    } else if (call.toolName === 'albatross_metric_log' && call.output.entry?.id) {
+      artifacts.push({
+        kind: 'metricEntry',
+        id: String(call.output.entry.id),
+        title: String(call.output.summary || 'Metric entry').slice(0, 300),
+        sourceKind: 'chat',
+        workId: call.output.workId ? String(call.output.workId) : undefined,
+      });
+    } else if (call.toolName === 'albatross_capture_work' && Array.isArray(call.output.work)) {
+      // Work the user asked to hold mid-chat. One artifact per Work row.
+      for (const work of call.output.work) {
+        if (!work?.id) continue;
+        artifacts.push({
+          kind: 'workCaptured',
+          id: String(work.id),
+          title: String(work.title || title || 'Work').slice(0, 300),
+          sourceKind: 'chat',
+        });
+      }
     }
   }
   return artifacts;
@@ -285,7 +322,10 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
   try {
     const calls = toolCallsFromSteps(input.steps);
     const signals = turnSignals(calls);
-    const artifacts = harvestTurnArtifacts(calls);
+    const harvested = harvestTurnArtifacts(calls);
+    // Shape writes are already on the Work. They are counted, never replanned.
+    const shapeWrites = harvested.filter(isShapeWrite);
+    const artifacts = harvested.filter((artifact) => !isShapeWrite(artifact));
     const detail = await dependencies.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
       userId: input.userId,
       workId: input.workId,
@@ -316,7 +356,13 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
             workId: input.workId,
             claim: `Created in chat for this Work: "${artifact.title}".`,
             title: artifact.title,
-            summary: `Chat-created ${artifact.kind === 'calendarEvent' ? 'calendar event' : artifact.kind}. Do not propose it again.`,
+            summary: `Chat-created ${
+              artifact.kind === 'calendarEvent'
+                ? 'calendar event'
+                : artifact.kind === 'workCaptured'
+                  ? 'Work'
+                  : artifact.kind
+            }. Do not propose it again.`,
             sourceKind: artifact.sourceKind,
             sourceId: artifact.id,
             trust: 'observed',
@@ -375,7 +421,12 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
       const freshState = fresh?.work?.workState || fresh?.work?.status;
       // An answered completion question may have closed the Work just now.
       if (['done', 'released', 'archived'].includes(freshState)) {
-        return { status: 'ok', artifactsRecorded: artifacts.length, questionsAnswered, advanced: false };
+        return {
+          status: 'ok',
+          artifactsRecorded: artifacts.length + shapeWrites.length,
+          questionsAnswered,
+          advanced: false,
+        };
       }
       const evidenceAt = fresh?.work?.lastEvidenceAt;
       await dependencies.advanceWork({
@@ -396,7 +447,12 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
           .catch(() => undefined);
       }
     }
-    return { status: 'ok', artifactsRecorded: artifacts.length, questionsAnswered, advanced };
+    return {
+      status: 'ok',
+      artifactsRecorded: artifacts.length + shapeWrites.length,
+      questionsAnswered,
+      advanced,
+    };
   } catch (error) {
     dependencies.reportError('[work-turn-reconcile] failed', input.workId, error);
     return { ...skipped, status: 'error' };

@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { conductorMayMove } from '../lib/albatross/conductor-quiet';
 import { planNeedsConductor } from '../lib/albatross/execution';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
+import { shapePlans } from '../lib/albatross/shape-policy';
 import {
   mergeStepProgress,
   progressFromPlanCompletions,
@@ -792,6 +793,9 @@ export const conductorCandidates = internalQuery({
       if (state !== 'active') return false;
       if (row.planError || row.status === 'needs_answers') return false;
       if ((row.questions || []).some((question) => !question.answer)) return false;
+      // The shape policy: a list, a practice, a monitor, or a routine has no
+      // plan, so the scheduling conductor has nothing to move.
+      if (shapePlans(row.shape) === 'no') return false;
       // The quiet rule: dormant Work sleeps, and untouched Work is left alone.
       if (!conductorMayMove(row, 'conductor', ts)) return false;
       if (row.lastConductorAt && row.lastConductorAt > ts - CONDUCTOR_RETRY_AFTER_MS) return false;

@@ -131,7 +131,7 @@ describe('captureWork', () => {
     // The prompt contract: the splitter is taught the shape taxonomy and the
     // schema names the field, so a lost import cannot fail silently.
     expect(generateCalls[0].system).toContain('Classify the shape of each outcome');
-    expect(generateCalls[0].system).toContain('"shape":"quick"|"project"|"practice"');
+    expect(generateCalls[0].system).toContain('"shape":"quick"|"list"|"project"|"practice"');
   });
 
   test('the splitter horizon wins and the deterministic parse is the fallback', async () => {
@@ -378,6 +378,83 @@ describe('captureWork', () => {
       userId: user.userId,
       captureId: 'capture-1',
       error: 'model offline',
+    });
+  });
+});
+
+describe('captureWork and shapes', () => {
+  test('the splitter carries list items and the metric onto the committed items', async () => {
+    const { deps, mutations, generateCalls } = makeDependencies({
+      text: JSON.stringify({
+        work: [
+          {
+            title: 'Movie list',
+            rawText: 'Movie list: Heat, Alien, Dune part two',
+            shape: 'list',
+            listItems: ['Heat', 'Alien', 'Dune part two'],
+          },
+          {
+            title: 'Lose fifteen pounds',
+            rawText: 'Lose fifteen pounds by spring',
+            shape: 'practice',
+            metric: { name: 'weight', unit: 'lb', target: null, direction: 'down' },
+          },
+        ],
+      }),
+    });
+    await captureWork(
+      { rawText: 'Movie list: Heat, Alien, Dune part two. Lose fifteen pounds by spring.', source: 'text' },
+      user,
+      deps,
+    );
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0]).toMatchObject({
+      shape: 'list',
+      listItems: ['Heat', 'Alien', 'Dune part two'],
+    });
+    expect(finish.args.items[0].metric).toBeUndefined();
+    expect(finish.args.items[1]).toMatchObject({
+      shape: 'practice',
+      metric: { name: 'weight', unit: 'lb', direction: 'down' },
+    });
+    // The metric phrase carried "by spring", so the practice has a target date.
+    expect(finish.args.items[1].horizon?.kind).toBe('now');
+    expect(finish.args.items[1].horizon?.by).toBeGreaterThan(NOW);
+    expect(generateCalls[0].system).toContain('For a list, return listItems');
+    expect(generateCalls[0].system).toContain('For a practice with a number, return metric');
+  });
+
+  test('a model that names the shape but no data is filled by the parsers', async () => {
+    const { deps, mutations } = makeDependencies({
+      text: JSON.stringify({
+        work: [{ title: 'Movie list', rawText: 'Movie list: Heat, Alien', shape: 'list' }],
+      }),
+    });
+    await captureWork({ rawText: 'Movie list: Heat, Alien', source: 'text' }, user, deps);
+    const finish = mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0].listItems).toEqual(['Heat', 'Alien']);
+  });
+
+  test('the fallback path and reviewed items read the shape from the text', async () => {
+    const failed = makeDependencies({ generateError: new Error('model offline') });
+    await captureWork({ rawText: 'Movie list: Heat, Alien', source: 'text' }, user, failed.deps);
+    const fallback = failed.mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(fallback.args.items[0]).toMatchObject({ shape: 'list', listItems: ['Heat', 'Alien'] });
+
+    const reviewed = makeDependencies();
+    await captureWork(
+      {
+        rawText: 'dump',
+        source: 'text',
+        reviewedItems: [{ title: 'Weight', rawText: 'Lose fifteen pounds by spring' }],
+      },
+      user,
+      reviewed.deps,
+    );
+    const finish = reviewed.mutations.find((mutation) => mutation.name === 'finishCapture')!;
+    expect(finish.args.items[0]).toMatchObject({
+      shape: 'practice',
+      metric: { name: 'weight', unit: 'lb', direction: 'down' },
     });
   });
 });

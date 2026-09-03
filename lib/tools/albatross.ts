@@ -6,7 +6,10 @@ import {
   registerUndoExecutor,
   undoOperation,
 } from '@/lib/ai/operations';
+import { captureFromChat } from '@/lib/albatross/capture-from-chat';
+import { HORIZON_KINDS } from '@/lib/albatross/horizon';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
+import { shapePlans } from '@/lib/albatross/shape-policy';
 import { commitWorkSplit, proposeWorkSplit } from '@/lib/albatross/split-work';
 import {
   type AlbatrossApplicationStep,
@@ -15,6 +18,8 @@ import {
   unresolvedArtifactsAfterUndo,
 } from '@/lib/albatross/work-model';
 import { summarizeWorkPlanRevision } from '@/lib/albatross/work-revision';
+import { WORK_SHAPES } from '@/lib/albatross/work-shape';
+import { resolveWorkByTitle } from '@/lib/albatross/work-title-match';
 import { unappliedActions } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
@@ -34,6 +39,7 @@ const defaultDeps = {
   generateIntentPlan,
   proposeWorkSplit,
   commitWorkSplit,
+  captureFromChat,
   tools: {
     tasksCreateCard,
     calendarCreateEvent,
@@ -409,6 +415,200 @@ export const albatrossGetWorkContext = defineTool({
   },
 });
 
+// The Ask / Hold bar and "hold this" in chat. The assistant calls this only
+// when the user asks to hold, keep, or remember something as Work.
+export const albatrossCaptureWork = defineTool({
+  name: 'albatross_capture_work',
+  description:
+    'Keep text as Albatross Work when the user explicitly asks to hold, keep, or remember something as work. Never call it on your own initiative. Returns the Work items with their shape and horizon.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({
+    text: z.string().trim().min(1).max(20_000),
+    shape: z.enum(WORK_SHAPES).optional(),
+    horizon: z
+      .object({
+        kind: z.enum(HORIZON_KINDS),
+        notBefore: z.number().int().nonnegative().optional(),
+        by: z.number().int().nonnegative().optional(),
+        label: z.string().trim().min(1).max(120).optional(),
+      })
+      .strict()
+      .optional(),
+    conversationId: z.string().trim().min(1).max(240).optional(),
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    work: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        shape: z.string(),
+        horizon: z.any().nullable(),
+      }),
+    ),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const result = await deps.captureFromChat(
+      {
+        text: args.text,
+        shape: args.shape,
+        horizon: args.horizon,
+        conversationId: args.conversationId ?? ctx.chatId,
+      },
+      { userId, email: ctx.userEmail || '', name: ctx.userName || '', source: 'clerk' },
+    );
+    return {
+      ok: true,
+      work: result.work.map((item) => ({
+        id: item.id,
+        title: item.title,
+        shape: item.shape,
+        horizon: item.horizon,
+      })),
+    };
+  },
+});
+
+// Shape-owned chat tools -------------------------------------------------------
+//
+// "Add Blade Runner to the movie list" and "log 182.4" write straight to the
+// Work. Neither is a plan step and neither is proof; the shape policy says a
+// list and a practice have no steps to prove.
+
+async function resolveShapedWork(
+  userId: string,
+  args: { workId?: string; workTitle?: string },
+  shape: 'list' | 'practice',
+) {
+  if (args.workId) {
+    const detail = await deps.convexQuery<any>(workV2Api().workDetail, { userId, workId: args.workId });
+    if (!detail?.work) throw new Error('Albatross Work not found.');
+    return detail.work;
+  }
+  const title = String(args.workTitle || '').trim();
+  if (!title) throw new Error('Name the Work: give workId or workTitle.');
+  const rows = await deps.convexQuery<any[]>(workV2Api().allWork, { userId, limit: 300 });
+  const match = resolveWorkByTitle(rows || [], title, { shape }) ?? resolveWorkByTitle(rows || [], title);
+  if (!match) {
+    throw new Error(
+      `No ${shape === 'list' ? 'list' : 'practice'} matches "${title}". Ask the user which Work they mean.`,
+    );
+  }
+  return match;
+}
+
+export const albatrossListAdd = defineTool({
+  name: 'albatross_list_add',
+  description:
+    'Add one item to a list-shaped Albatross Work ("add Blade Runner to the movie list"). Give workId, or workTitle in the user\'s words; the tool resolves the list by title. Returns the item and the full list.',
+  category: 'tasks',
+  mutating: true,
+  input: z
+    .object({
+      workId: z.string().min(1).optional(),
+      workTitle: z.string().trim().min(1).max(200).optional(),
+      text: z.string().trim().min(1).max(500),
+    })
+    .refine((value) => Boolean(value.workId || value.workTitle), {
+      message: 'Give workId or workTitle.',
+    }),
+  output: z.object({
+    ok: z.boolean(),
+    workId: z.string(),
+    workTitle: z.string(),
+    item: z.object({ id: z.string(), text: z.string(), done: z.boolean(), addedAt: z.number() }),
+    itemCount: z.number(),
+    summary: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const work = await resolveShapedWork(userId, args, 'list');
+    const result = await deps.convexMutation<{ item: any; listItems: any[] }>(workV2Api().addListItem, {
+      userId,
+      workId: String(work._id),
+      text: args.text,
+    });
+    const workTitle = String(work.title || work.rawText || 'List');
+    return {
+      ok: true,
+      workId: String(work._id),
+      workTitle,
+      item: { id: result.item.id, text: result.item.text, done: false, addedAt: result.item.addedAt },
+      itemCount: result.listItems.length,
+      summary: `Added "${result.item.text}" to ${workTitle}.`,
+    };
+  },
+});
+
+export const albatrossMetricLog = defineTool({
+  name: 'albatross_metric_log',
+  description:
+    'Log one value for a practice-shaped Albatross Work ("log 182.4 for the weight goal"). Give workId, or workTitle in the user\'s words. Returns the entry, the metric, and the review line data.',
+  category: 'tasks',
+  mutating: true,
+  input: z
+    .object({
+      workId: z.string().min(1).optional(),
+      workTitle: z.string().trim().min(1).max(200).optional(),
+      value: z.number().finite(),
+      note: z.string().trim().max(500).optional(),
+      atIso: z.string().datetime({ offset: true }).optional(),
+    })
+    .refine((value) => Boolean(value.workId || value.workTitle), {
+      message: 'Give workId or workTitle.',
+    }),
+  output: z.object({
+    ok: z.boolean(),
+    workId: z.string(),
+    workTitle: z.string(),
+    entry: z.object({ id: z.string(), value: z.number(), at: z.number(), note: z.string().nullable() }),
+    metric: z.object({
+      name: z.string(),
+      unit: z.string(),
+      target: z.number().optional(),
+      direction: z.enum(['down', 'up']).optional(),
+    }),
+    summary: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const work = await resolveShapedWork(userId, args, 'practice');
+    const at = args.atIso ? Date.parse(args.atIso) : undefined;
+    const result = await deps.convexMutation<{ entry: any; metric: any; summary: any }>(
+      workV2Api().logMetric,
+      {
+        userId,
+        workId: String(work._id),
+        value: args.value,
+        ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}),
+        ...(args.note ? { note: args.note } : {}),
+      },
+    );
+    const workTitle = String(work.title || work.rawText || 'Practice');
+    const unit = result.metric?.unit ? ` ${result.metric.unit}` : '';
+    return {
+      ok: true,
+      workId: String(work._id),
+      workTitle,
+      entry: {
+        id: String(result.entry._id),
+        value: result.entry.value,
+        at: result.entry.at,
+        note: result.entry.note ?? null,
+      },
+      metric: {
+        name: String(result.metric?.name || 'value'),
+        unit: String(result.metric?.unit || ''),
+        ...(typeof result.metric?.target === 'number' ? { target: result.metric.target } : {}),
+        ...(result.metric?.direction ? { direction: result.metric.direction } : {}),
+      },
+      summary: `Logged ${result.entry.value}${unit} for ${workTitle}.`,
+    };
+  },
+});
+
 export const albatrossRecordProgress = defineTool({
   name: 'albatross_record_progress',
   description:
@@ -531,6 +731,13 @@ export const albatrossReplanWork = defineTool({
       workId: args.workId,
     });
     if (!before?.work) throw new Error('Albatross Work not found.');
+    // The shape policy: a list, a practice, a monitor, or a routine keeps no
+    // plan. Say so before any state changes, so nothing reads as an error.
+    if (shapePlans(before.work.shape) === 'no') {
+      throw new Error(
+        `This Work is a ${before.work.shape}. It keeps no plan and no steps, so there is nothing to revise.`,
+      );
+    }
     await deps.convexMutation(workV2Api().setAgentState, {
       userId,
       workId: args.workId,

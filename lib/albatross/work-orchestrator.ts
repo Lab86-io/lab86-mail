@@ -71,7 +71,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     agentState: 'researching',
   });
   try {
-    await workOrchestratorDependencies.generateIntentPlan({
+    const generated = await workOrchestratorDependencies.generateIntentPlan({
       userId: input.userId,
       userEmail: input.userEmail,
       userName: input.userName,
@@ -79,6 +79,9 @@ export async function advanceWork(input: AdvanceWorkInput) {
       timezone: input.timezone,
       geo: input.geo,
     });
+    // A shape without plans is ready as it is. The planner already set the
+    // agent state to idle; there is no plan to apply and nothing to schedule.
+    if (generated?.skipped) return { status: 'ready' as const, workId: input.workId, planId: undefined };
     const workbench = await workOrchestratorDependencies.convexQuery<any>(
       (api as any).albatrossIntents.getIntentWorkbench,
       {

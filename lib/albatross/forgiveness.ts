@@ -137,24 +137,20 @@ export function recoveryAcknowledgement(recovery: Recovery): string {
 export type { WorkShape } from '@/lib/albatross/work-shape';
 
 import { type HorizonWorkLike, isDormant } from '@/lib/albatross/horizon';
-import type { WorkShape } from '@/lib/albatross/work-shape';
+import { resolveShape, SHAPE_POLICY, shapeAllows } from '@/lib/albatross/shape-policy';
+import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
 
 /**
  * How long a shape can sit still before it is worth asking about.
  *
  * A flat ninety days is too blunt: a small errand deserves a nudge in a
  * fortnight, a government application should not be nagged while it is
- * genuinely in processing, and a practice paused after an injury must not be
- * asked about repeatedly.
+ * genuinely in processing, and a practice or a list must never be asked
+ * about at all. The numbers come from the shape policy; `null` means never.
  */
-export const STALE_AFTER_DAYS: Record<WorkShape, number> = {
-  quick: 14,
-  decision: 21,
-  project: 45,
-  recurring: 60,
-  practice: 90,
-  monitor: 120,
-};
+export const STALE_AFTER_DAYS: Record<WorkShape, number | null> = Object.fromEntries(
+  WORK_SHAPES.map((shape) => [shape, SHAPE_POLICY[shape].staleAfterDays]),
+) as Record<WorkShape, number | null>;
 
 export interface StalenessInput extends HorizonWorkLike {
   shape?: WorkShape | null;
@@ -176,7 +172,11 @@ export function isStale(work: StalenessInput, nowMs: number): boolean {
   if (work.reviewAt && nowMs < work.reviewAt) return false;
   // Dormant Work sits still on purpose. That is not neglect.
   if (isDormant(work, nowMs)) return false;
-  const days = STALE_AFTER_DAYS[(work.shape as WorkShape) || 'project'];
+  // A list, a practice, a monitor, or a routine has no finish line. Stillness
+  // is its normal state, so the policy says it is never stale.
+  if (!shapeAllows(work.shape, 'staleness')) return false;
+  const days = STALE_AFTER_DAYS[resolveShape(work.shape)];
+  if (days === null) return false;
   return nowMs - work.updatedAt > days * 24 * 3_600_000;
 }
 

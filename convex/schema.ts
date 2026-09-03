@@ -23,6 +23,43 @@ export const albatrossHorizonValidator = v.object({
   wokeAt: v.optional(v.number()),
 });
 
+// The shape of one Work. Mirrors `WORK_SHAPES` in `lib/albatross/work-shape.ts`.
+export const albatrossWorkShapeValidator = v.union(
+  v.literal('quick'),
+  v.literal('list'),
+  v.literal('project'),
+  v.literal('practice'),
+  v.literal('decision'),
+  v.literal('monitor'),
+  v.literal('recurring'),
+);
+
+// One item on a list-shaped Work. Items have no steps and no proof.
+export const albatrossListItemValidator = v.object({
+  id: v.string(),
+  text: v.string(),
+  done: v.boolean(),
+  addedAt: v.number(),
+  doneAt: v.optional(v.number()),
+});
+
+// The number a practice tracks. The entries live in `albatrossMetricEntries`.
+export const albatrossMetricValidator = v.object({
+  name: v.string(),
+  unit: v.string(),
+  target: v.optional(v.number()),
+  direction: v.optional(v.union(v.literal('down'), v.literal('up'))),
+});
+
+// One milestone on a project-shaped Work. `order` is the rail position.
+export const albatrossMilestoneValidator = v.object({
+  id: v.string(),
+  title: v.string(),
+  done: v.boolean(),
+  doneAt: v.optional(v.number()),
+  order: v.number(),
+});
+
 const albatrossConfirmationRef = v.object({
   kind: v.string(),
   id: v.string(),
@@ -1032,17 +1069,14 @@ export default defineSchema({
     reviewAt: v.optional(v.number()),
     // What kind of outcome this is. A practice is not a project waiting to be
     // finished, and rendering it as one is why lifestyle changes read as
-    // permanent failures.
-    shape: v.optional(
-      v.union(
-        v.literal('quick'),
-        v.literal('project'),
-        v.literal('practice'),
-        v.literal('decision'),
-        v.literal('monitor'),
-        v.literal('recurring'),
-      ),
-    ),
+    // permanent failures. The policy in `lib/albatross/shape-policy.ts` decides
+    // what each shape gets: a plan, a check, a review, or none of them.
+    shape: v.optional(albatrossWorkShapeValidator),
+    // Shape-owned data. A list keeps items. A practice tracks one metric. A
+    // project holds milestones. Each is present only when the shape uses it.
+    listItems: v.optional(v.array(albatrossListItemValidator)),
+    metric: v.optional(albatrossMetricValidator),
+    milestones: v.optional(v.array(albatrossMilestoneValidator)),
     agentState: v.optional(
       v.union(
         v.literal('idle'),
@@ -1191,6 +1225,20 @@ export default defineSchema({
     .index('by_mail_watch', ['mailWatchAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
     .index('by_capture', ['captureId']),
+
+  // One logged value for a practice-shaped Work. The trend, the streak of
+  // weeks with a log, and the weekly review line are all computed from these
+  // rows on the client, with no model call.
+  albatrossMetricEntries: defineTable({
+    userId: v.string(),
+    workId: v.id('albatrossIntents'),
+    // When the value was true, epoch ms. The user may log for an earlier day.
+    at: v.number(),
+    value: v.number(),
+    note: v.optional(v.string()),
+  })
+    .index('by_work_at', ['workId', 'at'])
+    .index('by_user', ['userId']),
 
   // A generated plan for one intent. digitalActions match the work-model
   // contract so albatross_apply_intent_plan can execute the plan as stored.

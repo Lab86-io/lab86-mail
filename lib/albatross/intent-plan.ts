@@ -18,6 +18,7 @@ import { githubSearch, mcpConnectionStatus, mcpListItems, mcpSearch } from '@/li
 import { type AnyTool, invokeTool } from '@/lib/tools/registry';
 import { browserbaseFetch, browserbaseSearch } from '@/lib/tools/web';
 import { type OutcomeContract, proposeContract } from './contract';
+import { shapePlans } from './shape-policy';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from './work-shape';
 import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
@@ -866,6 +867,30 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
   });
   const intent = workbench.intent;
 
+  // The shape policy: a list, a practice, a monitor, or a routine has no plan.
+  // The Work is ready as it is. No model call, no plan row, no steps.
+  if (shapePlans(intent.shape) === 'no') {
+    await deps.convexMutation(deps.api.albatrossIntents.updateIntent, {
+      ...caller,
+      intentId: input.intentId,
+      status: 'ready',
+      planError: '',
+    });
+    await deps
+      .convexMutation((deps.api as any).albatrossWorkV2.setAgentState, {
+        ...caller,
+        workId: input.intentId,
+        agentState: 'idle',
+      })
+      .catch(() => undefined);
+    return {
+      planId: null,
+      skipped: 'shape' as const,
+      title: intent.title ?? undefined,
+      outcome: undefined,
+    };
+  }
+
   await deps.convexMutation(deps.api.albatrossIntents.updateIntent, {
     ...caller,
     intentId: input.intentId,
@@ -1058,6 +1083,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
     return {
       planId,
+      skipped: undefined,
       projectTitle: generation.projectTitle ?? undefined,
       title: generation.title,
       outcome: generation.outcome,
