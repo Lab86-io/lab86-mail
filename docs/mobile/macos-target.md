@@ -64,10 +64,13 @@ source identity + `CONFIGURATION=Debug`); every CI and Release path keeps the fu
 - ~~Month calendar falls back to agenda~~ — `MacMonthGridView` (2026-09-03): continuous
   month scroll on the shared `CalendarGrid`/`DayChips` helpers, single click selects,
   double click opens the day.
+- ~~List + reading pane~~ — `MacMailSplitView` (2026-09-03): the thread list and the
+  reader sit side by side; the open row is highlighted; the phone keeps its push.
 - Compose/sheet sizing is functional, not yet Mac-refined; no dedicated ⌘K palette,
   menu-bar extra, or multiple-window scenes yet.
 - Document editor uses SwiftUI `TextEditor` on the Mac (no NSTextView finesse yet).
-- Notification-permission deep link opens System Settings' Notifications pane generically.
+- ~~Notification-permission deep link opens the Notifications pane generically~~ — opens the
+  app's own row (`?id=io.lab86.mail`) as of 2026-09-03.
 
 ## Visual QA on production (2026-08-19)
 

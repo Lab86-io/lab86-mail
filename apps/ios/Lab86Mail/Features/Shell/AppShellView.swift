@@ -335,9 +335,11 @@ private struct SourceList: View {
             engagement: model.engagement,
             spacing: 4,
             onMeasure: { centers, total in
-                // Layout callbacks arrive on the main thread; the model is
-                // main-actor state, so hop explicitly rather than assume.
-                MainActor.assumeIsolated { model.setMeasurement(centers: centers, total: total) }
+                // Layout may measure off the main actor; the model is
+                // main-actor state, so hand the measurement over rather than
+                // assume. Main-actor tasks from one origin run in order, so a
+                // later measurement can never land before an earlier one.
+                Task { @MainActor in model.setMeasurement(centers: centers, total: total) }
             }
         ) {
             rows
