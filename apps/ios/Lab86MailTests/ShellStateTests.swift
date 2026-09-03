@@ -30,4 +30,20 @@ struct ShellStateTests {
         #expect(!route.matches(thread("thread-1", account: "acct-2")))
         #expect(!route.matches(thread("thread-2", account: "acct-1")))
     }
+
+    @Test
+    func theMacNotificationPaneOpensOnTheAppsOwnRow() {
+        #expect(
+            PlatformSettings.notificationSettingsURL(bundleIdentifier: "io.lab86.mail")?.absoluteString
+                == "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=io.lab86.mail"
+        )
+        #expect(
+            PlatformSettings.notificationSettingsURL(bundleIdentifier: nil)?.absoluteString
+                == "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        )
+        #expect(
+            PlatformSettings.notificationSettingsURL(bundleIdentifier: "")?.absoluteString
+                == "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        )
+    }
 }

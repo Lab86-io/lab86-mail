@@ -116,18 +116,25 @@ struct MacMonthGridView: View {
                     .foregroundStyle(isCurrent ? environment.theme.accentColor : Color.primary)
                 Spacer(minLength: 0)
             }
+            // The header's height is exactly monthHeaderHeight and each week
+            // row exactly rowHeight (its rule is drawn inside the row), so
+            // `sectionHeight` and the offset model describe what is rendered.
             .frame(height: Self.monthHeaderHeight, alignment: .bottomLeading)
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
             .accessibilityAddTraits(.isHeader)
             ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
-                Divider().overlay(environment.theme.hairlineColor)
                 HStack(spacing: 0) {
                     ForEach(Array(week.enumerated()), id: \.offset) { _, day in
                         cell(day: day, in: month)
                     }
                 }
                 .frame(height: Self.rowHeight)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(environment.theme.hairlineColor)
+                        .frame(height: 0.5)
+                        .accessibilityHidden(true)
+                }
             }
         }
     }
