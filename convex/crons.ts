@@ -33,6 +33,9 @@ crons.interval('calendar resync', { minutes: 15 }, internal.calendarSync.tick, {
 // File new mail threads into the user's areas every 30 minutes: deterministic
 // fact matches first, then one nano-LLM verdict for the rest (candidate-only).
 crons.interval('area classify', { minutes: 30 }, internal.albatross.classifyTick, {});
+// Shapes for Work captured before shapes existed. Each pass reads only
+// unshaped Work, so the job does less every hour and then does nothing.
+crons.interval('shape backfill', { hours: 1 }, internal.albatross.shapeBackfillTick, {});
 
 // Unstick intent plans whose generation was killed mid-flight (deploys
 // replace the Next container; SIGTERM skips the planError catch). Re-kicks

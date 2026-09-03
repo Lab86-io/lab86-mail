@@ -3119,6 +3119,31 @@ export const seedContextGraphFromFixture = mutation({
 // Periodic area classification. Mirrors convex/calendarSync.ts: AI + the
 // classifier live in the Next.js app, so the schedule fans out to the
 // internal-secret-gated route for every user with a connected account.
+/**
+ * Give existing Work the shape it always had. The pass is bounded and reads
+ * only Work that still has no shape, so it does less every hour and goes
+ * quiet by itself once every row is shaped.
+ */
+export const shapeBackfillTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[shape-backfill cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
+    const ok = await fanOutInternalPost(
+      `${appUrl}/api/cron/shape-backfill`,
+      secret,
+      targets.map((target) => ({ userId: target.userId, limit: 20 })),
+      { label: 'shape-backfill cron', timeoutMs: 120_000, concurrency: 3 },
+    );
+    console.log(`[shape-backfill cron] shaped work for ${ok}/${targets.length} users`);
+  },
+});
+
 export const classifyTick = internalAction({
   args: {},
   handler: async (ctx) => {

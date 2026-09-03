@@ -2171,6 +2171,24 @@ describe('classifyTick', () => {
     }));
 });
 
+describe('shapeBackfillTick', () => {
+  test('no-ops without an app url and fans out to zero targets with one', () =>
+    withSecret(async () => {
+      const previousUrl = process.env.LAB86_MAIL_PUBLIC_URL;
+      try {
+        delete process.env.LAB86_MAIL_PUBLIC_URL;
+        const t = convexTest(schema, convexModules);
+        await t.action(internal.albatross.shapeBackfillTick, {});
+
+        process.env.LAB86_MAIL_PUBLIC_URL = 'https://app.example.test/';
+        await t.action(internal.albatross.shapeBackfillTick, {});
+      } finally {
+        if (previousUrl === undefined) delete process.env.LAB86_MAIL_PUBLIC_URL;
+        else process.env.LAB86_MAIL_PUBLIC_URL = previousUrl;
+      }
+    }));
+});
+
 describe('setAreaImage', () => {
   test('sets, replaces, and clears the area image with upload cleanup', () =>
     withSecret(async () => {
