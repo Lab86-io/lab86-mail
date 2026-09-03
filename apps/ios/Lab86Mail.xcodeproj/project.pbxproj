@@ -44,7 +44,6 @@
 		1BEE08D5C2A3EC80516BC9C8 /* MobileAccountModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10343F3BA20E045570BC575D /* MobileAccountModels.swift */; };
 		1C28F30FED108C6A11087247 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D719013972BC68E43E8C7D2 /* AppShellView.swift */; };
 		1C45E57512502B77937F3E28 /* TodayCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D6FF8570807BB483B114261 /* TodayCompositionTests.swift */; };
-		1CE7912CC37AFD40A862F16A /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = E6BD4C002F7D38BA454452F9 /* Info.plist */; };
 		1E1BE18AE71029794F6FE250 /* AccountRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C561C5E4283E796A15C19BAE /* AccountRepository.swift */; };
 		1F8070F7BA0CE141FFF4A794 /* MissedMoveRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 802912264C82CA059C28A94F /* MissedMoveRecoveryView.swift */; };
 		213FF8640FF026D065312398 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073F0B7710A3F6C84A5DFA12 /* AppDelegate.swift */; };
@@ -1326,7 +1325,6 @@
 				95A5E5810BEFB13BE1688DBE /* Fraunces-SemiBoldItalic.ttf in Resources */,
 				DA283F1E080550542FDF8100 /* Geist-Regular.ttf in Resources */,
 				3733A60A60F96AF481745B42 /* Geist-SemiBold.ttf in Resources */,
-				1CE7912CC37AFD40A862F16A /* Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

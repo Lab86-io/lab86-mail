@@ -181,4 +181,14 @@ for bad in 'webcredentials:' 'webcredentials:$(LAB86_INFO_CLERK_FRONTEND_API_HOS
   fi
 done
 
+# A stray Info.plist copied into the bundle's resources must fail the gate.
+mkdir -p "$test_root/Resources"
+LAB86_RESOURCES_DIR="$test_root/Resources" run_verifier production >/dev/null
+cp "$test_root/Info.plist" "$test_root/Resources/Info.plist"
+if LAB86_RESOURCES_DIR="$test_root/Resources" run_verifier production 2>/dev/null; then
+  echo 'Release verification must reject a stray Info.plist in the resources folder.' >&2
+  exit 1
+fi
+rm -f "$test_root/Resources/Info.plist"
+
 printf 'built configuration verification tests passed\n'

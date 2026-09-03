@@ -116,7 +116,13 @@ targets:
     type: application
     platform: macOS
     sources:
+      # The iOS Info.plist is the iOS target's INFOPLIST_FILE, not a resource:
+      # left in, XcodeGen copies it verbatim (placeholders and all) into
+      # Contents/Resources, and App Store Connect rejects the Mac upload as a
+      # nested bundle with an invalid identifier (ITMS-90277/90261/90280).
       - path: Lab86Mail
+        excludes:
+          - "Resources/Info.plist"
       - path: Shared
       - path: Lab86MailMac
     configFiles:
