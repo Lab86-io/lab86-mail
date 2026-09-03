@@ -280,14 +280,16 @@ export const WorkMetricEntrySchema = z
     id: identifier,
     at: z.number().int().nonnegative(),
     value: z.number(),
-    note: z.string().max(500).nullable().optional(),
+    // Optional, not nullable: the Swift generator drops anyOf[x, null] fields.
+    note: z.string().max(500).optional(),
   })
   .strict();
 
 export const WorkMetricSummarySchema = z
   .object({
-    latest: z.number().nullable(),
-    latestAt: z.number().int().nonnegative().nullable(),
+    // Optional, not nullable: the Swift generator drops anyOf[x, null] fields.
+    latest: z.number().optional(),
+    latestAt: z.number().int().nonnegative().optional(),
     count: z.number().int().nonnegative(),
     weeksWithEntry: z.number().int().nonnegative(),
   })

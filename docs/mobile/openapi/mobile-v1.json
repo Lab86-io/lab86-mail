@@ -2091,15 +2091,8 @@
             "type": "number"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 500
           }
         },
         "required": ["id", "at", "value"],
@@ -2109,26 +2102,12 @@
         "type": "object",
         "properties": {
           "latest": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "number"
           },
           "latestAt": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
           "count": {
             "type": "integer",
@@ -2141,7 +2120,7 @@
             "maximum": 9007199254740991
           }
         },
-        "required": ["latest", "latestAt", "count", "weeksWithEntry"],
+        "required": ["count", "weeksWithEntry"],
         "additionalProperties": false
       },
       "WorkMilestone": {
@@ -2768,15 +2747,8 @@
                     "type": "number"
                   },
                   "note": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "maxLength": 500
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "string",
+                    "maxLength": 500
                   }
                 },
                 "required": ["id", "at", "value"],
@@ -2786,26 +2758,12 @@
                 "type": "object",
                 "properties": {
                   "latest": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "number"
                   },
                   "latestAt": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   },
                   "count": {
                     "type": "integer",
@@ -2818,7 +2776,7 @@
                     "maximum": 9007199254740991
                   }
                 },
-                "required": ["latest", "latestAt", "count", "weeksWithEntry"],
+                "required": ["count", "weeksWithEntry"],
                 "additionalProperties": false
               }
             },

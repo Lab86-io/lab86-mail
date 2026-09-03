@@ -383,12 +383,18 @@ private final class MacWheelMonitor {
     func start() {
         guard token == nil else { return }
         token = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, self.hovering, !event.hasPreciseScrollingDeltas,
-                      abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return event }
-                self.scrollTo?(MacLaterRulerLayout.wheelOffset(current: self.offsetX, deltaY: event.scrollingDeltaY))
-                return nil
+            // NSEvent is not Sendable, so read the values here and let the
+            // isolated block work with plain numbers.
+            let precise = event.hasPreciseScrollingDeltas
+            let deltaY = event.scrollingDeltaY
+            let deltaX = event.scrollingDeltaX
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.hovering, !precise,
+                      abs(deltaY) > abs(deltaX) else { return false }
+                self.scrollTo?(MacLaterRulerLayout.wheelOffset(current: self.offsetX, deltaY: deltaY))
+                return true
             }
+            return handled ? nil : event
         }
     }
 

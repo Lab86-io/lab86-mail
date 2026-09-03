@@ -2264,15 +2264,8 @@
             "type": "number"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 500
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "string",
+            "maxLength": 500
           }
         },
         "required": [
@@ -2286,26 +2279,12 @@
         "type": "object",
         "properties": {
           "latest": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "number"
           },
           "latestAt": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           },
           "count": {
             "type": "integer",
@@ -2319,8 +2298,6 @@
           }
         },
         "required": [
-          "latest",
-          "latestAt",
           "count",
           "weeksWithEntry"
         ],
@@ -3061,15 +3038,8 @@
                     "type": "number"
                   },
                   "note": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "maxLength": 500
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "string",
+                    "maxLength": 500
                   }
                 },
                 "required": [
@@ -3083,26 +3053,12 @@
                 "type": "object",
                 "properties": {
                   "latest": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "number"
                   },
                   "latestAt": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   },
                   "count": {
                     "type": "integer",
@@ -3116,8 +3072,6 @@
                   }
                 },
                 "required": [
-                  "latest",
-                  "latestAt",
                   "count",
                   "weeksWithEntry"
                 ],
