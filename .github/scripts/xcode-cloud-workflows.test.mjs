@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { selectGitRefID } from './start-xcode-cloud.mjs';
+import { buildRunCreatedAt, selectGitRefID } from './start-xcode-cloud.mjs';
 
 const immutableUploadArtifact = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
 const immutableCheckout = 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5';
@@ -150,4 +150,17 @@ test('TestFlight polling selects the newest matching upload and proves its prove
   assert.match(contents, /selectVerifiedBuild\(\{/);
   assert.match(contents, /marketingVersion: process\.env\.EXPECTED_MARKETING_VERSION/);
   assert.match(contents, /notBefore: process\.env\.BUILD_NOT_BEFORE/);
+});
+
+test('the TestFlight floor is the build run creation date, else the time the build was requested', () => {
+  const requestedAt = '2026-09-03T04:46:00.000Z';
+  assert.equal(
+    buildRunCreatedAt({ attributes: { createdDate: '2026-09-03T04:46:31.394Z' } }, requestedAt),
+    '2026-09-03T04:46:31.394Z',
+  );
+  // App Store Connect omitted the date on the resolved run in the v0.14.0
+  // release, which reached the TestFlight step as the string "undefined".
+  assert.equal(buildRunCreatedAt({ attributes: { number: 196 } }, requestedAt), requestedAt);
+  assert.equal(buildRunCreatedAt({ attributes: { createdDate: 'undefined' } }, requestedAt), requestedAt);
+  assert.equal(buildRunCreatedAt(undefined, requestedAt), requestedAt);
 });
