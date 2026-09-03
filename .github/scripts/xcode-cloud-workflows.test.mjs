@@ -139,9 +139,15 @@ test('Xcode Cloud resolves immutable branch and tag references', () => {
   assert.throws(() => selectGitRefID(references, 'v9.9.9'), /git reference "v9\.9\.9" was not found/);
 });
 
-test('TestFlight polling selects the newest matching upload deterministically', () => {
+test('TestFlight polling selects the newest matching upload and proves its provenance', () => {
   const contents = readFileSync(new URL('./wait-for-testflight.mjs', import.meta.url), 'utf8');
 
   assert.match(contents, /sort: '-uploadedDate'/);
-  assert.match(contents, /build = response\.data\[0\]/);
+  assert.match(contents, /include: 'preReleaseVersion'/);
+  // The build number alone cannot distinguish this run's upload from a
+  // phantom release; the verified selection carries marketing version and
+  // upload time.
+  assert.match(contents, /selectVerifiedBuild\(\{/);
+  assert.match(contents, /marketingVersion: process\.env\.EXPECTED_MARKETING_VERSION/);
+  assert.match(contents, /notBefore: process\.env\.BUILD_NOT_BEFORE/);
 });

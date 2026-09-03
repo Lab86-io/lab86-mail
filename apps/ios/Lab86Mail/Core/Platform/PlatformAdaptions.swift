@@ -60,9 +60,21 @@ enum PlatformSettings {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
         #else
-        let pane = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")
-        if let pane { NSWorkspace.shared.open(pane) }
+        if let pane = notificationSettingsURL(bundleIdentifier: Bundle.main.bundleIdentifier) {
+            NSWorkspace.shared.open(pane)
+        }
         #endif
+    }
+
+    // System Settings opens straight to this app's row in Notifications when
+    // the pane is asked for by bundle identifier; without one it opens the
+    // generic list and the user has to find the app themselves.
+    nonisolated static func notificationSettingsURL(bundleIdentifier: String?) -> URL? {
+        var target = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        if let bundleIdentifier, !bundleIdentifier.isEmpty {
+            target += "?id=\(bundleIdentifier)"
+        }
+        return URL(string: target)
     }
 
     static var systemSettingsName: String {

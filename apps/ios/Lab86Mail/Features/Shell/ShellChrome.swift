@@ -52,7 +52,11 @@ struct RootDestinationView: View {
                 FilesView()
             }
         case .mail:
+            #if os(macOS)
+            MacMailSplitView()
+            #else
             MailView()
+            #endif
         case .chat:
             if let chat = environment.assistantChat {
                 AssistantChatView(model: chat)

@@ -499,4 +499,33 @@ struct SidebarWheelPlacementTests {
         ) == 0)
     }
 }
+
+@MainActor
+struct SidebarMeasurementTests {
+    @Test
+    func aLateOlderMeasurementCannotOverwriteANewerOne() {
+        let model = SidebarWheelModel()
+        model.setMeasurement(centers: [10, 20], total: 100, sequence: 2)
+        model.setMeasurement(centers: [1, 2], total: 50, sequence: 1)
+        #expect(model.publishedMeasurement.centers == [10, 20])
+        #expect(model.publishedMeasurement.total == 100)
+        model.setMeasurement(centers: [30, 40], total: 200, sequence: 3)
+        #expect(model.publishedMeasurement.total == 200)
+        // Unsequenced callers keep the old contract.
+        model.setMeasurement(centers: [5], total: 5)
+        #expect(model.publishedMeasurement.total == 5)
+    }
+
+    @Test
+    func theSequenceCounterIsMonotonicAcrossThreads() async {
+        let sequence = SidebarMeasurementSequence()
+        let values = await withTaskGroup(of: Int.self) { group in
+            for _ in 0..<64 { group.addTask { sequence.next() } }
+            var seen: [Int] = []
+            for await value in group { seen.append(value) }
+            return seen.sorted()
+        }
+        #expect(values == Array(1...64))
+    }
+}
 #endif

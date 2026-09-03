@@ -88,3 +88,26 @@ export async function preserveLogBundles(
 
   return { preserved, failed };
 }
+
+// Errors first and on their own; deprecation chatter only when there is
+// nothing more serious to show, so one real compile error is never buried in
+// a dozen warnings (the 0.9.3 archive failure read exactly like that).
+export function summarizeIssues(issues) {
+  const byType = { errors: [], other: [] };
+  for (const issue of issues ?? []) {
+    const type = String(issue?.attributes?.issueType ?? '').toUpperCase();
+    const message =
+      `${issue?.attributes?.fileSource?.path ? `${issue.attributes.fileSource.path}: ` : ''}${issue?.attributes?.message ?? ''}`.trim();
+    if (!message) continue;
+    (type === 'ERROR' || type === 'TEST_FAILURE' ? byType.errors : byType.other).push(message);
+  }
+  if (byType.errors.length > 0) {
+    const suppressed = byType.other.length
+      ? ` (${byType.other.length} warning${byType.other.length === 1 ? '' : 's'} omitted)`
+      : '';
+    return `${byType.errors.length} error${byType.errors.length === 1 ? '' : 's'}: ${byType.errors.join('; ')}${suppressed}`;
+  }
+  return byType.other.length
+    ? `No errors reported; warnings: ${byType.other.join('; ')}`
+    : 'No issues reported.';
+}

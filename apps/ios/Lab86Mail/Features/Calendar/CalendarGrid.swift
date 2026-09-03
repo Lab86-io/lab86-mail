@@ -39,6 +39,19 @@ enum CalendarGrid {
         let offset = calendar.firstWeekday - 1
         return (0..<7).map { symbols[($0 + offset) % 7] }
     }
+
+    // One identity for an event across every grid: the provider id and the
+    // account joined through a separator neither can contain, so "ab"+"c"
+    // and "a"+"bc" stop colliding and a tap can never open the wrong event.
+    static let entityKeySeparator = "\u{1F}"
+
+    static func entityKey(id: String, accountID: String) -> String {
+        id + entityKeySeparator + accountID
+    }
+
+    static func entityKey(for event: CalendarEventSummary) -> String {
+        entityKey(id: event.id, accountID: event.accountID)
+    }
 }
 
 // MARK: - Timeline placement
@@ -56,7 +69,22 @@ enum TimelineLayout {
         let startMinutes: Int
         let endMinutes: Int
 
-        var id: String { event.id + event.accountID }
+        var id: String { CalendarGrid.entityKey(for: event) }
+    }
+
+    // Where a moment sits on the day's 24 wall-clock hour rows. The axis is
+    // drawn from hour labels, so a 23:00 event on the 23-hour day in March
+    // belongs beside "23", not an hour early where its elapsed minutes would
+    // put it; on the 25-hour day in November the repeated hour collapses onto
+    // the row it reads as. Moments outside the day clamp to its edges.
+    static func wallClockMinutes(of date: Date, on day: Date, calendar: Calendar) -> Int {
+        let dayStart = calendar.startOfDay(for: day)
+        guard date >= dayStart else { return 0 }
+        guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart), date < dayEnd else {
+            return minutesPerDay
+        }
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
     // Overlapping events share the width of their cluster the way Apple and
@@ -68,13 +96,12 @@ enum TimelineLayout {
         on day: Date,
         calendar: Calendar
     ) -> [Placement] {
-        let dayStart = calendar.startOfDay(for: day)
         let sorted = events.sorted {
             $0.start == $1.start ? $0.end > $1.end : $0.start < $1.start
         }
 
         func minutes(_ date: Date) -> Int {
-            Int((date.timeIntervalSince(dayStart) / 60).rounded(.down))
+            wallClockMinutes(of: date, on: day, calendar: calendar)
         }
 
         var result: [Placement] = []
@@ -147,8 +174,8 @@ enum DayChips {
         let allDay = events.filter(\.allDay).sorted { $0.title < $1.title }
         let timed = events.filter { !$0.allDay }.sorted { $0.start < $1.start }
         let ordered =
-            allDay.map { Chip(id: $0.id + $0.accountID, title: $0.title, kind: .allDay, seed: seed(for: $0)) }
-            + timed.map { Chip(id: $0.id + $0.accountID, title: $0.title, kind: .timed, seed: seed(for: $0)) }
+            allDay.map { Chip(id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .allDay, seed: seed(for: $0)) }
+            + timed.map { Chip(id: CalendarGrid.entityKey(for: $0), title: $0.title, kind: .timed, seed: seed(for: $0)) }
             + tasks.map { Chip(id: "task:" + $0.id, title: $0.title, kind: .task, seed: "task") }
 
         guard limit > 0 else { return ([], ordered.count) }

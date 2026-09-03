@@ -291,6 +291,9 @@ struct MailView: View {
         } message: {
             Text(environment.store.mailErrorMessage ?? "Try again.")
         }
+        #if !os(macOS)
+        // The Mac reads the same route in a pane beside the list
+        // (MacMailSplitView); only the phone pushes the thread over it.
         .navigationDestination(
             isPresented: Binding(
                 get: { navigation.threadRoute != nil },
@@ -298,11 +301,10 @@ struct MailView: View {
             )
         ) {
             if let route = navigation.threadRoute {
-                ThreadView(route: route, summary: environment.store.threads.first {
-                    $0.id == route.threadID && $0.accountID == route.accountID
-                })
+                ThreadView(route: route, summary: environment.store.threads.first { route.matches($0) })
             }
         }
+        #endif
         .shellToolbar()
     }
 
@@ -319,7 +321,7 @@ struct MailView: View {
                 MailThreadRow(thread: thread)
             }
             .buttonStyle(.plain)
-            .listRowBackground(Color.clear)
+            .listRowBackground(rowBackground(for: thread, navigation: navigation))
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if thread.unread {
                 Button("Read", systemImage: "envelope.open") {
@@ -560,6 +562,17 @@ struct MailView: View {
 
     private func threadKey(_ thread: MailThreadSummary) -> String {
         "\(thread.accountID):\(thread.id)"
+    }
+
+    // The Mac keeps the list on screen while a thread is open, so the open
+    // row needs to read as the one being read.
+    private func rowBackground(for thread: MailThreadSummary, navigation: NavigationModel) -> Color {
+        #if os(macOS)
+        if navigation.threadRoute?.matches(thread) == true {
+            return environment.theme.accentSoftColor.opacity(0.6)
+        }
+        #endif
+        return .clear
     }
 
     private func accountMenuTitle(_ id: String, fallback: String) -> String {

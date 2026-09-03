@@ -45,6 +45,12 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
+    // Whether a list row is the thread this route opens; the Mac's reading
+    // pane highlights it and the phone's list has no reason to.
+    func matches(_ thread: MailThreadSummary) -> Bool {
+        thread.accountID == accountID && thread.id == threadID
+    }
+
     let accountID: String
     let threadID: String
     var id: String { "\(accountID):\(threadID)" }

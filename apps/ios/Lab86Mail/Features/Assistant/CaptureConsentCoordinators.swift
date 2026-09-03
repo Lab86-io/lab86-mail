@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import CoreLocation
+import MapKit
 import Observation
 @preconcurrency import Speech
 
@@ -42,11 +43,7 @@ final class CaptureVoiceCoordinator: NSObject {
             return
         }
         #if os(iOS)
-        let microphone = await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission {
-                continuation.resume(returning: $0)
-            }
-        }
+        let microphone = await AVAudioApplication.requestRecordPermission()
         #else
         let microphone = await AVCaptureDevice.requestAccess(for: .audio)
         #endif
@@ -125,23 +122,34 @@ protocol CaptureLocationLabelResolving: AnyObject {
     func cancel()
 }
 
+// MapKit's reverse geocoding replaced CLGeocoder in the 26 SDKs; the label
+// is the city with its region ("Rochester, NY"), the same shape the old
+// locality + administrative-area pair produced.
 @MainActor
 final class SystemLocationLabelResolver: CaptureLocationLabelResolving {
-    private let geocoder = CLGeocoder()
+    private var request: MKReverseGeocodingRequest?
 
     func resolveLabel(for location: CLLocation) async -> String? {
-        guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else {
-            return nil
-        }
-        let resolvedLabel = [placemark.locality, placemark.administrativeArea]
+        request?.cancel()
+        guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+        self.request = request
+        defer { if self.request === request { self.request = nil } }
+        guard let item = try? await request.mapItems.first else { return nil }
+        return Self.label(for: item)
+    }
+
+    nonisolated static func label(for item: MKMapItem) -> String? {
+        let representations = item.addressRepresentations
+        let candidates = [representations?.cityWithContext, representations?.regionName, item.name]
+        let label = candidates
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
-        return resolvedLabel.isEmpty ? nil : resolvedLabel
+            .first { !$0.isEmpty }
+        return label
     }
 
     func cancel() {
-        geocoder.cancelGeocode()
+        request?.cancel()
+        request = nil
     }
 }
 
