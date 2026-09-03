@@ -334,7 +334,11 @@ private struct SourceList: View {
             slotY: model.slotY,
             engagement: model.engagement,
             spacing: 4,
-            onMeasure: { model.setMeasurement(centers: $0, total: $1) }
+            onMeasure: { centers, total in
+                // Layout callbacks arrive on the main thread; the model is
+                // main-actor state, so hop explicitly rather than assume.
+                MainActor.assumeIsolated { model.setMeasurement(centers: centers, total: total) }
+            }
         ) {
             rows
         }

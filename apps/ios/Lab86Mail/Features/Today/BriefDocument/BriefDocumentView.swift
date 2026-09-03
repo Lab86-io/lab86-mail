@@ -873,7 +873,7 @@ private struct BriefEntityRow: View {
 
     private func handoffSummary(_ handoff: BriefEntityHandoff) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            (Text("My read: ").fontWeight(.semibold) + Text(handoff.assessment))
+            Text("\(Text("My read: ").fontWeight(.semibold))\(handoff.assessment)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -948,7 +948,7 @@ private struct BriefEntityRow: View {
     }
 
     private func labeledDetail(_ label: String, value: String) -> some View {
-        (Text("\(label): ").fontWeight(.semibold).foregroundStyle(.primary) + Text(value))
+        Text("\(Text("\(label): ").fontWeight(.semibold).foregroundStyle(.primary))\(value)")
     }
 }
 

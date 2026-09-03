@@ -834,7 +834,7 @@ private struct DayTimelineView: View {
     }
 
     private func minutesIntoDay(_ date: Date) -> Int {
-        Int(date.timeIntervalSince(calendar.startOfDay(for: day)) / 60)
+        TimelineLayout.wallClockMinutes(of: date, on: day, calendar: calendar)
     }
 
     private func scrollToStart(_ proxy: ScrollViewProxy) {
@@ -1021,7 +1021,7 @@ private struct WeekTimelineView: View {
             if let task = dueTasks(on: day).first(where: { "task:" + $0.id == chip.id }) {
                 onOpenTask(task)
             }
-        } else if let event = allDay(on: day).first(where: { $0.id + $0.accountID == chip.id }) {
+        } else if let event = allDay(on: day).first(where: { CalendarGrid.entityKey(for: $0) == chip.id }) {
             onOpen(event)
         }
     }

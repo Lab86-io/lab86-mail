@@ -243,4 +243,46 @@ struct CalendarLayoutTests {
         let week = CalendarView.weekStart(for: wednesday, calendar: calendar)
         #expect(CalendarView.selectedDay(forWeek: week, keeping: wednesday, calendar: calendar) == wednesday)
     }
+
+    // MARK: - Identity
+
+    @Test
+    func entityKeysCannotCollideAcrossTheIdAndAccountBoundary() {
+        #expect(CalendarGrid.entityKey(id: "ab", accountID: "c") != CalendarGrid.entityKey(id: "a", accountID: "bc"))
+        #expect(CalendarGrid.entityKey(id: "ab", accountID: "c") == CalendarGrid.entityKey(id: "ab", accountID: "c"))
+        let placed = TimelineLayout.place([event("ab", from: date(2026, 7, 6, 9), to: date(2026, 7, 6, 10))], on: date(2026, 7, 6), calendar: calendar)
+        #expect(placed.first?.id == CalendarGrid.entityKey(id: "ab", accountID: "acct"))
+        let chips = DayChips.make(events: [event("ab", from: date(2026, 7, 6), to: date(2026, 7, 7), allDay: true)], tasks: [], limit: 3)
+        #expect(chips.chips.first?.id == CalendarGrid.entityKey(id: "ab", accountID: "acct"))
+    }
+
+    // MARK: - Daylight-saving days
+
+    @Test
+    func theShortMarchDayPlacesEventsOnTheirWallClockHour() {
+        // 8 March 2026 in New York has 23 hours: 02:00 jumps to 03:00.
+        let day = date(2026, 3, 8)
+        let late = TimelineLayout.place([event("late", from: date(2026, 3, 8, 23), to: date(2026, 3, 8, 23, 30))], on: day, calendar: calendar)
+        #expect(late.first?.startMinutes == 23 * 60)
+        #expect(late.first?.endMinutes == 23 * 60 + 30)
+        // Elapsed minutes would have said 22:00; the wall clock says 23:00.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 3, 8, 23), on: day, calendar: calendar) == 1380)
+        // An event across the gap keeps its wall-clock span.
+        let across = TimelineLayout.place([event("gap", from: date(2026, 3, 8, 1, 30), to: date(2026, 3, 8, 3, 30))], on: day, calendar: calendar)
+        #expect(across.first?.startMinutes == 90)
+        #expect(across.first?.endMinutes == 210)
+    }
+
+    @Test
+    func theLongNovemberDayKeepsLateEventsInsideTheAxis() {
+        // 1 November 2026 in New York has 25 hours: 02:00 falls back to 01:00.
+        let day = date(2026, 11, 1)
+        let late = TimelineLayout.place([event("late", from: date(2026, 11, 1, 23), to: date(2026, 11, 2, 0))], on: day, calendar: calendar)
+        #expect(late.first?.startMinutes == 23 * 60)
+        #expect(late.first?.endMinutes == TimelineLayout.minutesPerDay)
+        // Midnight of the next day is the axis end, not an hour past it.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 11, 2), on: day, calendar: calendar) == TimelineLayout.minutesPerDay)
+        // Moments before the day clamp to its start.
+        #expect(TimelineLayout.wallClockMinutes(of: date(2026, 10, 31, 23), on: day, calendar: calendar) == 0)
+    }
 }

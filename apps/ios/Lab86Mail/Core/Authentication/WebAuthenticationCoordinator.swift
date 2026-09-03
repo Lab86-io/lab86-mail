@@ -127,9 +127,15 @@ final class WebAuthenticationCoordinator: NSObject, ASWebAuthenticationPresentat
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         #if canImport(UIKit)
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        if let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) { return window }
+        // A window must belong to a scene on the 26 SDKs; the sceneless
+        // initializer is deprecated and only a last resort.
+        if let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first {
+            return UIWindow(windowScene: scene)
+        }
+        // No scene at all only happens before the app has a UI; a detached
+        // window keeps the contract without the deprecated sceneless init.
+        return UIWindow(frame: .zero)
         #else
         return NSApplication.shared.keyWindow
             ?? NSApplication.shared.windows.first(where: \.isVisible)
