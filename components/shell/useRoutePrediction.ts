@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BarRoute, RouteVerdict } from '@/lib/albatross/route-classifier';
 import { flipRoute, instantRoute, predictRoute, ROUTE_CONFIRM_DELAY_MS } from '@/lib/albatross/route-client';
+import type { BarRoute, RouteVerdict } from '@/lib/albatross/route-rules';
 
 // The route state of the bar. The heuristic sets the chip at once. The
 // endpoint confirms `delayMs` after the last keystroke. Tab flips the chip

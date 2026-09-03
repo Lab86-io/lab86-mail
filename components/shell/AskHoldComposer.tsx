@@ -9,7 +9,7 @@ import { type RoutePredictionOptions, useRoutePrediction } from '@/components/sh
 import { Button } from '@/components/ui/button';
 import { PromptInput, PromptInputActions, PromptInputTextarea } from '@/components/ui/prompt-input';
 import { HOLD_ERROR, type HoldCard } from '@/lib/albatross/capture-client';
-import type { BarRoute } from '@/lib/albatross/route-classifier';
+import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
 
 // One bar for Ask and Hold. The chip at the right edge says where Enter

@@ -9,8 +9,8 @@ import { QueryProvider } from '@/components/shell/QueryProvider';
 import { RouteChip, RouteTabHint } from '@/components/shell/RouteChip';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import { HOLD_ERROR, type HoldCard, type HoldInput, type HoldResult } from '@/lib/albatross/capture-client';
-import type { RouteVerdict } from '@/lib/albatross/route-classifier';
-import { routeHeuristic } from '@/lib/albatross/route-classifier';
+import type { RouteVerdict } from '@/lib/albatross/route-rules';
+import { routeHeuristic } from '@/lib/albatross/route-rules';
 
 /* Dev-only harness: the Ask / Hold bar on fixtures, so the chip, the Tab
  * lock, the landing with one and three cards, "Hold this", and the error

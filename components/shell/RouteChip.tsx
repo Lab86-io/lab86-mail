@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BarRoute } from '@/lib/albatross/route-classifier';
+import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
 
 // One word at the right edge of the bar: Ask or Hold. Tab flips it. The color

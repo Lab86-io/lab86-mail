@@ -1,9 +1,4 @@
-import {
-  ASK_FALLBACK,
-  type BarRoute,
-  type RouteVerdict,
-  routeHeuristic,
-} from '@/lib/albatross/route-classifier';
+import { ASK_FALLBACK, type BarRoute, type RouteVerdict, routeHeuristic } from '@/lib/albatross/route-rules';
 
 // The client side of the Ask / Hold route. The heuristic answers at once for
 // the clear cases. The endpoint confirms after the typing stops. Every failure
