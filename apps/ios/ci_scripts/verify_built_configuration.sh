@@ -116,13 +116,20 @@ esac
 # identifier is a literal "$(PRODUCT_BUNDLE_IDENTIFIER)" and rejects the upload
 # (ITMS-90277/90261/90280). It happens when a target's source folder carries
 # another target's Info.plist.
+# On iOS the resources folder is the bundle root, which is where the app's own
+# processed Info.plist lives; only a *different* file than INFOPLIST_PATH counts.
 resources_dir="${TARGET_BUILD_DIR:-}/${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}"
 if [[ -n "${LAB86_RESOURCES_DIR:-}" ]]; then
   resources_dir="$LAB86_RESOURCES_DIR"
 fi
-if [[ -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}${LAB86_RESOURCES_DIR:-}" && -f "$resources_dir/Info.plist" ]]; then
-  echo "Refusing to archive: a stray Info.plist is bundled as a resource at $resources_dir/Info.plist." >&2
-  exit 1
+stray_plist="$resources_dir/Info.plist"
+if [[ -n "${UNLOCALIZED_RESOURCES_FOLDER_PATH:-}${LAB86_RESOURCES_DIR:-}" && -f "$stray_plist" ]]; then
+  own_plist="$(cd "$(dirname "$info_plist")" && pwd -P)/$(basename "$info_plist")"
+  found_plist="$(cd "$(dirname "$stray_plist")" && pwd -P)/Info.plist"
+  if [[ "$found_plist" != "$own_plist" ]]; then
+    echo "Refusing to archive: a stray Info.plist is bundled as a resource at $stray_plist." >&2
+    exit 1
+  fi
 fi
 
 # The signed entitlements must carry a concrete passkey association. Xcode
