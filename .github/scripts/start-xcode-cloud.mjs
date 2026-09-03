@@ -507,6 +507,11 @@ export async function main() {
   );
   assertImmutableExpectedSource(sourceReference, process.env.XCODE_CLOUD_EXPECTED_COMMIT_SHA);
 
+  // The moment before the build is asked for is a floor every upload from
+  // this run must clear; App Store Connect does not always return the run's
+  // own creation date on the resolved build run, so this clock is the
+  // fallback rather than the string "undefined".
+  const requestedAt = new Date().toISOString();
   const response = await startBuildRunWithConditionPropagation(() =>
     appStoreConnect('/v1/ciBuildRuns', {
       method: 'POST',
@@ -531,9 +536,16 @@ export async function main() {
   if (process.env.GITHUB_OUTPUT) {
     appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `build_run_id=${buildRun.id}\nbuild_number=${buildRun.attributes.number}\nbuild_created_at=${buildRun.attributes.createdDate}\n`,
+      `build_run_id=${buildRun.id}\nbuild_number=${buildRun.attributes.number}\nbuild_created_at=${buildRunCreatedAt(buildRun, requestedAt)}\n`,
     );
   }
+}
+
+// The build run's own creation date when App Store Connect reports one, else
+// the time this run asked for the build; both precede any upload it makes.
+export function buildRunCreatedAt(buildRun, requestedAt) {
+  const reported = buildRun?.attributes?.createdDate;
+  return typeof reported === 'string' && Number.isFinite(Date.parse(reported)) ? reported : requestedAt;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
