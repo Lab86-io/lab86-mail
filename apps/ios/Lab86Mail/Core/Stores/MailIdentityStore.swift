@@ -11,12 +11,16 @@ import Observation
 @Observable
 final class MailIdentityStore {
     private let tools: any ToolInvoking
+    // Company-logo answers come back as site-relative paths (/api/logos/…);
+    // they only become fetchable against the backend origin.
+    private let baseURL: URL?
 
     private(set) var photoURLs: [String: URL] = [:]
     private var negativeEmails: Set<String> = []
 
-    init(tools: any ToolInvoking) {
+    init(tools: any ToolInvoking, baseURL: URL? = nil) {
         self.tools = tools
+        self.baseURL = baseURL
     }
 
     // Resolves photo URLs for a batch of (email, account) pairs, grouping by
@@ -71,13 +75,24 @@ final class MailIdentityStore {
             let email = Self.normalize(rawEmail)
             guard !email.isEmpty else { continue }
             if let urlString = value.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !urlString.isEmpty,
-               let url = URL(string: urlString), url.scheme != nil {
+               let url = Self.photoURL(from: urlString, baseURL: baseURL) {
                 photoURLs[email] = url
             } else {
                 negativeEmails.insert(email)
             }
         }
+    }
+
+    // Absolute http(s) URLs pass through; site-relative logo paths resolve
+    // against the backend origin. Any other scheme (file:, data:, javascript:)
+    // is never a usable network image and is treated as a miss.
+    nonisolated static func photoURL(from urlString: String, baseURL: URL?) -> URL? {
+        guard !urlString.isEmpty else { return nil }
+        if let url = URL(string: urlString), let scheme = url.scheme?.lowercased() {
+            return scheme == "https" || scheme == "http" ? url : nil
+        }
+        guard urlString.hasPrefix("/"), let baseURL else { return nil }
+        return URL(string: urlString, relativeTo: baseURL)?.absoluteURL
     }
 
     private static func normalize(_ email: String) -> String {

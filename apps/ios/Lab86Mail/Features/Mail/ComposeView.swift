@@ -249,6 +249,10 @@ struct ComposeView: View {
             .padding(.vertical, 12)
             .contentShape(.rect)
         }
+        // The row draws its own chevron; AppKit's menu chrome (indicator +
+        // bordered button) doubled it and collided with the avatar.
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .accessibilityLabel("From \(selectedAccountLabel)")
     }
 

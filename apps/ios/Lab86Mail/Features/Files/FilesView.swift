@@ -1,6 +1,5 @@
 import SwiftUI
 import QuickLook
-import UIKit
 import UniformTypeIdentifiers
 
 struct FilesView: View {
@@ -95,12 +94,18 @@ struct FilesView: View {
         } message: {
             Text("Connected drives stay private to your account. Albatross requests write access so you can publish and sync edits.")
         }
+        #if os(iOS)
         .sheet(isPresented: $showsFileImporter) {
             OpenInPlaceDocumentPicker { urls in
                 showsFileImporter = false
                 openLocalFile(urls.first)
             }
         }
+        #else
+        .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.item]) { result in
+            openLocalFile(try? result.get())
+        }
+        #endif
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { oldValue, newValue in
             if oldValue != newValue,
@@ -295,6 +300,18 @@ struct FilesView: View {
         }
     }
 
+    private func chipTitle(for connection: CloudFileConnection) -> String {
+        Self.chipTitle(for: connection, among: store.connections)
+    }
+
+    // One drive per provider reads by provider name; a second account of the
+    // same provider needs its own label (the account email) to tell them apart.
+    nonisolated static func chipTitle(for connection: CloudFileConnection, among connections: [CloudFileConnection]) -> String {
+        let providerName = connection.provider == "google_drive" ? "Google Drive" : "OneDrive"
+        let sameProvider = connections.filter { $0.provider == connection.provider }
+        return sameProvider.count > 1 ? connection.label : providerName
+    }
+
     private var locationPicker: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
@@ -305,8 +322,11 @@ struct FilesView: View {
                     selectLocation("albatross")
                 }
                 ForEach(store.connections) { connection in
+                    // Two drives from one provider are indistinguishable by
+                    // provider name alone; repeats fall back to the account
+                    // label the server already supplies.
                     LocationChip(
-                        title: connection.provider == "google_drive" ? "Google Drive" : "OneDrive",
+                        title: chipTitle(for: connection),
                         symbol: connection.provider == "google_drive" ? "triangle" : "cloud",
                         selected: locationID == connection.id,
                         warning: connection.status == "error"
@@ -544,6 +564,7 @@ private struct CloudFolderRoute: Hashable {
     let name: String
 }
 
+#if os(iOS)
 private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
     let onPick: ([URL]) -> Void
 
@@ -587,6 +608,7 @@ private struct OpenInPlaceDocumentPicker: UIViewControllerRepresentable {
         deinit {}
     }
 }
+#endif
 
 private enum CloudBrowseOutcome: Sendable {
     case success(Int, [CloudFileItem])

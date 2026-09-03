@@ -83,7 +83,9 @@ struct EventEditorView: View {
         return false
     }
 
-    static func canCreateEvent(
+    // Pure policy over value types; nonisolated so tests (which run off the
+    // main actor) can call it without tripping the isolation assertion.
+    nonisolated static func canCreateEvent(
         accountID: String,
         calendarID: String,
         calendars: [CalendarChoice],

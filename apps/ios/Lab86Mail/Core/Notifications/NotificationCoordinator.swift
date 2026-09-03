@@ -1,7 +1,11 @@
 import Foundation
 import Observation
-import UIKit
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 extension Notification.Name {
     static let lab86DeviceToken = Notification.Name("io.lab86.mail.device-token")
@@ -117,7 +121,7 @@ final class NotificationCoordinator {
         do {
             let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
             await refreshAuthorizationStatus()
-            if granted { UIApplication.shared.registerForRemoteNotifications() }
+            if granted { Self.registerForRemoteNotifications() }
         } catch {
             registrationError = error.localizedDescription
         }
@@ -127,10 +131,18 @@ final class NotificationCoordinator {
         await refreshAuthorizationStatus()
         switch authorizationStatus {
         case .authorized, .provisional, .ephemeral:
-            UIApplication.shared.registerForRemoteNotifications()
+            Self.registerForRemoteNotifications()
         default:
             break
         }
+    }
+
+    private static func registerForRemoteNotifications() {
+        #if canImport(UIKit)
+        UIApplication.shared.registerForRemoteNotifications()
+        #else
+        NSApplication.shared.registerForRemoteNotifications()
+        #endif
     }
 
     func loadPreferences() async {
@@ -211,7 +223,7 @@ final class NotificationCoordinator {
             let response = try await backend.post(
                 path: "/api/mobile/devices",
                 body: .object([
-                    "platform": .string("ios"),
+                    "platform": .string(Self.devicePlatform),
                     "token": .string(token),
                     "deviceId": .string(Self.deviceIdentifier),
                     "appVersion": .string(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"),
@@ -242,7 +254,11 @@ final class NotificationCoordinator {
     }
 
     func unregisterLocally() {
+        #if canImport(UIKit)
         UIApplication.shared.unregisterForRemoteNotifications()
+        #else
+        NSApplication.shared.unregisterForRemoteNotifications()
+        #endif
         lastRegisteredAt = nil
     }
 
@@ -328,7 +344,25 @@ final class NotificationCoordinator {
         #endif
     }
 
-    private static var deviceIdentifier: String {
+    nonisolated static var devicePlatform: String {
+        #if os(macOS)
+        "macos"
+        #else
+        "ios"
+        #endif
+    }
+
+    static var deviceIdentifier: String {
+        #if canImport(UIKit)
         UIDevice.current.identifierForVendor?.uuidString ?? "ios-unknown-install"
+        #else
+        // macOS has no vendor identifier; a persisted per-install UUID gives
+        // token rotation the same stable device identity.
+        let key = "lab86-mail-install-identifier"
+        if let existing = UserDefaults.standard.string(forKey: key) { return existing }
+        let created = "mac-\(UUID().uuidString.lowercased())"
+        UserDefaults.standard.set(created, forKey: key)
+        return created
+        #endif
     }
 }

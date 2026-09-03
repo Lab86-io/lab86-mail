@@ -115,6 +115,12 @@ export const MailThreadSyncChangeSchema = z
         archived: z.boolean().optional(),
         trashed: z.boolean().optional(),
         unread: z.boolean().optional(),
+        // Epoch ms when a snoozed thread resurfaces. Clearing is a separate
+        // literal flag (not null) so generated clients that fold JSON null
+        // into absence keep the tri-state.
+        snoozedUntil: z.number().int().nonnegative().optional(),
+        snoozeCleared: z.literal(true).optional(),
+        muted: z.boolean().optional(),
       })
       .strict(),
   })
@@ -130,6 +136,23 @@ export const MailMessageSyncChangeSchema = z
         accountID: identifier,
         unread: z.boolean().optional(),
         starred: z.boolean().optional(),
+        labelsAdded: z.array(identifier).max(50).optional(),
+        labelsRemoved: z.array(identifier).max(50).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const MailDraftSyncChangeSchema = z
+  .object({
+    ...syncChangeBase,
+    domain: z.literal('mail'),
+    entityKind: z.literal('draft'),
+    payload: z
+      .object({
+        accountID: identifier,
+        draftID: identifier,
+        deleted: z.literal(true).optional(),
       })
       .strict(),
   })
@@ -198,6 +221,7 @@ export const OperationSyncChangeSchema = z
 export const MobileSyncChangeVariantSchemas = {
   MailThreadSyncChange: MailThreadSyncChangeSchema,
   MailMessageSyncChange: MailMessageSyncChangeSchema,
+  MailDraftSyncChange: MailDraftSyncChangeSchema,
   CalendarEventSyncChange: CalendarEventSyncChangeSchema,
   TaskSyncChange: TaskSyncChangeSchema,
   WorkSyncChange: WorkSyncChangeSchema,
@@ -208,6 +232,7 @@ export const MobileSyncChangeVariantSchemas = {
 export const SyncChangeSchema = z.discriminatedUnion('entityKind', [
   MobileSyncChangeVariantSchemas.MailThreadSyncChange,
   MobileSyncChangeVariantSchemas.MailMessageSyncChange,
+  MobileSyncChangeVariantSchemas.MailDraftSyncChange,
   MobileSyncChangeVariantSchemas.CalendarEventSyncChange,
   MobileSyncChangeVariantSchemas.TaskSyncChange,
   MobileSyncChangeVariantSchemas.WorkSyncChange,
@@ -240,6 +265,76 @@ export const SyncEnvelopeSchema = z
     cursor: z.string(),
     serverRevision: z.number().int().nonnegative(),
     hasMore: z.boolean(),
+  })
+  .strict();
+
+// Typed paged mail reads. Summaries come from the synced Convex corpus
+// (lastDate-cursor pages); detail reads reuse the corpus-first get_thread
+// path, so a fully-hydrated thread is a pure local read server-side.
+export const MailAttachmentSchema = z
+  .object({
+    id: identifier,
+    name: z.string().max(500),
+    contentType: z.string().max(200),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const MailThreadSummarySchema = z
+  .object({
+    id: identifier,
+    accountID: identifier,
+    subject: z.string().max(2_000),
+    fromHeader: z.string().max(1_000),
+    senderEmail: z.string().max(320).optional(),
+    snippet: z.string().max(500),
+    lastMessageAt: z.number().int().nonnegative(),
+    unread: z.boolean(),
+    starred: z.boolean(),
+    labels: z.array(z.string().max(240)).max(200),
+    messageCount: z.number().int().nonnegative(),
+    smartCategory: z.string().max(240).optional(),
+  })
+  .strict();
+
+export const MailThreadPageSchema = z
+  .object({
+    items: z.array(MailThreadSummarySchema),
+    nextCursor: z.string().optional(),
+    hasMore: z.boolean(),
+    serverTime: isoTimestamp,
+  })
+  .strict();
+
+export const MailMessageSchema = z
+  .object({
+    id: identifier,
+    threadID: identifier,
+    accountID: identifier,
+    subject: z.string().max(2_000),
+    fromHeader: z.string().max(1_000),
+    fromEmail: z.string().max(320).optional(),
+    to: z.string().max(20_000),
+    cc: z.string().max(20_000),
+    bcc: z.string().max(20_000),
+    sentAt: z.number().int().nonnegative(),
+    snippet: z.string().max(500),
+    bodyText: z.string().max(500_000),
+    bodyHTML: z.string().max(1_000_000).optional(),
+    labels: z.array(z.string().max(240)).max(200),
+    unread: z.boolean(),
+    starred: z.boolean(),
+    attachments: z.array(MailAttachmentSchema).max(100),
+  })
+  .strict();
+
+export const MailThreadDetailSchema = z
+  .object({
+    threadID: identifier,
+    accountID: identifier,
+    subject: z.string().max(2_000),
+    messages: z.array(MailMessageSchema),
+    summary: z.string().max(20_000).optional(),
   })
   .strict();
 
@@ -297,6 +392,103 @@ const taskCreatePayload = z
   })
   .strict();
 
+const mailMessageLabelPayload = z
+  .object({
+    accountID: identifier,
+    threadID: identifier,
+    messageID: identifier,
+    label: z.string().trim().min(1).max(240),
+  })
+  .strict();
+
+const mailSnoozePayload = z
+  .object({
+    accountID: identifier,
+    threadID: identifier,
+    messageID: identifier,
+    untilAt: isoTimestamp,
+  })
+  .strict();
+
+const mailUnsnoozePayload = z
+  .object({
+    accountID: identifier,
+    threadID: identifier,
+    messageID: identifier,
+  })
+  .strict();
+
+// Text-only durable sends. Attachment sends stay on the authenticated
+// multipart /api/compose boundary — bytes do not belong in a queued command.
+const mailSendPayload = z
+  .object({
+    accountID: identifier,
+    mode: z.enum(['new', 'reply', 'replyAll', 'forward']),
+    to: z.string().max(20_000).optional(),
+    cc: z.string().max(20_000).optional(),
+    bcc: z.string().max(20_000).optional(),
+    subject: z.string().max(2_000).optional(),
+    bodyText: z.string().max(500_000),
+    bodyHTML: z.string().max(1_000_000).optional(),
+    threadID: optionalIdentifier,
+    messageID: optionalIdentifier,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.mode === 'new' || value.mode === 'forward') && !value.to?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'to is required for new and forward sends.',
+      });
+    }
+    if (value.mode === 'new' && value.subject === undefined) {
+      ctx.addIssue({ code: 'custom', message: 'subject is required for a new send.' });
+    }
+    if (value.mode !== 'new' && !value.messageID) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'messageID is required for reply, replyAll, and forward sends.',
+      });
+    }
+  });
+
+const mailSaveDraftPayload = z
+  .object({
+    accountID: identifier,
+    draftID: optionalIdentifier,
+    threadID: optionalIdentifier,
+    inReplyToMessageID: optionalIdentifier,
+    to: z.string().max(20_000),
+    cc: z.string().max(20_000).optional(),
+    bcc: z.string().max(20_000).optional(),
+    subject: z.string().max(2_000),
+    bodyText: z.string().max(500_000),
+    bodyHTML: z.string().max(1_000_000).optional(),
+    scheduledFor: isoTimestamp.optional(),
+    // Explicit unschedule for an existing draft (mirrors `snoozeCleared`):
+    // omitting `scheduledFor` on an update must mean "leave it unchanged".
+    scheduleCleared: z.literal(true).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.scheduleCleared && value.scheduledFor !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'scheduleCleared cannot be combined with scheduledFor.',
+      });
+    }
+    if (value.scheduleCleared && !value.draftID) {
+      ctx.addIssue({ code: 'custom', message: 'scheduleCleared requires an existing draftID.' });
+    }
+  });
+
+const mailDeleteDraftPayload = z
+  .object({
+    accountID: identifier,
+    draftID: identifier,
+  })
+  .strict();
+
 export const MailArchiveCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.archive'), payload: mailThreadPayload })
   .strict();
@@ -314,6 +506,41 @@ export const MailStarCommandSchema = z
   .strict();
 export const MailUnstarCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.unstar'), payload: mailMessagePayload })
+  .strict();
+export const MailAddLabelCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.addLabel'), payload: mailMessageLabelPayload })
+  .strict();
+export const MailRemoveLabelCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('mail.removeLabel'),
+    payload: mailMessageLabelPayload,
+  })
+  .strict();
+export const MailSnoozeCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.snooze'), payload: mailSnoozePayload })
+  .strict();
+export const MailUnsnoozeCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.unsnooze'), payload: mailUnsnoozePayload })
+  .strict();
+export const MailMuteCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.mute'), payload: mailThreadPayload })
+  .strict();
+export const MailRestoreCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.restore'), payload: mailThreadPayload })
+  .strict();
+export const MailSendCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.send'), payload: mailSendPayload })
+  .strict();
+export const MailSaveDraftCommandSchema = z
+  .object({ ...mobileCommandBase, kind: z.literal('mail.saveDraft'), payload: mailSaveDraftPayload })
+  .strict();
+export const MailDeleteDraftCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('mail.deleteDraft'),
+    payload: mailDeleteDraftPayload,
+  })
   .strict();
 export const CalendarCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('calendar.create'), payload: calendarCreatePayload })
@@ -369,6 +596,15 @@ export const MobileCommandVariantSchemas = {
   MailMarkUnreadCommand: MailMarkUnreadCommandSchema,
   MailStarCommand: MailStarCommandSchema,
   MailUnstarCommand: MailUnstarCommandSchema,
+  MailAddLabelCommand: MailAddLabelCommandSchema,
+  MailRemoveLabelCommand: MailRemoveLabelCommandSchema,
+  MailSnoozeCommand: MailSnoozeCommandSchema,
+  MailUnsnoozeCommand: MailUnsnoozeCommandSchema,
+  MailMuteCommand: MailMuteCommandSchema,
+  MailRestoreCommand: MailRestoreCommandSchema,
+  MailSendCommand: MailSendCommandSchema,
+  MailSaveDraftCommand: MailSaveDraftCommandSchema,
+  MailDeleteDraftCommand: MailDeleteDraftCommandSchema,
   CalendarCreateCommand: CalendarCreateCommandSchema,
   TaskCreateCommand: TaskCreateCommandSchema,
   TaskSetCompletedCommand: TaskSetCompletedCommandSchema,
@@ -384,6 +620,15 @@ const commandSchemas = Object.values(MobileCommandVariantSchemas) as [
   typeof MailMarkUnreadCommandSchema,
   typeof MailStarCommandSchema,
   typeof MailUnstarCommandSchema,
+  typeof MailAddLabelCommandSchema,
+  typeof MailRemoveLabelCommandSchema,
+  typeof MailSnoozeCommandSchema,
+  typeof MailUnsnoozeCommandSchema,
+  typeof MailMuteCommandSchema,
+  typeof MailRestoreCommandSchema,
+  typeof MailSendCommandSchema,
+  typeof MailSaveDraftCommandSchema,
+  typeof MailDeleteDraftCommandSchema,
   typeof CalendarCreateCommandSchema,
   typeof TaskCreateCommandSchema,
   typeof TaskSetCompletedCommandSchema,
@@ -466,6 +711,11 @@ export const MobileContractV1 = {
   schemas: {
     AssistantEvent: AssistantEventSchema,
     CommandReceipt: CommandReceiptSchema,
+    MailAttachment: MailAttachmentSchema,
+    MailMessage: MailMessageSchema,
+    MailThreadDetail: MailThreadDetailSchema,
+    MailThreadPage: MailThreadPageSchema,
+    MailThreadSummary: MailThreadSummarySchema,
     MobileBootstrap: MobileBootstrapSchema,
     MobileCommand: MobileCommandSchema,
     MobileErrorEnvelope: MobileErrorEnvelopeSchema,

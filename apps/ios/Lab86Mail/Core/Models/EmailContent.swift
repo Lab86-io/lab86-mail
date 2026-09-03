@@ -30,6 +30,23 @@ enum EmailTextNormalizer {
         return String(value[matchRange]).lowercased()
     }
 
+    // The human half of `"Name" <a@b.com>`. A named header returns the name;
+    // a bare address stays a full address (truncating it to the mailbox would
+    // hide which service sent it). Returns nil only when nothing is left.
+    static func displayName(from value: String?) -> String? {
+        let cleaned = header(value)
+        guard !cleaned.isEmpty else { return nil }
+        if let angle = cleaned.firstIndex(of: "<") {
+            let name = String(cleaned[..<angle])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if !name.isEmpty { return name }
+            // `<a@b.com>` with no name: surface the bare address.
+            return email(from: cleaned)
+        }
+        return cleaned
+    }
+
     static func preview(_ value: String) -> String {
         let readable = readerText(value)
         return readable.replacingOccurrences(

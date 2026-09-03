@@ -39,7 +39,7 @@ import {
   workIdFromSearch,
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
-import { AssistantChat } from './AIBar';
+import { AIBarTrigger, AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
@@ -275,6 +275,7 @@ export function AppShell({
               </AnimatePresence>
             </div>
             <AssistantChat />
+            <AIBarTrigger />
             <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
             <AlbatrossCompanion />
           </main>
@@ -356,6 +357,7 @@ export function AppShell({
             </AnimatePresence>
           </TooltipProvider>
           <AssistantChat />
+          <AIBarTrigger />
           <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
           <AlbatrossCompanion />
         </main>

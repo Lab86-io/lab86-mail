@@ -158,7 +158,7 @@ struct TasksView: View {
             }
             // One confirmation tick when the drop lands; the lift/placeholder
             // feedback during the drag is the native reorder container's.
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            PlatformHaptics.lightImpact()
             Task {
                 await store.reorderTask(
                     id: taskID,

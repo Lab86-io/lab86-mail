@@ -1,5 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 struct DocumentEditorView: View {
     @Environment(AppEnvironment.self) private var environment
@@ -97,8 +101,23 @@ struct DocumentEditorView: View {
             set: { if !$0 { shareURL = nil } }
         )) {
             if let shareURL {
+                #if os(iOS)
                 ActivityShareSheet(items: [shareURL])
                     .presentationDetents([.medium])
+                #else
+                VStack(spacing: 16) {
+                    Text("Share this file")
+                        .font(.headline)
+                    ShareLink(item: shareURL) {
+                        Label("Share…", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Done") { self.shareURL = nil }
+                        .buttonStyle(.plain)
+                }
+                .padding(28)
+                .frame(minWidth: 320)
+                #endif
             }
         }
         .alert("File", isPresented: Binding(
@@ -660,11 +679,19 @@ private struct NativeDocEditor: View {
     }
 
     private var horizontalPadding: CGFloat {
+        #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? 56 : 20
+        #else
+        56
+        #endif
     }
 
     private var pageMinimumHeight: CGFloat {
+        #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? 920 : 680
+        #else
+        920
+        #endif
     }
 
     private func update(_ index: Int, mutation: (inout AlbatrossDocBlock) -> Void) {
@@ -674,7 +701,7 @@ private struct NativeDocEditor: View {
         onChange(next)
     }
 
-    private func blockUIFont(_ block: AlbatrossDocBlock) -> UIFont {
+    private func blockUIFont(_ block: AlbatrossDocBlock) -> PlatformFont {
         if block.type == "heading" {
             switch block.level ?? 2 {
             case 1: return .preferredFont(forTextStyle: .largeTitle).withTraits(.traitBold)
@@ -682,7 +709,7 @@ private struct NativeDocEditor: View {
             default: return .preferredFont(forTextStyle: .title1).withTraits(.traitBold)
             }
         }
-        let body = UIFont.preferredFont(forTextStyle: .body)
+        let body = PlatformFont.preferredFont(forTextStyle: .body)
         return block.type == "quote" ? body.withTraits(.traitItalic) : body
     }
 }
@@ -694,6 +721,26 @@ private struct IndexedDocBlock: Identifiable {
     var id: String { block.id }
 }
 
+#if os(macOS)
+// AppKit's field editor plumbing buys nothing here; SwiftUI's TextEditor is a
+// competent multi-line editor on the Mac and keeps the block model identical.
+private struct GrowingTextEditor: View {
+    @Binding var text: String
+    let font: NSFont
+    let minimumHeight: CGFloat
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(Font(font))
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
+            // With internal scrolling off, the editor must size itself to
+            // its text or anything past the minimum height is unreachable.
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(minHeight: minimumHeight)
+    }
+}
+#else
 private struct GrowingTextEditor: UIViewRepresentable {
     @Binding var text: String
     let font: UIFont
@@ -752,6 +799,10 @@ private struct GrowingTextEditor: UIViewRepresentable {
         deinit {}
     }
 }
+#endif
+
+#if canImport(UIKit)
+typealias PlatformFont = UIFont
 
 private extension UIFont {
     func withTraits(_ traits: UIFontDescriptor.SymbolicTraits) -> UIFont {
@@ -759,6 +810,22 @@ private extension UIFont {
         return UIFont(descriptor: descriptor, size: 0)
     }
 }
+#else
+typealias PlatformFont = NSFont
+
+private extension NSFont {
+    func withTraits(_ traits: NSFontDescriptor.SymbolicTraits) -> NSFont {
+        let descriptor = fontDescriptor.withSymbolicTraits(traits)
+        return NSFont(descriptor: descriptor, size: 0) ?? self
+    }
+}
+
+// Alias the UIKit trait spellings the shared call sites use.
+private extension NSFontDescriptor.SymbolicTraits {
+    static var traitBold: NSFontDescriptor.SymbolicTraits { .bold }
+    static var traitItalic: NSFontDescriptor.SymbolicTraits { .italic }
+}
+#endif
 
 private struct NativeSheetEditor: View {
     let activeSheetID: String
@@ -1168,6 +1235,7 @@ private struct DocumentAISheet: View {
     }
 }
 
+#if os(iOS)
 private struct ActivityShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
@@ -1177,3 +1245,4 @@ private struct ActivityShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+#endif

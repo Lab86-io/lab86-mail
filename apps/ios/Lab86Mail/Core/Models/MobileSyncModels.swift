@@ -16,6 +16,33 @@ struct MailThreadSyncPatch: Equatable, Sendable {
     let archived: Bool?
     let trashed: Bool?
     let unread: Bool?
+    // Epoch ms when the thread resurfaces; snoozeCleared reports an explicit
+    // un-snooze, distinct from a change that says nothing about snoozing.
+    let snoozedUntil: Int?
+    let snoozeCleared: Bool?
+    let muted: Bool?
+
+    init(
+        entityID: String,
+        revision: Int,
+        accountID: String,
+        archived: Bool? = nil,
+        trashed: Bool? = nil,
+        unread: Bool? = nil,
+        snoozedUntil: Int? = nil,
+        snoozeCleared: Bool? = nil,
+        muted: Bool? = nil
+    ) {
+        self.entityID = entityID
+        self.revision = revision
+        self.accountID = accountID
+        self.archived = archived
+        self.trashed = trashed
+        self.unread = unread
+        self.snoozedUntil = snoozedUntil
+        self.snoozeCleared = snoozeCleared
+        self.muted = muted
+    }
 }
 
 struct MailMessageSyncPatch: Equatable, Sendable {
@@ -24,6 +51,34 @@ struct MailMessageSyncPatch: Equatable, Sendable {
     let accountID: String
     let unread: Bool?
     let starred: Bool?
+    let labelsAdded: [String]?
+    let labelsRemoved: [String]?
+
+    init(
+        entityID: String,
+        revision: Int,
+        accountID: String,
+        unread: Bool? = nil,
+        starred: Bool? = nil,
+        labelsAdded: [String]? = nil,
+        labelsRemoved: [String]? = nil
+    ) {
+        self.entityID = entityID
+        self.revision = revision
+        self.accountID = accountID
+        self.unread = unread
+        self.starred = starred
+        self.labelsAdded = labelsAdded
+        self.labelsRemoved = labelsRemoved
+    }
+}
+
+struct MailDraftSyncPatch: Equatable, Sendable {
+    let entityID: String
+    let revision: Int
+    let accountID: String
+    let draftID: String
+    let deleted: Bool
 }
 
 struct CalendarEventSyncReference: Equatable, Sendable {
@@ -77,6 +132,7 @@ struct OperationSyncPatch: Equatable, Sendable {
 enum MobileSyncChange: Equatable, Sendable {
     case mailThread(MailThreadSyncPatch)
     case mailMessage(MailMessageSyncPatch)
+    case mailDraft(MailDraftSyncPatch)
     case calendarEvent(CalendarEventSyncReference)
     case task(TaskSyncPatch)
     case work(WorkSyncReference)
@@ -85,7 +141,7 @@ enum MobileSyncChange: Equatable, Sendable {
 
     var domain: MobileDomain {
         switch self {
-        case .mailThread, .mailMessage: .mail
+        case .mailThread, .mailMessage, .mailDraft: .mail
         case .calendarEvent: .calendar
         case .task: .tasks
         case .work: .work
@@ -98,6 +154,7 @@ enum MobileSyncChange: Equatable, Sendable {
         switch self {
         case .mailThread(let patch): patch.revision
         case .mailMessage(let patch): patch.revision
+        case .mailDraft(let patch): patch.revision
         case .calendarEvent(let reference): reference.revision
         case .task(let patch): patch.revision
         case .work(let reference): reference.revision

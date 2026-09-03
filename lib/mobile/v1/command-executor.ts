@@ -137,6 +137,229 @@ export async function executeMobileCommand(
         },
       };
     }
+    case 'mail.addLabel':
+    case 'mail.removeLabel': {
+      const adding = command.kind === 'mail.addLabel';
+      const result = await dependencies.invoke(
+        adding ? 'add_label' : 'remove_label',
+        {
+          account: command.payload.accountID,
+          messageId: command.payload.messageID,
+          label: command.payload.label,
+        },
+        user,
+      );
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'message',
+        entityID: command.payload.messageID,
+        syncPayload: {
+          accountID: command.payload.accountID,
+          ...(adding ? { labelsAdded: [command.payload.label] } : { labelsRemoved: [command.payload.label] }),
+        },
+      };
+    }
+    case 'mail.snooze': {
+      const untilTs = Date.parse(command.payload.untilAt);
+      const result = await dependencies.invoke(
+        'snooze_thread',
+        {
+          account: command.payload.accountID,
+          messageId: command.payload.messageID,
+          threadId: command.payload.threadID,
+          untilTs,
+        },
+        user,
+      );
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'thread',
+        entityID: command.payload.threadID,
+        syncPayload: { accountID: command.payload.accountID, snoozedUntil: untilTs },
+      };
+    }
+    case 'mail.unsnooze': {
+      const result = await dependencies.invoke(
+        'unsnooze_thread',
+        { account: command.payload.accountID, messageId: command.payload.messageID },
+        user,
+      );
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'thread',
+        entityID: command.payload.threadID,
+        syncPayload: { accountID: command.payload.accountID, snoozeCleared: true },
+      };
+    }
+    case 'mail.mute': {
+      const result = await dependencies.invoke(
+        'mute_thread',
+        { account: command.payload.accountID, threadId: command.payload.threadID },
+        user,
+      );
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'thread',
+        entityID: command.payload.threadID,
+        syncPayload: { accountID: command.payload.accountID, muted: true },
+      };
+    }
+    case 'mail.restore': {
+      const result = await dependencies.invoke(
+        'restore_from_trash',
+        { account: command.payload.accountID, threadId: command.payload.threadID },
+        user,
+      );
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'thread',
+        entityID: command.payload.threadID,
+        syncPayload: { accountID: command.payload.accountID, archived: false, trashed: false },
+      };
+    }
+    case 'mail.send': {
+      const payload = command.payload;
+      const result =
+        payload.mode === 'new'
+          ? await dependencies.invoke(
+              'send_message',
+              {
+                account: payload.accountID,
+                to: payload.to,
+                cc: payload.cc,
+                bcc: payload.bcc,
+                subject: payload.subject ?? '',
+                body: payload.bodyText,
+                html: payload.bodyHTML,
+              },
+              user,
+            )
+          : payload.mode === 'forward'
+            ? await dependencies.invoke(
+                'forward',
+                {
+                  account: payload.accountID,
+                  messageId: payload.messageID,
+                  to: payload.to,
+                  cc: payload.cc,
+                  bcc: payload.bcc,
+                  body: payload.bodyText,
+                  html: payload.bodyHTML,
+                },
+                user,
+              )
+            : await dependencies.invoke(
+                payload.mode === 'reply' ? 'reply' : 'reply_all',
+                {
+                  account: payload.accountID,
+                  messageId: payload.messageID,
+                  threadId: payload.threadID,
+                  body: payload.bodyText,
+                  html: payload.bodyHTML,
+                },
+                user,
+              );
+      // A brand-new send has no client-side thread; the provider's thread id
+      // is the real identity, and only failing that does the idempotency key
+      // stand in so the sync change still has a stable key.
+      const providerThreadID =
+        typeof result?.threadId === 'string' && result.threadId ? String(result.threadId) : undefined;
+      const threadID = payload.threadID || providerThreadID || command.idempotencyKey;
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'thread',
+        entityID: threadID,
+        syncPayload: { accountID: payload.accountID },
+      };
+    }
+    case 'mail.saveDraft': {
+      const payload = command.payload;
+      // Tri-state, like snooze: an ISO time schedules, `scheduleCleared`
+      // unschedules (explicit null in the patch), absent leaves it alone.
+      const scheduledFor = payload.scheduleCleared
+        ? null
+        : payload.scheduledFor
+          ? Date.parse(payload.scheduledFor)
+          : undefined;
+      if (payload.draftID) {
+        const result = await dependencies.invoke(
+          'update_draft',
+          {
+            id: payload.draftID,
+            patch: {
+              to: payload.to,
+              cc: payload.cc,
+              bcc: payload.bcc,
+              subject: payload.subject,
+              body: payload.bodyText,
+              html: payload.bodyHTML,
+              scheduledFor,
+            },
+          },
+          user,
+        );
+        return {
+          status: 'applied',
+          ...resultMetadata(result),
+          syncDomain: 'mail',
+          entityKind: 'draft',
+          entityID: payload.draftID,
+          syncPayload: { accountID: payload.accountID, draftID: payload.draftID },
+        };
+      }
+      const result = await dependencies.invoke(
+        'save_draft',
+        {
+          account: payload.accountID,
+          threadId: payload.threadID,
+          inReplyToMessageId: payload.inReplyToMessageID,
+          to: payload.to,
+          cc: payload.cc,
+          bcc: payload.bcc,
+          subject: payload.subject,
+          body: payload.bodyText,
+          html: payload.bodyHTML,
+          scheduledFor: scheduledFor ?? undefined,
+        },
+        user,
+      );
+      const draftID = String(result?.draft?._id || command.idempotencyKey);
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'draft',
+        entityID: draftID,
+        syncPayload: { accountID: payload.accountID, draftID },
+      };
+    }
+    case 'mail.deleteDraft': {
+      const result = await dependencies.invoke('delete_draft', { id: command.payload.draftID }, user);
+      return {
+        status: 'applied',
+        ...resultMetadata(result),
+        syncDomain: 'mail',
+        entityKind: 'draft',
+        entityID: command.payload.draftID,
+        syncPayload: {
+          accountID: command.payload.accountID,
+          draftID: command.payload.draftID,
+          deleted: true,
+        },
+      };
+    }
     case 'calendar.create': {
       const toolArguments = {
         account: command.payload.accountID,

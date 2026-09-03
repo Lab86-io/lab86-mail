@@ -1,7 +1,9 @@
 export type MobilePushEnvironment = 'development' | 'production';
 
+export type MobileDevicePlatform = 'ios' | 'macos';
+
 export interface MobileDeviceRegistration {
-  platform: 'ios';
+  platform: MobileDevicePlatform;
   token: string;
   deviceId: string;
   environment: MobilePushEnvironment;
@@ -46,7 +48,9 @@ export function parseMobileDeviceRegistration(input: unknown): MobileDeviceRegis
   if (!input || typeof input !== 'object')
     throw new MobileDeviceInputError('A device registration is required.');
   const record = input as Record<string, unknown>;
-  if (record.platform !== 'ios') throw new MobileDeviceInputError('Only iOS devices are supported.');
+  if (record.platform !== 'ios' && record.platform !== 'macos') {
+    throw new MobileDeviceInputError('Only iOS and macOS devices are supported.');
+  }
   if (record.environment !== 'development' && record.environment !== 'production') {
     throw new MobileDeviceInputError('A valid APNs environment is required.');
   }
@@ -56,7 +60,7 @@ export function parseMobileDeviceRegistration(input: unknown): MobileDeviceRegis
     throw new MobileDeviceInputError('The app version is invalid.');
   }
   return {
-    platform: 'ios',
+    platform: record.platform,
     token: token(record.token),
     deviceId: deviceId(record.deviceId),
     environment: record.environment,

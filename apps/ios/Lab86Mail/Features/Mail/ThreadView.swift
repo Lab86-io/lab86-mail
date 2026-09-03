@@ -153,7 +153,7 @@ struct ThreadView: View {
                 .accessibilityLabel("\(pageTitle). \(metaLine(detail))")
                 .contextMenu {
                     Button("Copy Subject", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = pageTitle
+                        PlatformPasteboard.copy(pageTitle)
                     }
                 }
             if let modelSummary {
@@ -613,6 +613,16 @@ private struct MessageSenderHeader: View {
 // just readable internal padding, with messages separated by spacing and a
 // hairline. The identity row lives in MessageSenderHeader.
 private struct MessageView: View {
+    // Desktop windows are wider than an email wants to be; the reader column
+    // caps and centres. Phones keep the full width.
+    static var readerMaxWidth: CGFloat {
+        #if os(macOS)
+        840
+        #else
+        .infinity
+        #endif
+    }
+
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     let message: MailMessage
@@ -638,12 +648,16 @@ private struct MessageView: View {
                     )
                     .padding(.horizontal, 12)
                     .padding(.bottom, 14)
+                    .frame(maxWidth: Self.readerMaxWidth)
+                    .frame(maxWidth: .infinity)
                 } else {
                     Text(message.body)
                         .textSelection(.enabled)
                         .font(.body)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 14)
+                        .frame(maxWidth: Self.readerMaxWidth, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                 }
                 if !message.attachments.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {

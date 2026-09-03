@@ -219,7 +219,7 @@ struct NotificationResponseRouterTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        AppDelegate.apply(
+        NotificationResponseApplier.apply(
             NotificationResponseRouter.plan(for: mailInput()),
             defaults: defaults
         )
@@ -243,7 +243,7 @@ struct NotificationResponseRouterTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        AppDelegate.apply(NotificationResponseRouter.plan(for: mailInput()), defaults: defaults)
+        NotificationResponseApplier.apply(NotificationResponseRouter.plan(for: mailInput()), defaults: defaults)
         let navigation = NavigationModel()
         navigation.consumePendingDeepLink(defaults: defaults)
         navigation.threadRoute = nil
@@ -259,7 +259,7 @@ struct NotificationResponseRouterTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
 
-        AppDelegate.apply(
+        NotificationResponseApplier.apply(
             NotificationResponseRouter.plan(for: mailInput(actionIdentifier: NotificationActionID.mailArchive)),
             defaults: defaults
         )
@@ -278,7 +278,7 @@ struct NotificationResponseRouterTests {
         var input = mailInput(actionIdentifier: NotificationActionID.mailReply, userText: "Ten minutes late.")
         input.messageID = nil
 
-        AppDelegate.apply(NotificationResponseRouter.plan(for: input), defaults: defaults)
+        NotificationResponseApplier.apply(NotificationResponseRouter.plan(for: input), defaults: defaults)
         let navigation = NavigationModel()
         navigation.consumeAppIntentRequests(defaults: defaults)
 
@@ -303,10 +303,10 @@ struct NotificationResponseRouterTests {
         ) { _ in announcements.count += 1 }
         defer { NotificationCenter.default.removeObserver(token) }
 
-        AppDelegate.apply(NotificationResponseRouter.plan(for: mailInput()), defaults: defaults)
+        NotificationResponseApplier.apply(NotificationResponseRouter.plan(for: mailInput()), defaults: defaults)
         #expect(announcements.count == 1)
 
-        AppDelegate.apply(
+        NotificationResponseApplier.apply(
             NotificationResponseRouter.plan(
                 for: mailInput(actionIdentifier: NotificationActionID.mailReply, userText: " ")
             ),
@@ -316,7 +316,7 @@ struct NotificationResponseRouterTests {
 
         // Marking read writes nothing the shell must route to, so it announces
         // on its own channel and not on this one.
-        AppDelegate.apply(
+        NotificationResponseApplier.apply(
             NotificationResponseRouter.plan(for: mailInput(actionIdentifier: NotificationActionID.mailMarkRead)),
             defaults: defaults
         )

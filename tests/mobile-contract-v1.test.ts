@@ -51,6 +51,43 @@ describe('MobileContractV1 schemas', () => {
     ).toThrow();
   });
 
+  test('saveDraft treats scheduleCleared as an explicit, exclusive unschedule', () => {
+    const base = {
+      idempotencyKey: 'draft-command-1',
+      kind: 'mail.saveDraft',
+      baseRevision: 1,
+      clientCreatedAt: createdAt,
+    };
+    const draft = { accountID: 'account-1', to: 'sam@example.com', subject: 'Later', bodyText: 'Body' };
+
+    const cleared = MobileCommandSchema.parse({
+      ...base,
+      payload: { ...draft, draftID: 'draft-12', scheduleCleared: true },
+    });
+    expect(cleared.kind).toBe('mail.saveDraft');
+
+    // Clearing and scheduling in one command is contradictory.
+    expect(() =>
+      MobileCommandSchema.parse({
+        ...base,
+        payload: { ...draft, draftID: 'draft-12', scheduleCleared: true, scheduledFor: createdAt },
+      }),
+    ).toThrow('scheduleCleared cannot be combined with scheduledFor');
+
+    // A brand-new draft has no schedule to clear.
+    expect(() =>
+      MobileCommandSchema.parse({ ...base, payload: { ...draft, scheduleCleared: true } }),
+    ).toThrow('scheduleCleared requires an existing draftID');
+
+    // `false` is not a valid value; the flag is a literal true or absent.
+    expect(() =>
+      MobileCommandSchema.parse({
+        ...base,
+        payload: { ...draft, draftID: 'draft-12', scheduleCleared: false },
+      }),
+    ).toThrow();
+  });
+
   test('golden bootstrap and sync payloads decode without JSONValue-style guessing', () => {
     const bootstrap = MobileBootstrapSchema.parse(
       JSON.parse(

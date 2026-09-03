@@ -40,6 +40,7 @@ import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
+import { useSidebar } from '@/components/ui/sidebar';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import {
   createHitlAutoContinueGuard,
@@ -48,7 +49,12 @@ import {
   toolActivityState,
   toolPartName,
 } from '@/lib/albatross/teach-ui';
-import { useClientStore } from '@/lib/client-state';
+import {
+  assistantLauncherPlacement,
+  capturePillHidden,
+  isAssistantShortcut,
+  useClientStore,
+} from '@/lib/client-state';
 import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
 
@@ -100,16 +106,20 @@ const ORB_COLORS = {
 
 // ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
 // Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
-// around the border so it reads as the live AI entry point.
-export function AIBarTrigger({ buttonHidden = false }: { buttonHidden?: boolean }) {
+// around the border so it reads as the live AI entry point. The same door the
+// Mac app has as its corner chat bubble; ⌘K is the keyboard twin on both.
+export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
+  const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
+  const { open: railOpen, isMobile } = useSidebar();
 
-  // ⌘K toggles the sidebar.
+  // ⌘K toggles the assistant panel from anywhere in the shell, including
+  // while the button itself is hidden behind the open panel.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if (isAssistantShortcut(e)) {
         e.preventDefault();
         setAiBarOpen(!aiBarOpen);
       }
@@ -118,12 +128,17 @@ export function AIBarTrigger({ buttonHidden = false }: { buttonHidden?: boolean 
     return () => window.removeEventListener('keydown', handler);
   }, [setAiBarOpen, aiBarOpen]);
 
-  // When the sidebar is open it owns its own pane and Close button, so we
-  // only render this floating trigger while it's closed. The fullscreen
-  // reader popout owns the whole window — no floating chrome above it.
-  // With Albatross on, New Intent owns the bottom-right slot and the
-  // assistant stays reachable via Cmd+K — keep the hook, skip the button.
-  if (buttonHidden || aiBarOpen || threadFullscreen) return null;
+  // The open panel owns its own pane and Close button, and the fullscreen
+  // reader popout owns the whole window — no floating chrome above either.
+  // The New Intent pill and an open reader's action bar share this corner,
+  // so the launcher stacks above them rather than overlapping.
+  const placement = assistantLauncherPlacement({
+    aiBarOpen,
+    threadFullscreen,
+    capturePillVisible: !capturePillHidden(aiBarOpen, railOpen, isMobile, readerOpen),
+    readerOpen,
+  });
+  if (placement === 'hidden') return null;
 
   return (
     <motion.button
@@ -135,7 +150,11 @@ export function AIBarTrigger({ buttonHidden = false }: { buttonHidden?: boolean 
       transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       onClick={() => setAiBarOpen(true)}
       title="Ask Assistant (⌘K)"
-      className="ask-assistant-glow group absolute bottom-4 right-4 z-30 flex items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 py-2 text-[12.5px] font-medium text-[var(--color-text)]"
+      data-placement={placement}
+      className={cn(
+        'ask-assistant-glow group fixed right-6 z-50 flex h-10 items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 text-[12.5px] font-medium text-[var(--color-text)] shadow-[var(--shadow-soft)]',
+        placement === 'stacked' ? 'bottom-[4.5rem]' : 'bottom-6',
+      )}
     >
       {/* Magic UI traveling light inside the hairline ring (CSS class). */}
       <BorderBeam size={56} duration={9} borderWidth={1} />

@@ -1,6 +1,10 @@
 import AuthenticationServices
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// Supplies one-time codes from mail to system AutoFill.
 ///
@@ -66,11 +70,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         present(codes: unique, completion: .oneTimeCode, scopedToService: !matches.isEmpty)
     }
 
+    #if os(iOS)
     /// The `ProvidesTextToInsert` path, for fields iOS does not recognise as
     /// one-time code fields. Completes with plain text rather than a credential.
+    /// iOS-only: text-to-insert is a software-keyboard entry point.
     override func prepareInterfaceForUserChoosingTextToInsert() {
         present(codes: vault.activeCodes(), completion: .textToInsert, scopedToService: false)
     }
+    #endif
 
     // MARK: - Presentation
 
@@ -90,12 +97,20 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             onSelect: { [weak self] code in self?.complete(with: code, using: completion) },
             onCancel: { [weak self] in self?.cancel(.userCanceled) }
         )
+        #if canImport(UIKit)
         let host = UIHostingController(rootView: view)
         addChild(host)
         host.view.frame = self.view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         self.view.addSubview(host.view)
         host.didMove(toParent: self)
+        #else
+        let host = NSHostingController(rootView: view)
+        addChild(host)
+        host.view.frame = self.view.bounds
+        host.view.autoresizingMask = [.width, .height]
+        self.view.addSubview(host.view)
+        #endif
     }
 
     // MARK: - Completion
@@ -113,7 +128,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         case .oneTimeCode:
             extensionContext.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code: code.code))
         case .textToInsert:
+            #if os(iOS)
             extensionContext.completeRequest(withTextToInsert: code.code)
+            #else
+            // Unreachable on the Mac (no text-to-insert entry point), but the
+            // switch stays exhaustive; completing as a code is the safe answer.
+            extensionContext.completeOneTimeCodeRequest(using: ASOneTimeCodeCredential(code: code.code))
+            #endif
         }
     }
 
@@ -193,12 +214,18 @@ private struct OneTimeCodePickerView: View {
                 }
             }
             .navigationTitle("Codes from mail")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: onCancel)
                 }
             }
         }
+        #if os(macOS)
+        // The Mac presents this in a system panel that sizes to fit.
+        .frame(minWidth: 420, minHeight: 360)
+        #endif
     }
 }

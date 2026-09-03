@@ -174,6 +174,391 @@ describe('mail commands', () => {
   });
 });
 
+describe('expanded mail commands', () => {
+  test('addLabel and removeLabel target the message and report the label delta', async () => {
+    const add = recordingDependencies();
+    const added = await executeMobileCommand(
+      command('mail.addLabel', {
+        accountID: 'account-1',
+        threadID: 'thread-1',
+        messageID: 'message-1',
+        label: 'MailOS/Receipts',
+      }),
+      user,
+      add.deps,
+    );
+    expect(add.calls).toEqual([
+      { name: 'add_label', args: { account: 'account-1', messageId: 'message-1', label: 'MailOS/Receipts' } },
+    ]);
+    expect(added).toMatchObject({
+      entityKind: 'message',
+      entityID: 'message-1',
+      syncPayload: { accountID: 'account-1', labelsAdded: ['MailOS/Receipts'] },
+    });
+
+    const remove = recordingDependencies();
+    const removed = await executeMobileCommand(
+      command('mail.removeLabel', {
+        accountID: 'account-1',
+        threadID: 'thread-1',
+        messageID: 'message-1',
+        label: 'MailOS/Receipts',
+      }),
+      user,
+      remove.deps,
+    );
+    expect(remove.calls[0].name).toBe('remove_label');
+    expect(removed.syncPayload).toEqual({ accountID: 'account-1', labelsRemoved: ['MailOS/Receipts'] });
+  });
+
+  test('snooze converts the ISO deadline to epoch ms for the tool and the sync payload', async () => {
+    const { calls, deps } = recordingDependencies();
+    const untilAt = '2026-08-21T09:00:00.000Z';
+
+    const result = await executeMobileCommand(
+      command('mail.snooze', {
+        accountID: 'account-1',
+        threadID: 'thread-4',
+        messageID: 'message-4',
+        untilAt,
+      }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([
+      {
+        name: 'snooze_thread',
+        args: {
+          account: 'account-1',
+          messageId: 'message-4',
+          threadId: 'thread-4',
+          untilTs: Date.parse(untilAt),
+        },
+      },
+    ]);
+    expect(result).toMatchObject({
+      entityKind: 'thread',
+      entityID: 'thread-4',
+      syncPayload: { accountID: 'account-1', snoozedUntil: Date.parse(untilAt) },
+    });
+  });
+
+  test('unsnooze clears the snooze with the explicit snoozeCleared flag', async () => {
+    const { calls, deps } = recordingDependencies();
+
+    const result = await executeMobileCommand(
+      command('mail.unsnooze', { accountID: 'account-1', threadID: 'thread-4', messageID: 'message-4' }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([
+      { name: 'unsnooze_thread', args: { account: 'account-1', messageId: 'message-4' } },
+    ]);
+    expect(result.syncPayload).toEqual({ accountID: 'account-1', snoozeCleared: true });
+  });
+
+  test('mute and restore route through their thread tools', async () => {
+    const mute = recordingDependencies();
+    const muted = await executeMobileCommand(
+      command('mail.mute', { accountID: 'account-1', threadID: 'thread-5' }),
+      user,
+      mute.deps,
+    );
+    expect(mute.calls).toEqual([
+      { name: 'mute_thread', args: { account: 'account-1', threadId: 'thread-5' } },
+    ]);
+    expect(muted.syncPayload).toEqual({ accountID: 'account-1', muted: true });
+
+    const restore = recordingDependencies();
+    const restored = await executeMobileCommand(
+      command('mail.restore', { accountID: 'account-1', threadID: 'thread-6' }),
+      user,
+      restore.deps,
+    );
+    expect(restore.calls[0].name).toBe('restore_from_trash');
+    expect(restored.syncPayload).toEqual({ accountID: 'account-1', archived: false, trashed: false });
+  });
+
+  test('send maps each mode onto its compose tool', async () => {
+    const fresh = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'new',
+        to: 'sam@example.com',
+        subject: 'Hello',
+        bodyText: 'Plain body',
+        bodyHTML: '<p>Plain body</p>',
+      }),
+      user,
+      fresh.deps,
+    );
+    expect(fresh.calls).toEqual([
+      {
+        name: 'send_message',
+        args: {
+          account: 'account-1',
+          to: 'sam@example.com',
+          cc: undefined,
+          bcc: undefined,
+          subject: 'Hello',
+          body: 'Plain body',
+          html: '<p>Plain body</p>',
+        },
+      },
+    ]);
+
+    const reply = recordingDependencies();
+    const replied = await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'reply',
+        bodyText: 'Sounds good',
+        threadID: 'thread-7',
+        messageID: 'message-7',
+      }),
+      user,
+      reply.deps,
+    );
+    expect(reply.calls[0]).toEqual({
+      name: 'reply',
+      args: {
+        account: 'account-1',
+        messageId: 'message-7',
+        threadId: 'thread-7',
+        body: 'Sounds good',
+        html: undefined,
+      },
+    });
+    expect(replied).toMatchObject({ entityKind: 'thread', entityID: 'thread-7' });
+
+    const replyAll = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'replyAll',
+        bodyText: 'Everyone',
+        messageID: 'message-8',
+      }),
+      user,
+      replyAll.deps,
+    );
+    expect(replyAll.calls[0].name).toBe('reply_all');
+
+    const forward = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'forward',
+        to: 'ari@example.com',
+        bodyText: 'FYI',
+        messageID: 'message-9',
+      }),
+      user,
+      forward.deps,
+    );
+    expect(forward.calls[0]).toEqual({
+      name: 'forward',
+      args: {
+        account: 'account-1',
+        messageId: 'message-9',
+        to: 'ari@example.com',
+        cc: undefined,
+        bcc: undefined,
+        body: 'FYI',
+        html: undefined,
+      },
+    });
+  });
+
+  test('send without a thread falls back to the idempotency key as identity', async () => {
+    const { deps } = recordingDependencies();
+    const result = await executeMobileCommand(
+      command(
+        'mail.send',
+        { accountID: 'account-1', mode: 'new', to: 'sam@example.com', subject: 'Hi', bodyText: 'Body' },
+        'send-key-1',
+      ),
+      user,
+      deps,
+    );
+    expect(result.entityID).toBe('send-key-1');
+    expect(result.syncPayload).toEqual({ accountID: 'account-1' });
+  });
+
+  test('send keys the sync change on the provider thread id when the tool reports one', async () => {
+    const { deps } = recordingDependencies({ ok: true, messageId: 'msg-9', threadId: 'thread-9' });
+    const result = await executeMobileCommand(
+      command(
+        'mail.send',
+        { accountID: 'account-1', mode: 'new', to: 'sam@example.com', subject: 'Hi', bodyText: 'Body' },
+        'send-key-2',
+      ),
+      user,
+      deps,
+    );
+    expect(result.entityID).toBe('thread-9');
+    expect(result.syncPayload).toEqual({ accountID: 'account-1' });
+  });
+
+  test('send prefers the thread the client already knows over the provider id', async () => {
+    const { deps } = recordingDependencies({ ok: true, threadId: 'provider-thread' });
+    const result = await executeMobileCommand(
+      command('mail.send', {
+        accountID: 'account-1',
+        mode: 'reply',
+        messageID: 'msg-1',
+        threadID: 'thread-1',
+        bodyText: 'Body',
+      }),
+      user,
+      deps,
+    );
+    expect(result.entityID).toBe('thread-1');
+  });
+
+  test('saveDraft converts scheduledFor to epoch ms on the create path', async () => {
+    const { calls, deps } = recordingDependencies({ ok: true, draft: { _id: 'draft-30' } });
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        to: 'sam@example.com',
+        subject: 'Later',
+        bodyText: 'Body',
+        scheduledFor: '2026-08-20T09:00:00.000Z',
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('save_draft');
+    expect(calls[0].args.scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
+  });
+
+  test('saveDraft converts scheduledFor to epoch ms inside the update patch', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Later',
+        bodyText: 'Body',
+        scheduledFor: '2026-08-20T09:00:00.000Z',
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('update_draft');
+    expect((calls[0].args.patch as any).scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
+  });
+
+  test('saveDraft leaves an existing schedule alone when scheduledFor is omitted', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Edited',
+        bodyText: 'Body',
+      }),
+      user,
+      deps,
+    );
+    expect('scheduledFor' in (calls[0].args.patch as any)).toBe(true);
+    expect((calls[0].args.patch as any).scheduledFor).toBeUndefined();
+  });
+
+  test('saveDraft with scheduleCleared sends an explicit null so the draft unschedules', async () => {
+    const { calls, deps } = recordingDependencies();
+    await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Now',
+        bodyText: 'Body',
+        scheduleCleared: true,
+      }),
+      user,
+      deps,
+    );
+    expect(calls[0].name).toBe('update_draft');
+    expect((calls[0].args.patch as any).scheduledFor).toBeNull();
+  });
+
+  test('saveDraft creates through save_draft and reports the stored draft id', async () => {
+    const { calls, deps } = recordingDependencies({
+      ok: true,
+      draft: { _id: 'draft-11' },
+      operationId: 'op-draft-11',
+    });
+
+    const result = await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        to: 'sam@example.com',
+        subject: 'Draft subject',
+        bodyText: 'Draft body',
+      }),
+      user,
+      deps,
+    );
+
+    expect(calls[0].name).toBe('save_draft');
+    expect(calls[0].args).toMatchObject({
+      account: 'account-1',
+      to: 'sam@example.com',
+      subject: 'Draft subject',
+      body: 'Draft body',
+    });
+    expect(result).toMatchObject({
+      operationID: 'op-draft-11',
+      entityKind: 'draft',
+      entityID: 'draft-11',
+      syncPayload: { accountID: 'account-1', draftID: 'draft-11' },
+    });
+  });
+
+  test('saveDraft with an existing id updates in place', async () => {
+    const { calls, deps } = recordingDependencies();
+
+    const result = await executeMobileCommand(
+      command('mail.saveDraft', {
+        accountID: 'account-1',
+        draftID: 'draft-12',
+        to: 'sam@example.com',
+        subject: 'Edited',
+        bodyText: 'Edited body',
+      }),
+      user,
+      deps,
+    );
+
+    expect(calls[0].name).toBe('update_draft');
+    expect(calls[0].args).toMatchObject({
+      id: 'draft-12',
+      patch: { subject: 'Edited', body: 'Edited body' },
+    });
+    expect(result.entityID).toBe('draft-12');
+  });
+
+  test('deleteDraft reports the deletion in the sync payload', async () => {
+    const { calls, deps } = recordingDependencies();
+
+    const result = await executeMobileCommand(
+      command('mail.deleteDraft', { accountID: 'account-1', draftID: 'draft-13' }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([{ name: 'delete_draft', args: { id: 'draft-13' } }]);
+    expect(result.syncPayload).toEqual({ accountID: 'account-1', draftID: 'draft-13', deleted: true });
+  });
+});
+
 describe('calendar commands', () => {
   const basePayload = {
     accountID: 'account-1',

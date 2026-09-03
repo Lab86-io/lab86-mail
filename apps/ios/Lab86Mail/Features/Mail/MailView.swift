@@ -78,6 +78,26 @@ struct MailView: View {
                         MailDateline(label: group.label)
                     }
                 }
+                // Older pages stream in beneath the list as this row scrolls
+                // into view; the unified cursor comes from the typed v1 reads.
+                if Self.showsLoadMoreRow(
+                    hasMore: environment.store.hasMoreMail,
+                    accountScope: accountScope,
+                    query: effectiveQuery
+                ) {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                        Spacer()
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .onAppear {
+                        Task { await environment.store.loadMoreMail() }
+                    }
+                    .accessibilityLabel("Loading older mail")
+                }
             }
         }
         .listStyle(.plain)
@@ -487,6 +507,15 @@ struct MailView: View {
         return mailboxScope == .inbox ? accountLabel : "\(mailboxScope.title) · \(accountLabel)"
     }
 
+    // The cursor pages the unified inbox. An account filter or a mailbox
+    // query (Unread, Starred, search) narrows the list locally, so a fetched
+    // page could add nothing visible and the row would just keep requesting
+    // pages; those views stay on what is loaded. Category pills are a view
+    // over the same unified list and keep paging.
+    nonisolated static func showsLoadMoreRow(hasMore: Bool, accountScope: Set<String>, query: String) -> Bool {
+        hasMore && accountScope.isEmpty && query.isEmpty
+    }
+
     private var effectiveQuery: String {
         [mailboxScope.query, searchText.trimmingCharacters(in: .whitespacesAndNewlines)]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
@@ -757,7 +786,7 @@ private struct MailThreadRow: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(thread.sender)
+                    Text(thread.senderDisplayName)
                         .font(environment.theme.displayType.displayFont(
                             size: 16,
                             weight: thread.unread ? .semibold : .regular

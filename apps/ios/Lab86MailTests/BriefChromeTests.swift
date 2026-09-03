@@ -122,8 +122,18 @@ struct BriefChromeTests {
         #expect(
             DailyBriefMasthead.editionTitle(
                 for: date,
-                timeZone: TimeZone(secondsFromGMT: 0)!
+                timeZone: TimeZone(secondsFromGMT: 0)!,
+                locale: Locale(identifier: "en_US")
             ) == "The Thursday Brief"
+        )
+        // A non-English locale proves the title is built from `locale`, not
+        // the process default.
+        #expect(
+            DailyBriefMasthead.editionTitle(
+                for: date,
+                timeZone: TimeZone(secondsFromGMT: 0)!,
+                locale: Locale(identifier: "fr_FR")
+            ) == "The jeudi Brief"
         )
     }
 

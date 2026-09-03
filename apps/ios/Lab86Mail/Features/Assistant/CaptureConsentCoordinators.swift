@@ -41,19 +41,27 @@ final class CaptureVoiceCoordinator: NSObject {
             errorMessage = "Speech recognition permission was not granted. You can keep typing."
             return
         }
+        #if os(iOS)
         let microphone = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission {
                 continuation.resume(returning: $0)
             }
         }
+        #else
+        let microphone = await AVCaptureDevice.requestAccess(for: .audio)
+        #endif
         guard microphone else {
             errorMessage = "Microphone permission was not granted. You can keep typing."
             return
         }
         do {
+            #if os(iOS)
+            // AVAudioSession is an iOS concept; the Mac's audio engine taps the
+            // default input without a session category.
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            #endif
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -163,18 +171,32 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         accuracy >= 0
     }
 
+    // One platform-specific notion of "may request a fix", shared by the
+    // explicit request and the authorization callback so neither path can
+    // drift (macOS reports `.authorized`, iOS `.authorizedWhenInUse`).
+    nonisolated static func grantsLocation(_ status: CLAuthorizationStatus) -> Bool {
+        #if os(macOS)
+        return status == .authorizedAlways || status == .authorized
+        #else
+        return status == .authorizedAlways || status == .authorizedWhenInUse
+        #endif
+    }
+
     func requestOnce() {
         errorMessage = nil
-        switch manager.authorizationStatus {
+        let status = manager.authorizationStatus
+        if Self.grantsLocation(status) {
+            isRequesting = true
+            manager.requestLocation()
+            return
+        }
+        switch status {
         case .notDetermined:
             isRequesting = true
             manager.requestWhenInUseAuthorization()
-        case .authorizedAlways, .authorizedWhenInUse:
-            isRequesting = true
-            manager.requestLocation()
         case .denied, .restricted:
             errorMessage = "Location permission is off. No location will be attached."
-        @unknown default:
+        default:
             errorMessage = "Location is unavailable. No location will be attached."
         }
     }
@@ -191,7 +213,7 @@ final class CaptureLocationCoordinator: NSObject, CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         Task { @MainActor [weak self] in
             guard let self else { return }
-            if status == .authorizedAlways || status == .authorizedWhenInUse {
+            if Self.grantsLocation(status) {
                 self.manager.requestLocation()
             } else if status == .denied || status == .restricted {
                 self.isRequesting = false

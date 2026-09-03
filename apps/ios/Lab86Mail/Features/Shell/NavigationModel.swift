@@ -184,6 +184,9 @@ final class NavigationModel {
     // Raw MailCategoryScope value chosen from the sidebar's smart filters.
     var pendingMailCategory: String?
     var pendingCompose: ComposePrefill?
+    // macOS presents Albatross chat as a floating corner panel (with a
+    // tear-out window), never as a tab. Unused on iOS.
+    var chatPanelPresented = false
 
     var hasNestedDestination: Bool {
         threadRoute != nil || eventRoute != nil || workRoute != nil

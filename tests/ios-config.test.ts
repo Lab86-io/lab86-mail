@@ -185,8 +185,10 @@ describe('native iOS authentication configuration', () => {
   });
 
   test('keeps the toolbar within the SwiftUI API surface available in Xcode Cloud', () => {
+    // The shared shell toolbar moved to ShellChrome.swift when the macOS
+    // target split the shells; the API-surface guard follows it.
     const shell = readFileSync(
-      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Shell/AppShellView.swift'),
+      path.join(process.cwd(), 'apps/ios/Lab86Mail/Features/Shell/ShellChrome.swift'),
       'utf8',
     );
 

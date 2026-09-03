@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 // MARK: - The wheel's body
@@ -236,3 +237,4 @@ struct SidebarWheelEngine: Equatable, Sendable {
         return min(upperBound, max(lowerBound, projected.rounded()))
     }
 }
+#endif

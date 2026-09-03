@@ -8,6 +8,15 @@ enum MobileCommandKind: String, Codable, CaseIterable, Sendable {
     case mailMarkUnread = "mail.markUnread"
     case mailStar = "mail.star"
     case mailUnstar = "mail.unstar"
+    case mailAddLabel = "mail.addLabel"
+    case mailRemoveLabel = "mail.removeLabel"
+    case mailSnooze = "mail.snooze"
+    case mailUnsnooze = "mail.unsnooze"
+    case mailMute = "mail.mute"
+    case mailRestore = "mail.restore"
+    case mailSend = "mail.send"
+    case mailSaveDraft = "mail.saveDraft"
+    case mailDeleteDraft = "mail.deleteDraft"
     case calendarCreate = "calendar.create"
     case taskCreate = "task.create"
     case taskSetCompleted = "task.setCompleted"
@@ -24,6 +33,67 @@ struct MailThreadCommandTarget: Codable, Equatable, Sendable {
 struct MailMessageCommandTarget: Codable, Equatable, Sendable {
     let accountID: String
     let messageID: String
+}
+
+struct MailMessageLabelCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let threadID: String
+    let messageID: String
+    let label: String
+}
+
+struct MailSnoozeCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let threadID: String
+    let messageID: String
+    let untilAt: Date
+}
+
+struct MailUnsnoozeCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let threadID: String
+    let messageID: String
+}
+
+enum MailSendMode: String, Codable, Equatable, Sendable {
+    case new
+    case reply
+    case replyAll
+    case forward
+}
+
+// Text-only durable sends; attachment sends stay on the multipart compose
+// boundary, mirroring the server contract exactly.
+struct MailSendCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let mode: MailSendMode
+    let to: String?
+    let cc: String?
+    let bcc: String?
+    let subject: String?
+    let bodyText: String
+    let bodyHTML: String?
+    let threadID: String?
+    let messageID: String?
+}
+
+struct MailSaveDraftCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let draftID: String?
+    let threadID: String?
+    let inReplyToMessageID: String?
+    let to: String
+    let cc: String?
+    let bcc: String?
+    let subject: String
+    let bodyText: String
+    let bodyHTML: String?
+    let scheduledFor: Date?
+}
+
+struct MailDeleteDraftCommandPayload: Codable, Equatable, Sendable {
+    let accountID: String
+    let draftID: String
 }
 
 struct CalendarCommandAttendee: Codable, Equatable, Sendable {
@@ -94,6 +164,15 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case mailMarkUnread(MailMessageCommandTarget)
     case mailStar(MailMessageCommandTarget)
     case mailUnstar(MailMessageCommandTarget)
+    case mailAddLabel(MailMessageLabelCommandPayload)
+    case mailRemoveLabel(MailMessageLabelCommandPayload)
+    case mailSnooze(MailSnoozeCommandPayload)
+    case mailUnsnooze(MailUnsnoozeCommandPayload)
+    case mailMute(MailThreadCommandTarget)
+    case mailRestore(MailThreadCommandTarget)
+    case mailSend(MailSendCommandPayload)
+    case mailSaveDraft(MailSaveDraftCommandPayload)
+    case mailDeleteDraft(MailDeleteDraftCommandPayload)
     case calendarCreate(CalendarCreateCommandPayload)
     case taskCreate(TaskCreateCommandPayload)
     case taskSetCompleted(TaskCompletionCommandPayload)
@@ -109,6 +188,15 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
         case .mailMarkUnread: .mailMarkUnread
         case .mailStar: .mailStar
         case .mailUnstar: .mailUnstar
+        case .mailAddLabel: .mailAddLabel
+        case .mailRemoveLabel: .mailRemoveLabel
+        case .mailSnooze: .mailSnooze
+        case .mailUnsnooze: .mailUnsnooze
+        case .mailMute: .mailMute
+        case .mailRestore: .mailRestore
+        case .mailSend: .mailSend
+        case .mailSaveDraft: .mailSaveDraft
+        case .mailDeleteDraft: .mailDeleteDraft
         case .calendarCreate: .calendarCreate
         case .taskCreate: .taskCreate
         case .taskSetCompleted: .taskSetCompleted

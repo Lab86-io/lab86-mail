@@ -75,7 +75,7 @@ export function GuidedStepPane({
   activeId?: string;
   onSelect?: (id: string) => void;
   onExit?: () => void;
-  onComplete?: (id: string, note?: string) => void | Promise<boolean>;
+  onComplete?: (id: string, note?: string) => undefined | Promise<boolean>;
   onDiscuss?: () => void;
   savingIds?: ReadonlySet<string>;
   error?: string | null;
