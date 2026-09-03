@@ -182,6 +182,38 @@ describe('step watch conductor route', () => {
     expect(evidenceGate).not.toHaveBeenCalled();
   });
 
+  test('a step with a confirmed verification is final and is never watched again', async () => {
+    const mutations: any[] = [];
+    const gate = mock(async () => ({ satisfies: true, reason: 'x' }));
+    const post = createStepWatchPost({
+      isInternalCronRequest: () => true,
+      convexQuery: mock(async () => ({
+        ...detail,
+        execution: {
+          guideSteps: [
+            {
+              ...sheetsStep,
+              done: false,
+              verification: { level: 'confirmed', evidenceTitle: 'Order received', evidenceUrl: null },
+            },
+          ],
+        },
+      })) as any,
+      convexMutation: mock(async (_fn: any, args: any) => {
+        mutations.push(args);
+        return undefined;
+      }) as any,
+      completeWorkStep: mock(async () => ({ ok: true })) as any,
+      evidenceSatisfies: gate as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(watchRequest({ userId: 'user-1', workId: 'work-1' }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, watched: 0, completedSteps: 0 });
+    expect(gate).not.toHaveBeenCalled();
+    expect(mutations).toEqual([{ userId: 'user-1', workId: 'work-1', stillWatching: false }]);
+  });
+
   test('no outstanding mail steps stands the watch down', async () => {
     const mutations: any[] = [];
     const post = createStepWatchPost({

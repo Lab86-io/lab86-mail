@@ -8,6 +8,7 @@ import {
 } from '@/lib/albatross/browser-session';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { completeWorkStep } from '@/lib/albatross/step-execution';
+import { stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
@@ -167,7 +168,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         ]);
         const step = findStep(detail, stepKey);
         if (!step) return Response.json({ ok: false, error: 'Step not found.' }, { status: 404 });
-        if (step.done) {
+        if (!stepNeedsCheck(step)) {
           return Response.json({ ok: false, error: 'This step is already complete.' }, { status: 409 });
         }
         if (!session || session.sessionId !== sessionId) {

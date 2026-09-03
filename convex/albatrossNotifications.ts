@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
+import { wakeLine } from '../lib/albatross/horizon';
 import { checkinRetryDelayMs } from '../lib/albatross/retry';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -71,6 +72,7 @@ function notificationPayload(input: {
   type:
     | 'daily_checkin'
     | 'work_question'
+    | 'work_wake'
     | 'approval'
     | 'completion_suggestion'
     | 'event_suggestion'
@@ -1317,6 +1319,50 @@ export const queueWorkConductorNotice = internalMutation({
         entityId: args.workId,
         deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
         dedupeKey: args.dedupeKey.slice(0, 500),
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId,
+      enabled: preference?.inAppEnabled !== false,
+      timestamp: ts,
+    });
+    return { created: true, notificationId };
+  },
+});
+
+/** A dormant Work reached its wake date. One calm line, once per sleep date. */
+export const queueHorizonWake = internalMutation({
+  args: {
+    userId: v.string(),
+    workId: v.string(),
+    title: v.string(),
+    notBefore: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const dedupeKey = `horizon-wake:${args.workId}:${args.notBefore}`;
+    const existing = await ctx.db
+      .query('albatrossNotifications')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', args.userId).eq('dedupeKey', dedupeKey))
+      .unique();
+    if (existing) return { created: false, notificationId: existing._id };
+    const preference = await ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .unique();
+    const ts = now();
+    const notificationId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'work_wake',
+        title: wakeLine(args.title).slice(0, 180),
+        body: 'Open it when you have time. Albatross did not move it.',
+        entityKind: 'work',
+        entityId: args.workId,
+        deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
+        dedupeKey,
         scheduledFor: ts,
       }),
     );

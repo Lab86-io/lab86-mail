@@ -13,6 +13,7 @@ import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
 import type * as albatross from "../albatross.js";
 import type * as albatrossDev from "../albatrossDev.js";
+import type * as albatrossAreaPulse from "../albatrossAreaPulse.js";
 import type * as albatrossBrowserSessions from "../albatrossBrowserSessions.js";
 import type * as albatrossEvidence from "../albatrossEvidence.js";
 import type * as albatrossIntents from "../albatrossIntents.js";
@@ -54,6 +55,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   albatross: typeof albatross;
   albatrossDev: typeof albatrossDev;
+  albatrossAreaPulse: typeof albatrossAreaPulse;
   albatrossBrowserSessions: typeof albatrossBrowserSessions;
   albatrossEvidence: typeof albatrossEvidence;
   albatrossIntents: typeof albatrossIntents;

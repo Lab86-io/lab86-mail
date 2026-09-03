@@ -37,12 +37,16 @@ export function createEvidenceReconcilePost(deps: EvidenceReconcileDependencies 
       );
     }
     try {
-      const result = await deps.advanceWork({ userId, workId });
-      await deps.convexMutation((api as any).albatrossWorkV2.completeEvidenceReconcile, {
-        userId,
-        workId,
-        evidenceAt,
-      });
+      const result = await deps.advanceWork({ userId, workId, trigger: 'evidence' });
+      // Dormant Work keeps its unreconciled evidence. The wake makes it a
+      // candidate again, and the proof is read then.
+      if (result.status !== 'dormant') {
+        await deps.convexMutation((api as any).albatrossWorkV2.completeEvidenceReconcile, {
+          userId,
+          workId,
+          evidenceAt,
+        });
+      }
       return NextResponse.json({ ok: true, workId, status: result.status });
     } catch (error) {
       deps.reportError('[cron/evidence-reconcile] advance failed', workId, error);

@@ -373,10 +373,33 @@ describe('evidence reconciliation conductor', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(advanceWork).toHaveBeenCalledWith({ userId: 'user-1', workId: 'work-1' });
+    expect(advanceWork).toHaveBeenCalledWith({ userId: 'user-1', workId: 'work-1', trigger: 'evidence' });
     expect(convexMutation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ workId: 'work-1', evidenceAt: 1_786_700_000_000 }),
     );
+  });
+
+  test('dormant Work keeps its evidence watermark for the wake', async () => {
+    const convexMutation = mock(async () => undefined);
+    const advanceWork = mock(async () => ({ status: 'dormant', workId: 'work-1' })) as any;
+    const post = createEvidenceReconcilePost({
+      isInternalCronRequest: () => true,
+      advanceWork,
+      convexMutation: convexMutation as any,
+      reportError: mock(() => undefined),
+    });
+    const response = await post(
+      cronRequest('/api/cron/evidence-reconcile', {
+        userId: 'user-1',
+        workId: 'work-1',
+        evidenceAt: 1_786_700_000_000,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, status: 'dormant' });
+    // The watermark is not acknowledged. The wake makes the Work a candidate again.
+    expect(convexMutation).not.toHaveBeenCalled();
   });
 });

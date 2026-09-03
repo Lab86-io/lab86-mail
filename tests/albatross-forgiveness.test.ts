@@ -198,6 +198,25 @@ describe('staleness is per shape, not a flat ninety days', () => {
     }
   });
 
+  test('dormant Work sits still on purpose and is never reviewed', () => {
+    const sleeping = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'later' as const, notBefore: NOW + DAY },
+    };
+    const someday = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'someday' as const },
+    };
+    const woken = {
+      ...work({ shape: 'quick', updatedAt: NOW - 200 * DAY }),
+      horizon: { kind: 'now' as const, notBefore: NOW - 2 * DAY, wokeAt: NOW - 2 * DAY },
+    };
+    expect(isStale(sleeping, NOW)).toBe(false);
+    expect(isStale(someday, NOW)).toBe(false);
+    expect(isStale(woken, NOW)).toBe(true);
+    expect(reviewBatch([sleeping, someday, woken], NOW)).toEqual([woken]);
+  });
+
   test('a pause-until date is honoured exactly', () => {
     const paused = work({ updatedAt: NOW - 300 * DAY, reviewAt: NOW + 5 * DAY });
     expect(isStale(paused, NOW)).toBe(false);

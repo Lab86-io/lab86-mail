@@ -123,6 +123,15 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
+    tier: raw.tier === 'free' || raw.tier === 'pro' || raw.tier === 'team' ? raw.tier : undefined,
+    prose:
+      raw.prose && typeof raw.prose === 'object'
+        ? {
+            lede: String(raw.prose.lede ?? ''),
+            weekAhead: String(raw.prose.weekAhead ?? ''),
+            model: String(raw.prose.model ?? 'local'),
+          }
+        : undefined,
     handoffs: parseTriageHandoffs(raw.handoffs),
     composition: raw.composition,
     document: migrateBriefDocument(raw.document),
@@ -138,6 +147,11 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       tracked,
       fyi,
       bulkTail,
+      // Budget lanes (2026-09-03). Absent on older editions; readers treat a
+      // missing lane as empty.
+      ...(Array.isArray(sections.answer) ? { answer: items(sections.answer) } : {}),
+      ...(Array.isArray(sections.today) ? { today: items(sections.today) } : {}),
+      ...(Array.isArray(sections.know) ? { know: items(sections.know) } : {}),
       tasks,
       calendar,
       mcp,
@@ -156,6 +170,8 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       dueSoon: stats.dueSoon ?? timeSensitive.length,
       bulkTailCount: stats.bulkTailCount ?? bulkTail.length,
       unread: stats.unread ?? 0,
+      ...(typeof stats.noise === 'number' ? { noise: stats.noise } : {}),
+      ...(typeof stats.selected === 'number' ? { selected: stats.selected } : {}),
       openTasks,
       completedTasks,
       calendarEvents: stats.calendarEvents ?? calendar.length,

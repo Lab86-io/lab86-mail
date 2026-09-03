@@ -158,6 +158,23 @@ function setupBase(h: Harness) {
   h.onConvex('calendarData:deleteEvent', () => ({ ok: true }));
   h.onConvex('operations:record', () => 'op_1');
   h.onConvex('operations:completeUndo', () => ({ status: 'undone' }));
+  // The post-mutation sync kick claims a sync in the background. The claim
+  // is refused here so the forced sync ends without a provider walk.
+  h.onConvex('accounts:getConnectedAccount', () => account);
+  h.onConvex('calendarData:claimCalendarSync', () => ({ claimed: false, reason: 'test' }));
+}
+
+// Every create, update, and delete must kick a forced sync so the server copy
+// replaces the mirror a few seconds later.
+async function expectPostMutationKick(h: Harness) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const claim = h.convexCalls.find((call) => call.path === 'calendarData:claimCalendarSync');
+  expect(claim?.args).toMatchObject({
+    userId: 'user_1',
+    accountId: 'acct_1',
+    force: true,
+    progress: { stage: 'claimed', reason: 'post_mutation' },
+  });
 }
 
 function eventResponse(id: string, overrides: Record<string, unknown> = {}) {
@@ -248,6 +265,7 @@ describe('createCalendarEvent', () => {
           payload: { accountId: 'acct_1', calendarId: 'cal_primary', eventId: 'evt_1' },
         },
       });
+      await expectPostMutationKick(h);
     });
   });
 
@@ -467,6 +485,7 @@ describe('updateCalendarEvent', () => {
           fields: { title: 'Old title', startAt: START_AT, endAt: END_AT, location: 'HQ' },
         },
       });
+      await expectPostMutationKick(h);
     });
   });
 
@@ -546,6 +565,7 @@ describe('deleteCalendarEvent', () => {
         kind: 'calendar.recreate_event',
         payload: { calendarId: 'cal_primary', fields: { title: 'Standup', startAt: START_AT } },
       });
+      await expectPostMutationKick(h);
     });
   });
 

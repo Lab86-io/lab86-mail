@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { proofMatchScore, proofOfferAllowed, threadPrimaryCategory } from '@/lib/albatross/proof-match';
 import { completeWorkStep } from '@/lib/albatross/step-execution';
+import { type StepVerification, stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 
@@ -41,6 +42,7 @@ interface WatchableStep {
   evidenceKind: string | null;
   evidenceHint: string | null;
   done: boolean;
+  verification?: StepVerification | null;
 }
 
 /**
@@ -66,8 +68,9 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         workId,
       });
       const steps: WatchableStep[] = detail?.execution?.guideSteps || [];
+      // A confirmed step is final. It is never watched again.
       const outstanding = steps.filter(
-        (step) => !step.done && step.evidenceKind === 'mail_confirmation' && step.identity,
+        (step) => stepNeedsCheck(step) && step.evidenceKind === 'mail_confirmation' && step.identity,
       );
       if (!outstanding.length) {
         await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {

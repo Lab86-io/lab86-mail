@@ -8,6 +8,11 @@ const user = {
   source: 'clerk' as const,
 };
 
+// Wednesday 2026-09-02, 09:00 local time.
+const NOW = new Date(2026, 8, 2, 9, 0, 0, 0).getTime();
+const localDay = (year: number, month: number, day: number) =>
+  new Date(year, month, day, 0, 0, 0, 0).getTime();
+
 const areas = [
   { _id: 'area-1', name: 'Home Care', kind: 'life', description: 'The house.' },
   { _id: 'area-2', name: 'Consulting', kind: 'work', description: 'Client work.' },
@@ -53,6 +58,7 @@ function makeDependencies(options: DependencyOptions = {}) {
       if (options.queriesFail) throw new Error('convex down');
       return 'status' in args ? (options.areas ?? []) : (options.facts ?? []);
     },
+    now: () => NOW,
   } as any;
   return { deps, mutations, generateCalls };
 }
@@ -126,6 +132,79 @@ describe('captureWork', () => {
     // schema names the field, so a lost import cannot fail silently.
     expect(generateCalls[0].system).toContain('Classify the shape of each outcome');
     expect(generateCalls[0].system).toContain('"shape":"quick"|"project"|"practice"');
+  });
+
+  test('the splitter horizon wins and the deterministic parse is the fallback', async () => {
+    const { deps, mutations, generateCalls } = makeDependencies({
+      areas,
+      facts,
+      text: JSON.stringify({
+        work: [
+          {
+            title: 'Renew the passport',
+            rawText: 'renew the passport, not before November',
+            horizon: {
+              kind: 'later',
+              notBeforeIso: '2026-12-01T00:00:00.000Z',
+              label: 'not before December',
+            },
+          },
+          { title: 'Book the cabin', rawText: 'book the cabin after Thanksgiving', horizon: null },
+          { title: 'Learn to sail', rawText: 'learn to sail someday', horizon: { kind: 'bogus' } },
+          { title: 'Send the invoice', rawText: 'send the invoice', horizon: { kind: 'now' } },
+        ],
+      }),
+    });
+    await captureWork({ rawText: 'brain dump', source: 'text' }, user, deps);
+    const items = mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items;
+    // The model's read is kept as given.
+    expect(items[0].horizon).toEqual({
+      kind: 'later',
+      notBefore: Date.parse('2026-12-01T00:00:00.000Z'),
+      label: 'not before December',
+    });
+    // A null or unusable horizon falls back to the words of the item.
+    expect(items[1].horizon).toEqual({ kind: 'later', label: 'after thanksgiving' });
+    expect(items[2].horizon).toEqual({ kind: 'someday', label: 'someday' });
+    // "now" with no date and no label is no horizon at all.
+    expect(items[3].horizon).toBeUndefined();
+    expect(generateCalls[0].system).toContain('"horizon":{"kind":"now"|"later"|"someday"');
+    expect(generateCalls[0].system).toContain('Today is 2026-09-02');
+  });
+
+  test('reviewed items and the verbatim fallback parse the horizon from the text', async () => {
+    const reviewed = makeDependencies({});
+    await captureWork(
+      {
+        rawText: 'dump',
+        source: 'text',
+        reviewedItems: [{ title: 'Budget', rawText: 'Look at the budget next month' }],
+      },
+      user,
+      reviewed.deps,
+    );
+    expect(
+      reviewed.mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items[0].horizon,
+    ).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 9, 1),
+      label: 'next month',
+    });
+
+    const fallback = makeDependencies({ generateError: new Error('model down') });
+    const result = await captureWork(
+      { rawText: 'Fix the shed door in two weeks', source: 'text' },
+      user,
+      fallback.deps,
+    );
+    expect(result.fallback).toBe(true);
+    expect(
+      fallback.mutations.find((mutation) => mutation.name === 'finishCapture')!.args.items[0].horizon,
+    ).toEqual({
+      kind: 'later',
+      notBefore: localDay(2026, 8, 16),
+      label: 'in two weeks',
+    });
   });
 
   test('splits a dump into Work and resolves model area names against active Areas', async () => {

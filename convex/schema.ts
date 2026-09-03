@@ -9,6 +9,20 @@ const albatrossSourceRef = v.object({
   url: v.optional(v.string()),
 });
 
+// The horizon of one Work. Dormant Work stays out of Today and out of every
+// conductor pass until `notBefore` passes or the user moves it to "now".
+export const albatrossHorizonValidator = v.object({
+  kind: v.union(v.literal('now'), v.literal('later'), v.literal('someday')),
+  // Epoch ms. The Work is dormant while now < notBefore.
+  notBefore: v.optional(v.number()),
+  // Epoch ms. A soft target date. Shown, never enforced.
+  by: v.optional(v.number()),
+  // The user's own words, for example "after the wedding".
+  label: v.optional(v.string()),
+  // Set once when the wake nudge fired.
+  wokeAt: v.optional(v.number()),
+});
+
 const albatrossConfirmationRef = v.object({
   kind: v.string(),
   id: v.string(),
@@ -779,6 +793,18 @@ export default defineSchema({
     artifactHtml: v.optional(v.string()),
     document: v.optional(v.any()),
     artifactSource: v.optional(v.string()),
+    // The structured area pulse (2026-09-03). `prose` is at most 3 sentences.
+    // The document and the HTML fallback are rendered from these fields.
+    pulse: v.optional(
+      v.object({
+        lastChange: v.string(),
+        nextMove: v.string(),
+        openQuestion: v.string(),
+        prose: v.string(),
+        model: v.optional(v.string()),
+      }),
+    ),
+    pulseUpdatedAt: v.optional(v.number()),
     sourceRefs: v.array(albatrossSourceRef),
     basedOnRevision: v.string(),
     generatedAt: v.optional(v.number()),
@@ -1139,6 +1165,15 @@ export default defineSchema({
     ),
     stepProgressMigratedAt: v.optional(v.number()),
     appliedAt: v.optional(v.number()),
+    // Now, later, or someday. Absent means "now".
+    horizon: v.optional(albatrossHorizonValidator),
+    // Mirror of `horizon.notBefore` while a wake is pending. The daily wake
+    // reads this index and clears the field, like `mailWatchAt`.
+    horizonWakeAt: v.optional(v.number()),
+    // The last time the user acted on this Work (capture, answer, step,
+    // state, horizon). The conductor stays quiet on Work the user has not
+    // touched. `updatedAt` cannot carry this, because the conductor bumps it.
+    lastUserTouchAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1154,6 +1189,7 @@ export default defineSchema({
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_mail_watch', ['mailWatchAt'])
+    .index('by_horizon_wake', ['horizonWakeAt'])
     .index('by_capture', ['captureId']),
 
   // A generated plan for one intent. digitalActions match the work-model
@@ -2036,6 +2072,8 @@ export default defineSchema({
     type: v.union(
       v.literal('daily_checkin'),
       v.literal('work_question'),
+      // A dormant Work reached its wake date.
+      v.literal('work_wake'),
       v.literal('approval'),
       v.literal('completion_suggestion'),
       // Retained for notifications written by the earlier mail/event notifier.

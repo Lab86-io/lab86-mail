@@ -8,7 +8,7 @@ import {
   nylasErrorStatus,
   withNylasRetry,
 } from '@/lib/nylas/retry';
-import { type EventInputRow, toEventInput } from './sync';
+import { type EventInputRow, maybeKickCalendarSync, toEventInput } from './sync';
 
 const calendarApi = (api as any).calendarData;
 const CREATE_REQUEST_ID_KEY = 'lab86CreateRequestId';
@@ -146,6 +146,7 @@ export async function createCalendarEvent(input: CreateEventInput) {
       payload: { accountId, calendarId, eventId: created.id },
     },
   });
+  kickSyncAfterMutation(account);
   return { eventId: created.id as string, calendarId, operationId, htmlLink: row?.htmlLink };
 }
 
@@ -289,6 +290,7 @@ export async function updateCalendarEvent(input: {
         }
       : undefined,
   });
+  kickSyncAfterMutation(account);
   return { ok: true, operationId };
 }
 
@@ -369,6 +371,7 @@ export async function deleteCalendarEvent(input: {
         }
       : undefined,
   });
+  kickSyncAfterMutation(account);
   return { ok: true, operationId };
 }
 
@@ -544,6 +547,13 @@ registerUndoExecutor('calendar.restore_event', async (payload, ctx) => {
 });
 
 // ---- helpers ---------------------------------------------------------------
+
+// The mirror write above shows the local copy at once. The forced sync then
+// replaces it with the server copy (attendee status, provider ids for
+// expanded instances) a few seconds later.
+function kickSyncAfterMutation(account: NylasAccountRow) {
+  maybeKickCalendarSync(account, { force: true, reason: 'post_mutation' });
+}
 
 async function deleteWithoutRecording(
   userId: string,

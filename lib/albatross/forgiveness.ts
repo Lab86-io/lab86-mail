@@ -136,6 +136,7 @@ export function recoveryAcknowledgement(recovery: Recovery): string {
 
 export type { WorkShape } from '@/lib/albatross/work-shape';
 
+import { type HorizonWorkLike, isDormant } from '@/lib/albatross/horizon';
 import type { WorkShape } from '@/lib/albatross/work-shape';
 
 /**
@@ -155,7 +156,7 @@ export const STALE_AFTER_DAYS: Record<WorkShape, number> = {
   monitor: 120,
 };
 
-export interface StalenessInput {
+export interface StalenessInput extends HorizonWorkLike {
   shape?: WorkShape | null;
   workState?: string | null;
   updatedAt: number;
@@ -173,6 +174,8 @@ export function isStale(work: StalenessInput, nowMs: number): boolean {
   if (work.workState === 'waiting' || work.workState === 'blocked') return false;
   // The user asked to be left alone until a date. Honour it exactly.
   if (work.reviewAt && nowMs < work.reviewAt) return false;
+  // Dormant Work sits still on purpose. That is not neglect.
+  if (isDormant(work, nowMs)) return false;
   const days = STALE_AFTER_DAYS[(work.shape as WorkShape) || 'project'];
   return nowMs - work.updatedAt > days * 24 * 3_600_000;
 }

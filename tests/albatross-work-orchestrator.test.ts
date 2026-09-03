@@ -191,3 +191,94 @@ describe('Albatross never repeats an action it already took', () => {
     }
   });
 });
+
+describe('the conductor quiet rule inside advanceWork', () => {
+  const DAY = 24 * 60 * 60_000;
+  const NOW = Date.parse('2026-09-02T14:00:00Z');
+
+  function quietHarness(intent: any) {
+    const mutations: any[] = [];
+    let planned = 0;
+    const restore = setWorkOrchestratorDependenciesForTest({
+      convexMutation: (async (_ref: unknown, args: any) => {
+        mutations.push(args);
+        return undefined;
+      }) as any,
+      convexQuery: (async () => ({ intent, plan: { _id: 'plan_1', status: 'applied' } })) as any,
+      generateIntentPlan: (async () => {
+        planned += 1;
+      }) as any,
+    });
+    return { mutations, restore, planned: () => planned };
+  }
+
+  test('the conductor leaves untouched Work alone and writes nothing', async () => {
+    const state = quietHarness({ questions: [], createdAt: NOW - 30 * DAY });
+    try {
+      await expect(advanceWork({ ...input, trigger: 'conductor', nowMs: NOW })).resolves.toEqual({
+        status: 'quiet',
+        workId: 'work_1',
+      });
+      expect(state.mutations).toEqual([]);
+      expect(state.planned()).toBe(0);
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('dormant Work does not move for the conductor or for evidence', async () => {
+    const state = quietHarness({
+      questions: [],
+      createdAt: NOW,
+      lastUserTouchAt: NOW,
+      horizon: { kind: 'later', notBefore: NOW + 10 * DAY },
+    });
+    try {
+      await expect(advanceWork({ ...input, trigger: 'conductor', nowMs: NOW })).resolves.toEqual({
+        status: 'dormant',
+        workId: 'work_1',
+      });
+      await expect(advanceWork({ ...input, trigger: 'evidence', nowMs: NOW })).resolves.toEqual({
+        status: 'dormant',
+        workId: 'work_1',
+      });
+      expect(state.planned()).toBe(0);
+    } finally {
+      state.restore();
+    }
+  });
+
+  test('a recent touch or a wake lets the conductor move the Work', async () => {
+    const touched = quietHarness({ questions: [], createdAt: NOW - 30 * DAY, lastUserTouchAt: NOW - 60_000 });
+    try {
+      const result = await advanceWork({ ...input, trigger: 'conductor', nowMs: NOW });
+      expect(result.status).toBe('ready');
+      expect(touched.planned()).toBe(1);
+    } finally {
+      touched.restore();
+    }
+    const woken = quietHarness({
+      questions: [],
+      createdAt: NOW - 30 * DAY,
+      horizon: { kind: 'now', notBefore: NOW - 60_000, wokeAt: NOW - 60_000 },
+    });
+    try {
+      const result = await advanceWork({ ...input, trigger: 'conductor', nowMs: NOW });
+      expect(result.status).toBe('ready');
+      expect(woken.planned()).toBe(1);
+    } finally {
+      woken.restore();
+    }
+  });
+
+  test('the user is never gated', async () => {
+    const state = quietHarness({ questions: [], createdAt: NOW - 30 * DAY, horizon: { kind: 'someday' } });
+    try {
+      const result = await advanceWork({ ...input, nowMs: NOW });
+      expect(result.status).toBe('ready');
+      expect(state.planned()).toBe(1);
+    } finally {
+      state.restore();
+    }
+  });
+});

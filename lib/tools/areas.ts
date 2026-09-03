@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { prepareAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
+import { laterShelf } from '@/lib/albatross/horizon';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 
@@ -372,7 +373,7 @@ export const workList = defineTool({
   input: z.object({
     limit: z.number().int().min(1).max(500).optional().describe('Default: 200'),
   }),
-  output: z.object({ work: z.array(z.any()), execution: z.any() }),
+  output: z.object({ work: z.array(z.any()), execution: z.any(), later: z.array(z.any()) }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const queryArgs = { userId, ...(args.limit ? { limit: args.limit } : {}) };
@@ -385,7 +386,9 @@ export const workList = defineTool({
         })
         .catch(() => null),
     ]);
-    return { work, execution };
+    // The "Later" shelf: dormant Work in wake order, undated Work at the end.
+    const later = laterShelf(work || [], Date.now());
+    return { work, execution, later };
   },
 });
 

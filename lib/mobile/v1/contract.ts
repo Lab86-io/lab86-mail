@@ -197,6 +197,36 @@ export const WorkSyncChangeSchema = z
   })
   .strict();
 
+// The horizon of one Work: now, later, or someday. Epoch ms, like every
+// other server-owned timestamp in a sync payload.
+export const WorkHorizonSchema = z
+  .object({
+    kind: z.enum(['now', 'later', 'someday']),
+    notBefore: z.number().int().nonnegative().optional(),
+    by: z.number().int().nonnegative().optional(),
+    label: z.string().trim().min(1).max(120).optional(),
+    wokeAt: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type WorkHorizon = z.infer<typeof WorkHorizonSchema>;
+
+export const WorkHorizonSyncChangeSchema = z
+  .object({
+    ...syncChangeBase,
+    domain: z.literal('work'),
+    entityKind: z.literal('workHorizon'),
+    payload: z
+      .object({
+        workID: identifier,
+        horizon: WorkHorizonSchema.optional(),
+        // Explicit clear (mirrors `snoozeCleared`): the Work is back on "now".
+        horizonCleared: z.literal(true).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const ApprovalSyncChangeSchema = z
   .object({
     ...syncChangeBase,
@@ -225,6 +255,7 @@ export const MobileSyncChangeVariantSchemas = {
   CalendarEventSyncChange: CalendarEventSyncChangeSchema,
   TaskSyncChange: TaskSyncChangeSchema,
   WorkSyncChange: WorkSyncChangeSchema,
+  WorkHorizonSyncChange: WorkHorizonSyncChangeSchema,
   ApprovalSyncChange: ApprovalSyncChangeSchema,
   OperationSyncChange: OperationSyncChangeSchema,
 } as const;
@@ -236,6 +267,7 @@ export const SyncChangeSchema = z.discriminatedUnion('entityKind', [
   MobileSyncChangeVariantSchemas.CalendarEventSyncChange,
   MobileSyncChangeVariantSchemas.TaskSyncChange,
   MobileSyncChangeVariantSchemas.WorkSyncChange,
+  MobileSyncChangeVariantSchemas.WorkHorizonSyncChange,
   MobileSyncChangeVariantSchemas.ApprovalSyncChange,
   MobileSyncChangeVariantSchemas.OperationSyncChange,
 ]);
@@ -545,6 +577,22 @@ export const MailDeleteDraftCommandSchema = z
 export const CalendarCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('calendar.create'), payload: calendarCreatePayload })
   .strict();
+// Asks the server to sync the calendar mirror. `view_open` is skipped when the
+// last sync finished under two minutes ago. `pull` and `manual_http` always
+// sync. The receipt carries no sync change; the calendar feed updates as the
+// sync writes events.
+export const CalendarResyncCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('calendar.resync'),
+    payload: z
+      .object({
+        accountID: optionalIdentifier,
+        reason: z.enum(['view_open', 'pull', 'manual_http']),
+      })
+      .strict(),
+  })
+  .strict();
 export const TaskCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('task.create'), payload: taskCreatePayload })
   .strict();
@@ -567,6 +615,35 @@ export const WorkCaptureCommandSchema = z
         areaID: optionalIdentifier,
       })
       .strict(),
+  })
+  .strict();
+// Set or clear the horizon of one Work. Dates are ISO timestamps, like every
+// other client-written time in a command. Exactly one of `horizon` and
+// `horizonCleared` is present.
+export const WorkSetHorizonCommandSchema = z
+  .object({
+    ...mobileCommandBase,
+    kind: z.literal('work.setHorizon'),
+    payload: z
+      .object({
+        workID: identifier,
+        horizon: z
+          .object({
+            kind: z.enum(['now', 'later', 'someday']),
+            notBeforeAt: isoTimestamp.optional(),
+            byAt: isoTimestamp.optional(),
+            label: z.string().trim().min(1).max(120).optional(),
+          })
+          .strict()
+          .optional(),
+        horizonCleared: z.literal(true).optional(),
+      })
+      .strict()
+      .superRefine((value, ctx) => {
+        if (Boolean(value.horizon) === Boolean(value.horizonCleared)) {
+          ctx.addIssue({ code: 'custom', message: 'Provide horizon or horizonCleared, not both.' });
+        }
+      }),
   })
   .strict();
 export const ApprovalApproveCommandSchema = z
@@ -606,9 +683,11 @@ export const MobileCommandVariantSchemas = {
   MailSaveDraftCommand: MailSaveDraftCommandSchema,
   MailDeleteDraftCommand: MailDeleteDraftCommandSchema,
   CalendarCreateCommand: CalendarCreateCommandSchema,
+  CalendarResyncCommand: CalendarResyncCommandSchema,
   TaskCreateCommand: TaskCreateCommandSchema,
   TaskSetCompletedCommand: TaskSetCompletedCommandSchema,
   WorkCaptureCommand: WorkCaptureCommandSchema,
+  WorkSetHorizonCommand: WorkSetHorizonCommandSchema,
   ApprovalApproveCommand: ApprovalApproveCommandSchema,
   ApprovalRejectCommand: ApprovalRejectCommandSchema,
 } as const;
@@ -630,9 +709,11 @@ const commandSchemas = Object.values(MobileCommandVariantSchemas) as [
   typeof MailSaveDraftCommandSchema,
   typeof MailDeleteDraftCommandSchema,
   typeof CalendarCreateCommandSchema,
+  typeof CalendarResyncCommandSchema,
   typeof TaskCreateCommandSchema,
   typeof TaskSetCompletedCommandSchema,
   typeof WorkCaptureCommandSchema,
+  typeof WorkSetHorizonCommandSchema,
   typeof ApprovalApproveCommandSchema,
   typeof ApprovalRejectCommandSchema,
 ];
@@ -723,6 +804,7 @@ export const MobileContractV1 = {
     PushEnvelope: PushEnvelopeSchema,
     SyncChange: SyncChangeSchema,
     SyncEnvelope: SyncEnvelopeSchema,
+    WorkHorizon: WorkHorizonSchema,
     ...MobileSyncChangeVariantSchemas,
     ...MobileCommandVariantSchemas,
   },

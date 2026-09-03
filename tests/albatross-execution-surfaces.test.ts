@@ -227,6 +227,7 @@ describe('the execution loop owns the visible product surfaces', () => {
       'step mail watch conductor',
       'passed block recovery',
       'shape-aware Work review',
+      'horizon wake',
     ]);
   });
 });

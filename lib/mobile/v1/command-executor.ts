@@ -1,21 +1,38 @@
 import { captureWork } from '@/lib/albatross/capture-work';
+import type { WorkHorizon as StoredWorkHorizon } from '@/lib/albatross/horizon';
 import type { CurrentUser } from '@/lib/auth/current-user';
+import { startCalendarResync } from '@/lib/calendar/resync';
 import { api, convexMutation } from '@/lib/hosted/convex';
 import { getTool } from '@/lib/tools';
 import { invokeTool } from '@/lib/tools/registry';
 import type { MobileCommand, MobileDomain, MobileSyncExecution } from './contract';
+
+// A command that changes no entity (for example `calendar.resync`) records
+// no sync change. It still names its domain for the command row.
+export type MobileSilentExecution = {
+  syncDomain: MobileDomain;
+  entityKind?: undefined;
+  entityID?: undefined;
+  syncPayload?: undefined;
+};
 
 export type MobileCommandExecution = {
   status: 'applied' | 'needsApproval';
   operationID?: string;
   approvalID?: string;
   undoExpiresAt?: number;
-} & MobileSyncExecution;
+} & (MobileSyncExecution | MobileSilentExecution);
 
 interface MobileCommandExecutorDependencies {
   invoke: (name: string, argumentsValue: Record<string, unknown>, user: CurrentUser) => Promise<any>;
   enqueueApproval: (input: Record<string, unknown>) => Promise<string>;
   capture: typeof captureWork;
+  resyncCalendar: typeof startCalendarResync;
+  setWorkHorizon: (input: {
+    userId: string;
+    workId: string;
+    horizon: StoredWorkHorizon | null;
+  }) => Promise<{ horizon: StoredWorkHorizon | null; dormant: boolean }>;
 }
 
 const defaultDependencies: MobileCommandExecutorDependencies = {
@@ -34,6 +51,10 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
     return convexMutation<string>((api as any).albatrossWork.enqueueApproval, input);
   },
   capture: captureWork,
+  resyncCalendar: startCalendarResync,
+  setWorkHorizon(input) {
+    return convexMutation((api as any).albatrossWorkV2.setHorizon, input);
+  },
 };
 
 export function mobileCommandDomain(command: MobileCommand): MobileDomain {
@@ -406,6 +427,14 @@ export async function executeMobileCommand(
         syncPayload: { accountID: command.payload.accountID, eventID: entityID },
       };
     }
+    case 'calendar.resync': {
+      await dependencies.resyncCalendar({
+        userId: user.userId,
+        accountId: command.payload.accountID,
+        reason: command.payload.reason,
+      });
+      return { status: 'applied', syncDomain: 'calendar' };
+    }
     case 'task.create': {
       const result = await dependencies.invoke(
         'tasks_create_card',
@@ -465,6 +494,32 @@ export async function executeMobileCommand(
           captureID: result.captureId,
           workIDs: result.workIds,
           fallback: result.fallback ?? false,
+        },
+      };
+    }
+    case 'work.setHorizon': {
+      const requested = command.payload.horizon;
+      const horizon: StoredWorkHorizon | null = requested
+        ? {
+            kind: requested.kind,
+            ...(requested.notBeforeAt ? { notBefore: Date.parse(requested.notBeforeAt) } : {}),
+            ...(requested.byAt ? { by: Date.parse(requested.byAt) } : {}),
+            ...(requested.label ? { label: requested.label } : {}),
+          }
+        : null;
+      const result = await dependencies.setWorkHorizon({
+        userId: user.userId,
+        workId: command.payload.workID,
+        horizon,
+      });
+      return {
+        status: 'applied',
+        syncDomain: 'work',
+        entityKind: 'workHorizon',
+        entityID: command.payload.workID,
+        syncPayload: {
+          workID: command.payload.workID,
+          ...(result?.horizon ? { horizon: result.horizon } : { horizonCleared: true as const }),
         },
       };
     }

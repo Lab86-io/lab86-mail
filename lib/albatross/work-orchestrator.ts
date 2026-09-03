@@ -3,6 +3,7 @@ import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { albatrossApplyIntentPlan } from '../tools/albatross';
 import { invokeTool } from '../tools/registry';
 import { generateAreaLivingBrief } from './area-living-brief';
+import { type AdvanceTrigger, conductorVerdict } from './conductor-quiet';
 import { generateIntentPlan } from './intent-plan';
 import { appliedStepsFromApplyResult } from './work-model';
 import { unappliedActions } from './work-v2';
@@ -42,9 +43,28 @@ export interface AdvanceWorkInput {
   workId: string;
   timezone?: string;
   geo?: { latitude: number; longitude: number };
+  /**
+   * Who asked. `user` (default) always moves. `evidence` moves unless the
+   * Work is dormant. `conductor` obeys the quiet rule: only Work the user
+   * touched recently, or a wake returned, may move.
+   */
+  trigger?: AdvanceTrigger;
+  nowMs?: number;
 }
 
 export async function advanceWork(input: AdvanceWorkInput) {
+  const trigger = input.trigger ?? 'user';
+  if (trigger !== 'user') {
+    const current = await workOrchestratorDependencies.convexQuery<any>(
+      (api as any).albatrossIntents.getIntentWorkbench,
+      { userId: input.userId, intentId: input.workId },
+    );
+    const row = current?.intent;
+    if (row) {
+      const verdict = conductorVerdict(row, trigger, input.nowMs ?? Date.now());
+      if (verdict !== 'move') return { status: verdict, workId: input.workId };
+    }
+  }
   await workOrchestratorDependencies.convexMutation((api as any).albatrossWorkV2.setAgentState, {
     userId: input.userId,
     workId: input.workId,

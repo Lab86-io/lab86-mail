@@ -252,22 +252,93 @@ export async function syncAllCalendarAccounts(
   return results;
 }
 
-const syncKickAt = new Map<string, number>();
 const SYNC_KICK_DEBOUNCE_MS = 5 * 60_000;
 
-// Fire-and-forget kick used by the surface load, the OAuth callback, and
-// recurring-event webhooks (whose payloads can't be applied as point deltas).
-export function maybeKickCalendarSync(row: Pick<NylasAccountRow, 'userId' | 'accountId'>) {
-  const key = `${row.userId}:${row.accountId}`;
-  const last = syncKickAt.get(key) || 0;
-  if (Date.now() - last < SYNC_KICK_DEBOUNCE_MS) return;
-  syncKickAt.set(key, Date.now());
-  void syncCalendarAccount({ userId: row.userId, accountId: row.accountId, reason: 'lazy_kick' }).catch(
-    (err) => {
-      syncKickAt.delete(key);
-      console.error(`[calendar] background sync failed for ${row.accountId}:`, err?.message || err);
-    },
-  );
+export interface CalendarSyncKickOptions {
+  // A forced kick skips the lazy debounce and overrides an active claim.
+  force?: boolean;
+  reason?: string;
+}
+
+type CalendarSyncKickRow = Pick<NylasAccountRow, 'userId' | 'accountId'>;
+
+interface CalendarSyncKickerDependencies {
+  sync: (input: { userId: string; accountId: string; force?: boolean; reason?: string }) => Promise<unknown>;
+  now?: () => number;
+  debounceMs?: number;
+  reportError?: (accountId: string, error: unknown) => void;
+}
+
+// Builds the fire-and-forget kick. The factory is the test seam: the sync
+// function and the clock are injected.
+//
+// Lazy kicks (no `force`) run at most once per account each five minutes.
+// Forced kicks run at most one sync per account at a time. A forced kick
+// that arrives while a forced sync runs sets a rerun flag, so the second
+// sync starts when the first one ends. Three quick edits give two syncs,
+// not three, and the last edit is always covered.
+export function createCalendarSyncKicker(deps: CalendarSyncKickerDependencies) {
+  const now = deps.now ?? (() => Date.now());
+  const debounceMs = deps.debounceMs ?? SYNC_KICK_DEBOUNCE_MS;
+  const reportError =
+    deps.reportError ??
+    ((accountId: string, error: unknown) => {
+      console.error(`[calendar] background sync failed for ${accountId}:`, (error as any)?.message || error);
+    });
+  const lazyKickAt = new Map<string, number>();
+  const forcedInFlight = new Map<string, { rerun: boolean; reason: string }>();
+
+  function runForced(row: CalendarSyncKickRow, key: string, reason: string) {
+    forcedInFlight.set(key, { rerun: false, reason });
+    // A forced sync also satisfies the lazy debounce.
+    lazyKickAt.set(key, now());
+    void deps
+      .sync({ userId: row.userId, accountId: row.accountId, force: true, reason })
+      .catch((error) => reportError(row.accountId, error))
+      .then(() => {
+        const state = forcedInFlight.get(key);
+        forcedInFlight.delete(key);
+        if (state?.rerun) runForced(row, key, state.reason);
+      });
+  }
+
+  function kick(row: CalendarSyncKickRow, options: CalendarSyncKickOptions = {}) {
+    const key = `${row.userId}:${row.accountId}`;
+    if (options.force) {
+      const reason = options.reason ?? 'forced_kick';
+      const inFlight = forcedInFlight.get(key);
+      if (inFlight) {
+        inFlight.rerun = true;
+        inFlight.reason = reason;
+        return;
+      }
+      runForced(row, key, reason);
+      return;
+    }
+    const last = lazyKickAt.get(key) || 0;
+    if (now() - last < debounceMs) return;
+    lazyKickAt.set(key, now());
+    void deps
+      .sync({ userId: row.userId, accountId: row.accountId, reason: options.reason ?? 'lazy_kick' })
+      .catch((error) => {
+        lazyKickAt.delete(key);
+        reportError(row.accountId, error);
+      });
+  }
+
+  return {
+    kick,
+    isForcedSyncInFlight: (row: CalendarSyncKickRow) => forcedInFlight.has(`${row.userId}:${row.accountId}`),
+  };
+}
+
+const defaultKicker = createCalendarSyncKicker({ sync: (input) => syncCalendarAccount(input) });
+
+// Fire-and-forget kick used by the surface load, the OAuth callback,
+// recurring-event webhooks (whose payloads can't be applied as point deltas),
+// and every calendar mutation (`force: true`, reason `post_mutation`).
+export function maybeKickCalendarSync(row: CalendarSyncKickRow, options: CalendarSyncKickOptions = {}) {
+  defaultKicker.kick(row, options);
 }
 
 const historyBackfillKickAt = new Map<string, number>();

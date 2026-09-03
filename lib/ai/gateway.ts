@@ -31,6 +31,10 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   daily_report_insight: 1500,
   daily_report_narrative: 4000,
   daily_report_artifact: 32000,
+  // The budget brief writes a lede, one line per item, and a week-ahead
+  // paragraph in one JSON reply. The area pulse is four short fields.
+  daily_brief_prose: 2500,
+  albatross_area_pulse: 900,
   albatross_area_artifact: 32000,
   albatross_plan: 8000,
   albatross_plan_artifact: 24000,

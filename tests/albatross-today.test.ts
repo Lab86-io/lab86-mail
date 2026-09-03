@@ -29,6 +29,7 @@ const work = (over: Partial<TodayWork>): TodayWork => ({
   nextStep: over.nextStep ?? null,
   scheduledStartAt: over.scheduledStartAt ?? null,
   scheduledEndAt: over.scheduledEndAt ?? null,
+  horizon: over.horizon ?? null,
 });
 
 const event = (over: Partial<TodayEvent>): TodayEvent => ({
@@ -78,6 +79,30 @@ describe('needsYouToday', () => {
   test('a put-down Albatross never appears, even with open questions', () => {
     const result = needsYouToday([work({ workState: 'archived', openQuestions: 3 })], []);
     expect(result.work).toEqual([]);
+  });
+});
+
+describe('dormant Work on Today', () => {
+  const NOW = Date.parse('2026-09-02T14:00:00Z');
+  const DAY = 24 * 60 * 60_000;
+
+  test('needsYouToday leaves out dormant Work even with open questions', () => {
+    const rows = [
+      work({ _id: 'awake', openQuestions: 1 }),
+      work({ _id: 'sleeping', openQuestions: 3, horizon: { kind: 'later', notBefore: NOW + 10 * DAY } }),
+      work({ _id: 'someday', openQuestions: 2, horizon: { kind: 'someday' } }),
+    ];
+    expect(needsYouToday(rows, [], NOW).work.map((row) => row._id)).toEqual(['awake']);
+  });
+
+  test('openWork and readyToMove leave out dormant Work', () => {
+    const rows = [
+      work({ _id: 'awake', updatedAt: 5 }),
+      work({ _id: 'sleeping', updatedAt: 9, horizon: { kind: 'later', notBefore: NOW + 10 * DAY } }),
+      work({ _id: 'woken', updatedAt: 7, horizon: { kind: 'now', notBefore: NOW - DAY, wokeAt: NOW - DAY } }),
+    ];
+    expect(openWork(rows, NOW).map((row) => row._id)).toEqual(['awake', 'woken']);
+    expect(readyToMove(rows, 'high', NOW).items.map((row) => row._id)).toEqual(['woken', 'awake']);
   });
 });
 

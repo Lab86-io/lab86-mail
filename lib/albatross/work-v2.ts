@@ -1,6 +1,53 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { HORIZON_KINDS, parseHorizonHint, type WorkHorizon } from '@/lib/albatross/horizon';
 import { WORK_SHAPES } from '@/lib/albatross/work-shape';
+
+// The splitter's read of the horizon. Dates arrive as ISO strings because a
+// model writes those more reliably than epoch numbers.
+export const splitHorizonSchema = z
+  .object({
+    kind: z.enum(HORIZON_KINDS),
+    notBeforeIso: z.string().max(40).nullish(),
+    byIso: z.string().max(40).nullish(),
+    label: z.string().max(120).nullish(),
+  })
+  .nullish()
+  .catch(undefined);
+
+export type SplitHorizon = z.infer<typeof splitHorizonSchema>;
+
+function isoToMs(value: string | null | undefined): number | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * The stored horizon for one split item. The model's read wins when it is
+ * usable. The deterministic parse of the item's own words is the fallback.
+ * "now" with no date and no label means no horizon at all.
+ */
+export function horizonForSplitItem(
+  horizon: SplitHorizon,
+  rawText: string,
+  nowMs: number,
+): WorkHorizon | undefined {
+  if (horizon) {
+    const notBefore = isoToMs(horizon.notBeforeIso);
+    const by = isoToMs(horizon.byIso);
+    const label = horizon.label?.trim() || undefined;
+    if (horizon.kind !== 'now' || notBefore !== undefined || by !== undefined) {
+      return {
+        kind: horizon.kind,
+        ...(notBefore !== undefined ? { notBefore } : {}),
+        ...(by !== undefined ? { by } : {}),
+        ...(label ? { label } : {}),
+      };
+    }
+  }
+  return parseHorizonHint(rawText, nowMs) ?? undefined;
+}
 
 export const workSplitSchema = z.object({
   work: z
@@ -14,6 +61,9 @@ export const workSplitSchema = z.object({
         // planner refines it later with more context; capture must not block
         // on it, so an unrecognised value simply drops to undefined.
         shape: z.enum(WORK_SHAPES).optional().catch(undefined),
+        // Now, later, or someday, in the splitter's read. Optional; the
+        // deterministic parse fills the gap.
+        horizon: splitHorizonSchema,
       }),
     )
     .min(1)

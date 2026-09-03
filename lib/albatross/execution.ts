@@ -4,9 +4,11 @@
 // exactly one move. This module is deliberately pure: Convex owns the source
 // rows, while every client receives the same already-decided projection.
 
+import { type HorizonWorkLike, isDormant } from './horizon';
+
 export type ExecutionPhase = 'active' | 'upcoming' | 'unscheduled';
 
-export interface ExecutionWorkRow {
+export interface ExecutionWorkRow extends HorizonWorkLike {
   _id: string;
   title?: string | null;
   rawText: string;
@@ -127,7 +129,9 @@ function move(row: ExecutionWorkRow, phase: ExecutionPhase): ExecutionMove {
  * move. It stays in `missedMoves` until a person chooses move, shrink, rebuild,
  * or done, because each choice changes authoritative Work differently.
  */
-export function selectExecutionSnapshot(rows: ExecutionWorkRow[], nowMs: number) {
+export function selectExecutionSnapshot(allRows: ExecutionWorkRow[], nowMs: number) {
+  // Dormant Work is kept, not carried. It names no move and asks for nothing.
+  const rows = allRows.filter((row) => !isDormant(row, nowMs));
   const needsYou = rows
     .filter(needsUser)
     .sort((a, b) => b.openQuestions - a.openQuestions || b.updatedAt - a.updatedAt);

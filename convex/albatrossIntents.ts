@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { conductorMayMove } from '../lib/albatross/conductor-quiet';
 import { planNeedsConductor } from '../lib/albatross/execution';
 import { bindPlanDocumentSteps } from '../lib/albatross/plan-frontier';
 import {
@@ -251,6 +252,8 @@ export const createIntent = mutation({
       workState: 'active',
       agentState: 'researching',
       lastAgentRunAt: ts,
+      // A capture is a user touch.
+      lastUserTouchAt: ts,
       createdAt: ts,
       updatedAt: ts,
     });
@@ -789,6 +792,8 @@ export const conductorCandidates = internalQuery({
       if (state !== 'active') return false;
       if (row.planError || row.status === 'needs_answers') return false;
       if ((row.questions || []).some((question) => !question.answer)) return false;
+      // The quiet rule: dormant Work sleeps, and untouched Work is left alone.
+      if (!conductorMayMove(row, 'conductor', ts)) return false;
       if (row.lastConductorAt && row.lastConductorAt > ts - CONDUCTOR_RETRY_AFTER_MS) return false;
       if (
         ['researching', 'applying'].includes(row.agentState || '') &&
