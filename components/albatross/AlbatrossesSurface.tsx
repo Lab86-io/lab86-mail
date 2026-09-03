@@ -2,10 +2,14 @@
 
 import { useConvexAuth, useQuery } from 'convex/react';
 import { LoaderCircle } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
+import { ReviewBatch } from '@/components/albatross/Forgiveness';
+import { LaterShelf } from '@/components/albatross/LaterShelf';
 import { AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
+import { reviewBatch, type WorkShape } from '@/lib/albatross/forgiveness';
+import { isDormant, laterShelf, type WorkHorizon } from '@/lib/albatross/horizon';
 import {
   needsYou,
   WORK_STATE_HINT,
@@ -29,6 +33,10 @@ export interface WorkListItem {
   openQuestions: number;
   updatedAt: number;
   createdAt: number;
+  horizon?: WorkHorizon | null;
+  lastUserTouchAt?: number | null;
+  shape?: WorkShape | null;
+  reviewAt?: number | null;
 }
 
 /** `all` is every Albatross; `needs_you` is the short list; `unhomed` is what
@@ -42,6 +50,17 @@ export function filterWork(rows: WorkListItem[], filter: ListFilter, areaId: str
     if (filter === 'unhomed') return !row.primaryAreaId;
     return true;
   });
+}
+
+/** The rows that are awake. Dormant Work belongs to the Later shelf, not to a group. */
+export function awakeWork<T extends Pick<WorkListItem, 'horizon'>>(rows: T[], nowMs: number): T[] {
+  return rows.filter((row) => !isDormant(row, nowMs));
+}
+
+/** Dormant Work for the shelf. The "Needs you" filter never shows it: nothing dormant needs anyone. */
+export function shelfWork(rows: WorkListItem[], filter: ListFilter, areaId: string | null, nowMs: number) {
+  if (filter === 'needs_you') return [];
+  return laterShelf(filterWork(rows, filter, areaId), nowMs);
 }
 
 export function groupWork(rows: WorkListItem[]) {
@@ -66,6 +85,13 @@ export function AlbatrossesSurface() {
   const rows = useQuery(api.albatrossWorkV2.allWork, isAuthenticated ? {} : 'skip') as
     | WorkListItem[]
     | undefined;
+  // One clock for the page, so a Work that wakes moves from the shelf to its
+  // group without a reload.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   const areas = useMemo(() => {
     const seen = new Map<string, string>();
@@ -75,7 +101,14 @@ export function AlbatrossesSurface() {
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
   }, [rows]);
 
-  const groups = useMemo(() => groupWork(filterWork(rows || [], filter, areaId)), [rows, filter, areaId]);
+  const groups = useMemo(
+    () => groupWork(awakeWork(filterWork(rows || [], filter, areaId), nowMs)),
+    [rows, filter, areaId, nowMs],
+  );
+  const later = useMemo(() => shelfWork(rows || [], filter, areaId, nowMs), [rows, filter, areaId, nowMs]);
+  // The staleness review lives here, with the Work it asks about. Today does
+  // not carry it.
+  const stale = useMemo(() => reviewBatch(rows || [], nowMs), [rows, nowMs]);
   const unhomedCount = useMemo(() => (rows || []).filter((row) => !row.primaryAreaId).length, [rows]);
 
   // 'unresolved' stays in the open half on purpose: those questions are the
@@ -148,7 +181,12 @@ export function AlbatrossesSurface() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">
         <div className="mx-auto max-w-3xl">
-          {visibleGroups.length === 0 ? <EmptyState filter={filter} /> : null}
+          {stale.length ? (
+            <div className="mb-8">
+              <ReviewBatch items={stale} />
+            </div>
+          ) : null}
+          {visibleGroups.length === 0 && later.length === 0 ? <EmptyState filter={filter} /> : null}
           {visibleGroups.map((group) => (
             <div key={group.key} className="mb-8">
               {/* A section rule, weighted by whether the group is asking for
@@ -176,6 +214,20 @@ export function AlbatrossesSurface() {
               </ul>
             </div>
           ))}
+
+          {later.length ? (
+            <div className="mb-8">
+              <div className="mb-3 flex items-baseline gap-2">
+                <span aria-hidden className="h-px w-5 shrink-0 bg-[var(--color-border-strong)]" />
+                <h2 className="font-serif text-[15px] font-semibold">Later</h2>
+                <p className="text-[12px] text-[var(--color-text-faint)]">
+                  Kept, not carried. Each comes back on its date.
+                </p>
+                <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
+              </div>
+              <LaterShelf items={later} nowMs={nowMs} onOpen={setSelectedWorkId} />
+            </div>
+          ) : null}
         </div>
       </div>
     </section>

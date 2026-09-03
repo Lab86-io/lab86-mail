@@ -42,6 +42,7 @@ struct WorkDetailView: View {
     // never discards text typed for another step.
     @State private var stepNotes: [String: String] = [:]
     @State private var browserStep: WorkDetail.ExecutionStep?
+    @State private var showsHorizonSheet = false
 
     var body: some View {
         Group {
@@ -84,6 +85,7 @@ struct WorkDetailView: View {
                     Button("Mark Complete", systemImage: "checkmark.circle") {
                         Task { await changeState("done") }
                     }
+                    Button("Set horizon") { showsHorizonSheet = true }
                     Divider()
                     Button("Archive", systemImage: "archivebox", role: .destructive) {
                         showsArchiveConfirmation = true
@@ -120,6 +122,28 @@ struct WorkDetailView: View {
                 await load(initial: false)
             }
         }
+        .sheet(isPresented: $showsHorizonSheet) {
+            HorizonSheet(
+                title: detail?.plan?.outcome ?? detail?.work.title ?? route.title ?? "Work",
+                initial: detail?.work.horizon
+            ) { horizon in
+                await setHorizon(horizon)
+            }
+        }
+    }
+
+    /// Write the horizon. The lead crossfades to the horizon line at once.
+    /// Work that now sleeps leaves this page: it belongs on the shelf.
+    private func setHorizon(_ horizon: WorkHorizon?) async -> Bool {
+        let ok = await WorkHorizonWriter.set(horizon, for: route.workID, environment: environment)
+        guard ok else { return false }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            detail = detail?.withHorizon(horizon)
+        }
+        if horizon?.isDormant(at: .now) == true {
+            environment.navigation.workRoute = nil
+        }
+        return true
     }
 
     private func loadedBody(_ detail: WorkDetail) -> some View {
@@ -334,9 +358,20 @@ struct WorkDetailView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(detail.work.stateLabel)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                // The state label opens the horizon sheet. Once a horizon is
+                // set, the label reads the horizon line instead.
+                Button {
+                    showsHorizonSheet = true
+                } label: {
+                    Text(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(detail.work.horizon?.isDormant(at: .now) == true
+                            ? environment.theme.accentColor : Color.secondary)
+                        .contentTransition(.opacity)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(detail.work.horizon?.line(at: .now) ?? detail.work.stateLabel)
+                .accessibilityHint("Opens the horizon sheet")
             }
 
             Text(detail.plan?.outcome ?? detail.work.title)

@@ -228,6 +228,54 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
 }
 
 @Test
+func generatedTypesCarryTheWorkHorizonContract() throws {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+
+    let change = try decoder.decode(
+        Components.Schemas.SyncChange.self,
+        from: Data(
+            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-1","revision":4,"operation":"upsert","payload":{"workID":"work-1","horizon":{"kind":"later","notBefore":1793509200000,"label":"not before November"}}}"#.utf8
+        )
+    )
+    switch change {
+    case .workHorizon(let horizon):
+        #expect(horizon.payload.workID == "work-1")
+        #expect(horizon.payload.horizon?.kind == .later)
+        #expect(horizon.payload.horizon?.notBefore == 1_793_509_200_000)
+        #expect(horizon.payload.horizonCleared == nil)
+    default:
+        Issue.record("The workHorizon change did not decode as a workHorizon case.")
+    }
+
+    let cleared = try decoder.decode(
+        Components.Schemas.SyncChange.self,
+        from: Data(
+            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-2","revision":5,"operation":"upsert","payload":{"workID":"work-2","horizonCleared":true}}"#.utf8
+        )
+    )
+    if case .workHorizon(let horizon) = cleared {
+        #expect(horizon.payload.horizon == nil)
+        #expect(horizon.payload.horizonCleared == true)
+    } else {
+        Issue.record("The cleared change did not decode as a workHorizon case.")
+    }
+
+    let command = try decoder.decode(
+        Components.Schemas.MobileCommand.self,
+        from: Data(
+            #"{"idempotencyKey":"h-1","clientCreatedAt":"2026-09-03T09:00:00Z","kind":"work.setHorizon","payload":{"workID":"work-1","horizon":{"kind":"someday","label":"one day"}}}"#.utf8
+        )
+    )
+    if case .work_setHorizon(let setHorizon) = command {
+        #expect(setHorizon.payload.horizon?.kind == .someday)
+        #expect(setHorizon.payload.horizon?.label == "one day")
+    } else {
+        Issue.record("The work.setHorizon command did not decode as a work_setHorizon case.")
+    }
+}
+
+@Test
 func authenticationMiddlewareAddsFreshCredentialsAndTraceHeaders() async throws {
     let recorder = RequestRecorder()
     let middleware = MobileAPIAuthenticationMiddleware(

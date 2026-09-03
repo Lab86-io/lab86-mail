@@ -29,6 +29,9 @@ export interface IEvent {
   // vs busy as form, not just colour.
   status?: string;
   busy?: boolean;
+  // True for a copy the app wrote itself. The server copy arrives with the
+  // next sync. Until then the block wears a dashed border.
+  pending?: boolean;
   location?: string;
   masterEventId?: string;
   // Rich metadata for the event viewer.

@@ -1,9 +1,10 @@
 'use client';
 
-import { useConvexAuth, useQuery } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
 import { type GuidedSession, GuidedStepPane } from '@/components/albatross/GuidedStep';
+import { HORIZON_SAVE_ERROR, HorizonControl } from '@/components/albatross/HorizonControl';
 import { OutcomeContractCard, ProofTimeline } from '@/components/albatross/Proof';
 import { OutcomeHeader } from '@/components/albatross/primitives';
 import { SplitSheet } from '@/components/albatross/SplitSheet';
@@ -12,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import type { OutcomeContract } from '@/lib/albatross/contract';
+import type { WorkHorizon } from '@/lib/albatross/horizon';
 import type { EvidenceLike } from '@/lib/albatross/proof';
 import { workStateKey } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
@@ -81,6 +83,7 @@ export interface WorkDetailData {
     primaryAreaId?: string;
     primaryProjectId?: string;
     updatedAt: number;
+    horizon?: WorkHorizon | null;
   };
   plan: null | {
     _id: string;
@@ -128,6 +131,30 @@ export function workDetailRecoveryPrompt(detail: WorkDetailData, workId: string,
     stepTitle: step.title,
     plannedAt: detail.execution.scheduledStartAt || undefined,
   };
+}
+
+/** Two horizons say the same thing. The wake stamp does not count: the server owns it. */
+export function sameHorizon(left: WorkHorizon | null | undefined, right: WorkHorizon | null | undefined) {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return (
+    left.kind === right.kind &&
+    (left.notBefore ?? null) === (right.notBefore ?? null) &&
+    (left.by ?? null) === (right.by ?? null) &&
+    (left.label ?? null) === (right.label ?? null)
+  );
+}
+
+/**
+ * The horizon the page shows: the user's last choice until the server row
+ * agrees with it, then the server row.
+ */
+export function visibleHorizon(
+  server: WorkHorizon | null | undefined,
+  optimistic: { value: WorkHorizon | null } | null,
+): WorkHorizon | null {
+  if (optimistic && !sameHorizon(server, optimistic.value)) return optimistic.value;
+  return server ?? null;
 }
 
 export function guideStepsWithOptimisticCompletion(
@@ -200,6 +227,10 @@ export function WorkDetail({ workId }: { workId: string }) {
   // The stored application keeps its artifacts after an undo; the ledger must
   // not keep offering Undo for a change that is already gone.
   const [undoneOperations, setUndoneOperations] = useState<ReadonlySet<string>>(new Set());
+  const setHorizonMutation = useMutation(api.albatrossWorkV2.setHorizon);
+  const [horizonChoice, setHorizonChoice] = useState<{ value: WorkHorizon | null } | null>(null);
+  const [horizonSaving, setHorizonSaving] = useState(false);
+  const [horizonError, setHorizonError] = useState<string | null>(null);
 
   useEffect(() => {
     if (detail?.work.primaryAreaId) setSelectedAreaId(String(detail.work.primaryAreaId));
@@ -223,6 +254,20 @@ export function WorkDetail({ workId }: { workId: string }) {
       return pending.length === current.size ? current : new Set(pending);
     });
   }, [detail]);
+
+  const saveHorizon = async (next: WorkHorizon | null) => {
+    setHorizonChoice({ value: next });
+    setHorizonSaving(true);
+    setHorizonError(null);
+    try {
+      await setHorizonMutation({ workId: workId as Id<'albatrossIntents'>, horizon: next });
+    } catch {
+      setHorizonChoice(null);
+      setHorizonError(HORIZON_SAVE_ERROR);
+    } finally {
+      setHorizonSaving(false);
+    }
+  };
 
   const advance = async () => {
     setAdvancing(true);
@@ -367,6 +412,7 @@ export function WorkDetail({ workId }: { workId: string }) {
   const document = plan?.artifactSource === 'document-v2' ? plan.document : undefined;
   const legacyPlan = Boolean(plan && !document && plan.artifactHtml);
   const open = work.workState !== 'done' && work.workState !== 'released' && work.workState !== 'archived';
+  const horizon = visibleHorizon(work.horizon, horizonChoice);
   const openAttachedChat = () => {
     setChatScope({
       kind: 'work',
@@ -427,46 +473,57 @@ export function WorkDetail({ workId }: { workId: string }) {
             evidence={detail.evidence || []}
             state={workStateKey({ ...work, openQuestions: pendingQuestions.length })}
             actions={
-              <>
-                <Button type="button" size="sm" variant="outline" onClick={openAttachedChat}>
-                  Discuss
-                </Button>
-                {detail.execution.currentStep ? (
-                  <Button type="button" size="sm" onClick={() => setGuided(true)}>
-                    Open guided work
+              <div className="flex flex-col items-end gap-2">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={openAttachedChat}>
+                    Discuss
                   </Button>
-                ) : (
-                  <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
-                    {advancing ? 'Working…' : 'Continue'}
-                  </Button>
-                )}
+                  {detail.execution.currentStep ? (
+                    <Button type="button" size="sm" onClick={() => setGuided(true)}>
+                      Open guided work
+                    </Button>
+                  ) : (
+                    <Button type="button" size="sm" disabled={advancing} onClick={() => void advance()}>
+                      {advancing ? 'Working…' : 'Continue'}
+                    </Button>
+                  )}
+                  {open ? (
+                    <>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSplitting((value) => !value);
+                          setReleasing(false);
+                        }}
+                      >
+                        Split this work
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setReleasing((value) => !value);
+                          setSplitting(false);
+                        }}
+                      >
+                        Put it down
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
                 {open ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setSplitting((value) => !value);
-                        setReleasing(false);
-                      }}
-                    >
-                      Split this work
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setReleasing((value) => !value);
-                        setSplitting(false);
-                      }}
-                    >
-                      Put it down
-                    </Button>
-                  </>
+                  <HorizonControl
+                    value={horizon}
+                    nowMs={nowMs}
+                    onChange={(next) => void saveHorizon(next)}
+                    saving={horizonSaving}
+                    error={horizonError}
+                  />
                 ) : null}
-              </>
+              </div>
             }
           />
 

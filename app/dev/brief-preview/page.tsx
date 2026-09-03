@@ -4,13 +4,21 @@ import { notFound, useSearchParams } from 'next/navigation';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
-import { richBriefDocumentFixture } from '@/lib/shared/brief-document-fixtures';
+import {
+  areaPulseDocumentFixture,
+  letterBriefDocumentFixture,
+  richBriefDocumentFixture,
+} from '@/lib/shared/brief-document-fixtures';
 
-/* Dev-only harness: the rich fixture through the real BriefCanvas, full
- * viewport, so layout (column thresholds), theming, and depth can be verified
- * deterministically without a signed-in account that owns a document-v2
- * brief. Add ?embedded=1 for the shape Today renders — no masthead, flowing in
- * a parent scroll. Not linked from anywhere; 404s outside development. */
+/* Dev-only harness: a fixture through the real BriefCanvas, full viewport, so
+ * layout, theming, and depth can be verified deterministically without a
+ * signed-in account that owns a brief. Query switches:
+ *   ?layout=letter (default)  the budget letter: lede, lanes, week ahead, areas
+ *   ?layout=area              the area pulse letter
+ *   ?layout=grid              the older editorial grid, for old editions
+ *   ?embedded=1               the shape Today renders: no masthead, parent scroll
+ *   ?noise=42                 the footer count of the letter
+ * Not linked from anywhere; 404s outside development. */
 export default function BriefPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
   return <BriefPreviewInner />;
@@ -18,7 +26,17 @@ export default function BriefPreviewPage() {
 
 function BriefPreviewInner() {
   useApplyThemeExtras();
-  const embedded = useSearchParams().get('embedded') === '1';
+  const params = useSearchParams();
+  const embedded = params.get('embedded') === '1';
+  const layout = params.get('layout') ?? 'letter';
+  const noiseParam = Number(params.get('noise') ?? '42');
+  const noiseCount = Number.isFinite(noiseParam) ? noiseParam : null;
+  const value =
+    layout === 'grid'
+      ? richBriefDocumentFixture
+      : layout === 'area'
+        ? areaPulseDocumentFixture
+        : letterBriefDocumentFixture;
   return (
     <QueryProvider clerkEnabled={false}>
       {embedded ? (
@@ -34,11 +52,11 @@ function BriefPreviewInner() {
             </p>
             <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
           </div>
-          <BriefCanvas value={richBriefDocumentFixture} embedded />
+          <BriefCanvas value={value} embedded noiseCount={noiseCount} />
         </div>
       ) : (
         <div className="h-dvh">
-          <BriefCanvas value={richBriefDocumentFixture} masthead />
+          <BriefCanvas value={value} masthead={layout !== 'area'} noiseCount={noiseCount} />
         </div>
       )}
     </QueryProvider>

@@ -148,154 +148,29 @@ struct TodayView: View {
             .overlay(alignment: .bottom) { Divider() }
     }
 
-    /// What actually needs the user: approvals waiting, plus every Albatross the
-    /// Albatrosses page would file under "Needs you". Counting approvals alone
-    /// let the masthead say "Nothing needs you today" while that page showed a
-    /// needs-you group.
+    /// What needs the user today: approvals waiting, plus every Albatross
+    /// that cannot move without them. The deck counts them. The page no longer
+    /// lists them; that list is the Work page.
     private var needsYouCount: Int {
         store.approvals.count + store.workExecution.needsYou.count
-    }
-
-    /// What Albatross is carrying on its own. The sentence says "Albatross is
-    /// carrying N things", which describes Albatrosses, not board cards.
-    private var carryingCount: Int {
-        store.allWork.filter { !$0.isClosed && !$0.needsYou }.count
     }
 
     private var dayShape: String {
         TodayComposition.dayShapeLine(
             needsYouCount: needsYouCount,
             eventCount: store.todaysEvents.count,
-            capacity: .normal,
-            carryingCount: carryingCount
+            capacity: .normal
         )
     }
 
-    /// The short list of Albatrosses that cannot move without the user, ordered
-    /// by how much is waiting on them.
-    private var needsYouWork: [WorkListItem] {
-        store.workExecution.needsYou
+    /// Mail that matters, from the brief's own attention index. At most four.
+    private var importantMail: [ImportantMailItem] {
+        Array((store.dailyReport?.importantMail ?? []).prefix(TodayComposition.importantMailLimit))
     }
 
-    /// Always current, because it is read rather than written.
+    /// Today is the day, the mail, and one move. Always current, because it
+    /// is read rather than written. No albatross stack sits above the calendar.
     @ViewBuilder private func liveLayer(now: Date) -> some View {
-        if let move = store.workExecution.currentMove {
-            todaySection("Do this next", note: currentMoveNote(move, now: now)) {
-                Button {
-                    environment.navigation.openWork(id: move.workID, title: move.workTitle)
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text([move.workTitle, move.areaName].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(move.stepTitle)
-                            .font(.system(.title3, design: .serif).weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let detail = move.detail {
-                            Text(detail)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Divider()
-                        HStack {
-                            Text(currentMoveProgress(move))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("Open guided work")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(environment.theme.accentColor)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(.secondarySystemGroupedBackground))
-                    )
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(environment.theme.accentColor.opacity(0.3))
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens the current step and its full plan")
-            }
-        } else if store.workDidLoad {
-            todaySection("Do this next", note: "There is no concrete move waiting.") {
-                Text("The current plan is clear. Add something only if it deserves a place in the day.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [5]))
-                    )
-            }
-        }
-
-        if !store.workExecution.missedMoves.isEmpty {
-            todaySection("The plan slipped", note: "Choose what should happen now.") {
-                VStack(spacing: 12) {
-                    ForEach(store.workExecution.missedMoves) { move in
-                        MissedMoveRecoveryView(move: move)
-                    }
-                }
-            }
-        }
-
-        if !store.approvals.isEmpty || !needsYouWork.isEmpty {
-            todaySection("Needs you", note: "Albatross cannot move these without you.") {
-                VStack(spacing: 0) {
-                    ForEach(needsYouWork.prefix(3)) { item in
-                        Button {
-                            environment.navigation.openWork(id: item.id, title: item.displayTitle)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.displayTitle)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                Text(item.standingLine)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 10)
-                        }
-                        .buttonStyle(.plain)
-                        Divider()
-                    }
-                    ForEach(store.approvals.prefix(3)) { approval in
-                        Button {
-                            environment.navigation.sheet = .activity
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(approval.title)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                Text(approval.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 10)
-                        }
-                        .buttonStyle(.plain)
-                        if approval.id != store.approvals.prefix(3).last?.id { Divider() }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(.secondarySystemGroupedBackground))
-                )
-            }
-        }
-
         // The day drawn to scale rather than listed. Where the open air is
         // decides what can move today, and a list never says it.
         todaySection("Your day", note: "Solid is booked. Dashed is open air.") {
@@ -308,34 +183,21 @@ struct TodayView: View {
             }
         }
 
-        if !store.areas.isEmpty {
-            todaySection("In motion", note: "Areas Albatross is carrying.") {
-                VStack(spacing: 0) {
-                    ForEach(store.areas.prefix(5)) { area in
-                        Button {
-                            environment.navigation.openArea(id: area.id, name: area.name)
-                        } label: {
-                            AreaMotionRow(area: area)
-                        }
-                        .buttonStyle(.plain)
-                    }
+        if !importantMail.isEmpty {
+            todaySection("Mail that matters", note: "What you would not want to miss.") {
+                MailThatMattersSection(items: importantMail) { item in
+                    environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
                 }
             }
         }
-    }
 
-    private func currentMoveNote(_ move: WorkExecutionMove, now: Date) -> String {
-        if move.phase == "active" { return "This block is happening now." }
-        if move.phase == "upcoming", let start = move.scheduledStartAt {
-            return "Protected for \(start.formatted(date: .abbreviated, time: .shortened))."
+        if let move = TodayComposition.nextMove(from: store.workExecution.currentMove, now: now) {
+            todaySection("Next move", note: "One step, booked for today.") {
+                NextMoveLine(move: move) {
+                    environment.navigation.openWork(id: move.workID, title: move.workTitle)
+                }
+            }
         }
-        return "The clearest concrete move."
-    }
-
-    private func currentMoveProgress(_ move: WorkExecutionMove) -> String {
-        if move.totalSteps == 0 || move.remainingSteps == 0 { return "This is the step to do." }
-        if move.remainingSteps == 1 { return "Last planned step" }
-        return "\(move.remainingSteps) of \(move.totalSteps) steps remain"
     }
 
     /// A section rule in the editorial voice: a hairline, a serif heading, a
@@ -706,29 +568,92 @@ struct TaskRow: View {
     }
 }
 
-private struct AreaMotionRow: View {
-    let area: AreaSummary
+/// At most four rows: the sender in the display face, the subject, and one
+/// line on why it matters. Hairline dividers, no card. Tap opens the thread.
+struct MailThatMattersSection: View {
+    @Environment(AppEnvironment.self) private var environment
+    let items: [ImportantMailItem]
+    let onOpen: (ImportantMailItem) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(area.name)
-                Text(area.overview?.statusLine ?? area.kind.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        VStack(spacing: 0) {
+            ForEach(items) { item in
+                Button {
+                    onOpen(item)
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        InitialsAvatar(name: item.sender, seed: item.sender, size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.sender)
+                                .font(environment.theme.displayType.displayFont(size: 15))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(item.subject)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            if let reason = item.reason {
+                                Text(reason)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Self.accessibilityLabel(item))
+                .accessibilityAddTraits(.isButton)
+                if item.id != items.last?.id {
+                    Divider()
+                }
             }
-            Spacer(minLength: 4)
-            if area.overview?.needsAttention == true {
-                Circle().fill(.orange).frame(width: 7, height: 7).accessibilityHidden(true)
-            }
-            Image(systemName: "chevron.forward")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
         }
-        .contentShape(.rect)
-        .accessibilityElement(children: .combine)
+    }
+
+    static func accessibilityLabel(_ item: ImportantMailItem) -> String {
+        var parts = ["From \(item.sender)", item.subject]
+        if let reason = item.reason { parts.append(reason) }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// One line: a 2 pt accent bar, the step title, the time. Tap opens the Work.
+struct NextMoveLine: View {
+    @Environment(AppEnvironment.self) private var environment
+    let move: TodayComposition.NextMove
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                    .fill(environment.theme.accentColor)
+                    .frame(width: 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(move.stepTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                    Text([move.time, move.workTitle].joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Next move, \(move.stepTitle), \(move.time), \(move.workTitle)")
         .accessibilityAddTraits(.isButton)
     }
 }

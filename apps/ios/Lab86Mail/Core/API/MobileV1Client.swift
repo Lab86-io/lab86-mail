@@ -331,6 +331,16 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     fallback: change.payload.fallback
                 )
             )
+        case .workHorizon(let change):
+            return .workHorizon(
+                WorkHorizonSyncPatch(
+                    entityID: change.entityID,
+                    revision: change.revision,
+                    workID: change.payload.workID,
+                    horizon: change.payload.horizon.map(workHorizon),
+                    horizonCleared: change.payload.horizonCleared ?? false
+                )
+            )
         case .approval(let change):
             if let requested = change.payload.value1 {
                 return .approval(
@@ -723,6 +733,27 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
+        case .workSetHorizon(let payload):
+            .work_setHorizon(
+                .init(
+                    idempotencyKey: snapshot.idempotencyKey,
+                    baseRevision: snapshot.baseRevision,
+                    clientCreatedAt: snapshot.clientCreatedAt,
+                    kind: .work_setHorizon,
+                    payload: .init(
+                        workID: payload.workID,
+                        horizon: payload.horizon.map { request in
+                            .init(
+                                kind: horizonKind(request.kind),
+                                notBeforeAt: request.notBeforeAt,
+                                byAt: request.byAt,
+                                label: request.label
+                            )
+                        },
+                        horizonCleared: payload.horizonCleared ? true : nil
+                    )
+                )
+            )
         case .approvalApprove(let payload):
             .approval_approve(
                 .init(
@@ -776,5 +807,28 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
         case .voice: .voice
         case .chat: .chat
         }
+    }
+
+    private static func horizonKind(
+        _ kind: WorkHorizonKind
+    ) -> Components.Schemas.WorkSetHorizonCommand.PayloadPayload.HorizonPayload.KindPayload {
+        switch kind {
+        case .now: .now
+        case .later: .later
+        case .someday: .someday
+        }
+    }
+
+    // Sync payloads carry epoch milliseconds, like every server-owned time.
+    private static func workHorizon(
+        _ value: Components.Schemas.WorkHorizonSyncChange.PayloadPayload.HorizonPayload
+    ) -> WorkHorizon {
+        WorkHorizon(
+            kind: WorkHorizonKind(rawValue: value.kind.rawValue) ?? .now,
+            notBefore: value.notBefore.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
+            by: value.by.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
+            label: value.label,
+            wokeAt: value.wokeAt.flatMap { CalendarDateParser.date(fromNumber: Double($0)) }
+        )
     }
 }

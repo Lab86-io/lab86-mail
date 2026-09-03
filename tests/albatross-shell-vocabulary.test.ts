@@ -119,9 +119,12 @@ describe('Mail tells the truth when nothing is connected', () => {
 });
 
 describe('Today puts responsibility above decoration', () => {
-  test('the surface leads with what needs the user, not with the weather', () => {
+  test('the surface leads with the next move, and carries no stack of Work', () => {
     const today = read('components/report/TodaySurface.tsx');
-    expect(today.indexOf('Needs you')).toBeLessThan(today.indexOf('Your day'));
+    expect(today.indexOf('Do this next')).toBeLessThan(today.indexOf('Your day'));
+    expect(today).not.toContain('Needs you');
+    expect(today).not.toContain('Waiting, not forgotten');
+    expect(today).not.toContain('Ongoing practices');
     expect(today).not.toContain('weather');
   });
 

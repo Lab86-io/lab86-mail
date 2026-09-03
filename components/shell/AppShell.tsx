@@ -43,6 +43,7 @@ import { AIBarTrigger, AssistantChat } from './AIBar';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
+import { WakeNudgeHost } from './WakeNudge';
 
 // Each visible-pane permutation gets its own persisted layout so the inbox
 // doesn't snap to weird sizes when the reader or AI sidebar mounts/unmounts.
@@ -278,6 +279,7 @@ export function AppShell({
             <AIBarTrigger />
             <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
             <AlbatrossCompanion />
+            <WakeNudgeHost />
           </main>
         </SidebarProvider>
 
@@ -360,6 +362,7 @@ export function AppShell({
           <AIBarTrigger />
           <IntentCaptureLauncher onCaptured={handleWorkCaptured} />
           <AlbatrossCompanion />
+          <WakeNudgeHost />
         </main>
       </SidebarProvider>
 

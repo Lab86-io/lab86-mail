@@ -16,6 +16,9 @@ struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
     let nextStep: String?
     let scheduledStartAt: Date?
     let scheduledEndAt: Date?
+    // The horizon: now, later, or someday. Optional so cached snapshots from
+    // older servers keep decoding.
+    private(set) var horizon: WorkHorizon?
 
     /// What the row calls itself. Never an id, never a blank line.
     var displayTitle: String {
@@ -40,8 +43,19 @@ struct WorkListItem: Identifiable, Hashable, Codable, Sendable {
         nextStep = json["nextStep"]?.stringValue?.nilIfBlank
         scheduledStartAt = CalendarDateParser.date(json["scheduledStartAt"])
         scheduledEndAt = CalendarDateParser.date(json["scheduledEndAt"])
+        horizon = WorkHorizon(json: json["horizon"])
+    }
+
+    /// The same row with a new horizon. Used for the optimistic write while
+    /// the server confirms.
+    func withHorizon(_ horizon: WorkHorizon?) -> WorkListItem {
+        var copy = self
+        copy.horizon = horizon
+        return copy
     }
 }
+
+extension WorkListItem: WorkHorizonCarrying {}
 
 /// The server's single answer to “what now?” and the separate recovery lane.
 struct WorkExecutionMove: Identifiable, Hashable, Codable, Sendable {
@@ -280,6 +294,17 @@ enum WorkGrouping {
             case .all: return true
             }
         }
+    }
+
+    /// Dormant Work leaves the state groups. It sleeps on the "Later" shelf,
+    /// in wake order. Closed Work never sleeps: finished is finished.
+    static func split(
+        _ rows: [WorkListItem],
+        now: Date
+    ) -> (awake: [WorkListItem], later: [WorkListItem]) {
+        let later = WorkHorizonShelf.later(rows.filter { !$0.isClosed }, now: now)
+        let laterIDs = Set(later.map(\.id))
+        return (rows.filter { !laterIDs.contains($0.id) }, later)
     }
 
     /// Groups in the order the list shows them, with empty groups dropped.

@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { FRONTIER_GATE_REGION_ID } from '@/lib/albatross/plan-frontier';
 import { callTool } from '@/lib/api-client';
 import { briefQueryKeys, briefRefKey, collectBriefRefs, hydratedEntityKey } from '@/lib/brief/hydration';
+import { briefLetterKind } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
@@ -29,6 +30,7 @@ import type { PrimaryView } from '@/lib/shared/types';
 import { safeExternalUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
+import { BriefLetter } from './BriefLetter';
 import { BriefMasthead } from './BriefMasthead';
 import { type BriefNodeContext, BriefNodeView, briefNodePresentationClass } from './BriefNodeView';
 import type { BriefActionPayload } from './brief-action-runtime';
@@ -48,6 +50,7 @@ export function BriefCanvas({
   masthead = false,
   footer,
   embedded = false,
+  noiseCount,
 }: {
   value: unknown;
   composing?: boolean;
@@ -57,6 +60,9 @@ export function BriefCanvas({
   /** Flow inside a parent scroll instead of owning the viewport. Today reads as
    *  one page, so the brief cannot bring its own scrollbar to it. */
   embedded?: boolean;
+  /** Scanned threads that did not earn a place. The letter prints one footer
+   *  line from it. */
+  noiseCount?: number | null;
 }) {
   const queryClient = useQueryClient();
   const document = useMemo(() => {
@@ -69,6 +75,9 @@ export function BriefCanvas({
       regions: parsed.regions.filter((region) => region.id !== FRONTIER_GATE_REGION_ID),
     };
   }, [value]);
+  // A budget brief or an area pulse reads as a letter in one measure. Older
+  // editions keep the editorial grid.
+  const letterKind = useMemo(() => briefLetterKind(document), [document]);
   const refs = useMemo(() => collectBriefRefs(document), [document]);
   const [hiddenRefs, setHiddenRefs] = useState<Set<string>>(() => new Set());
   const [completedRefs, setCompletedRefs] = useState<Map<string, boolean>>(() => new Map());
@@ -272,6 +281,14 @@ export function BriefCanvas({
     },
   };
 
+  // The letter carries its lede in the body, so the header never repeats the
+  // summary. Under Today, which already names the day, or under the masthead,
+  // the letter has no header at all unless there is a notice to show.
+  const notice = composing || hydration.isError;
+  const showTitle = !masthead && !(letterKind && embedded);
+  const showSummary = !letterKind;
+  const headerVisible = notice || showTitle || showSummary;
+
   return (
     <article
       className={cn(
@@ -281,79 +298,92 @@ export function BriefCanvas({
       data-brief-document-version={document.version}
     >
       {masthead ? <BriefMasthead generatedAt={document.generatedAt} timezone={document.timezone} /> : null}
-      <header className="mx-auto mb-7 max-w-[1760px] border-b border-[var(--color-border)] pb-5">
-        {composing || hydration.isError ? (
-          <div className="mb-3 flex items-center justify-end gap-2 text-[11px] font-medium text-[var(--color-text-muted)]">
-            {composing ? (
-              <span className="flex items-center gap-1.5 text-[var(--color-accent)]">
-                <span className="size-1.5 animate-pulse rounded-full bg-current" />
-                Adding regions…
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-[var(--color-warning)]">
-                <AlertTriangle className="size-3" />
-                Saved details shown
-              </span>
-            )}
-          </div>
-        ) : null}
-        {masthead ? null : (
-          <h1 className="max-w-3xl text-balance font-display text-3xl font-semibold leading-[1.05] tracking-tight @[640px]:text-4xl">
-            {document.title}
-          </h1>
-        )}
-        <p
-          className={
-            masthead
-              ? 'mt-3 max-w-4xl text-pretty font-display text-lg leading-relaxed text-[var(--color-text-muted)] first-letter:float-left first-letter:mr-2 first-letter:font-display first-letter:text-5xl first-letter:font-semibold first-letter:leading-[0.82] first-letter:text-[var(--color-accent-2)] @[640px]:text-xl'
-              : 'mt-3 max-w-3xl text-pretty text-sm leading-relaxed text-[var(--color-text-muted)] @[640px]:text-[15px]'
-          }
+      {headerVisible ? (
+        <header
+          className={cn(
+            'mx-auto mb-7 border-b border-[var(--color-border)] pb-5',
+            letterKind ? 'max-w-[620px]' : 'max-w-[1760px]',
+          )}
         >
-          {document.summary}
-        </p>
-        {masthead ? null : (
-          <time className="mt-3 block text-[11px] text-[var(--color-text-faint)]">
-            {new Intl.DateTimeFormat(undefined, {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-            }).format(new Date(document.generatedAt))}
-          </time>
-        )}
-      </header>
-      {/* Editorial masonry preserves authored visual order while measuring
-          each story's real height. Wide concepts claim horizontal room, not
-          a fixed vertical rectangle that leaves an empty hole beside them. */}
-      <BriefEditorialGrid>
-        {document.regions.map((region) => (
-          <section key={region.id} data-brief-region={region.id} className="contents">
-            {columnBlocks(region.tree).map((block, index) => (
-              <BriefEditorialGridItem
-                key={block.node.id ?? `${block.node.kind}-${index}`}
-                className={cn('@container', block.wrapperClass)}
-                spacing={block.spacing}
-              >
-                <div
-                  data-brief-story-card
-                  className={cn(
-                    'min-w-0 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
-                    block.cardClass,
-                  )}
+          {notice ? (
+            <div className="mb-3 flex items-center justify-end gap-2 text-[11px] font-medium text-[var(--color-text-muted)]">
+              {composing ? (
+                <span className="flex items-center gap-1.5 text-[var(--color-accent)]">
+                  <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                  Adding regions…
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-[var(--color-warning)]">
+                  <AlertTriangle className="size-3" />
+                  Saved details shown
+                </span>
+              )}
+            </div>
+          ) : null}
+          {showTitle ? (
+            <h1 className="max-w-3xl text-balance font-display text-3xl font-semibold leading-[1.05] tracking-tight @[640px]:text-4xl">
+              {document.title}
+            </h1>
+          ) : null}
+          {showSummary ? (
+            <p
+              className={
+                masthead
+                  ? 'mt-3 max-w-4xl text-pretty font-display text-lg leading-relaxed text-[var(--color-text-muted)] first-letter:float-left first-letter:mr-2 first-letter:font-display first-letter:text-5xl first-letter:font-semibold first-letter:leading-[0.82] first-letter:text-[var(--color-accent-2)] @[640px]:text-xl'
+                  : 'mt-3 max-w-3xl text-pretty text-sm leading-relaxed text-[var(--color-text-muted)] @[640px]:text-[15px]'
+              }
+            >
+              {document.summary}
+            </p>
+          ) : null}
+          {showTitle ? (
+            <time className="mt-3 block text-[11px] text-[var(--color-text-faint)]">
+              {new Intl.DateTimeFormat(undefined, {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              }).format(new Date(document.generatedAt))}
+            </time>
+          ) : null}
+        </header>
+      ) : null}
+      {letterKind ? (
+        <BriefLetter document={document} kind={letterKind} context={context} noiseCount={noiseCount} />
+      ) : (
+        /* Editorial masonry preserves authored visual order while measuring
+           each story's real height. Wide concepts claim horizontal room, not
+           a fixed vertical rectangle that leaves an empty hole beside them. */
+        <BriefEditorialGrid>
+          {document.regions.map((region) => (
+            <section key={region.id} data-brief-region={region.id} className="contents">
+              {columnBlocks(region.tree).map((block, index) => (
+                <BriefEditorialGridItem
+                  key={block.node.id ?? `${block.node.kind}-${index}`}
+                  className={cn('@container', block.wrapperClass)}
+                  spacing={block.spacing}
                 >
-                  <BriefNodeView
-                    node={block.node}
-                    context={context}
-                    regionSummary={region.summary}
-                    topLevel
-                  />
-                </div>
-              </BriefEditorialGridItem>
-            ))}
-          </section>
-        ))}
-      </BriefEditorialGrid>
+                  <div
+                    data-brief-story-card
+                    className={cn(
+                      'min-w-0 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                      block.cardClass,
+                    )}
+                  >
+                    <BriefNodeView
+                      node={block.node}
+                      context={context}
+                      regionSummary={region.summary}
+                      topLevel
+                    />
+                  </div>
+                </BriefEditorialGridItem>
+              ))}
+            </section>
+          ))}
+        </BriefEditorialGrid>
+      )}
       {footer}
       {canvasReview ? (
         <div className="sticky bottom-3 z-20 mx-auto mt-4 flex max-w-xl items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/95 p-3 shadow-[var(--shadow-pop)] backdrop-blur">

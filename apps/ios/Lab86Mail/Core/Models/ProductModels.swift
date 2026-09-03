@@ -992,6 +992,44 @@ struct DailyBriefArt: Hashable, Codable, Sendable {
     }
 }
 
+/// One mail thread the brief says matters today. Today shows at most four.
+struct ImportantMailItem: Identifiable, Hashable, Codable, Sendable {
+    let accountID: String
+    let threadID: String
+    let subject: String
+    let sender: String
+    /// Why it matters, in one line. The model's line first, then the reason.
+    let reason: String?
+
+    var id: String { "\(accountID):\(threadID)" }
+
+    init?(json: JSONValue) {
+        guard let accountID = json["account"]?.stringValue?.nilIfBlank,
+              let threadID = json["threadId"]?.stringValue?.nilIfBlank else { return nil }
+        self.accountID = accountID
+        self.threadID = threadID
+        subject = json["subject"]?.stringValue?.nilIfBlank ?? "Untitled"
+        let people = (json["people"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
+        sender = json["sender"]?.stringValue?.nilIfBlank ?? people.first ?? "Unknown sender"
+        reason = json["line"]?.stringValue?.nilIfBlank ?? json["whyItMatters"]?.stringValue?.nilIfBlank
+    }
+
+    /// The brief's own attention index: the "answer" lane on editions from
+    /// 2026-09-03, "replyOwed" on older ones. Today builds no second index.
+    static func fromSections(_ sections: JSONValue?, limit: Int = 4) -> [ImportantMailItem] {
+        let lane = sections?["answer"]?.arrayValue ?? sections?["replyOwed"]?.arrayValue ?? []
+        var seen = Set<String>()
+        var items: [ImportantMailItem] = []
+        for row in lane {
+            guard let item = ImportantMailItem(json: row), !seen.contains(item.id) else { continue }
+            seen.insert(item.id)
+            items.append(item)
+            if items.count == limit { break }
+        }
+        return items
+    }
+}
+
 struct DailyReportModel: Hashable, Codable, Sendable {
     enum Status: String, Codable, Sendable { case partial, ready }
 
@@ -1012,6 +1050,14 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         let openTasks: Int
         let completedTasks: Int
         let calendarEvents: Int
+        // Budget editions (2026-09-03) count the mail that did not earn a
+        // place (`noise`) and the items that did (`selected`). Optional so
+        // older editions and cached snapshots keep decoding.
+        var noise: Int? = nil
+        var selected: Int? = nil
+
+        // A budget edition writes both counts. Older editions write neither.
+        var isBudgetEdition: Bool { noise != nil && selected != nil }
     }
 
     struct SectionCounts: Hashable, Codable, Sendable {
@@ -1048,6 +1094,11 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     // keeps pre-existing cached snapshots decodable.
     let art: DailyBriefArt?
     private let services: [String]?
+    // Mail that matters today, from the brief's own attention index. Optional
+    // in the cache so editions saved before 2026-09-03 keep decoding.
+    private let importantMailItems: [ImportantMailItem]?
+
+    var importantMail: [ImportantMailItem] { importantMailItems ?? [] }
 
     // Raw service ids the edition drew from (mail providers, mcp servers…).
     // The footer derives its final list from these plus section content.
@@ -1094,6 +1145,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         artifactSource = json["artifactSource"]?.stringValue?.nilIfBlank
         let sections = json["sections"]
         hasAreaBrief = sections?["albatross"]?.objectValue != nil
+        importantMailItems = ImportantMailItem.fromSections(sections)
         let stats = json["stats"]
         self.stats = Stats(
             scannedThreads: Int(stats?["scannedThreads"]?.doubleValue ?? 0),
@@ -1103,7 +1155,9 @@ struct DailyReportModel: Hashable, Codable, Sendable {
             unread: Int(stats?["unread"]?.doubleValue ?? 0),
             openTasks: Int(stats?["openTasks"]?.doubleValue ?? 0),
             completedTasks: Int(stats?["completedTasks"]?.doubleValue ?? 0),
-            calendarEvents: Int(stats?["calendarEvents"]?.doubleValue ?? 0)
+            calendarEvents: Int(stats?["calendarEvents"]?.doubleValue ?? 0),
+            noise: stats?["noise"]?.doubleValue.map { Int($0) },
+            selected: stats?["selected"]?.doubleValue.map { Int($0) }
         )
         sectionCounts = SectionCounts(
             replyOwed: sections?["replyOwed"]?.arrayValue?.count ?? 0,
@@ -1466,6 +1520,30 @@ struct WorkDetail: Hashable, Codable, Sendable {
         let agentState: String
         let planError: String?
         let updatedAt: Date?
+        // Optional so cached details from older servers keep decoding.
+        var horizon: WorkHorizon?
+
+        init(
+            id: String,
+            title: String,
+            rawText: String,
+            status: String,
+            workState: String,
+            agentState: String,
+            planError: String?,
+            updatedAt: Date?,
+            horizon: WorkHorizon? = nil
+        ) {
+            self.id = id
+            self.title = title
+            self.rawText = rawText
+            self.status = status
+            self.workState = workState
+            self.agentState = agentState
+            self.planError = planError
+            self.updatedAt = updatedAt
+            self.horizon = horizon
+        }
 
         var stateLabel: String {
             switch agentState {
@@ -1791,6 +1869,23 @@ struct WorkDetail: Hashable, Codable, Sendable {
         )
     }
 
+    /// The same detail with a new horizon. The optimistic write while the
+    /// server confirms.
+    func withHorizon(_ horizon: WorkHorizon?) -> WorkDetail {
+        var nextWork = work
+        nextWork.horizon = horizon
+        return WorkDetail(
+            work: nextWork,
+            plan: plan,
+            project: project,
+            questions: questions,
+            application: application,
+            execution: execution,
+            contract: contract,
+            evidence: evidence
+        )
+    }
+
     // Snapshots written before guided execution carry no `execution` key.
     // Keep the in-memory model non-optional while decoding that older cache.
     init(from decoder: any Decoder) throws {
@@ -1868,7 +1963,8 @@ struct WorkDetail: Hashable, Codable, Sendable {
             workState: workJSON?["workState"]?.stringValue ?? "active",
             agentState: workJSON?["agentState"]?.stringValue ?? "idle",
             planError: workJSON?["planError"]?.stringValue?.nilIfBlank,
-            updatedAt: CalendarDateParser.date(workJSON?["updatedAt"])
+            updatedAt: CalendarDateParser.date(workJSON?["updatedAt"]),
+            horizon: WorkHorizon(json: workJSON?["horizon"])
         )
         execution = Execution(json: json["execution"])
 

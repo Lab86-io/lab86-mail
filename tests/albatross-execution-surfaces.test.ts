@@ -11,7 +11,6 @@ import {
   WorkDetailRecovery,
   workDetailRecoveryPrompt,
 } from '../components/albatross/WorkDetail';
-import { keyedMissedMoves, MissedMovesRecoverySection } from '../components/report/TodaySurface';
 import { visibleExecutionNotifications } from '../components/shell/NotificationCenter';
 import { CONTINUOUS_EXECUTION_CRON_NAMES } from '../convex/crons';
 
@@ -172,49 +171,24 @@ describe('the execution loop owns the visible product surfaces', () => {
         { type: 'urgent_mail', id: 'urgent' },
         { type: 'work_update', id: 'work' },
         { type: 'daily_checkin', id: 'checkin' },
+        // The wake has its own nudge in the shell. The bell does not repeat it.
+        { type: 'work_wake', id: 'wake' },
       ]).map((row) => row.id),
     ).toEqual(['work', 'checkin']);
   });
 
-  test('the keyed missed-move projection rejects legacy and blank keys', () => {
-    expect(
-      keyedMissedMoves([
-        { workId: 'legacy', stepKey: null },
-        { workId: 'blank', stepKey: '' },
-      ]),
-    ).toEqual([]);
-  });
-
-  test('an all-unkeyed missed list renders no recovery section or controls', () => {
-    const html = renderToStaticMarkup(
-      createElement(MissedMovesRecoverySection, {
-        moves: [
-          {
-            workId: 'legacy',
-            stepKey: null,
-            stepTitle: 'Legacy move',
-            scheduledStartAt: null,
-          },
-          {
-            workId: 'blank',
-            stepKey: '',
-            stepTitle: 'Blank move',
-            scheduledStartAt: null,
-          },
-        ],
-      }),
-    );
-
-    expect(html).toBe('');
-    expect(html).not.toContain('The plan slipped');
-    expect(html).not.toContain('Find another time');
-  });
-
   test('guided work and recovery are mounted on every execution surface', () => {
     const today = read('components/report/TodaySurface.tsx');
+    const detail = read('components/albatross/WorkDetail.tsx');
     const calendar = read('components/calendar/CalendarSurface.tsx');
-    expect(today).toContain('<LapsePrompt');
-    expect(calendar).toContain('<LapsePrompt');
+    // Today shows the day, the mail, and one next move. Recovery lives in the Work detail.
+    expect(today).not.toContain('LapsePrompt');
+    expect(today).not.toContain('missedMoves');
+    expect(detail).toContain('<LapsePrompt');
+    // Missed moves live only in the Work detail. The calendar grid has no banner.
+    expect(calendar).not.toContain('LapsePrompt');
+    expect(calendar).toContain('<SyncLine');
+    expect(calendar).toContain('<SyncStatus');
     expect(existsSync(join(repoRoot, 'components/albatross/IntentPip.tsx'))).toBe(false);
   });
 

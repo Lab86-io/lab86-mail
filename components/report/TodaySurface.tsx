@@ -3,13 +3,9 @@
 import { useQuery as useReactQuery } from '@tanstack/react-query';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import { DailyCheckin, type DailyCheckinData } from '@/components/albatross/DailyCheckin';
-import { LapsePrompt, ReEntry, ReviewBatch } from '@/components/albatross/Forgiveness';
-import { AlbatrossRow } from '@/components/albatross/primitives';
 import { BriefMasthead } from '@/components/report/brief-canvas/BriefMasthead';
 import { DayRibbon } from '@/components/report/DayRibbon';
 import { api } from '@/convex/_generated/api';
-import { reEntryDaysAway, reviewBatch, shouldOfferReEntry } from '@/lib/albatross/forgiveness';
 import {
   CAPACITY_LABEL,
   type Capacity,
@@ -19,12 +15,9 @@ import {
   importantMailToday,
   needsYouToday,
   openWork,
-  practiceLine,
   type TodayApproval,
   type TodayEvent,
-  type TodayPractice,
   type TodayWork,
-  waitingOnSomebody,
 } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -46,51 +39,30 @@ interface ExecutionMove {
 
 interface ExecutionSnapshot {
   currentMove: ExecutionMove | null;
-  missedMoves: ExecutionMove[];
   needsYou: TodayWork[];
 }
 
-/** Recovery requires the stable server step key used by the recovery mutation. */
-export function keyedMissedMoves<T extends { stepKey: string | null }>(
-  moves: T[],
-): Array<T & { stepKey: string }> {
-  return moves.filter((move): move is T & { stepKey: string } => Boolean(move.stepKey));
-}
+export const TODAY_EMPTY_LINE = 'Nothing is scheduled. The day is yours.';
+export const IMPORTANT_MAIL_MAX = 4;
 
-export function MissedMovesRecoverySection({
-  moves,
-}: {
-  moves: Array<Pick<ExecutionMove, 'workId' | 'stepKey' | 'stepTitle' | 'scheduledStartAt'>>;
-}) {
-  const keyedMoves = keyedMissedMoves(moves);
-  if (!keyedMoves.length) return null;
-  return (
-    <Section title="The plan slipped" note="Choose what should happen now.">
-      <div className="space-y-3">
-        {keyedMoves.map((move) => (
-          <LapsePrompt
-            key={`${move.workId}:${move.stepKey || move.stepTitle}`}
-            workId={move.workId}
-            stepKey={move.stepKey}
-            stepTitle={move.stepTitle}
-            plannedAt={move.scheduledStartAt || undefined}
-          />
-        ))}
-      </div>
-    </Section>
-  );
+/** The one line under "Do this next": where the move sits in the day. */
+export function nextMoveWhen(move: Pick<ExecutionMove, 'phase' | 'scheduledStartAt'>): string | null {
+  if (move.phase === 'active') return 'Now';
+  if (move.phase === 'upcoming' && move.scheduledStartAt) {
+    return new Intl.DateTimeFormat([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(
+      move.scheduledStartAt,
+    );
+  }
+  return null;
 }
 
 /**
- * Today. What deserves attention today, given the life this person actually
- * has today — not a magazine about it.
+ * Today. The day, the important mail, and at most one next move.
  *
- * It reads in layers down one scroll. The live layer comes first: what needs
- * the user and what could move on the left, the day drawn to scale on the
- * right. The brief's synthesis follows underneath, in the same scroll.
- *
- * The live layer is queried on every load, so the top of the page can never be
- * stale. The brief is generated, and says so.
+ * The page reads in one scroll: the plate, the capacity line, then a
+ * two-column layer with the next move and the mail on the left and the day
+ * drawn to scale on the right. The brief follows underneath. Nothing here
+ * stacks Work above the calendar. Work lives on its own page.
  */
 export function TodaySurface({ brief }: { brief?: ReactNode }) {
   const { isAuthenticated } = useConvexAuth();
@@ -102,7 +74,6 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
     setSelectedWorkId(workId);
     setPrimaryView('albatrosses');
   };
-  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
   const capacity = useClientStore((s) => s.capacity);
   const setCapacity = useClientStore((s) => s.setCapacity);
   // One timestamp for the whole render, so the window and the dateline agree.
@@ -125,38 +96,23 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
 
   const rows = work || [];
   // Calendar holds expire while Today may remain open on a second monitor.
-  // Refresh the eligibility clock on a bounded cadence so the authoritative
-  // current move and missed-block recovery stay honest without a reload.
+  // Refresh the clock on a bounded cadence so the current move stays honest
+  // without a reload.
   useEffect(() => {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => globalThis.clearInterval(timer);
   }, []);
-  const clientAttention = needsYouToday(rows, approvals || []);
-  const attention = {
-    work: execution?.needsYou || [],
-    approvals: clientAttention.approvals,
-  };
+  const attention = needsYouToday(rows, approvals || [], nowMs);
   const schedule = fixedSchedule(events || []);
   const [dayChangedOpen, setDayChangedOpen] = useState(false);
-  const waiting = waitingOnSomebody(rows);
   const loading = work === undefined || execution === undefined;
+  const markSeen = useClientStore((s) => s.markSeen);
+  useEffect(() => {
+    markSeen();
+  }, [markSeen]);
 
-  const checkin = useQuery(api.albatrossNotifications.currentCheckin, isAuthenticated ? {} : 'skip') as
-    | DailyCheckinData
-    | null
-    | undefined;
-  const [checkinOpen, setCheckinOpen] = useState(false);
-  const carryoverCheckin = Boolean(
-    checkin && checkin.localDate !== new Intl.DateTimeFormat('en-CA').format(new Date(nowMs)),
-  );
-
-  const practices = useQuery(
-    api.albatrossRoutines.activePractices,
-    isAuthenticated ? { limit: 2 } : 'skip',
-  ) as TodayPractice[] | undefined;
-
-  // Important mail rides on the brief's own attention index — the same source
-  // that decides what the brief leads with. Today does not build a second one.
+  // Important mail rides on the brief's own attention index. The same source
+  // decides what the brief leads with. Today does not build a second one.
   const latestBrief = useReactQuery({
     queryKey: ['daily-report', 'today-mail'],
     queryFn: async () =>
@@ -171,36 +127,25 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
       from: String(item.from || item.fromName || ''),
       reason: item.reason ?? item.why ?? null,
     })),
-  );
-
-  // Re-entry and the staleness review both live at the top of Today, above
-  // everything else, because they change what the rest of the page means.
-  const lastSeenAt = useClientStore((s) => s.lastSeenAt);
-  const markSeen = useClientStore((s) => s.markSeen);
-  const [reEntryDismissed, setReEntryDismissed] = useState(false);
-  const [reviewDismissed, setReviewDismissed] = useState(false);
-  const [awayDays] = useState(() => reEntryDaysAway(lastSeenAt, Date.now()));
-  const [showReEntry] = useState(() => shouldOfferReEntry(lastSeenAt, Date.now()));
-  useEffect(() => {
-    markSeen();
-  }, [markSeen]);
-  const stale = useMemo(() => reviewBatch(rows, nowMs), [rows, nowMs]);
+  ).slice(0, IMPORTANT_MAIL_MAX);
 
   const shape = dayShapeLine({
-    needsYouCount: attention.work.length + attention.approvals.length,
+    needsYouCount: (execution?.needsYou || []).length + attention.approvals.length,
     eventCount: schedule.length,
     capacity,
-    carryingCount: openWork(rows).length,
+    carryingCount: openWork(rows, nowMs).length,
   });
+
+  const move = execution?.currentMove ?? null;
+  const when = move ? nextMoveWhen(move) : null;
+  const leftEmpty = !loading && !move && !mail.length;
 
   return (
     <section className="report-paper flex h-full min-h-0 flex-col">
       <div className="@container min-h-0 flex-1 overflow-y-auto">
         {/* The plate. It carries the day's art, its dateline and its edition
-          title, and it derives all three from today rather than from the brief
-          — so it is right on a morning when nothing has been written yet, and
-          there is only ever one of it on the page. It scrolls away with the
-          page; a plate this size pinned to the top would eat the day. */}
+          title, and it derives all three from today rather than from the brief,
+          so it is right on a morning when nothing has been written yet. */}
         <BriefMasthead generatedAt={nowMs} bleed={false} />
 
         <header className="border-b border-[var(--color-border)] px-5 pb-4">
@@ -209,8 +154,8 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
               <p className="max-w-xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">{shape}</p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              {/* The user states their own capacity. Albatross may later notice a
-                pattern, but it does not diagnose anybody's day for them. */}
+              {/* The user states their own capacity. Albatross does not
+                diagnose anybody's day for them. */}
               <button
                 type="button"
                 aria-expanded={dayChangedOpen}
@@ -247,8 +192,8 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
             <div className="mx-auto mt-3 max-w-5xl rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
               <p className="text-[13px] font-medium">What changed?</p>
               <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-                Today's plan was a guess. Tell Albatross how the day actually looks and it will use less of it
-                — nothing is lost either way.
+                Today's plan was a guess. Tell Albatross how the day looks now and it will use less of it.
+                Nothing is lost either way.
               </p>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {(
@@ -278,154 +223,33 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
         <div className="px-5 pb-16 pt-6">
           <div className="mx-auto grid max-w-5xl gap-8 @container lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
             <div className="min-w-0">
-              {showReEntry && !reEntryDismissed ? (
-                <div className="mb-8">
-                  <ReEntry
-                    days={awayDays}
-                    onShowUrgent={() => {
-                      setCapacity('low');
-                      setReEntryDismissed(true);
-                    }}
-                    onReviewOld={() => {
-                      setReviewDismissed(false);
-                      setReEntryDismissed(true);
-                    }}
-                    onDismiss={() => setReEntryDismissed(true)}
-                  />
-                </div>
-              ) : null}
-
-              {stale.length && !reviewDismissed ? (
-                <div className="mb-8">
-                  <ReviewBatch items={stale} />
-                </div>
-              ) : null}
-
               {loading ? (
                 <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading today’s move…</p>
               ) : null}
 
-              {execution?.currentMove ? (
+              {move ? (
                 <Section
                   title="Do this next"
-                  note={
-                    execution.currentMove.phase === 'active'
-                      ? 'This block is happening now.'
-                      : execution.currentMove.phase === 'upcoming' && execution.currentMove.scheduledStartAt
-                        ? `Protected for ${new Intl.DateTimeFormat([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(execution.currentMove.scheduledStartAt)}.`
-                        : 'The clearest concrete move.'
-                  }
+                  note={when ? `Protected for ${when}.` : 'The clearest concrete move.'}
                 >
+                  {/* One line. The step in serif, the Work it belongs to after it. */}
                   <button
                     type="button"
-                    onClick={() => openAlbatross(execution.currentMove!.workId)}
-                    className="w-full rounded-xl border border-[var(--color-accent)]/35 bg-[var(--color-bg-elevated)] px-5 py-5 text-left shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-bg-subtle)]"
+                    onClick={() => openAlbatross(move.workId)}
+                    className="flex w-full items-baseline gap-3 rounded-xl border border-[var(--color-accent)]/35 bg-[var(--color-bg-elevated)] px-4 py-3 text-left shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-bg-subtle)]"
                   >
-                    <span className="block text-[11.5px] text-[var(--color-text-faint)]">
-                      {execution.currentMove.workTitle}
-                      {execution.currentMove.areaName ? ` · ${execution.currentMove.areaName}` : ''}
+                    <span className="min-w-0 flex-1 truncate font-serif text-[17px] font-semibold leading-snug">
+                      {move.stepTitle}
                     </span>
-                    <span className="mt-1 block font-serif text-[20px] font-semibold leading-tight">
-                      {execution.currentMove.stepTitle}
-                    </span>
-                    {execution.currentMove.detail ? (
-                      <span className="mt-1.5 block max-w-2xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                        {execution.currentMove.detail}
-                      </span>
-                    ) : null}
-                    <span className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--color-border)]/70 pt-3 text-[12px]">
-                      <span className="text-[var(--color-text-muted)]">
-                        {execution.currentMove.remainingSteps === 1
-                          ? 'Last planned step'
-                          : `${execution.currentMove.remainingSteps} of ${execution.currentMove.totalSteps} steps remain`}
-                      </span>
-                      <span className="font-medium text-[var(--color-accent)]">Open guided work</span>
-                    </span>
-                  </button>
-                </Section>
-              ) : !loading ? (
-                <Section title="Do this next" note="There is no concrete move waiting.">
-                  <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
-                    The current plan is clear. Add something only if it deserves a place in the day.
-                  </p>
-                </Section>
-              ) : null}
-
-              <MissedMovesRecoverySection moves={execution?.missedMoves || []} />
-
-              {attention.work.length || attention.approvals.length ? (
-                <Section title="Needs you" note="Albatross cannot move these without you.">
-                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    {attention.approvals.map((approval) => (
-                      <li key={approval._id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (approval.intentId) openAlbatross(approval.intentId);
-                          }}
-                          className="flex w-full items-start gap-3 px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-serif text-[16px] font-semibold">
-                              {approval.title}
-                            </span>
-                            <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
-                              Waiting for your approval
-                            </span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                    {attention.work.map((item) => (
-                      <li key={item._id}>
-                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                      </li>
-                    ))}
-                  </ul>
-                </Section>
-              ) : !loading ? (
-                <Section title="Needs you" note="Albatross cannot move these without you.">
-                  <p className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">
-                    Nothing needs you right now.
-                  </p>
-                </Section>
-              ) : null}
-
-              {practices?.length ? (
-                <Section title="Ongoing practices" note="Kept over time, not scored week by week.">
-                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    {practices.map((practice) => (
-                      <li key={practice._id} className="px-4 py-3">
-                        <p className="text-[13.5px] font-medium">{practice.title}</p>
-                        <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-                          {practiceLine(practice, nowMs)}
-                          {practice.areaName ? ` · ${practice.areaName}` : ''}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </Section>
-              ) : null}
-
-              {checkin ? (
-                <Section title="Evening check-in" note="How did the day actually go?">
-                  <button
-                    type="button"
-                    onClick={() => setCheckinOpen(true)}
-                    className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]"
-                  >
-                    <span className="block text-[13.5px] font-medium">
-                      {carryoverCheckin ? 'Yesterday’s check-in is still open' : 'Ready when you are'}
-                    </span>
-                    <span className="mt-0.5 block text-[12px] text-[var(--color-text-muted)]">
-                      What moved, what changed, and what tomorrow should protect.
+                    <span className="shrink-0 truncate text-[12px] text-[var(--color-text-muted)]">
+                      {move.workTitle}
                     </span>
                   </button>
                 </Section>
               ) : null}
 
               {mail.length ? (
-                <Section title="Important mail" note="Only what bears on an open Albatross or on today.">
+                <Section title="Important mail" note="Only what bears on today.">
                   <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                     {mail.map((item) => (
                       <li key={item.id}>
@@ -445,31 +269,8 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                 </Section>
               ) : null}
 
-              {waiting.length ? (
-                <Section title="Waiting, not forgotten" note="These depend on somebody or something else.">
-                  <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    {waiting.map((item) => (
-                      <li key={item._id}>
-                        <AlbatrossRow item={item} onOpen={() => openAlbatross(item._id)} />
-                      </li>
-                    ))}
-                  </ul>
-                </Section>
-              ) : null}
-
-              {!loading &&
-              !attention.work.length &&
-              !attention.approvals.length &&
-              !execution?.currentMove ? (
-                <div className="mt-2">
-                  <button
-                    type="button"
-                    onClick={() => setCaptureOpen(true)}
-                    className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
-                  >
-                    Get this off my mind
-                  </button>
-                </div>
+              {leftEmpty ? (
+                <p className="text-[13px] text-[var(--color-text-muted)]">{TODAY_EMPTY_LINE}</p>
               ) : null}
             </div>
 
@@ -493,7 +294,6 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           {brief ? <div className="mx-auto mt-12 max-w-5xl">{brief}</div> : null}
         </div>
       </div>
-      <DailyCheckin checkin={checkin || null} open={checkinOpen} onOpenChange={setCheckinOpen} />
     </section>
   );
 }

@@ -107,6 +107,27 @@ struct ShellStatusOverlay: View {
     }
 }
 
+// The wake nudge host: one glass capsule under the navigation bar, anchored
+// top trailing. Both shells apply it; the Mac window uses the same anchor.
+struct ShellWakeNudgeModifier: ViewModifier {
+    let topInset: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .topTrailing) {
+                WakeNudgeOverlay()
+                    .padding(.horizontal, 16)
+                    .padding(.top, topInset)
+            }
+    }
+}
+
+extension View {
+    func shellWakeNudge(topInset: CGFloat = 8) -> some View {
+        modifier(ShellWakeNudgeModifier(topInset: topInset))
+    }
+}
+
 struct PendingSendToast: View {
     @Environment(AppEnvironment.self) private var environment
     let record: PendingSendRecord

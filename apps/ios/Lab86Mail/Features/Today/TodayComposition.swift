@@ -32,22 +32,15 @@ enum TodayComposition {
     }
 
     /// One sentence about the shape of the day. Never a tally, never a scolding.
+    ///
+    /// Today no longer lists what Albatross carries, so the deck does not
+    /// count it either. The day is the calendar, the mail, and one move.
     static func dayShapeLine(
         needsYouCount: Int,
         eventCount: Int,
-        capacity: Capacity,
-        carryingCount: Int = 0
+        capacity: Capacity
     ) -> String {
         if needsYouCount == 0 && eventCount == 0 {
-            // "The day is yours" is only true when there is genuinely nothing in
-            // it. Saying it while Albatross is visibly carrying work reads as a
-            // system that has not looked at its own page.
-            if carryingCount == 1 {
-                return "Nothing needs you today. Albatross is carrying one thing on its own."
-            }
-            if carryingCount > 1 {
-                return "Nothing needs you today. Albatross is carrying \(carryingCount) things on its own."
-            }
             return "Nothing needs you and nothing is booked. The day is yours."
         }
         var parts: [String] = []
@@ -62,6 +55,35 @@ enum TodayComposition {
         case .normal: return sentence
         }
     }
+
+    /// The one "Next move" line. It renders only when a move is scheduled
+    /// for today. An unscheduled move, or one booked for another day, gives
+    /// Today nothing to say.
+    struct NextMove: Equatable, Sendable {
+        let workID: String
+        let workTitle: String
+        let stepTitle: String
+        let time: String
+    }
+
+    static func nextMove(
+        from move: WorkExecutionMove?,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> NextMove? {
+        guard let move, let start = move.scheduledStartAt,
+              calendar.isDate(start, inSameDayAs: now) else { return nil }
+        // A block that passed is a missed move. That prompt lives in the Work
+        // detail, never on Today.
+        if let end = move.scheduledEndAt, end <= now { return nil }
+        var style = Date.FormatStyle(calendar: calendar, timeZone: calendar.timeZone).hour().minute()
+        style.locale = calendar.locale ?? .current
+        let time = start <= now ? "Now" : start.formatted(style)
+        return NextMove(workID: move.workID, workTitle: move.workTitle, stepTitle: move.stepTitle, time: time)
+    }
+
+    /// At most four rows. The section is not a digest.
+    static let importantMailLimit = 4
 
     /// How old the brief is, in plain words. Nil when none has ever been written.
     static func briefFreshness(generatedAt: Date?, now: Date) -> String? {

@@ -271,11 +271,13 @@ describe('the surfaces use it', () => {
     expect(detail).toContain('Put it down');
   });
 
-  test('Today carries the review and the return, above everything else', () => {
+  test('the Work page carries the review, and Today does not', () => {
+    const list = readFileSync('components/albatross/AlbatrossesSurface.tsx', 'utf8');
     const today = readFileSync('components/report/TodaySurface.tsx', 'utf8');
-    expect(today).toContain('ReviewBatch');
-    expect(today).toContain('ReEntry');
-    expect(today.indexOf('<ReEntry')).toBeLessThan(today.indexOf('Needs you'));
+    expect(list).toContain('<ReviewBatch');
+    expect(list.indexOf('<ReviewBatch')).toBeLessThan(list.indexOf('visibleGroups.map'));
+    expect(today).not.toContain('ReviewBatch');
+    expect(today).not.toContain('ReEntry');
   });
 
   test('the lapse record survives account deletion policy', () => {

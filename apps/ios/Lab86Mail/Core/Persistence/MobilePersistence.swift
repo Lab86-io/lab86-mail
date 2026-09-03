@@ -21,6 +21,7 @@ enum MobileCommandKind: String, Codable, CaseIterable, Sendable {
     case taskCreate = "task.create"
     case taskSetCompleted = "task.setCompleted"
     case workCapture = "work.capture"
+    case workSetHorizon = "work.setHorizon"
     case approvalApprove = "approval.approve"
     case approvalReject = "approval.reject"
 }
@@ -148,6 +149,34 @@ struct WorkCaptureCommandPayload: Codable, Equatable, Sendable {
     let areaID: String?
 }
 
+// The horizon a client asks for. Dates are ISO timestamps on the wire, like
+// every other client-written time in a command.
+struct WorkHorizonCommandRequest: Codable, Equatable, Sendable {
+    let kind: WorkHorizonKind
+    let notBeforeAt: Date?
+    let byAt: Date?
+    let label: String?
+
+    init(kind: WorkHorizonKind, notBeforeAt: Date? = nil, byAt: Date? = nil, label: String? = nil) {
+        self.kind = kind
+        self.notBeforeAt = notBeforeAt
+        self.byAt = byAt
+        self.label = label
+    }
+
+    init(_ horizon: WorkHorizon) {
+        self.init(kind: horizon.kind, notBeforeAt: horizon.notBefore, byAt: horizon.by, label: horizon.label)
+    }
+}
+
+// Exactly one of `horizon` and `horizonCleared` is set. A nil horizon clears.
+struct WorkSetHorizonCommandPayload: Codable, Equatable, Sendable {
+    let workID: String
+    let horizon: WorkHorizonCommandRequest?
+
+    var horizonCleared: Bool { horizon == nil }
+}
+
 struct ApprovalApproveCommandPayload: Codable, Equatable, Sendable {
     let approvalID: String
 }
@@ -177,6 +206,7 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case taskCreate(TaskCreateCommandPayload)
     case taskSetCompleted(TaskCompletionCommandPayload)
     case workCapture(WorkCaptureCommandPayload)
+    case workSetHorizon(WorkSetHorizonCommandPayload)
     case approvalApprove(ApprovalApproveCommandPayload)
     case approvalReject(ApprovalRejectCommandPayload)
 
@@ -201,6 +231,7 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
         case .taskCreate: .taskCreate
         case .taskSetCompleted: .taskSetCompleted
         case .workCapture: .workCapture
+        case .workSetHorizon: .workSetHorizon
         case .approvalApprove: .approvalApprove
         case .approvalReject: .approvalReject
         }
