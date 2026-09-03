@@ -15,6 +15,9 @@ struct CalendarView: View {
     @State private var visibleMonth: Date?
     @State private var visibleYear: Int?
     @State private var todayToken = 0
+    // Events and tasks bucketed by day, rebuilt when the store's data moves
+    // rather than re-filtered by every cell on every layout pass.
+    @State private var dayIndex = CalendarDayIndex.empty
     @AppStorage("calendarViewMode") private var viewMode = "day"
 
     private static let dayWindow = -28...56
@@ -49,6 +52,8 @@ struct CalendarView: View {
             visibleMonth = nil
             visibleYear = nil
         }
+        .onChange(of: store.events, initial: true) { rebuildDayIndex() }
+        .onChange(of: store.dueCalendarTasks, initial: true) { rebuildDayIndex() }
         .navigationDestination(item: $navigation.eventRoute) { route in
             EventDetailView(route: route)
         }
@@ -283,8 +288,7 @@ struct CalendarView: View {
             .frame(height: 34)
             WeekTimelineView(
                 weekStart: weekPage,
-                events: store.events,
-                tasks: store.dueCalendarTasks,
+                index: dayIndex,
                 selectedDay: selectedDay,
                 onOpen: { environment.navigation.openEvent($0) },
                 onOpenTask: { openTask = $0 },
@@ -304,8 +308,7 @@ struct CalendarView: View {
             ForEach(weekRange, id: \.self) { weekStart in
                 WeekTimelineView(
                     weekStart: weekStart,
-                    events: store.events,
-                    tasks: store.dueCalendarTasks,
+                    index: dayIndex,
                     selectedDay: selectedDay,
                     onOpen: { environment.navigation.openEvent($0) },
                     onOpenTask: { openTask = $0 },
@@ -332,8 +335,20 @@ struct CalendarView: View {
     @ViewBuilder private var monthBody: some View {
         #if canImport(HorizonCalendar)
         horizonMonthBody
+        #elseif os(macOS)
+        MacMonthGridView(
+            index: dayIndex,
+            selectedDay: selectedDay,
+            onSelectDay: { day in select(day: day) },
+            onOpenDay: { day in
+                select(day: day)
+                viewMode = "day"
+            },
+            onVisibleMonthChange: { visibleMonth = $0 },
+            todayToken: todayToken
+        )
+        .background(Color(uiColor: .systemBackground))
         #else
-        // The Mac month grid is still to come; agenda keeps the mode usable.
         agendaBody
         #endif
     }
@@ -341,8 +356,7 @@ struct CalendarView: View {
     #if canImport(HorizonCalendar)
     private var horizonMonthBody: some View {
         HorizonMonthView(
-            events: store.events,
-            tasks: store.dueCalendarTasks,
+            index: dayIndex,
             selectedDay: selectedDay,
             onSelectDay: { day in
                 select(day: day)
@@ -554,23 +568,25 @@ struct CalendarView: View {
 
     // MARK: - Event slicing
 
+    private func rebuildDayIndex() {
+        dayIndex = CalendarDayIndex(
+            events: store.events,
+            tasks: store.dueCalendarTasks,
+            calendar: calendar,
+            revision: dayIndex.revision + 1
+        )
+    }
+
     private func timedEvents(on day: Date) -> [CalendarEventSummary] {
-        let start = calendar.startOfDay(for: day)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        return store.events.filter { !$0.allDay && $0.start < end && $0.end > start }
+        dayIndex.timed(on: day)
     }
 
     private func allDayEvents(on day: Date) -> [CalendarEventSummary] {
-        let start = calendar.startOfDay(for: day)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        return store.events.filter { $0.allDay && $0.start < end && $0.end > start }
+        dayIndex.allDay(on: day)
     }
 
     private func dueTasks(on day: Date) -> [TaskSummary] {
-        store.dueCalendarTasks.filter { task in
-            guard let due = task.due else { return false }
-            return calendar.isDate(due, inSameDayAs: day)
-        }
+        dayIndex.tasks(on: day)
     }
 
     private var groupedDates: [(Date, [CalendarEventSummary], [TaskSummary])] {
@@ -870,8 +886,7 @@ private extension Int {
 
 private struct WeekTimelineView: View {
     let weekStart: Date
-    let events: [CalendarEventSummary]
-    let tasks: [TaskSummary]
+    let index: CalendarDayIndex
     let selectedDay: Date
     let onOpen: (CalendarEventSummary) -> Void
     let onOpenTask: (TaskSummary) -> Void
@@ -1160,22 +1175,15 @@ private struct WeekTimelineView: View {
     }
 
     private func timed(on day: Date) -> [CalendarEventSummary] {
-        let start = calendar.startOfDay(for: day)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        return events.filter { !$0.allDay && $0.start < end && $0.end > start }
+        index.timed(on: day)
     }
 
     private func allDay(on day: Date) -> [CalendarEventSummary] {
-        let start = calendar.startOfDay(for: day)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        return events.filter { $0.allDay && $0.start < end && $0.end > start }
+        index.allDay(on: day)
     }
 
     private func dueTasks(on day: Date) -> [TaskSummary] {
-        tasks.filter { task in
-            guard let due = task.due else { return false }
-            return calendar.isDate(due, inSameDayAs: day)
-        }
+        index.tasks(on: day)
     }
 
     private func shortHour(_ hour: Int) -> String {

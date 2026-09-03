@@ -285,4 +285,67 @@ struct CalendarLayoutTests {
         // Moments before the day clamp to its start.
         #expect(TimelineLayout.wallClockMinutes(of: date(2026, 10, 31, 23), on: day, calendar: calendar) == 0)
     }
+
+    // MARK: - Day index
+
+    private func task(_ id: String, due: Date?) -> TaskSummary {
+        TaskSummary(id: id, title: "Task \(id)", column: "Tasks", due: due, completed: false, order: 0)
+    }
+
+    @Test
+    func theDayIndexBucketsEveryDayAnEntryTouches() {
+        let events = [
+            event("one", from: date(2026, 7, 6, 9), to: date(2026, 7, 6, 10)),
+            event("span", from: date(2026, 7, 6, 22), to: date(2026, 7, 8, 2)),
+            event("whole", from: date(2026, 7, 7), to: date(2026, 7, 8), allDay: true),
+            event("ends-at-midnight", from: date(2026, 7, 9, 23), to: date(2026, 7, 10)),
+        ]
+        let tasks = [task("t1", due: date(2026, 7, 7, 15)), task("none", due: nil)]
+        let index = CalendarDayIndex(events: events, tasks: tasks, calendar: calendar, revision: 3)
+
+        #expect(index.timed(on: date(2026, 7, 6)).map(\.id) == ["one", "span"])
+        #expect(index.timed(on: date(2026, 7, 7)).map(\.id) == ["span"])
+        #expect(index.timed(on: date(2026, 7, 8)).map(\.id) == ["span"])
+        #expect(index.allDay(on: date(2026, 7, 7)).map(\.id) == ["whole"])
+        #expect(index.allDay(on: date(2026, 7, 8)).isEmpty)
+        // All-day entries lead when a day is asked for everything.
+        #expect(index.events(on: date(2026, 7, 7)).map(\.id) == ["whole", "span"])
+        // An event ending exactly at midnight belongs to the day it started.
+        #expect(index.timed(on: date(2026, 7, 10)).isEmpty)
+        #expect(index.tasks(on: date(2026, 7, 7)).map(\.id) == ["t1"])
+        #expect(index.tasks(on: date(2026, 7, 6)).isEmpty)
+        #expect(index.hasEntries(on: date(2026, 7, 8)))
+        #expect(!index.hasEntries(on: date(2026, 7, 11)))
+        // Any moment of the day resolves to the same bucket.
+        #expect(index.timed(on: date(2026, 7, 6, 17, 45)).map(\.id) == ["one", "span"])
+    }
+
+    @Test
+    func theDayIndexCapsARunawaySpanAndCarriesItsRevision() {
+        let runaway = event("forever", from: date(2026, 1, 1), to: date(2030, 1, 1))
+        let days = CalendarDayIndex.days(touchedBy: runaway, calendar: calendar)
+        #expect(days.count == CalendarDayIndex.maximumSpanDays)
+        let a = CalendarDayIndex(events: [], tasks: [], calendar: calendar, revision: 1)
+        let b = CalendarDayIndex(events: [runaway], tasks: [], calendar: calendar, revision: 1)
+        let c = CalendarDayIndex(events: [], tasks: [], calendar: calendar, revision: 2)
+        #expect(a == b)
+        #expect(a != c)
+    }
+
+    #if os(macOS)
+    @Test
+    func theMacMonthGridReportsTheMonthUnderAnOffset() {
+        let months = [date(2026, 6, 1), date(2026, 7, 1), date(2026, 8, 1)]
+        let june = MacMonthGridView.sectionHeight(
+            weeks: CalendarGrid.weeks(ofMonthContaining: months[0], calendar: calendar).count
+        )
+        #expect(MacMonthGridView.month(atOffset: 0, months: months, calendar: calendar) == months[0])
+        #expect(MacMonthGridView.month(atOffset: june - 1, months: months, calendar: calendar) == months[0])
+        #expect(
+            MacMonthGridView.month(atOffset: june + MacMonthGridView.monthSpacing + 1, months: months, calendar: calendar)
+                == months[1]
+        )
+        #expect(MacMonthGridView.month(atOffset: 100_000, months: months, calendar: calendar) == months[2])
+    }
+    #endif
 }
