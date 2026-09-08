@@ -123,6 +123,8 @@ async function runAgentReport(input: {
   reportId?: string;
 }): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
+  // Narrative research runs independently (hourly, after chat, or on request).
+  // Today reads its live result; a slow research run must not delay the base report.
   const tier = await resolveBriefPlanTier(input.userId);
 
   let structured: DailyReport;
@@ -303,6 +305,7 @@ export async function composeBudgetBrief(
           .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
         areas: areas.map((area) => ({ name: area.name, line: area.line })),
         tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
+        reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
         weather,
       },
       { generate: deps.generate, userId },

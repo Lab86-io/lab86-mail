@@ -203,6 +203,26 @@ function SearchContent({
     retry: false,
   });
   const pages = scope === 'all' ? searchPages(trimmed) : [];
+  const narrative = useQuery({
+    queryKey: ['global-search', 'narrative', query],
+    queryFn: async ({ signal }) => {
+      const data = await readSearchSource<{
+        entries: Array<{ _id: string; title: string; text: string; occurredAt: number }>;
+      }>(`/api/narrative?q=${encodeURIComponent(query)}`, signal);
+      return (data.entries || []).slice(0, 5).map(
+        (entry): SearchResult => ({
+          id: `narrative:${entry._id}`,
+          title: entry.title,
+          detail: entry.text.slice(0, 140),
+          timestamp: entry.occurredAt,
+          target: { kind: 'narrative', id: entry._id },
+        }),
+      );
+    },
+    enabled: scope === 'all' && (query.length >= 2 || !trimmed),
+    staleTime: 0,
+    retry: false,
+  });
   const files = localFileResults(trimmed, documents.data?.documents || [], uploads.data?.files || []);
   const go = (path: string) => {
     if (pathname !== '/' || !path.startsWith('/?')) router.push(path);
@@ -438,6 +458,11 @@ function SearchContent({
               : 'Jump to a page, or type to find mail, files, and events.'}
           </p>
         )}
+        {scope === 'all' && narrative.data?.length ? (
+          <CommandGroup heading={trimmed ? 'Related history' : 'Pick up a thread'}>
+            {narrative.data.map(row)}
+          </CommandGroup>
+        ) : null}
         {scope === 'all' ? (
           <CommandGroup heading="Actions">
             {matchesSearch('compose new message email', trimmed) ? (

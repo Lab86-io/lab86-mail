@@ -10,6 +10,7 @@ import { SettingsIcon } from '@/components/ui/settings';
 import type { SearchTarget } from '@/lib/search/global-search';
 
 export function searchResultIcon(target: SearchTarget) {
+  if (target.kind === 'narrative') return HistoryIcon;
   if (target.kind === 'page') {
     if (target.view === 'areas') return FolderIcon;
     if (target.view === 'activity') return HistoryIcon;

@@ -39,6 +39,7 @@ export interface BriefProseInput {
   // At most 3 area lines.
   areas: Array<{ name: string; line: string }>;
   tomorrowIntent?: string | null;
+  reflection?: string | null;
   // One short weather sentence, or null.
   weather?: string | null;
 }
@@ -57,7 +58,8 @@ Rules:
 - Use only supplied facts. Never invent people, dates, events, or outcomes.
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words.
 - Never write the word "AI". Never mention models, assistants, or this brief itself.
-- Never summarize a summary: each line comes from the email, not from the reason field.`;
+- Never summarize a summary: each item line comes from the email, not from the reason field.
+- When a reflection is supplied, distinguish the user's reported progress from independently observed evidence. Do not manufacture completion or assume calendar attendance. The user's current intention outranks artifact volume.`;
 
 // ---- Day table -------------------------------------------------------------
 
@@ -334,6 +336,7 @@ export function buildBriefProsePrompt(input: BriefProseInput): string {
     now: `${days[0].weekday}, ${days[0].label}, ${localTimeLabel(input.now, input.timezone)} (${input.timezone})`,
     weather: input.weather || null,
     tomorrowIntent: input.tomorrowIntent || null,
+    reflection: input.reflection || null,
     items: input.items.map((item) => ({
       key: item.key,
       lane: item.lane,

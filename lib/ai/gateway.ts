@@ -164,10 +164,15 @@ export async function resolveAiRuntime(input: {
   userId?: string | null;
   speed?: AiSpeed;
   feature: string;
+  narrativeModel?: string;
 }): Promise<ResolvedAiRuntime> {
   const userId = input.userId || getAiRequestContext().userId || null;
   let speed = input.speed || 'fast';
   let platformPreference: PlatformPreference | undefined;
+  const narrativeModel =
+    input.feature.startsWith('narrative_') && input.narrativeModel === 'z-ai/glm-5.3-flash'
+      ? input.narrativeModel
+      : undefined;
 
   if (userId) {
     const state = await convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId });
@@ -175,7 +180,8 @@ export async function resolveAiRuntime(input: {
     if (isUserOpenRouterKeyRequired()) {
       if (state.key?.provider === 'openrouter') {
         const apiKey = decryptSecret(state.key.encryptedKey);
-        const modelName = settingsModelFor(speed, state.settings) || modelFor('openrouter', speed);
+        const modelName =
+          narrativeModel || settingsModelFor(speed, state.settings) || modelFor('openrouter', speed);
         return {
           userId,
           source: 'byok',
@@ -197,7 +203,12 @@ export async function resolveAiRuntime(input: {
       }
       const apiKey = decryptSecret(state.key.encryptedKey);
       const provider = state.key.provider;
-      const modelName = settingsModelFor(speed, state.settings) || modelFor(provider, speed);
+      if (narrativeModel && provider !== 'openrouter')
+        throw new Error(
+          'The selected narrative model requires an OpenRouter key. Choose Current model in Narrative settings to use your existing provider.',
+        );
+      const modelName =
+        narrativeModel || settingsModelFor(speed, state.settings) || modelFor(provider, speed);
       return {
         userId,
         source: 'byok',
@@ -211,8 +222,8 @@ export async function resolveAiRuntime(input: {
     const budgetPolicy = assertLab86Budget(state, entitlement, input.feature);
     if (budgetPolicy.forceFastModel && speed === 'primary') speed = 'fast';
     platformPreference = {
-      provider: state.settings?.provider,
-      modelName: settingsModelFor(speed, state.settings),
+      provider: narrativeModel ? 'openrouter' : state.settings?.provider,
+      modelName: narrativeModel || settingsModelFor(speed, state.settings),
     };
   }
 
@@ -220,7 +231,12 @@ export async function resolveAiRuntime(input: {
     throw new Error('Sign in and add your OpenRouter API key before using AI features.');
   }
 
-  const platform = platformRuntime(speed, platformPreference);
+  if (narrativeModel && !openrouter)
+    throw new Error('GLM narrative generation requires a configured OpenRouter route.');
+  const platform = platformRuntime(
+    speed,
+    narrativeModel ? { provider: 'openrouter', modelName: narrativeModel } : platformPreference,
+  );
   if (platform) {
     return {
       userId,
@@ -263,9 +279,10 @@ export async function generateTextForCurrentUser(
     userName,
     model: _ignored,
     maxOutputTokens,
+    narrativeModel,
     ...rest
   } = options as any;
-  const runtime = await resolveAiRuntime({ userId, speed, feature });
+  const runtime = await resolveAiRuntime({ userId, speed, feature, narrativeModel });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
     let lastErr: any;
     const runtimes = [runtime, ...agentFallbackRuntimes(runtime, feature)];

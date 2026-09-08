@@ -139,6 +139,7 @@ import {
 } from './mail-mutate';
 import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
+import { NARRATIVE_TOOLS } from './narrative';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
 import type { AnyTool } from './registry';
@@ -391,6 +392,7 @@ const allTools: AnyTool[] = [
   // Display tools — validated payloads rendered as rich tool-ui components in
   // chat (weather, charts, tables, code, media, maps, drafts…).
   ...DISPLAY_TOOLS,
+  ...NARRATIVE_TOOLS,
 ];
 
 export const TOOLS: Record<string, AnyTool> = Object.fromEntries(allTools.map((t) => [t.name, t]));

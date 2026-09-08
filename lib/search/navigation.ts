@@ -54,6 +54,10 @@ export function navigateSearchTarget(
   state.setSelectedThread(null);
   state.setCalendarSearchTarget(null);
   state.setSelectedWorkId(null);
+  if (target.kind === 'narrative') {
+    navigate(`/narrative${target.id ? `?id=${encodeURIComponent(target.id)}` : ''}`);
+    return;
+  }
   if (target.kind === 'settings') {
     navigate('/settings');
     return;
