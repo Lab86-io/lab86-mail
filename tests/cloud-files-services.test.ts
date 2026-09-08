@@ -435,7 +435,7 @@ describe('cloud file connection service', () => {
 });
 
 describe('cloud file browsing service', () => {
-  test('builds bounded Google search and folder requests and records success', async () => {
+  test('builds bounded Google search, isolates credential arguments, and records success', async () => {
     const accessed = mock(async () => undefined);
     const fetchMock = mock(async (url: string | URL | Request) => {
       const parsed = new URL(String(url));
@@ -447,15 +447,18 @@ describe('cloud file browsing service', () => {
       });
     });
     __setCloudFileBrowseDepsForTest({
-      getCloudFileAccess: (async () => ({
-        connection: {
-          connectionId: 'google-1',
-          provider: 'google_drive',
-          status: 'connected',
-          scopes: [],
-        },
-        accessToken: 'access',
-      })) as any,
+      getCloudFileAccess: (async (input: unknown) => {
+        expect(input).toEqual({ userId: 'user-1', connectionId: 'google-1' });
+        return {
+          connection: {
+            connectionId: 'google-1',
+            provider: 'google_drive',
+            status: 'connected',
+            scopes: [],
+          },
+          accessToken: 'access',
+        };
+      }) as any,
       markCloudFileConnectionAccess: accessed as any,
       fetch: fetchMock as any,
     });

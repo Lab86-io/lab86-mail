@@ -232,7 +232,12 @@ export async function browseCloudFiles(input: {
   query?: string;
   cursor?: string;
 }): Promise<CloudFilePage> {
-  const access = await dependencies.getCloudFileAccess(input);
+  // Browse-only fields (query, folder and cursor) are not valid arguments to
+  // the credential lookup's strict Convex validator.
+  const access = await dependencies.getCloudFileAccess({
+    userId: input.userId,
+    connectionId: input.connectionId,
+  });
   if (!access) throw new Error('File connection not found.');
   const { connection, accessToken } = access;
   try {

@@ -4,7 +4,12 @@
  * Type-light RPC client over `/api/tools/[name]`. Used by client components
  * via TanStack Query. The same registry that the AI agent and Codex see.
  */
-export async function callTool<T = any>(name: string, args: any = {}, headers: HeadersInit = {}): Promise<T> {
+export async function callTool<T = any>(
+  name: string,
+  args: any = {},
+  headers: HeadersInit = {},
+  signal?: AbortSignal,
+): Promise<T> {
   // Tools that parse naive date/times (e.g. calendar_create_event) need the
   // user's timezone. The agent passes it explicitly, but direct UI calls didn't
   // carry one, so created events landed in the wrong zone. Send the browser tz.
@@ -22,6 +27,7 @@ export async function callTool<T = any>(name: string, args: any = {}, headers: H
       ...headers,
     },
     body: JSON.stringify(args),
+    ...(signal ? { signal } : {}),
   });
   let data: any = null;
   let raw = '';

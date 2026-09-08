@@ -5,6 +5,7 @@ import { ChevronDown } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { CalendarSearchSelection } from '@/components/calendar/CalendarSearchSelection';
 import { CalendarBody } from '@/components/calendar/engine/calendar-body';
 import { type CalendarPersistence, CalendarProvider } from '@/components/calendar/engine/calendar-context';
 import { CalendarHeader } from '@/components/calendar/engine/calendar-header';
@@ -19,6 +20,7 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
 import { useCalendarResync } from '@/lib/calendar/use-calendar-resync';
+import { useClientStore } from '@/lib/client-state';
 import { TABLEAU10 } from '@/lib/shared/format';
 
 // Tableau-10 categorical palette now lives in lib/shared/format (re-exported
@@ -42,13 +44,21 @@ const WINDOW_PAST_MS = 92 * 86_400_000;
 const WINDOW_FUTURE_MS = 366 * 86_400_000;
 
 export function CalendarSurface() {
+  const searchTarget = useClientStore((s) => s.calendarSearchTarget);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const reduceMotion = useReducedMotion() ?? false;
   // Stable bounds: recomputing per render would resubscribe the live query.
-  const [window] = useState(() => ({
+  const [window, setWindow] = useState(() => ({
     startAt: Date.now() - WINDOW_PAST_MS,
     endAt: Date.now() + WINDOW_FUTURE_MS,
   }));
+  useEffect(() => {
+    if (!searchTarget) return;
+    const date = Date.parse(searchTarget.startIso);
+    if (Number.isFinite(date) && (date < window.startAt || date > window.endAt)) {
+      setWindow({ startAt: date - WINDOW_PAST_MS, endAt: date + WINDOW_FUTURE_MS });
+    }
+  }, [searchTarget, window]);
 
   const liveCalendars = useConvexQuery({
     query: (api as any).calendarData.liveCalendars,
@@ -293,7 +303,7 @@ export function CalendarSurface() {
     />
   );
 
-  if (nothingSynced) {
+  if (nothingSynced && !searchTarget) {
     return (
       <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
         <SyncLine active={sync.active} reduceMotion={reduceMotion} />
@@ -346,6 +356,7 @@ export function CalendarSurface() {
           persistence={persistence}
           writableCalendars={writableCalendars}
         >
+          <CalendarSearchSelection />
           <DndProvider>
             <CalendarHeader status={syncStatus} />
             <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} />
