@@ -1,22 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import {
-  ArrowUpRight,
-  CalendarDays,
-  CornerDownLeft,
-  FileText,
-  LayoutGrid,
-  Loader2,
-  Mail,
-  Moon,
-  Pencil,
-  Sun,
-  X,
-} from 'lucide-react';
+import { ArrowUpRight, CornerDownLeft, Loader2, Mail, Moon, Pencil, Sun, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
+import { SearchResultIcon } from '@/components/palette/SearchResultIcon';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { callTool, readSearchSource } from '@/lib/api-client';
@@ -234,25 +223,21 @@ function SearchContent({
     onNavigate(() => navigateSearchTarget(target, useClientStore.getState(), go));
   };
   const row = (result: SearchResult) => {
-    const Icon =
-      result.target.kind === 'mail'
-        ? Mail
-        : result.target.kind === 'calendar'
-          ? CalendarDays
-          : ['document', 'google', 'external'].includes(result.target.kind)
-            ? FileText
-            : LayoutGrid;
     const current = result.target.kind === 'page' && pathname === '/' && result.target.view === activeView;
     return (
       <CommandItem
         key={result.id}
         value={result.id}
+        data-icon-row
         onSelect={() => navigate(result)}
         className="group mx-1 gap-3 rounded-lg px-3 py-2.5 data-[selected=true]:bg-[var(--color-accent-soft)] data-[selected=true]:text-[var(--color-text)]"
       >
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
-          <Icon className="size-4 text-[var(--color-text-muted)]" />
-        </span>
+        <div
+          aria-hidden="true"
+          className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]"
+        >
+          <SearchResultIcon target={result.target} active={selected === result.id} />
+        </div>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium">{result.title}</span>
           <span className="block truncate text-[11px] text-[var(--color-text-muted)]">

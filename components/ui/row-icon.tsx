@@ -1,5 +1,6 @@
 'use client';
 
+import { useReducedMotion } from 'motion/react';
 import { type ComponentType, type Ref, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -27,27 +28,41 @@ export function RowIcon({
   icon: Icon,
   size = 16,
   className,
+  active,
 }: {
   icon: AnimatedIconComponent;
   size?: number;
   className?: string;
+  // Command palettes keep DOM focus in the input; their highlighted row can
+  // request the same animation without moving keyboard focus to the icon.
+  active?: boolean;
 }) {
   const handleRef = useRef<IconHandle>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (active && !reducedMotion) handleRef.current?.startAnimation();
+    else if (active !== undefined || reducedMotion) handleRef.current?.stopAnimation();
+  }, [active, reducedMotion]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const row = host.closest(ROW_SELECTOR) ?? host;
-    const enter = () => handleRef.current?.startAnimation();
-    const leave = () => handleRef.current?.stopAnimation();
+    const enter = () => {
+      if (!reducedMotion) handleRef.current?.startAnimation();
+    };
+    const leave = () => {
+      if (!active) handleRef.current?.stopAnimation();
+    };
     row.addEventListener('mouseenter', enter);
     row.addEventListener('mouseleave', leave);
     return () => {
       row.removeEventListener('mouseenter', enter);
       row.removeEventListener('mouseleave', leave);
     };
-  }, []);
+  }, [active, reducedMotion]);
 
   // The host must NOT be a <span>: the shadcn sidebar hides every direct span
   // child of a menu button in icon-collapsed mode (max-w-0 + opacity-0), which
