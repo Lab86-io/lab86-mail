@@ -124,8 +124,10 @@ guards, and truthful typed-query empty-state copy. Focused regression tests
 cover the shared shortcut/focus contract and the Area/Today layout boundaries.
 
 Validation before staging: web lint, typecheck, and optimized production build
-passed; the full Bun suite passed with 3,158 tests, with 100% line/function
-coverage on the new search-focus contract. Native macOS and iPhone
+passed; the full Bun suite passed with 3,165 tests, with 100% line/function
+coverage on the new search-focus contract and the search compiler. Added
+operator, recipient, date-bound, OR, and spam/trash-scope regression tests while
+resolving the inherited staging coverage-ratchet gap. Native macOS and iPhone
 simulator builds passed during implementation. Native test execution remains
 blocked by the pre-existing `DevelopmentAPIOverrideTests` initializer mismatch;
 no iPhone UI change is intended.

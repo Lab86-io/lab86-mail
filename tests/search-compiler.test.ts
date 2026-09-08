@@ -58,4 +58,56 @@ describe('compileMailSearch', () => {
     });
     expect(badDate.dropped.map((item) => item.reason)).toContain('unparseable date');
   });
+
+  test('compiles recipient, subject, and inclusive date bounds for supported providers', () => {
+    const ast = parseMailSearchQuery(
+      'to:team@example.test subject:Railway after:2026-09-01 before:2026-09-08',
+    );
+    for (const provider of ['google', 'icloud', 'imap'] as const) {
+      const plan = compileMailSearch(ast, { provider, limit: 100, pageToken: 'next-page' });
+      expect(plan.queryParams).toEqual({
+        limit: 80,
+        page_token: 'next-page',
+        to: 'team@example.test',
+        subject: 'Railway',
+        latest_message_after: Date.parse('2026-09-01T00:00:00Z') / 1000,
+        latest_message_before: Date.parse('2026-09-08T23:59:59Z') / 1000,
+      });
+      expect(plan.dropped).toEqual([]);
+    }
+  });
+
+  test('reports unsupported importance and OR filters rather than silently compiling them', () => {
+    const plan = compileMailSearch(
+      parseMailSearchQuery('is:important from:(a@example.test OR b@example.test)'),
+      {
+        provider: 'google',
+        limit: 10,
+      },
+    );
+    expect(plan.queryParams).toEqual({ limit: 10 });
+    expect(plan.dropped.map(({ reason }) => reason)).toEqual([
+      'structured search does not expose provider importance',
+      'structured search does not support OR groups yet',
+    ]);
+  });
+
+  test('does not send unsupported date bounds to Microsoft thread listing', () => {
+    const plan = compileMailSearch(parseMailSearchQuery('after:2026-09-01 before:2026-09-08'), {
+      provider: 'microsoft',
+      limit: 10,
+    });
+    expect(plan.queryParams).toEqual({ limit: 10 });
+    expect(plan.dropped).toHaveLength(2);
+    expect(plan.dropped.every(({ reason }) => reason.includes('Microsoft thread listing'))).toBe(true);
+  });
+
+  test('drops an invalid before date without discarding a valid subject filter', () => {
+    const plan = compileMailSearch(parseMailSearchQuery('subject:Railway before:not-a-date'), {
+      provider: 'google',
+      limit: 10,
+    });
+    expect(plan.queryParams).toEqual({ limit: 10, subject: 'Railway' });
+    expect(plan.dropped.map(({ reason }) => reason)).toEqual(['unparseable date']);
+  });
 });
