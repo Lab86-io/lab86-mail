@@ -41,6 +41,38 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('old unfinished work survives a large history of pinned derived chapters', async () => {
+    const t = harness();
+    await enable(t);
+    const old = await capture(t, 'Finish the long-running review', 'long-running');
+    await t.run(async (ctx) => {
+      await ctx.db.patch(old, { occurredAt: 1, pinned: true });
+      for (let i = 0; i < 210; i++)
+        await ctx.db.insert('narrativeEntries', {
+          userId,
+          key: `historic:${i}`,
+          level: 'day',
+          title: 'An old chapter',
+          text: 'A past account',
+          source: 'derived',
+          sourceIds: [old],
+          topics: [],
+          trust: 'inferred',
+          occurredAt: Date.now() - i,
+          observedAt: Date.now(),
+          updatedAt: Date.now(),
+          current: true,
+          pinned: true,
+        });
+    });
+    expect(
+      (await t.query(f.search, { ...args, query: 'long-running', level: 'observation' })).entries.some(
+        (e: any) => e._id === old,
+      ),
+    ).toBe(true);
+    await t.mutation(f.prepareBrief, args);
+    expect((await t.query(f.brief, args)).entry.sourceIds).toContain(old);
+  });
   test('correction preserves unrelated historical chapters and recompilation resets stale model labels', async () => {
     const t = harness();
     await enable(t);

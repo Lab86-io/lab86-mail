@@ -262,7 +262,9 @@ export const search = query({
       : [];
     const pinned = await ctx.db
       .query('narrativeEntries')
-      .withIndex('by_user_pinned', (q) => q.eq('userId', userId).eq('pinned', true))
+      .withIndex('by_user_level_pinned', (q) =>
+        q.eq('userId', userId).eq('level', 'observation').eq('pinned', true),
+      )
       .order('desc')
       .take(80);
     const candidates = [
@@ -652,7 +654,9 @@ export const compile = mutation({
       .take(800);
     const pinned = await ctx.db
       .query('narrativeEntries')
-      .withIndex('by_user_pinned', (q) => q.eq('userId', args.userId).eq('pinned', true))
+      .withIndex('by_user_level_pinned', (q) =>
+        q.eq('userId', args.userId).eq('level', 'observation').eq('pinned', true),
+      )
       .order('desc')
       .take(160);
     const rows = [
@@ -798,7 +802,9 @@ export const prepareBrief = mutation({
       .take(160);
     const pinned = await ctx.db
       .query('narrativeEntries')
-      .withIndex('by_user_pinned', (q) => q.eq('userId', args.userId).eq('pinned', true))
+      .withIndex('by_user_level_pinned', (q) =>
+        q.eq('userId', args.userId).eq('level', 'observation').eq('pinned', true),
+      )
       .order('desc')
       .take(80);
     const checkins = await ctx.db
@@ -806,9 +812,20 @@ export const prepareBrief = mutation({
       .withIndex('by_user_source', (q) => q.eq('userId', args.userId).eq('source', 'checkins'))
       .order('desc')
       .take(12);
-    const all = [...new Map([...checkins, ...pinned, ...recent].map((r) => [r._id, r])).values()].filter(
-      (r) => r.level === 'observation' && r.current,
-    );
+    const sourceHeads = (
+      await Promise.all(
+        prefs.sources.map((source) =>
+          ctx.db
+            .query('narrativeEntries')
+            .withIndex('by_user_source', (q) => q.eq('userId', args.userId).eq('source', source))
+            .order('desc')
+            .take(6),
+        ),
+      )
+    ).flat();
+    const all = [
+      ...new Map([...checkins, ...pinned, ...recent, ...sourceHeads].map((r) => [r._id, r])).values(),
+    ].filter((r) => r.level === 'observation' && r.current);
     const eligible = [];
     for (const row of all) {
       if (await visible(ctx, row, prefs)) eligible.push(row);

@@ -64,6 +64,7 @@ export const narrativeTables = {
     .index('by_user_source', ['userId', 'source'])
     .index('by_user_current_time', ['userId', 'current', 'occurredAt'])
     .index('by_user_pinned', ['userId', 'pinned', 'occurredAt'])
+    .index('by_user_level_pinned', ['userId', 'level', 'pinned', 'occurredAt'])
     .searchIndex('by_text', { searchField: 'text', filterFields: ['userId', 'current', 'level'] }),
   narrativeCursors: defineTable({
     userId: v.string(),
