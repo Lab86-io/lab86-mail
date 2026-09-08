@@ -1,7 +1,37 @@
 import { afterEach, expect, test } from 'bun:test';
-import { callTool, health, listTools } from '../lib/api-client';
+import { callTool, health, listTools, readSearchSource } from '../lib/api-client';
 
 const originalFetch = globalThis.fetch;
+test('search sources reject malformed, empty and failed responses with safe recovery text', async () => {
+  const signal = new AbortController().signal;
+  for (const [body, status] of [
+    ['<html>failure</html>', 502],
+    ['', 200],
+    ['null', 200],
+    ['{"ok":false}', 200],
+  ] as const) {
+    response(body, status);
+    await expect(readSearchSource('/source', signal)).rejects.toThrow('Could not search this source.');
+  }
+  response('{"ok":false,"error":"Please reconnect"}', 409);
+  await expect(readSearchSource('/source', signal)).rejects.toThrow('Please reconnect');
+});
+
+test('search sources preserve successful envelopes and cancellation', async () => {
+  const controller = new AbortController();
+  globalThis.fetch = (async (url, init) => {
+    expect(url).toBe('/api/documents?limit=200');
+    expect(init?.signal).toBe(controller.signal);
+    init?.signal?.throwIfAborted();
+    return Response.json({ ok: true, documents: [] });
+  }) as typeof fetch;
+  expect(await readSearchSource('/api/documents?limit=200', controller.signal)).toEqual({
+    ok: true,
+    documents: [],
+  });
+  controller.abort();
+  await expect(readSearchSource('/api/documents?limit=200', controller.signal)).rejects.toThrow();
+});
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });

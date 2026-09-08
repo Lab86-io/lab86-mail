@@ -1,6 +1,12 @@
 import type { ClientState } from '../client-state';
 import { type SearchTarget, searchFilePath } from './global-search';
 
+export function focusSearchAfterSelection(root: ParentNode, previous: HTMLElement | null) {
+  const launcher = root.querySelector<HTMLButtonElement>('button[aria-label^="Search everything"]');
+  if (launcher) launcher.focus();
+  else if (previous?.isConnected) previous.focus();
+}
+
 export function navigateSearchTarget(
   target: Exclude<SearchTarget, { kind: 'external' }>,
   state: Pick<

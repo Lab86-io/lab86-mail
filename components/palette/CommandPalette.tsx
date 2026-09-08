@@ -19,7 +19,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { callTool } from '@/lib/api-client';
+import { callTool, readSearchSource } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
@@ -35,7 +35,7 @@ import {
   searchMail,
   searchPages,
 } from '@/lib/search/global-search';
-import { navigateSearchTarget } from '@/lib/search/navigation';
+import { focusSearchAfterSelection, navigateSearchTarget } from '@/lib/search/navigation';
 import { cn } from '@/lib/utils';
 
 const tool: SearchTool = (name, args, signal) => callTool(name, args, {}, signal);
@@ -45,12 +45,6 @@ const SCOPES: Array<{ id: SearchScope; label: string }> = [
   { id: 'files', label: 'Files' },
   { id: 'calendar', label: 'Calendar' },
 ];
-async function readJson<T>(url: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal });
-  const data = await response.json();
-  if (!response.ok || data.ok === false) throw new Error(data.error || 'Could not search this source.');
-  return data;
-}
 
 /** Opening or dismissing global search never changes the underlying page. */
 export function CommandPalette() {
@@ -97,6 +91,8 @@ export function CommandPalette() {
             }
             const action = pendingAction.current;
             pendingAction.current = null;
+            // The global launcher survives in-place page and result changes.
+            focusSearchAfterSelection(document, returnFocus.current);
             action();
           }}
         >
@@ -197,9 +193,9 @@ function SearchContent({
     retry: false,
   });
   const documents = useQuery({
-    queryKey: ['documents'],
+    queryKey: ['documents', { limit: 200 }],
     queryFn: ({ signal }) =>
-      readJson<{ documents: Array<{ documentId: string; title: string; kind: string }> }>(
+      readSearchSource<{ documents: Array<{ documentId: string; title: string; kind: string }> }>(
         '/api/documents?limit=200',
         signal,
       ),
@@ -210,7 +206,10 @@ function SearchContent({
   const uploads = useQuery({
     queryKey: ['albatross-files'],
     queryFn: ({ signal }) =>
-      readJson<{ files: Array<{ id: string; name: string; url?: string }> }>('/api/agent/uploads', signal),
+      readSearchSource<{ files: Array<{ id: string; name: string; url?: string }> }>(
+        '/api/agent/uploads',
+        signal,
+      ),
     enabled: scope === 'all' || scope === 'files',
     staleTime: 60_000,
     retry: false,
@@ -287,7 +286,7 @@ function SearchContent({
         <div role="status" className="px-4 text-[11px] text-[var(--color-text-muted)]">
           {!settled || result.isFetching ? (
             <span className="flex items-center gap-2 py-3">
-              <Loader2 className="size-3 animate-spin" />
+              <Loader2 className="size-3 motion-safe:animate-spin" />
               Searching…
             </span>
           ) : null}

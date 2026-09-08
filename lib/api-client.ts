@@ -62,3 +62,13 @@ export async function listTools(): Promise<any> {
   const r = await fetch('/api/tools', { cache: 'no-store' });
   return r.json();
 }
+
+/** Search list endpoints use an envelope distinct from the tool RPC. */
+export async function readSearchSource<T>(url: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || data === null || data?.ok === false) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Could not search this source.');
+  }
+  return data as T;
+}

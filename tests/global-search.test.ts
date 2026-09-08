@@ -14,7 +14,7 @@ import {
   searchMail,
   searchPages,
 } from '../lib/search/global-search';
-import { navigateSearchTarget } from '../lib/search/navigation';
+import { focusSearchAfterSelection, navigateSearchTarget } from '../lib/search/navigation';
 
 const event = {
   accountId: 'account-a',
@@ -236,6 +236,29 @@ describe('global search sources', () => {
 });
 
 describe('search navigation and selection', () => {
+  test('selection hands focus to stable chrome, with a connected fallback only', () => {
+    let focused = '';
+    const previous = {
+      isConnected: true,
+      focus: () => {
+        focused = 'previous';
+      },
+    } as HTMLElement;
+    const launcher = {
+      focus: () => {
+        focused = 'launcher';
+      },
+    };
+    focusSearchAfterSelection({ querySelector: () => launcher } as unknown as ParentNode, previous);
+    expect(focused).toBe('launcher');
+    const emptyRoot = { querySelector: () => null } as unknown as ParentNode;
+    focusSearchAfterSelection(emptyRoot, previous);
+    expect(focused).toBe('previous');
+    focused = '';
+    focusSearchAfterSelection(emptyRoot, { ...previous, isConnected: false } as HTMLElement);
+    focusSearchAfterSelection(emptyRoot, null);
+    expect(focused).toBe('');
+  });
   let previous = useClientStore.getState();
   beforeEach(() => {
     previous = useClientStore.getState();
