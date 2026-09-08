@@ -80,7 +80,7 @@ function setup(
         : {
             text: JSON.stringify({
               text: 'You planned to finish the review. Completion is not yet established by the available evidence. Check QA before deployment.',
-              sourceIds: ['evidence1'],
+              sourceIds: ['E1'],
             }),
             totalUsage: { inputTokens: 30, outputTokens: 20 },
           };
@@ -102,6 +102,7 @@ describe('narrative agent run', () => {
     expect(requests).toHaveLength(2);
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
+    expect(requests[1].messages.at(-1).content).toContain('{"code":"E1","id":"evidence1"}');
     expect(requests[0].stopWhen({ steps: [{}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
@@ -140,7 +141,7 @@ describe('narrative agent run', () => {
           : {
               text: JSON.stringify({
                 text: 'You planned to finish QA before deployment. Preparing for the review remains your stated priority; completion is not established by the evidence.',
-                sourceIds: ['evidence1'],
+                sourceIds: ['E1'],
               }),
             },
     });
@@ -164,11 +165,17 @@ describe('narrative agent run', () => {
   });
   test('fabricated citations do not publish and lease completion records failure', async () => {
     const { writes } = setup({
-      generate: async () => ({ text: '{"text":"You finished everything","sourceIds":["invented"]}' }),
+      generate: async () => ({
+        text: JSON.stringify({
+          text: 'You planned to finish the review. Completion is not yet established by the available evidence. Check QA before deployment.',
+          sourceIds: ['E999'],
+        }),
+      }),
     });
     expect((await refreshNarrative('pilot')).status).toBe('partial');
     expect(writes.some((w) => w.name === 'narrative:publish')).toBe(false);
     expect(writes.at(-1)?.name).toBe('narrative:finish');
+    expect(writes.at(-1)?.args.error).toContain('cited evidence it did not read');
   });
   test('revoked publication is partial, and provider errors never persist private response bodies', async () => {
     setup({ revoked: true });
