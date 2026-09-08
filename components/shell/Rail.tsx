@@ -9,7 +9,7 @@ import {
 } from 'convex/react';
 import { History, Search, Settings } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -53,11 +53,7 @@ import { orderedAreaImageSources } from '@/lib/albatross/area-image';
 import { railWorkBadge } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
-import {
-  MAIL_SEARCH_FOCUS_EVENT,
-  mailSearchShortcutLabel,
-  requestMailSearchFocus,
-} from '@/lib/mail/search/focus-contract';
+import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
@@ -145,17 +141,12 @@ export function Rail({
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+  const paletteOpen = useClientStore((s) => s.paletteOpen);
+  const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
   const { isMobile, openMobile, setOpenMobile } = useSidebar();
-  const searchAfterSidebarClose = useRef(false);
   useEffect(() => {
-    if (!isMobile || !openMobile) return;
-    const closeForSearch = () => {
-      searchAfterSidebarClose.current = true;
-      setOpenMobile(false);
-    };
-    window.addEventListener(MAIL_SEARCH_FOCUS_EVENT, closeForSearch);
-    return () => window.removeEventListener(MAIL_SEARCH_FOCUS_EVENT, closeForSearch);
-  }, [isMobile, openMobile, setOpenMobile]);
+    if (isMobile && openMobile && paletteOpen) setOpenMobile(false);
+  }, [isMobile, openMobile, paletteOpen, setOpenMobile]);
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -275,10 +266,9 @@ export function Rail({
       collapsible="icon"
       className="rail-wash bg-[var(--rail-bg)] font-display"
       onMobileCloseAutoFocus={(event) => {
-        if (!searchAfterSidebarClose.current) return;
+        if (!paletteOpen) return;
         event.preventDefault();
-        searchAfterSidebarClose.current = false;
-        requestMailSearchFocus();
+        document.querySelector<HTMLInputElement>('[data-global-search-input]')?.focus();
       }}
       onClickCapture={(event) => {
         if (!isMobile) return;
@@ -334,16 +324,11 @@ export function Rail({
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip={`Search mail (${searchShortcut} or /)`}
-              aria-label={`Search mail (${searchShortcut} or slash)`}
+              tooltip={`Search everything (${searchShortcut} or /)`}
+              aria-label={`Search everything (${searchShortcut} or slash)`}
               aria-keyshortcuts="Meta+F Control+F /"
-              title={`Search mail (${searchShortcut} or /)`}
-              onClick={() => {
-                setSelectedThread(null);
-                setPrimaryView('mail');
-                closeMobileSidebar();
-                requestMailSearchFocus();
-              }}
+              title={`Search everything (${searchShortcut} or /)`}
+              onClick={() => setPaletteOpen(true)}
               className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] font-medium shadow-[var(--shadow-soft)] hover:border-[var(--color-accent)]/45 focus-visible:ring-[var(--color-accent)]"
             >
               <Search className="size-4 shrink-0" aria-hidden />

@@ -53,14 +53,16 @@ describe('the global mail-search keyboard contract', () => {
     expect(mailSearchShortcutLabel('Win32')).toBe('Ctrl F');
   });
 
-  test('routes both the rail action and keyboard shortcuts to the authoritative Inbox target', () => {
+  test('opens global search without routing to Inbox while preserving its local field', () => {
     const rail = read('components/shell/Rail.tsx');
     const shortcuts = read('components/shell/ShortcutsBinding.tsx');
     const inbox = read('components/inbox/Inbox.tsx');
-    expect(rail).toContain("setPrimaryView('mail')");
-    expect(rail).toContain('requestMailSearchFocus()');
+    const palette = read('components/palette/CommandPalette.tsx');
+    expect(rail).toContain('setPaletteOpen(true)');
+    expect(rail).not.toContain('requestMailSearchFocus()');
     expect(rail).toContain('{searchShortcut}');
-    expect(shortcuts).toContain('isGlobalMailSearchShortcut(e, e.target)');
+    expect(palette).toContain('isGlobalMailSearchShortcut(event, event.target)');
+    expect(shortcuts).toContain('if (paletteOpen) return;');
     expect(shortcuts).not.toContain("querySelector('input[placeholder");
     expect(inbox).toContain('data-mail-search-input="true"');
     expect(inbox).toContain('registerMailSearchFocus()');

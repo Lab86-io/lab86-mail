@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
+import type { CalendarSearchTarget } from './search/global-search';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
 
 export interface ComposePrefill {
@@ -62,6 +63,7 @@ export interface ClientState {
   selectedThreadId: string | null;
   selectedIds: string[];
   paletteOpen: boolean;
+  calendarSearchTarget: CalendarSearchTarget | null;
   // Set by any surface that wants the capture takeover — the rail, an empty
   // state, a shortcut. The launcher owns the overlay; this is only the door.
   captureOpen: boolean;
@@ -154,6 +156,7 @@ export interface ClientState {
   clearSelected: () => void;
   selectMany: (ids: string[]) => void;
   setPaletteOpen: (open: boolean) => void;
+  setCalendarSearchTarget: (target: CalendarSearchTarget | null) => void;
   setCaptureOpen: (open: boolean) => void;
   openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
@@ -328,6 +331,7 @@ export const useClientStore = create<ClientState>()(
       selectedThreadId: null,
       selectedIds: [],
       paletteOpen: false,
+      calendarSearchTarget: null,
       captureOpen: false,
       captureSeed: null,
       boardSurfaceEnabled: false,
@@ -365,12 +369,14 @@ export const useClientStore = create<ClientState>()(
 
       setAccount: (account) => set({ account }),
       setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
-      setPrimaryView: (primaryView) => set({ primaryView }),
+      setPrimaryView: (primaryView) =>
+        set({ primaryView, ...(primaryView !== 'calendar' ? { calendarSearchTarget: null } : {}) }),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),
       setQuery: (query) =>
         set({
           primaryView: 'mail',
+          calendarSearchTarget: null,
           query,
           smartCategory: null,
           searchDraft: '',
@@ -382,6 +388,7 @@ export const useClientStore = create<ClientState>()(
       setSmartCategory: (smartCategory) =>
         set({
           primaryView: 'mail',
+          calendarSearchTarget: null,
           smartCategory,
           query: DEFAULT_QUERY,
           searchDraft: '',
@@ -408,6 +415,7 @@ export const useClientStore = create<ClientState>()(
       clearSelected: () => set({ selectedIds: [] }),
       selectMany: (ids) => set({ selectedIds: ids }),
       setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+      setCalendarSearchTarget: (calendarSearchTarget) => set({ calendarSearchTarget }),
       setCaptureOpen: (captureOpen) => set({ captureOpen, ...(captureOpen ? {} : { captureSeed: null }) }),
       openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),

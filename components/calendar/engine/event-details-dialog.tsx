@@ -35,6 +35,7 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -45,7 +46,9 @@ import { useClientStore } from '@/lib/client-state';
 
 interface IProps {
   event: IEvent;
-  children: ReactNode;
+  children?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 const RSVP_LABEL: Record<string, string> = {
@@ -58,12 +61,14 @@ const RSVP_LABEL: Record<string, string> = {
 // Dedicated event viewer: everything the synced event knows — times in the
 // user's clock format, owning calendar, location with an embedded map,
 // attendees with RSVP state, conferencing link, recurrence and notes.
-export function EventDetailsDialog({ event, children }: IProps) {
+export function EventDetailsDialog({ event, children, open: controlledOpen, onOpenChange }: IProps) {
   const startDate = parseISO(event.startDate);
   const endDate = parseISO(event.endDate);
   const { use24HourFormat, removeEvent } = useCalendar();
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
   // Only subscribe to linked cards while the dialog is open — otherwise every
   // rendered event card on a dense calendar holds a live Convex subscription.
   const linkedCardsQuery = useConvexQuery({
@@ -79,10 +84,13 @@ export function EventDetailsDialog({ event, children }: IProps) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
+      {children ? <DialogTrigger asChild>{children}</DialogTrigger> : null}
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="pr-6 font-display text-[18px] leading-snug">{event.title}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Event date, location, attendees, and calendar details.
+          </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 pr-3">
