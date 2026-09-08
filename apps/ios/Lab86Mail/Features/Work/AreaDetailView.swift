@@ -905,9 +905,15 @@ private struct AreaBriefLead: View {
             }
         }
         .padding(.horizontal, 20)
+        #if os(macOS)
+        // The desktop column header already clears the controls. Keep only
+        // the image inset that balances the masthead's full-bleed offset.
+        .padding(.top, mastheadURL == nil ? 0 : 20)
+        #else
         // Text-first briefs clear the floating glass controls; a masthead
         // picture slides beneath them instead.
         .padding(.top, mastheadURL == nil ? 60 : 20)
+        #endif
         .padding(.bottom, 24)
         .onAppear {
             onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)

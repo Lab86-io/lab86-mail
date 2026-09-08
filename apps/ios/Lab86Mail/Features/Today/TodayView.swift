@@ -159,10 +159,9 @@ struct TodayView: View {
     /// dashboard. It deliberately reuses the same masthead, lede, document,
     /// footer, review flow, and legacy HTML renderer rather than creating a
     /// second interpretation of report data.
-    @ViewBuilder
     private func macBriefBody(_ report: DailyReportModel) -> some View {
-        if let document = report.document, Self.rendersNativeDocument(report) {
-            ScrollView {
+        ScrollView {
+            if let document = report.document, Self.rendersNativeDocument(report) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
                     DailyBriefLede(text: document.summary)
@@ -176,19 +175,7 @@ struct TodayView: View {
                 }
                 .frame(maxWidth: 920)
                 .frame(maxWidth: .infinity)
-            }
-            .background(environment.theme.paperColor)
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                Self.mastheadScrolledPast(
-                    offset: geometry.contentOffset.y + geometry.contentInsets.top,
-                    containerWidth: min(geometry.containerSize.width, 920)
-                )
-            } action: { _, crossed in
-                showsInlineDate = crossed
-            }
-            .refreshable { await store.refreshToday() }
-        } else {
-            ScrollView {
+            } else {
                 DailyBriefView(
                     report: report,
                     lastRefresh: store.lastRefresh,
@@ -199,9 +186,19 @@ struct TodayView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 32)
             }
-            .background(environment.theme.paperColor)
-            .refreshable { await store.refreshToday() }
         }
+        .background(environment.theme.paperColor)
+        // Both native and legacy editions carry a masthead, so the shared
+        // scroller must hand its dateline to the toolbar for either renderer.
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            Self.mastheadScrolledPast(
+                offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                containerWidth: min(geometry.containerSize.width, 920)
+            )
+        } action: { _, crossed in
+            showsInlineDate = crossed
+        }
+        .refreshable { await store.refreshToday() }
     }
     #endif
 
