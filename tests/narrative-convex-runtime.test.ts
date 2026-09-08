@@ -41,7 +41,10 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
-  test('corrections block replay of an old source version without freezing future changes', async () => {
+  test.each([
+    false,
+    true,
+  ])('corrections block replay without freezing future changes (missing baseline: %s)', async (missingBaseline) => {
     const t = harness();
     await enable(t);
     const source = await t.run((ctx) =>
@@ -57,6 +60,7 @@ describe('shared narrative runtime', () => {
     await t.mutation(f.ingest, { ...args, group: 'work' });
     const old = (await t.query(f.search, { ...args, level: 'observation' })).entries[0];
     await t.mutation(f.edit, { ...args, id: old._id, text: 'Wait for QA before shipping' });
+    if (missingBaseline) await t.run((ctx) => ctx.db.patch(old._id, { sourceBaseVersion: undefined }));
     await t.run(async (ctx) => {
       const cursors = await ctx.db.query('narrativeCursors').collect();
       for (const cursor of cursors) await ctx.db.delete(cursor._id);
@@ -65,6 +69,7 @@ describe('shared narrative runtime', () => {
     expect((await t.query(f.search, { ...args, level: 'observation' })).entries[0].text).toBe(
       'Wait for QA before shipping',
     );
+    expect((await t.query(f.read, { ...args, id: old._id })).entry.sourceBaseVersion).toBe(old.sourceVersion);
     await t.run((ctx) =>
       ctx.db.patch(source, { rawText: 'QA passed; prepare deployment', updatedAt: Date.now() }),
     );

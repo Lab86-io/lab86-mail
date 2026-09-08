@@ -97,7 +97,10 @@ try {
   assert(result.status === 'ready', `Research did not finish: ${JSON.stringify(result)}`);
   assert(brief.entry?.model === 'z-ai/glm-5.3-flash', 'Brief was not model-written');
   assert(
-    /QA/i.test(brief.entry.text) && /review/i.test(brief.entry.text),
+    /design review/i.test(brief.entry.text) &&
+      (/QA[^.!?]*before[^.!?]*deploy/i.test(brief.entry.text) ||
+        /before[^.!?]*deploy[^.!?]*QA/i.test(brief.entry.text) ||
+        /deploy[^.!?]*until[^.!?]*QA/i.test(brief.entry.text)),
     'Brief omitted the actual intention or its QA condition',
   );
   assert(brief.entry.sourceIds.includes(observation), 'Brief lost source provenance');
