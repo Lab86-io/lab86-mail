@@ -15,6 +15,7 @@ import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
 import {
   localFileResults,
   matchesSearch,
+  SEARCH_SCOPES,
   type SearchGroup,
   type SearchResult,
   type SearchScope,
@@ -24,16 +25,14 @@ import {
   searchMail,
   searchPages,
 } from '@/lib/search/global-search';
-import { focusSearchAfterSelection, navigateSearchTarget } from '@/lib/search/navigation';
+import {
+  focusSearchAfterSelection,
+  navigateSearchTarget,
+  searchScopeForArrow,
+} from '@/lib/search/navigation';
 import { cn } from '@/lib/utils';
 
 const tool: SearchTool = (name, args, signal) => callTool(name, args, {}, signal);
-const SCOPES: Array<{ id: SearchScope; label: string }> = [
-  { id: 'all', label: 'Everything' },
-  { id: 'mail', label: 'Mail' },
-  { id: 'files', label: 'Files' },
-  { id: 'calendar', label: 'Calendar' },
-];
 
 /** Opening or dismissing global search never changes the underlying page. */
 export function CommandPalette() {
@@ -87,8 +86,8 @@ export function CommandPalette() {
         >
           <DialogTitle className="sr-only">Search Albatross</DialogTitle>
           <DialogDescription className="sr-only">
-            Switch pages or find mail, files, and calendar events. Use arrow keys to choose, Enter to open,
-            and Escape to return to your page.
+            Switch pages or find mail, files, and calendar events. Use up and down to choose, Enter to open,
+            and Escape to return to your page. Left and right switch categories at the edges of your query.
           </DialogDescription>
           {open ? (
             <SearchContent
@@ -232,10 +231,7 @@ function SearchContent({
         onSelect={() => navigate(result)}
         className="group mx-1 gap-3 rounded-lg px-3 py-2.5 data-[selected=true]:bg-[var(--color-accent-soft)] data-[selected=true]:text-[var(--color-text)]"
       >
-        <div
-          aria-hidden="true"
-          className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]"
-        >
+        <div aria-hidden="true" className="grid size-8 shrink-0 place-items-center">
           <SearchResultIcon target={result.target} active={selected === result.id} />
         </div>
         <span className="min-w-0 flex-1">
@@ -326,6 +322,20 @@ function SearchContent({
       onValueChange={setSelected}
       shouldFilter={false}
       loop
+      onKeyDown={(event) => {
+        const input = inputRef.current;
+        const fromInput = event.target === input;
+        if (!fromInput && !(event.target instanceof Element && event.target.closest('[data-search-scope]')))
+          return;
+        const next = searchScopeForArrow(event.nativeEvent, scope, fromInput ? input! : undefined);
+        if (!next) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setScope(next);
+        setNatural(false);
+        setSelected('');
+        input?.focus();
+      }}
       className="rounded-none bg-transparent text-[var(--color-text)]"
     >
       <div className="relative border-b border-[var(--color-border)] [&_[data-slot=command-input-wrapper]]:h-16 [&_[data-slot=command-input-wrapper]]:border-0 [&_[data-slot=command-input-wrapper]]:pl-5 [&_[data-slot=command-input-wrapper]]:pr-14 [&_[data-slot=command-input-wrapper]>svg]:size-5 [&_[data-slot=command-input-wrapper]>svg]:text-[var(--color-accent)]">
@@ -355,14 +365,16 @@ function SearchContent({
         className="flex items-center gap-1 border-b border-[var(--color-border)] px-4 py-2"
         aria-label="Search sources"
       >
-        {SCOPES.map((option) => (
+        {SEARCH_SCOPES.map((option) => (
           <button
             key={option.id}
             type="button"
+            data-search-scope={option.id}
             aria-pressed={scope === option.id}
             onClick={() => {
               setScope(option.id);
               setNatural(false);
+              setSelected('');
               inputRef.current?.focus();
             }}
             className={cn(
@@ -520,6 +532,9 @@ function SearchContent({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] text-[var(--color-text-muted)]">
         <span>
           <kbd>↑ ↓</kbd> navigate
+        </span>
+        <span title="Switch categories when the query is empty or the caret is at its beginning or end">
+          <kbd>← →</kbd> categories
         </span>
         <span>
           <kbd>↵</kbd> open

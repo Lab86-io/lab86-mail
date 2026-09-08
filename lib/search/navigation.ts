@@ -1,5 +1,36 @@
 import type { ClientState } from '../client-state';
-import { type SearchTarget, searchFilePath } from './global-search';
+import { SEARCH_SCOPES, type SearchScope, type SearchTarget, searchFilePath } from './global-search';
+
+type CategoryKey = Pick<
+  KeyboardEvent,
+  'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented'
+>;
+
+/** Horizontal arrows change sources at query edges without stealing text editing. */
+export function searchScopeForArrow(
+  event: CategoryKey,
+  current: SearchScope,
+  input?: Pick<HTMLInputElement, 'value' | 'selectionStart' | 'selectionEnd'>,
+): SearchScope | null {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey ||
+    (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+  )
+    return null;
+  if (input) {
+    const { selectionStart: start, selectionEnd: end, value } = input;
+    if (start === null || end === null || start !== end) return null;
+    if (event.key === 'ArrowLeft' ? start !== 0 : end !== value.length) return null;
+  }
+  const direction = event.key === 'ArrowRight' ? 1 : -1;
+  const index = SEARCH_SCOPES.findIndex((scope) => scope.id === current);
+  return SEARCH_SCOPES[(index + direction + SEARCH_SCOPES.length) % SEARCH_SCOPES.length].id;
+}
 
 export function focusSearchAfterSelection(root: ParentNode, previous: HTMLElement | null) {
   const launcher = root.querySelector<HTMLButtonElement>('button[aria-label^="Search everything"]');
