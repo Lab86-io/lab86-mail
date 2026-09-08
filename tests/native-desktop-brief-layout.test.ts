@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 
-const today = readFileSync(new URL('../Lab86Mail/Features/Today/TodayView.swift', import.meta.url), 'utf8');
-const area = readFileSync(new URL('../Lab86Mail/Features/Work/AreaDetailView.swift', import.meta.url), 'utf8');
+const today = readFileSync(
+  new URL('../apps/ios/Lab86Mail/Features/Today/TodayView.swift', import.meta.url),
+  'utf8',
+);
+const area = readFileSync(
+  new URL('../apps/ios/Lab86Mail/Features/Work/AreaDetailView.swift', import.meta.url),
+  'utf8',
+);
 
 // These are composition guardrails, not a substitute for native rendering.
 // The regressions were missing SwiftUI modifiers, so protect the actual wiring
