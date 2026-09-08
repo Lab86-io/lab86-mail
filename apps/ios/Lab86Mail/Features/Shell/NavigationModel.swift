@@ -214,6 +214,15 @@ final class NavigationModel {
         documentRoute = nil
     }
 
+    // Search is a destination-level request, not only a transient toolbar
+    // event. Keeping the request on navigation means Command-F can move from
+    // any Mac surface to Mail and the newly-mounted MailView still knows to
+    // reveal and focus its native search field.
+    func requestMailSearch(query: String = "") {
+        selectPrimary(.mail)
+        pendingMailSearch = query
+    }
+
     // When opened from an Area, mail remains inside that Area's back stack.
     // Global notification/search routes use Mail as a hidden routable root.
     func openThread(accountID: String, threadID: String, preservingCurrentRoot: Bool = false) {

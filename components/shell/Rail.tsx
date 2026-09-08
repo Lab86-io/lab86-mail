@@ -9,7 +9,7 @@ import {
 } from 'convex/react';
 import { History, Search, Settings } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -53,6 +53,11 @@ import { orderedAreaImageSources } from '@/lib/albatross/area-image';
 import { railWorkBadge } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import {
+  MAIL_SEARCH_FOCUS_EVENT,
+  mailSearchShortcutLabel,
+  requestMailSearchFocus,
+} from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
@@ -140,14 +145,29 @@ export function Rail({
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
-  const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  const searchAfterSidebarClose = useRef(false);
+  useEffect(() => {
+    if (!isMobile || !openMobile) return;
+    const closeForSearch = () => {
+      searchAfterSidebarClose.current = true;
+      setOpenMobile(false);
+    };
+    window.addEventListener(MAIL_SEARCH_FOCUS_EVENT, closeForSearch);
+    return () => window.removeEventListener(MAIL_SEARCH_FOCUS_EVENT, closeForSearch);
+  }, [isMobile, openMobile, setOpenMobile]);
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
   const [addingArea, setAddingArea] = useState(false);
   const [newAreaName, setNewAreaName] = useState('');
   const [creatingArea, setCreatingArea] = useState(false);
+  // Keep the server and first client render identical, then specialize the
+  // label once the browser platform is known.
+  const [searchShortcut, setSearchShortcut] = useState('⌘/Ctrl F');
+  useEffect(() => {
+    setSearchShortcut(mailSearchShortcutLabel(navigator.platform));
+  }, []);
   const createAreaMutation = useConvexMutation(api.albatross.createArea);
   const createArea = async () => {
     const name = newAreaName.trim();
@@ -254,6 +274,12 @@ export function Rail({
     <Sidebar
       collapsible="icon"
       className="rail-wash bg-[var(--rail-bg)] font-display"
+      onMobileCloseAutoFocus={(event) => {
+        if (!searchAfterSidebarClose.current) return;
+        event.preventDefault();
+        searchAfterSidebarClose.current = false;
+        requestMailSearchFocus();
+      }}
       onClickCapture={(event) => {
         if (!isMobile) return;
         const target = event.target as HTMLElement | null;
@@ -304,6 +330,32 @@ export function Rail({
               />
               <PlusIcon size={16} />
               <span>{CAPTURE_BUTTON_LABEL}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip={`Search mail (${searchShortcut} or /)`}
+              aria-label={`Search mail (${searchShortcut} or slash)`}
+              aria-keyshortcuts="Meta+F Control+F /"
+              title={`Search mail (${searchShortcut} or /)`}
+              onClick={() => {
+                setSelectedThread(null);
+                setPrimaryView('mail');
+                closeMobileSidebar();
+                requestMailSearchFocus();
+              }}
+              className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] font-medium shadow-[var(--shadow-soft)] hover:border-[var(--color-accent)]/45 focus-visible:ring-[var(--color-accent)]"
+            >
+              <Search className="size-4 shrink-0" aria-hidden />
+              <span>Search</span>
+              <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
+                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
+                  {searchShortcut}
+                </kbd>
+                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
+                  /
+                </kbd>
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -460,18 +512,6 @@ export function Rail({
           <RailDivider />
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="Search"
-                  onClick={() => {
-                    setPaletteOpen(true);
-                    closeMobileSidebar();
-                  }}
-                >
-                  <Search className="size-4 shrink-0" aria-hidden />
-                  <span>Search</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   isActive={visiblePrimaryView === 'activity'}

@@ -37,6 +37,7 @@ export function CommandPalette() {
   const open = useClientStore((s) => s.paletteOpen);
   const setOpen = useClientStore((s) => s.setPaletteOpen);
   const setQuery = useClientStore((s) => s.setQuery);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -70,7 +71,7 @@ export function CommandPalette() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-[600px] overflow-hidden p-0" showCloseButton={false}>
         <Command shouldFilter>
-          <CommandInput placeholder="Search threads, accounts, actions…" />
+          <CommandInput placeholder="Run a command or jump to…" />
           <CommandList>
             <CommandEmpty>No matches.</CommandEmpty>
 
@@ -86,7 +87,16 @@ export function CommandPalette() {
                 [QUICK_SEARCH_QUERIES.drafts, 'Drafts', Pencil],
                 ['label:MailOS/Snoozed', 'Snoozed', AlarmClock],
               ].map(([q, label, Icon]: any) => (
-                <CommandItem key={q} value={`mailbox ${label}`} onSelect={() => run(() => setQuery(q))}>
+                <CommandItem
+                  key={q}
+                  value={`mailbox ${label}`}
+                  onSelect={() =>
+                    run(() => {
+                      setQuery(q);
+                      setPrimaryView('mail');
+                    })
+                  }
+                >
                   <Icon className="h-3.5 w-3.5 opacity-60" /> {label}
                 </CommandItem>
               ))}
@@ -136,6 +146,7 @@ export function CommandPalette() {
                       run(() => {
                         if (t.account) setThreadAccount(t.account);
                         setSelectedThread(t._id);
+                        setPrimaryView('mail');
                       })
                     }
                   >

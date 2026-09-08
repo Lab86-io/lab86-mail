@@ -6,13 +6,11 @@ import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
-
-const editable = (el: EventTarget | null) => {
-  if (!el || !(el instanceof HTMLElement)) return false;
-  const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  return el.isContentEditable;
-};
+import {
+  isEditableSearchTarget,
+  isGlobalMailSearchShortcut,
+  requestMailSearchFocus,
+} from '@/lib/mail/search/focus-contract';
 
 export function ShortcutsBinding() {
   // Thread shortcuts (archive/trash/triage/summary) act on the open thread, so
@@ -32,12 +30,22 @@ export function ShortcutsBinding() {
   const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
   const composeMode = useClientStore((s) => s.compose.mode);
   const closeCompose = useClientStore((s) => s.closeCompose);
+  const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const qc = useQueryClient();
 
   useEffect(() => {
     let pendingG = 0;
     const handler = async (e: KeyboardEvent) => {
-      if (editable(e.target)) return;
+      if (e.defaultPrevented || e.isComposing) return;
+      if (isGlobalMailSearchShortcut(e, e.target)) {
+        e.preventDefault();
+        setSelectedThread(null);
+        setPaletteOpen(false);
+        setPrimaryView('mail');
+        requestMailSearchFocus();
+        return;
+      }
+      if (isEditableSearchTarget(e.target)) return;
       // ⌘P / ctrl+P → palette
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
@@ -91,10 +99,6 @@ export function ShortcutsBinding() {
         case 'c':
           e.preventDefault();
           openComposeNew();
-          break;
-        case '/':
-          e.preventDefault();
-          (document.querySelector('input[placeholder^="Ask for mail"]') as HTMLInputElement | null)?.focus();
           break;
         case '?':
           e.preventDefault();
@@ -173,6 +177,7 @@ export function ShortcutsBinding() {
     setShortcutsOpen,
     setSelectedThread,
     setPaletteOpen,
+    setPrimaryView,
     closeCompose,
     qc,
   ]);

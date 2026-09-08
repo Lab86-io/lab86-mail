@@ -198,6 +198,19 @@ struct MailView: View {
                     }
                 }
             }
+            #if os(macOS)
+            if isSearchFocused || !searchText.isEmpty {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close Search", systemImage: "xmark") {
+                        searchText = ""
+                        isSearchFocused = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Clear and close search (Escape)")
+                    .accessibilityHint("Clears the query and returns keyboard focus to the inbox.")
+                }
+            }
+            #endif
         }
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search this inbox")
         .onReceive(NotificationCenter.default.publisher(for: .albatrossFocusMailSearch)) { _ in
@@ -205,14 +218,27 @@ struct MailView: View {
         }
         .onAppear {
             if let pending = environment.navigation.pendingMailSearch {
-                searchText = pending
+                // Empty is a focus-only request (Command-F). A non-empty
+                // App Intent/deep-link request replaces the current query.
+                if !pending.isEmpty { searchText = pending }
                 environment.navigation.pendingMailSearch = nil
+                #if os(macOS)
+                isSearchFocused = true
+                #endif
             }
             if let raw = environment.navigation.pendingMailCategory {
                 categoryScope = MailCategoryScope.from(raw: raw)
                 environment.navigation.pendingMailCategory = nil
             }
         }
+        #if os(macOS)
+        .onChange(of: environment.navigation.pendingMailSearch) { _, pending in
+            guard let pending else { return }
+            if !pending.isEmpty { searchText = pending }
+            environment.navigation.pendingMailSearch = nil
+            isSearchFocused = true
+        }
+        #endif
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }
             categoryScope = MailCategoryScope.from(raw: raw)
