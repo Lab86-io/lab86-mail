@@ -13,8 +13,6 @@ import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
-import { CalendarDaysIcon } from '@/components/ui/calendar-days';
-import { CircleCheckIcon } from '@/components/ui/circle-check';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -24,9 +22,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { FileTextIcon } from '@/components/ui/file-text';
-import { FolderIcon } from '@/components/ui/folder';
-import { MailCheckIcon } from '@/components/ui/mail-check';
 import { PlusIcon } from '@/components/ui/plus';
 import { RowIcon, rowIcon } from '@/components/ui/row-icon';
 import { SettingsIcon } from '@/components/ui/settings';
@@ -57,6 +52,7 @@ import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
+import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { ThemePanel } from './ThemePanel';
 
 // Top-level surfaces of the product, in the order a person meets them: the
@@ -66,11 +62,11 @@ const SURFACES: Array<{
   label: string;
   Icon: any;
 }> = [
-  { view: 'today', label: 'Today', Icon: rowIcon(FileTextIcon) },
-  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(CircleCheckIcon) },
-  { view: 'mail', label: 'Mail', Icon: rowIcon(MailCheckIcon) },
-  { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
-  { view: 'files', label: 'Files', Icon: rowIcon(FolderIcon) },
+  { view: 'today', label: 'Today', Icon: rowIcon(RAIL_SURFACE_ICONS.today) },
+  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(RAIL_SURFACE_ICONS.albatrosses) },
+  { view: 'mail', label: 'Mail', Icon: rowIcon(RAIL_SURFACE_ICONS.mail) },
+  { view: 'calendar', label: 'Calendar', Icon: rowIcon(RAIL_SURFACE_ICONS.calendar) },
+  { view: 'files', label: 'Files', Icon: rowIcon(RAIL_SURFACE_ICONS.files) },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
