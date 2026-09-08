@@ -1,6 +1,12 @@
 import type { PrimaryView } from '../shared/types';
 
 export type SearchScope = 'all' | 'mail' | 'files' | 'calendar';
+export const SEARCH_SCOPES: ReadonlyArray<{ id: SearchScope; label: string }> = [
+  { id: 'all', label: 'Everything' },
+  { id: 'mail', label: 'Mail' },
+  { id: 'files', label: 'Files' },
+  { id: 'calendar', label: 'Calendar' },
+];
 export interface CalendarSearchTarget {
   accountId: string;
   calendarId: string;
