@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { getFunctionName } from 'convex/server';
 import { api, convexMutation, convexQuery } from '../lib/hosted/convex';
 import { __setNarrativeDepsForTest, refreshNarrative } from '../lib/narrative/service';
 
@@ -23,6 +24,28 @@ process.env.LAB86_NARRATIVE_USER_IDS = userId;
 // Exercise the deployed memory + actual research loop without provisioning
 // a fake Clerk billing identity or altering any real user's AI preferences.
 __setNarrativeDepsForTest({
+  query: (async (fn: any, args: any) => {
+    const name = getFunctionName(fn);
+    try {
+      const result = await convexQuery(fn, args);
+      console.log('Synthetic query complete', name);
+      return result;
+    } catch (error) {
+      console.error('Synthetic query failed', name);
+      throw error;
+    }
+  }) as any,
+  mutation: (async (fn: any, args: any) => {
+    const name = getFunctionName(fn);
+    try {
+      const result = await convexMutation(fn, args);
+      console.log('Synthetic mutation complete', name);
+      return result;
+    } catch (error) {
+      console.error('Synthetic mutation failed', name);
+      throw error;
+    }
+  }) as any,
   runtime: (async () => ({ modelName: 'z-ai/glm-5.3-flash', provider: 'openrouter' })) as any,
   generate: (async ({
     userId: _,
@@ -30,7 +53,26 @@ __setNarrativeDepsForTest({
     speed: _speed,
     narrativeModel: _narrativeModel,
     ...options
-  }: any) => generateText({ ...options, model })) as any,
+  }: any) => {
+    try {
+      const result = await generateText({ ...options, model });
+      console.log('Synthetic model result', {
+        finishReason: result.finishReason,
+        text: result.text.slice(0, 1200),
+        usage: result.totalUsage,
+      });
+      return result;
+    } catch (error: any) {
+      console.error('Synthetic model failure', {
+        name: error?.name,
+        message: error?.message,
+        text: error?.text?.slice(0, 1200),
+        cause: error?.cause?.message,
+        usage: error?.usage,
+      });
+      throw error;
+    }
+  }) as any,
 });
 const f = api.narrative;
 const assert = (condition: unknown, message: string) => {
@@ -54,6 +96,13 @@ try {
   const brief = await convexQuery<any>(f.brief, { userId });
   assert(result.status === 'ready', `Research did not finish: ${JSON.stringify(result)}`);
   assert(brief.entry?.model === 'z-ai/glm-5.3-flash', 'Brief was not model-written');
+  assert(
+    /design review/i.test(brief.entry.text) &&
+      (/QA[^.!?]*before[^.!?]*deploy/i.test(brief.entry.text) ||
+        /before[^.!?]*deploy[^.!?]*QA/i.test(brief.entry.text) ||
+        /deploy[^.!?]*until[^.!?]*QA/i.test(brief.entry.text)),
+    'Brief omitted the actual intention or its QA condition',
+  );
   assert(brief.entry.sourceIds.includes(observation), 'Brief lost source provenance');
   const search = await convexQuery<any>(f.search, { userId, query: 'review' });
   assert(search.entries.length > 0, 'Deployed full-text search returned no evidence');

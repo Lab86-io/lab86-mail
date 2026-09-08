@@ -69,9 +69,9 @@ export function NarrativeSettings() {
         </p>
       </div>
       <p>
-        No sources are included until you choose them. Enabling memory starts with the last 30 days and
-        follows new changes. Connected-source content is sent to your selected AI provider when a narrative
-        run needs it.
+        No sources are included until you choose them. Enabling memory starts with the last 30 days of source
+        changes plus existing Work and Area context, then follows new changes. Connected-source content is
+        sent to your selected AI provider when a narrative run needs it.
       </p>
       <fieldset className="space-y-2">
         <legend className="mb-2 font-medium">Sources you allow narrative memory to use</legend>

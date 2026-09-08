@@ -391,7 +391,17 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
     .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', value.key))
     .collect();
   const current = versions.find((r) => r.current);
-  if (current?.corrected || current?.sourceVersion === value.sourceVersion) return false;
+  if (current?.sourceVersion === value.sourceVersion) return false;
+  if (current?.corrected) {
+    if (!current.sourceBaseVersion) {
+      // Older corrections and captured chat turns may have no source baseline.
+      // Establish one without overwriting the correction on this ambiguous
+      // first sync. Subsequent genuine source changes can advance the account.
+      await ctx.db.patch(current._id, { sourceBaseVersion: value.sourceVersion });
+      return false;
+    }
+    if (current.sourceBaseVersion === value.sourceVersion) return false;
+  }
   for (const version of versions.filter((r) => r.current))
     await ctx.db.patch(version._id, { current: false, pinned: false, updatedAt: Date.now() });
   await ctx.db.insert('narrativeEntries', {
@@ -528,7 +538,12 @@ export const edit = mutation({
       await ctx.db.patch(row._id, {
         text,
         ...(args.text !== undefined
-          ? { corrected: true, trust: 'reported' as const, sourceVersion: `correction:${prefs.revision + 1}` }
+          ? {
+              corrected: true,
+              trust: 'reported' as const,
+              sourceVersion: `correction:${prefs.revision + 1}`,
+              sourceBaseVersion: row.corrected ? row.sourceBaseVersion : row.sourceVersion,
+            }
           : {}),
         pinned: args.pinned ?? row.pinned,
         updatedAt: Date.now(),

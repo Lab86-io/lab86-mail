@@ -41,6 +41,46 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test.each([
+    false,
+    true,
+  ])('corrections block replay without freezing future changes (missing baseline: %s)', async (missingBaseline) => {
+    const t = harness();
+    await enable(t);
+    const source = await t.run((ctx) =>
+      ctx.db.insert('albatrossIntents', {
+        userId,
+        rawText: 'Ship review',
+        source: 'text',
+        status: 'captured',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await t.mutation(f.ingest, { ...args, group: 'work' });
+    const old = (await t.query(f.search, { ...args, level: 'observation' })).entries[0];
+    await t.mutation(f.edit, { ...args, id: old._id, text: 'Wait for QA before shipping' });
+    if (missingBaseline) await t.run((ctx) => ctx.db.patch(old._id, { sourceBaseVersion: undefined }));
+    await t.run(async (ctx) => {
+      const cursors = await ctx.db.query('narrativeCursors').collect();
+      for (const cursor of cursors) await ctx.db.delete(cursor._id);
+    });
+    await t.mutation(f.ingest, { ...args, group: 'work' });
+    expect((await t.query(f.search, { ...args, level: 'observation' })).entries[0].text).toBe(
+      'Wait for QA before shipping',
+    );
+    expect((await t.query(f.read, { ...args, id: old._id })).entry.sourceBaseVersion).toBe(old.sourceVersion);
+    await t.run((ctx) =>
+      ctx.db.patch(source, { rawText: 'QA passed; prepare deployment', updatedAt: Date.now() }),
+    );
+    await t.mutation(f.ingest, { ...args, group: 'work' });
+    expect((await t.query(f.search, { ...args, level: 'observation' })).entries[0].text).toContain(
+      'QA passed',
+    );
+    const historical = await t.query(f.read, { ...args, id: old._id });
+    expect(historical.entry.current).toBe(false);
+    expect(historical.entry.text).toBe('Wait for QA before shipping');
+  });
   test('old unfinished work survives a large history of pinned derived chapters', async () => {
     const t = harness();
     await enable(t);
@@ -106,6 +146,8 @@ describe('shared narrative runtime', () => {
     expect((await t.query(f.brief, args)).entry._id).toBe(brief);
     await t.mutation(f.edit, { ...args, id, text: 'That is no longer the plan' });
     expect((await t.query(f.brief, args)).entry).toBeNull();
+    await t.mutation(f.edit, { ...args, id, text: 'Second correction: hold the release' });
+    expect((await t.query(f.read, { ...args, id })).entry.sourceBaseVersion).toBeUndefined();
   });
   test('source deletion hides its observations and chapters even before cleanup', async () => {
     const t = harness();

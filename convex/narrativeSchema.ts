@@ -40,6 +40,7 @@ export const narrativeTables = {
     sourceTable: v.optional(v.string()),
     sourceId: v.optional(v.string()),
     sourceVersion: v.optional(v.string()),
+    sourceBaseVersion: v.optional(v.string()),
     sourceIds: v.array(v.string()),
     sourceVersions: v.optional(v.record(v.string(), v.string())),
     topics: v.array(v.string()),
