@@ -6,6 +6,7 @@ import {
   stepCountIs,
 } from 'ai';
 import { z } from 'zod';
+import { narrativePrompt } from '../narrative/service';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
@@ -15,6 +16,11 @@ import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
 export const AGENT_TOOL_NAMES = new Set([
+  'narrative_search',
+  'narrative_read',
+  'narrative_sources',
+  'narrative_changes_since',
+  'narrative_record_change',
   'list_accounts',
   'search_threads',
   'corpus_search',
@@ -608,7 +614,11 @@ export async function runAgent({
     timeStyle: 'long',
   }).format(new Date());
   const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
-  const system = `${base}\n\n${timeContext}${extraSystem ? `\n\n${extraSystem}` : ''}`;
+  const latestUser = [...messages].reverse().find((message) => message.role === 'user');
+  const memoryQuery =
+    typeof latestUser?.content === 'string' ? latestUser.content : JSON.stringify(latestUser?.content || '');
+  const narrative = await narrativePrompt(userId, memoryQuery).catch(() => '');
+  const system = `${base}\n\n${timeContext}${narrative ? `\n\n${narrative}` : ''}${extraSystem ? `\n\n${extraSystem}` : ''}`;
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();

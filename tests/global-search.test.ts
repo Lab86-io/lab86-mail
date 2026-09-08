@@ -42,7 +42,8 @@ const mockTool = (fn: (name: string, args: Record<string, unknown>, signal?: Abo
 
 describe('global search sources', () => {
   test('page aliases, multiple words, case and empty queries', () => {
-    expect(searchPages('')).toHaveLength(8);
+    expect(searchPages('')).toHaveLength(9);
+    expect(searchPages('narrative')[0].target).toEqual({ kind: 'narrative' });
     expect(searchPages('HOME')[0].target).toEqual({ kind: 'page', view: 'today' });
     expect(searchPages('calendar')[0].title).toBe('Calendar');
     expect(searchPages('preferences')[0].target).toEqual({ kind: 'settings' });

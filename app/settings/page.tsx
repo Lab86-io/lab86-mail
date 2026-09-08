@@ -41,6 +41,7 @@ import {
 } from '@/components/hosted/ai-options';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { Badge } from '@/components/ui/badge';
@@ -79,6 +80,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
   ai: () => <AiSection />,
+  narrative: () => <NarrativeSettings />,
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
   account: () => <AccountSection />,

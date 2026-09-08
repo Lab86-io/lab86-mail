@@ -3,6 +3,7 @@ import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
+import { narrativePrompt } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
@@ -413,7 +414,7 @@ export async function writeAreaPulse(
         userEmail: input.userEmail,
         userName: input.userName,
         system: AREA_PULSE_SYSTEM_PROMPT,
-        prompt: JSON.stringify(context, null, 2),
+        prompt: `${JSON.stringify(context, null, 2)}\n${await narrativePrompt(input.userId, '', `area:${context.area?.id || context.area?.areaId || ''}`).catch(() => '')}`,
       }),
       AREA_PULSE_DEADLINE_MS,
       'Area pulse composition',

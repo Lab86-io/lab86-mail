@@ -16,6 +16,7 @@ export interface CalendarSearchTarget {
 export type SearchTarget =
   | { kind: 'page'; view: PrimaryView }
   | { kind: 'settings' }
+  | { kind: 'narrative'; id?: string }
   | { kind: 'mail'; account: string; threadId: string }
   | { kind: 'document'; documentId: string }
   | { kind: 'google'; connectionId: string; fileId: string; mimeType: string }
@@ -34,6 +35,12 @@ export interface SearchGroup {
 }
 
 export const SEARCH_PAGES: SearchResult[] = [
+  {
+    id: 'page:narrative',
+    title: 'Narrative',
+    detail: 'Your history, ongoing threads and source evidence',
+    target: { kind: 'narrative' },
+  },
   { id: 'page:today', title: 'Today', detail: 'Daily Brief · home', target: { kind: 'page', view: 'today' } },
   {
     id: 'page:albatrosses',

@@ -11,6 +11,7 @@ import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { captureNarrativeTurn, refreshNarrative } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -185,10 +186,27 @@ export async function POST(req: NextRequest) {
       ),
     );
     const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
+    const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
+    const memoryId = latestUser
+      ? await captureNarrativeTurn(
+          user.userId,
+          latestUser.id,
+          messageText(latestUser),
+          contextAttachments.filter((item) => item.kind === 'work').map((item) => `work:${item.id}`),
+        ).catch(() => null)
+      : null;
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
-        [body.extraSystem, areaDiscoveryContext, ...attachedContexts, compactionNote]
+        [
+          body.extraSystem,
+          areaDiscoveryContext,
+          ...attachedContexts,
+          compactionNote,
+          memoryId
+            ? `The current user statement was recorded as narrative observation ${memoryId}. You may reference it when recording a meaningful change; it is a user report, not independent proof.`
+            : '',
+        ]
           .filter(Boolean)
           .join('\n\n') || undefined,
       userId: user.userId,
@@ -204,6 +222,7 @@ export async function POST(req: NextRequest) {
     // turn's artifacts and answers cannot be attributed to one of them, and
     // fanning out would cross-pollinate evidence between Works.
     const workAttachments = contextAttachments.filter((attachment) => attachment.kind === 'work');
+    if (memoryId) after(() => refreshNarrative(user.userId, 'conversation').then(() => undefined));
     if (workAttachments.length === 1) {
       const workId = workAttachments[0].id;
       after(() =>

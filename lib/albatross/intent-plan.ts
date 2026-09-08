@@ -4,6 +4,7 @@ import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
+import { narrativePrompt, narrativeResearchTools } from '@/lib/narrative/service';
 import {
   type BriefDocumentV2,
   type BriefRegion,
@@ -925,6 +926,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       currentWorkBlock(workbench, workDetail),
       '',
       contextText,
+      await narrativePrompt(input.userId, intent.rawText, `work:${input.intentId}`).catch(() => ''),
       nearby.block,
     ]
       .filter(Boolean)
@@ -939,7 +941,10 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         userName: input.userName,
         system: PLAN_SYSTEM,
         prompt,
-        tools: plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
+        tools: {
+          ...plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
+          ...(input.userId ? narrativeResearchTools(input.userId) : {}),
+        },
         stopWhen: stepCountIs(12),
       }),
       150_000,

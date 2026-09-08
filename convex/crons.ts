@@ -2,6 +2,8 @@ import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
 
 const crons = cronJobs();
+// Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
+crons.interval('shared narrative memory', { hours: 1 }, (internal as any).narrative.tick, {});
 
 export const CONTINUOUS_EXECUTION_CRON_NAMES = {
   scheduling: 'Work scheduling conductor',
