@@ -39,10 +39,11 @@ export function RowIcon({
 }) {
   const handleRef = useRef<IconHandle>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const hoveredRef = useRef(false);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
-    if (active && !reducedMotion) handleRef.current?.startAnimation();
+    if ((active || hoveredRef.current) && !reducedMotion) handleRef.current?.startAnimation();
     else if (active !== undefined || reducedMotion) handleRef.current?.stopAnimation();
   }, [active, reducedMotion]);
 
@@ -51,9 +52,11 @@ export function RowIcon({
     if (!host) return;
     const row = host.closest(ROW_SELECTOR) ?? host;
     const enter = () => {
+      hoveredRef.current = true;
       if (!reducedMotion) handleRef.current?.startAnimation();
     };
     const leave = () => {
+      hoveredRef.current = false;
       if (!active) handleRef.current?.stopAnimation();
     };
     row.addEventListener('mouseenter', enter);

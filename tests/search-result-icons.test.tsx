@@ -87,6 +87,13 @@ test('row animations follow keyboard selection, whole-row hover, and clean up li
     calls.length = 0;
     row.dispatchEvent(new Event('mouseenter'));
     expect(calls).toEqual(['start']);
+
+    calls.length = 0;
+    await act(async () => renderer.update(<RowIcon icon={FakeIcon} active />));
+    await act(async () => renderer.update(<RowIcon icon={FakeIcon} active={false} />));
+    expect(calls).toEqual(['start', 'start']);
+    row.dispatchEvent(new Event('mouseleave'));
+    expect(calls).toEqual(['start', 'start', 'stop']);
   } finally {
     await act(async () => renderer?.unmount());
   }
