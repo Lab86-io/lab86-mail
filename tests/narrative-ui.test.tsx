@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NarrativeSettings } from '../components/narrative/Narrative';
+import { NarrativeSearchButton, NarrativeSettings } from '../components/narrative/Narrative';
 import { NarrativeBrief } from '../components/narrative/NarrativeBrief';
 
 function render(node: ReactNode, key: unknown[], data: unknown) {
@@ -13,6 +13,12 @@ function render(node: ReactNode, key: unknown[], data: unknown) {
   return html;
 }
 describe('narrative surfaces', () => {
+  test('search advertises its actual global shortcut, not the assistant shortcut', () => {
+    const html = renderToStaticMarkup(<NarrativeSearchButton />);
+    expect(html).toContain('aria-keyshortcuts="/"');
+    expect(html).toContain('Search everything (slash)');
+    expect(html).not.toContain('⌘K');
+  });
   test('consent starts unselected, enabling is disabled, and destructive action asks for confirmation', () => {
     const html = render(<NarrativeSettings />, ['narrative', 'status'], {
       available: true,

@@ -318,6 +318,20 @@ function ObservationCard({ entry, onChange }: { entry: NarrativeEntry; onChange:
   );
 }
 
+export function NarrativeSearchButton() {
+  return (
+    <button
+      type="button"
+      className={`${field} ml-auto`}
+      aria-label="Search everything (slash)"
+      aria-keyshortcuts="/"
+      onClick={() => useClientStore.getState().setPaletteOpen(true)}
+    >
+      Search <kbd className="ml-2 text-xs">/</kbd>
+    </button>
+  );
+}
+
 export function NarrativePage() {
   const params = useSearchParams();
   const router = useRouter();
@@ -357,14 +371,7 @@ export function NarrativePage() {
             <ArrowLeft className="size-4" />
           </Link>
           <h1 className="font-serif text-xl">Narrative</h1>
-          <button
-            type="button"
-            className={`${field} ml-auto`}
-            aria-label="Search everything"
-            onClick={() => useClientStore.getState().setPaletteOpen(true)}
-          >
-            Search <kbd className="ml-2 text-xs">⌘K</kbd>
-          </button>
+          <NarrativeSearchButton />
           <Link className="text-xs" href="/settings?tab=narrative">
             Sources & privacy
           </Link>
