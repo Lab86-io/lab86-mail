@@ -73,11 +73,13 @@ function setup(
       })) as any,
     generate: (async (request) => {
       requests.push(request);
+      if (request.toolChoice !== 'none')
+        await request.tools.narrative_start.execute({}, { toolCallId: 'test-start', messages: [] });
       return overrides.generate
         ? overrides.generate(request)
         : {
             text: JSON.stringify({
-              text: 'You planned to finish the review. Completion is not yet established.',
+              text: 'You planned to finish the review. Completion is not yet established by the available evidence. Check QA before deployment.',
               sourceIds: ['evidence1'],
             }),
             totalUsage: { inputTokens: 30, outputTokens: 20 },
@@ -97,21 +99,27 @@ describe('narrative agent run', () => {
   test('research uses read-only tools, cancellation, explicit model, and bounded generation', async () => {
     const { writes, requests } = setup();
     expect((await refreshNarrative('pilot', 'brief')).status).toBe('ready');
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].toolChoice).toBe('none');
+    expect(requests[1].feature).toBe('narrative_write');
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',
       'narrative_search',
       'narrative_sources',
+      'narrative_start',
     ]);
     expect(requests[0].narrativeModel).toBe('z-ai/glm-5.3-flash');
     expect(requests[0].abortSignal).toBeInstanceOf(AbortSignal);
     expect(requests[0].maxOutputTokens).toBe(4000);
     expect(requests[0].maxRetries).toBe(0);
     expect(requests[0].prepareStep({ messages: [], stepNumber: 4 })).toEqual({ toolChoice: 'none' });
+    expect(requests[0].prepareStep({ messages: [], stepNumber: 0 })).toEqual({
+      toolChoice: { type: 'tool', toolName: 'narrative_start' },
+    });
     expect(writes.find((w) => w.name === 'narrative:publish')?.args.sourceIds).toEqual(['evidence1']);
     expect(writes.at(-1)?.name).toBe('narrative:finish');
-    expect(writes.at(-1)?.args.inputTokens).toBe(30);
+    expect(writes.at(-1)?.args.inputTokens).toBe(60);
   });
   test('unknown or over-budget pricing prevents a model request but preserves indexed fallback', async () => {
     const { writes, requests } = setup({ price: '0.01' });
@@ -119,6 +127,39 @@ describe('narrative agent run', () => {
     expect(requests).toEqual([]);
     expect(writes.some((w) => w.name === 'narrative:compile')).toBe(true);
     expect(writes.at(-1)?.args.error).toContain('budget');
+  });
+  test('research progress is never published; the tool-disabled writing call must finish the account', async () => {
+    const { writes, requests } = setup({
+      generate: async (request) =>
+        request.feature === 'narrative_research'
+          ? {
+              text: 'Checking for more records...',
+              response: { messages: [{ role: 'assistant', content: 'Checking for more records...' }] },
+            }
+          : {
+              text: JSON.stringify({
+                text: 'You planned to finish QA before deployment. Preparing for the review remains your stated priority; completion is not established by the evidence.',
+                sourceIds: ['evidence1'],
+              }),
+            },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect(requests[1].toolChoice).toBe('none');
+    expect(writes.find((w) => w.name === 'narrative:publish')?.args.text).toContain('finish QA');
+    expect(writes.find((w) => w.name === 'narrative:publish')?.args.text).not.toContain('Checking');
+  });
+  test('failed evidence reads are recoverable and do not leak server error bodies', async () => {
+    __setNarrativeDepsForTest({
+      query: (async () => {
+        throw new Error('PRIVATE SERVER DETAIL');
+      }) as any,
+    });
+    const result = await narrativeResearchTools('pilot').narrative_read.execute!(
+      { id: 'invalid' },
+      { toolCallId: 'test', messages: [] },
+    );
+    expect(JSON.stringify(result)).toContain('exact entry id');
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
   });
   test('fabricated citations do not publish and lease completion records failure', async () => {
     const { writes } = setup({
@@ -153,6 +194,27 @@ describe('narrative agent run', () => {
   });
   test('parsing and accounting retain explicit evidence and actual GLM rates', () => {
     expect(() => parseNarrativeGeneration('{"text":"hello","sourceIds":[]}', new Set())).toThrow();
+    expect(() =>
+      parseNarrativeGeneration(
+        '{"text":"Loading your day context...","sourceIds":["one"]}',
+        new Set(['one']),
+      ),
+    ).toThrow('progress placeholder');
+    expect(() =>
+      parseNarrativeGeneration(
+        '{"text":"Nothing else has changed since yesterday.","sourceIds":["one"]}',
+        new Set(['one']),
+      ),
+    ).toThrow('inactivity');
+    expect(
+      parseNarrativeGeneration(
+        JSON.stringify({
+          text: 'Your intention is to finish QA before deployment. Absence of records is not proof that nothing happened; the outcome remains unknown.',
+          sourceIds: ['one'],
+        }),
+        new Set(['one']),
+      ).text,
+    ).toContain('not proof');
     expect(
       estimateAiUsageCost({
         provider: 'openrouter',
