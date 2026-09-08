@@ -102,6 +102,7 @@ describe('narrative agent run', () => {
     expect(requests).toHaveLength(2);
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
+    expect(requests[0].stopWhen({ steps: [{}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',

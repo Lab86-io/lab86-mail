@@ -196,6 +196,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
   const prefs = await deps.mutation<any>(functions.claim, { userId, runId, kind });
   if (!prefs) return { status: 'busy_or_budget_limited' };
   const signal = AbortSignal.timeout(210_000);
+  const runStartedAt = Date.now();
   let sourceCount = 0,
     inputTokens = 0,
     outputTokens = 0,
@@ -222,7 +223,10 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       ...candidates.entries.filter((e) => e.level !== 'observation' && !e.model && e._id !== briefId),
     ].slice(0, 2);
     if (chapters.length) model = await checkRunBudget(userId, prefs.model);
-    for (const chapter of chapters) {
+    for (const [chapterIndex, chapter] of chapters.entries()) {
+      // Finish a useful current account before spending the remaining time on
+      // another chapter. Unwritten chapters remain in the durable pending queue.
+      if (chapterIndex > 0 && Date.now() - runStartedAt > 120_000) break;
       signal.throwIfAborted();
       const detail = await readNarrative(userId, chapter._id);
       if (!detail) continue;
@@ -271,7 +275,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         system: RESEARCH_SYSTEM,
         prompt,
         tools: tracked,
-        stopWhen: stepCountIs(4),
+        stopWhen: stepCountIs(detail.sources.length <= 3 ? 1 : 4),
         maxOutputTokens: 4_000,
         maxRetries: 0,
         providerOptions: { openai: { reasoningEffort: 'low' } },
