@@ -63,7 +63,7 @@ export function CalendarSearchSelection() {
           {detail.error ? detail.error.message : 'Loading the details from its calendar.'}
         </DialogDescription>
         {detail.isFetching ? (
-          <Loader2 className="size-5 animate-spin" aria-label="Loading event" />
+          <Loader2 className="size-5 motion-safe:animate-spin" aria-label="Loading event" />
         ) : (
           <button
             type="button"
