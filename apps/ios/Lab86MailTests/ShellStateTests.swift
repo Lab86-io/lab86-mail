@@ -32,6 +32,34 @@ struct ShellStateTests {
     }
 
     @Test
+    @MainActor
+    func requestingMailSearchRoutesThereAndLeavesAFocusRequestForTheMountedView() {
+        let navigation = NavigationModel()
+        navigation.openArea(id: "area-1", name: "Move")
+        navigation.workRoute = WorkRoute(workID: "work-1", title: "Book movers")
+        navigation.threadRoute = ThreadRoute(accountID: "acct-1", threadID: "thread-1")
+
+        navigation.requestMailSearch(query: "closing date")
+
+        #expect(navigation.selectedTab == .mail)
+        #expect(navigation.pendingMailSearch == "closing date")
+        #expect(navigation.areaRoute == nil)
+        #expect(navigation.workRoute == nil)
+        #expect(navigation.threadRoute == nil)
+    }
+
+    @Test
+    @MainActor
+    func commandFUsesAnEmptyNonNilRequestSoMailCanFocusWithoutChangingTheQuery() {
+        let navigation = NavigationModel()
+
+        navigation.requestMailSearch()
+
+        #expect(navigation.selectedTab == .mail)
+        #expect(navigation.pendingMailSearch == "")
+    }
+
+    @Test
     func theMacNotificationPaneOpensOnTheAppsOwnRow() {
         #expect(
             PlatformSettings.notificationSettingsURL(bundleIdentifier: "io.lab86.mail")?.absoluteString

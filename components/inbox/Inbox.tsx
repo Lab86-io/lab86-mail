@@ -77,6 +77,7 @@ import { useClientStore } from '@/lib/client-state';
 import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-pagination';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
+import { focusMailResult, registerMailSearchFocus } from '@/lib/mail/search/focus-contract';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
@@ -191,6 +192,9 @@ export function Inbox() {
   const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => registerMailSearchFocus(), []);
 
   // Reflect the active query in the bar — but show All Mail as an empty bar
   // (placeholder), so "all mail" reads as "no filter" instead of raw syntax.
@@ -820,7 +824,7 @@ export function Inbox() {
           )}
         >
           <div className="flex items-center gap-2">
-            <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+            <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:border-[var(--color-accent)] focus-within:ring-[3px] focus-within:ring-[var(--color-accent)]/20">
               {translating ? (
                 <BorderBeam
                   size={80}
@@ -837,18 +841,33 @@ export function Inbox() {
                 )}
               </InputGroupAddon>
               <InputGroupInput
+                ref={searchInputRef}
+                data-mail-search-input="true"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     submitSearch();
-                  } else if (e.key === 'Escape' && searchInput) {
+                  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    if (
+                      scrollRef.current &&
+                      focusMailResult(scrollRef.current, e.key === 'ArrowDown' ? 1 : -1)
+                    ) {
+                      e.preventDefault();
+                    }
+                  } else if (e.key === 'Escape') {
                     e.preventDefault();
-                    clearSearch();
+                    e.stopPropagation();
+                    if (searchInput) clearSearch();
+                    else e.currentTarget.blur();
                   }
                 }}
                 placeholder="Search your mail, or ask in your own words"
+                aria-label="Search mail across your selected accounts"
+                aria-keyshortcuts="Meta+F Control+F /"
+                title="Search mail (Command or Control F, or slash)"
                 className="text-[13px]"
               />
               {searchInput ? (
@@ -900,12 +919,7 @@ export function Inbox() {
             {translatedQuery && !smartCategory ? (
               <Badge variant="outline" className="gap-1">
                 Filter: <span className="font-mono">{translatedQuery}</span>
-                <button
-                  type="button"
-                  onClick={clearSearch}
-                  title="Clear generated filter"
-                  aria-label="Clear generated filter"
-                >
+                <button type="button" onClick={clearSearch} title="Clear filter" aria-label="Clear filter">
                   <X className="size-3" />
                 </button>
               </Badge>
@@ -987,7 +1001,7 @@ export function Inbox() {
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-3 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent"
           />
-          <div ref={scrollRef} className="scrollable flex min-h-0 flex-1 flex-col">
+          <div ref={scrollRef} data-mail-results className="scrollable flex min-h-0 flex-1 flex-col">
             {/* No mailbox connected means no mail is coming. Skeleton rows here
               read as "still loading" forever, which is a lie. */}
             {!authedAccounts.length ? (
@@ -1000,7 +1014,7 @@ export function Inbox() {
                 onRetry={() => refetch()}
               />
             ) : items.length === 0 ? (
-              translatedQuery || nlSearchIntent ? (
+              nlSearchIntent ? (
                 <SearchEmptyState
                   onClear={clearSearch}
                   onEditGenerated={() => {
@@ -1019,11 +1033,13 @@ export function Inbox() {
                     if (nlSearchIntent) {
                       setQuery(nlSearchIntent);
                       setSearchInput(nlSearchIntent);
+                      setSearchDraft(nlSearchIntent);
+                      setTranslatedSearch(null, nlSearchIntent, 'typed');
                     }
                   }}
                 />
               ) : (
-                <EmptyState account={account} />
+                <EmptyState account={account} searching={!smartCategory && query !== DEFAULT_QUERY} />
               )
             ) : (
               <motion.div
@@ -1248,6 +1264,15 @@ export const InboxThreadRow = memo(function InboxThreadRow({
       onPointerLeave={cancelPrefetch}
       onFocus={() => onPrefetch(item)}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          const results = event.currentTarget.closest('[data-mail-results]');
+          if (results) {
+            event.preventDefault();
+            focusMailResult(results, event.key === 'ArrowDown' ? 1 : -1, event.currentTarget);
+          }
+          return;
+        }
         if (event.key === ' ') {
           event.preventDefault();
           if (event.shiftKey) {
@@ -1271,11 +1296,12 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         }
       }}
       role="button"
+      data-mail-thread-row="true"
       tabIndex={0}
       className={cn(
         // No transition on the row itself: the hover highlight is a selection
         // cue, so it must be instant for snappy up/down scanning.
-        'group relative grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left last:border-b-0 hover:bg-[var(--color-hover-soft)]',
+        'group relative grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left outline-none last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-selected-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
@@ -1636,14 +1662,16 @@ function NoMailboxState() {
   );
 }
 
-function EmptyState({ account }: { account: string }) {
+function EmptyState({ account, searching }: { account: string; searching: boolean }) {
   return (
     <Empty className="grid flex-1 place-items-center px-6 py-12 text-center">
       <EmptyHeader>
         <EmptyMedia>
           <InboxIcon className="h-4 w-4 text-[var(--color-text-faint)]" />
         </EmptyMedia>
-        <EmptyTitle className="font-display italic">Nothing here yet</EmptyTitle>
+        <EmptyTitle className="font-display italic">
+          {searching ? 'No mail matched your search' : 'Nothing here yet'}
+        </EmptyTitle>
         <EmptyDescription>
           {account
             ? 'Try a different search, smart category, or mailbox.'

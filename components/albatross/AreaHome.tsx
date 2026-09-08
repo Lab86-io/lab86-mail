@@ -34,7 +34,6 @@ import {
   CircleDot,
   FolderInput,
   Inbox,
-  LayoutTemplate,
   MessageSquareText,
   MoreHorizontal,
   RefreshCw,
@@ -337,7 +336,52 @@ function useMinuteNow() {
 
 // The Area page is a lens on one part of a life: what it says right now, what
 // is being carried inside it, and the mail that feeds it.
-export type AreaView = 'brief' | 'albatrosses' | 'inbox';
+export type AreaView = 'brief' | 'albatrosses';
+
+/**
+ * Area detail is one desktop workbench: the editorial brief and the mail that
+ * informs it stay visible together. Narrow web widths use the same two
+ * surfaces in a vertical reading order rather than hiding either behind tabs.
+ */
+function AreaWorkbench({ home, brief }: { home: AreaHomeData; brief: ReactNode }) {
+  return (
+    <div
+      data-area-workbench
+      className="scrollable grid h-full min-h-0 grid-cols-1 overflow-y-auto bg-[var(--color-bg)] min-[1100px]:grid-cols-[minmax(0,1.15fr)_minmax(380px,0.85fr)] min-[1100px]:grid-rows-1 min-[1100px]:overflow-hidden"
+    >
+      <section
+        aria-label={`${home.area.name} brief`}
+        data-area-brief-column
+        className="min-h-[620px] min-w-0 overflow-hidden border-b border-[var(--color-border)] min-[1100px]:min-h-0 min-[1100px]:border-b-0 min-[1100px]:border-r"
+      >
+        {brief}
+      </section>
+      <aside
+        aria-label={`${home.area.name} inbox`}
+        data-area-inbox-column
+        className="min-h-[520px] min-w-0 overflow-hidden min-[1100px]:min-h-0"
+      >
+        <AreaInbox home={home} />
+      </aside>
+    </div>
+  );
+}
+
+function AreaWorkButton({ onOpen, compact = false }: { onOpen: () => void; compact?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45',
+        compact && 'px-2 py-0.5 text-[10.5px]',
+      )}
+    >
+      <CircleDot className="size-3" aria-hidden />
+      Albatrosses
+    </button>
+  );
+}
 
 export function AreaHome() {
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
@@ -620,9 +664,6 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
       />
     );
   }
-  if (areaView === 'inbox') {
-    return <AreaInbox home={home} onAllAreas={() => setSelectedAreaId(null)} onViewChange={setAreaView} />;
-  }
 
   // The generated document is the selected Area screen. React only supplies
   // the sandbox, theme/action bridge, and small floating host controls. The
@@ -633,79 +674,89 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     !showStructuredFallback
   ) {
     return (
-      <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)]">
-        <BriefCanvas
-          value={home.livingBrief.document}
-          composing={home.livingBrief.status === 'generating' || artifactRefreshing}
-        />
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
-          <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
-            <button
-              type="button"
-              onClick={() => setSelectedAreaId(null)}
-              className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
-            >
-              Areas
-            </button>
-            <span className="text-[var(--color-text-faint)]">/</span>
-            <AreaMark area={home.area} />
-            <span className="max-w-48 truncate text-[12px] font-medium">{home.area.name}</span>
-            <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-            <AreaViewSwitcher value="brief" onChange={setAreaView} compact />
+      <AreaWorkbench
+        home={home}
+        brief={
+          <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)] pt-14">
+            <BriefCanvas
+              value={home.livingBrief.document}
+              composing={home.livingBrief.status === 'generating' || artifactRefreshing}
+            />
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
+              <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAreaId(null)}
+                  className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
+                >
+                  Areas
+                </button>
+                <span className="text-[var(--color-text-faint)]">/</span>
+                <AreaMark area={home.area} />
+                <span className="max-w-48 truncate text-[12px] font-medium">{home.area.name}</span>
+                <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
+                <AreaWorkButton onOpen={() => setAreaView('albatrosses')} compact />
+              </div>
+              <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatScope({ kind: 'area', areaId: home.area._id });
+                    setAiBarOpen(true);
+                  }}
+                  className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)]"
+                >
+                  Discuss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshArtifact()}
+                  disabled={artifactRefreshing || home.livingBrief.status === 'generating'}
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
+                >
+                  <RefreshCw
+                    className={cn('size-3', artifactRefreshing && 'motion-safe:animate-spin')}
+                    aria-hidden
+                  />
+                  <span className="hidden md:inline">Refresh</span>
+                </button>
+                <a
+                  href="/settings?tab=areas"
+                  className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)]"
+                >
+                  Manage
+                </a>
+              </div>
+            </div>
           </div>
-          <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
-            <button
-              type="button"
-              onClick={() => {
-                setChatScope({ kind: 'area', areaId: home.area._id });
-                setAiBarOpen(true);
-              }}
-              className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)]"
-            >
-              Discuss
-            </button>
-            <button
-              type="button"
-              onClick={() => void refreshArtifact()}
-              disabled={artifactRefreshing || home.livingBrief.status === 'generating'}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
-            >
-              <RefreshCw
-                className={cn('size-3', artifactRefreshing && 'motion-safe:animate-spin')}
-                aria-hidden
-              />
-              <span className="hidden md:inline">Refresh</span>
-            </button>
-            <a
-              href="/settings?tab=areas"
-              className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)]"
-            >
-              Manage
-            </a>
-          </div>
-        </div>
-      </div>
+        }
+      />
     );
   }
 
   if (home.livingBrief?.artifactHtml && !showStructuredFallback) {
     return (
-      <AreaArtifactCanvas
+      <AreaWorkbench
         home={home}
-        html={home.livingBrief.artifactHtml}
-        status={home.livingBrief.status}
-        generatedAt={home.livingBrief.generatedAt}
-        refreshError={artifactRefreshError || home.livingBrief.error || null}
-        refreshing={artifactRefreshing}
-        onRefresh={() => void refreshArtifact()}
-        onDiscuss={() => {
-          setChatScope({ kind: 'area', areaId: home.area._id });
-          setAiBarOpen(true);
-        }}
-        onAllAreas={() => setSelectedAreaId(null)}
-        onViewChange={setAreaView}
-        onStructuredFallback={() => setShowStructuredFallback(true)}
-        pulse={pulse}
+        brief={
+          <AreaArtifactCanvas
+            home={home}
+            html={home.livingBrief.artifactHtml}
+            status={home.livingBrief.status}
+            generatedAt={home.livingBrief.generatedAt}
+            refreshError={artifactRefreshError || home.livingBrief.error || null}
+            refreshing={artifactRefreshing}
+            onRefresh={() => void refreshArtifact()}
+            onDiscuss={() => {
+              setChatScope({ kind: 'area', areaId: home.area._id });
+              setAiBarOpen(true);
+            }}
+            onAllAreas={() => setSelectedAreaId(null)}
+            onOpenAlbatrosses={() => setAreaView('albatrosses')}
+            onStructuredFallback={() => setShowStructuredFallback(true)}
+            pulse={pulse}
+          />
+        }
       />
     );
   }
@@ -713,15 +764,20 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   if (!showStructuredFallback) {
     const failed = home.livingBrief?.status === 'error' || Boolean(artifactRefreshError);
     return (
-      <AreaArtifactUnavailable
-        area={home.area}
-        failed={failed}
-        refreshing={artifactRefreshing || home.livingBrief?.status === 'generating'}
-        error={artifactRefreshError || home.livingBrief?.error || null}
-        onRefresh={() => void refreshArtifact()}
-        onAllAreas={() => setSelectedAreaId(null)}
-        onViewChange={setAreaView}
-        onStructuredFallback={() => setShowStructuredFallback(true)}
+      <AreaWorkbench
+        home={home}
+        brief={
+          <AreaArtifactUnavailable
+            area={home.area}
+            failed={failed}
+            refreshing={artifactRefreshing || home.livingBrief?.status === 'generating'}
+            error={artifactRefreshError || home.livingBrief?.error || null}
+            onRefresh={() => void refreshArtifact()}
+            onAllAreas={() => setSelectedAreaId(null)}
+            onOpenAlbatrosses={() => setAreaView('albatrosses')}
+            onStructuredFallback={() => setShowStructuredFallback(true)}
+          />
+        }
       />
     );
   }
@@ -795,125 +851,75 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
-        <button
-          type="button"
-          onClick={() => setSelectedAreaId(null)}
-          className="text-[12px] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline"
-        >
-          Areas
-        </button>
-        <span className="text-[12px] text-[var(--color-text-faint)]">/</span>
-        <AreaMark area={home.area} />
-        <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight">{home.area.name}</h2>
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
-          {home.area.kind}
-        </Badge>
-        <AreaIndexStatusPill status={indexStatus} />
-        <AreaViewSwitcher value={areaView} onChange={setAreaView} />
-        <span className="ml-auto" />
-        <RefreshBriefButton areaId={home.area._id} canGenerate={brief.canGenerate} />
-        <ManageLink />
-      </header>
+    <AreaWorkbench
+      home={home}
+      brief={
+        <div className="flex h-full min-h-0 flex-col">
+          <header className="flex items-center gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setSelectedAreaId(null)}
+              className="text-[12px] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline"
+            >
+              Areas
+            </button>
+            <span className="text-[12px] text-[var(--color-text-faint)]">/</span>
+            <AreaMark area={home.area} />
+            <h2 className="min-w-0 truncate text-[15px] font-semibold tracking-tight">{home.area.name}</h2>
+            <Badge variant="outline" className="px-1.5 py-0 text-[10px] capitalize">
+              {home.area.kind}
+            </Badge>
+            <AreaIndexStatusPill status={indexStatus} />
+            <AreaWorkButton onOpen={() => setAreaView('albatrosses')} />
+            <span className="ml-auto" />
+            <RefreshBriefButton areaId={home.area._id} canGenerate={brief.canGenerate} />
+            <ManageLink />
+          </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12">
-        <BriefLead home={home} brief={brief} indexStatus={indexStatus} now={now} onDiscuss={discuss} />
-        {briefEmpty ? (
-          <>
-            <div className="mx-3 mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
-              <p className="text-[13px] font-medium">Nothing filed here yet.</p>
-              <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-                Mail is linked here only when it specifically matches this area. Capture a plan above, or add
-                verified identities in Settings to sharpen the match.
-              </p>
-            </div>
-            <ContextSection home={home} count={sectionCount('context')} />
-          </>
-        ) : (
-          <>
-            <NeedsYouSection rows={needsYou} bounded={needsYouBounded} />
-            <ProjectsSection projects={home.projects} count={home.counts.projects} />
-            <WorkSections rows={workRows} />
-            {shouldShowEvidenceBand(evidence.length, home.counts.places) ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-12">
+            <BriefLead home={home} brief={brief} indexStatus={indexStatus} now={now} onDiscuss={discuss} />
+            {briefEmpty ? (
               <>
-                <EvidenceHeader segments={evidence} />
-                <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
-                  <div className="min-w-0">
-                    <EventsSection events={home.events} count={sectionCount('events')} />
-                    <MailSection mail={home.mail} count={sectionCount('mail')} />
-                    <TasksSection tasks={home.tasks} count={sectionCount('tasks')} now={now} />
-                  </div>
-                  <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
-                    <PlacesSection places={home.places} count={home.counts.places} />
-                    <ContextSection home={home} count={sectionCount('context')} />
-                  </aside>
+                <div className="mx-3 mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
+                  <p className="text-[13px] font-medium">Nothing filed here yet.</p>
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                    Mail is linked here only when it specifically matches this area. Capture a plan above, or
+                    add verified identities in Settings to sharpen the match.
+                  </p>
                 </div>
+                <ContextSection home={home} count={sectionCount('context')} />
               </>
-            ) : null}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function AreaViewSwitcher({
-  value,
-  onChange,
-  compact = false,
-}: {
-  value: AreaView;
-  onChange: (view: AreaView) => void;
-  compact?: boolean;
-}) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Area view"
-      className={cn(
-        'inline-flex items-center rounded-full bg-[var(--color-bg-muted)] p-0.5',
-        compact && 'bg-transparent p-0',
-      )}
-    >
-      {[
-        { id: 'brief' as const, label: 'Brief', icon: LayoutTemplate },
-        { id: 'albatrosses' as const, label: 'Albatrosses', icon: CircleDot },
-        { id: 'inbox' as const, label: 'Mail', icon: Inbox },
-      ].map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={value === item.id}
-            onClick={() => onChange(item.id)}
-            className={cn(
-              'inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors',
-              value === item.id &&
-                'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]',
-              compact && 'h-6 px-2 text-[10.5px]',
+            ) : (
+              <>
+                <NeedsYouSection rows={needsYou} bounded={needsYouBounded} />
+                <ProjectsSection projects={home.projects} count={home.counts.projects} />
+                <WorkSections rows={workRows} />
+                {shouldShowEvidenceBand(evidence.length, home.counts.places) ? (
+                  <>
+                    <EvidenceHeader segments={evidence} />
+                    <div className="grid gap-x-9 min-[1180px]:grid-cols-[minmax(0,1fr)_340px]">
+                      <div className="min-w-0">
+                        <EventsSection events={home.events} count={sectionCount('events')} />
+                        <MailSection mail={home.mail} count={sectionCount('mail')} />
+                        <TasksSection tasks={home.tasks} count={sectionCount('tasks')} now={now} />
+                      </div>
+                      <aside className="min-w-0 min-[1180px]:sticky min-[1180px]:top-0 min-[1180px]:self-start">
+                        <PlacesSection places={home.places} count={home.counts.places} />
+                        <ContextSection home={home} count={sectionCount('context')} />
+                      </aside>
+                    </div>
+                  </>
+                ) : null}
+              </>
             )}
-          >
-            <Icon className="size-3" aria-hidden />
-            {item.label}
-          </button>
-        );
-      })}
-    </div>
+          </div>
+        </div>
+      }
+    />
   );
 }
 
-function AreaInbox({
-  home,
-  onAllAreas,
-  onViewChange,
-}: {
-  home: AreaHomeData;
-  onAllAreas: () => void;
-  onViewChange: (view: AreaView) => void;
-}) {
+function AreaInbox({ home }: { home: AreaHomeData }) {
   const { isAuthenticated } = useConvexAuth();
   const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
     | AreaOverviewRow[]
@@ -1048,29 +1054,17 @@ function AreaInbox({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
       <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2.5">
-        <button
-          type="button"
-          onClick={onAllAreas}
-          className="text-[11.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-        >
-          Areas
-        </button>
-        <span className="text-[var(--color-text-faint)]">/</span>
-        <AreaMark area={home.area} />
-        <h2 className="min-w-0 truncate text-[14px] font-semibold">{home.area.name}</h2>
-        <AreaViewSwitcher value="inbox" onChange={onViewChange} />
-        <a
-          href="/settings?tab=areas"
-          className="ml-auto text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-        >
-          Manage
-        </a>
+        <Inbox className="size-4 text-[var(--color-text-muted)]" aria-hidden />
+        <div className="min-w-0">
+          <h2 className="truncate text-[14px] font-semibold">Area inbox</h2>
+          <p className="truncate text-[10.5px] text-[var(--color-text-faint)]">{home.area.name}</p>
+        </div>
       </header>
       <section className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg)] p-2 sm:p-3">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
           <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]">
+              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:border-[var(--color-accent)] focus-within:ring-[3px] focus-within:ring-[var(--color-accent)]/20">
                 <InputGroupAddon>
                   <Search className="size-4 text-[var(--color-text-faint)]" aria-hidden />
                 </InputGroupAddon>
@@ -1161,7 +1155,7 @@ function AreaInbox({
             </div>
           ) : null}
 
-          <div className="scrollable flex min-h-0 flex-1 flex-col">
+          <div data-mail-results className="scrollable flex min-h-0 flex-1 flex-col">
             {visibleRows.length ? (
               <div>
                 {visibleRows.map((row, index) => {
@@ -1455,7 +1449,7 @@ function AreaArtifactCanvas({
   onRefresh,
   onDiscuss,
   onAllAreas,
-  onViewChange,
+  onOpenAlbatrosses,
   onStructuredFallback,
   pulse,
 }: {
@@ -1468,7 +1462,7 @@ function AreaArtifactCanvas({
   onRefresh: () => void;
   onDiscuss: () => void;
   onAllAreas: () => void;
-  onViewChange: (view: AreaView) => void;
+  onOpenAlbatrosses: () => void;
   onStructuredFallback: () => void;
   pulse?: AreaPulseData;
 }) {
@@ -1681,7 +1675,7 @@ function AreaArtifactCanvas({
           <AreaMark area={area} />
           <span className="max-w-48 truncate text-[12px] font-medium">{area.name}</span>
           <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
-          <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
+          <AreaWorkButton onOpen={onOpenAlbatrosses} compact />
         </div>
 
         <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
@@ -1742,7 +1736,7 @@ function AreaArtifactUnavailable({
   error,
   onRefresh,
   onAllAreas,
-  onViewChange,
+  onOpenAlbatrosses,
   onStructuredFallback,
 }: {
   area: AreaIdentityLike;
@@ -1751,7 +1745,7 @@ function AreaArtifactUnavailable({
   error: string | null;
   onRefresh: () => void;
   onAllAreas: () => void;
-  onViewChange: (view: AreaView) => void;
+  onOpenAlbatrosses: () => void;
   onStructuredFallback: () => void;
 }) {
   return (
@@ -1765,7 +1759,7 @@ function AreaArtifactUnavailable({
         Areas
       </button>
       <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-sm">
-        <AreaViewSwitcher value="brief" onChange={onViewChange} compact />
+        <AreaWorkButton onOpen={onOpenAlbatrosses} compact />
       </div>
       <div className="relative m-auto max-w-lg px-8 text-center">
         <AreaMark area={area} size="lg" />
@@ -2758,7 +2752,13 @@ function AreaAlbatrosses({
         </button>
         <span className="text-[11px] text-[var(--color-text-faint)]">/</span>
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{areaName}</span>
-        <AreaViewSwitcher value="albatrosses" onChange={onViewChange} compact />
+        <button
+          type="button"
+          onClick={() => onViewChange('brief')}
+          className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+        >
+          Back to brief &amp; inbox
+        </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-16 pt-5">

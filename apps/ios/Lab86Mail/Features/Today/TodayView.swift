@@ -80,7 +80,8 @@ struct TodayView: View {
         .shellToolbar()
     }
 
-    /// Today is one page read in layers down one scroll.
+    /// On compact Apple platforms, Today is one page read in layers down one
+    /// scroll. The Mac branch below restores the written Brief as the page.
     ///
     /// The live layer comes first and is read from live work, approvals and
     /// calendar rows, so the top of the page can never be stale. The brief's
@@ -89,7 +90,26 @@ struct TodayView: View {
     /// It used to be two whole surfaces: when a brief existed the live day
     /// vanished behind it, and a three-week-old edition could present itself as
     /// the current one. The web merged them; this is the same page.
+    @ViewBuilder
     private var todayBody: some View {
+        #if os(macOS)
+        // Restore the desktop Today surface to its strongest identity: when a
+        // written edition exists, the brief is the page. Live operational
+        // modules remain the useful fallback while an edition is unavailable.
+        if let report = store.dailyReport, report.hasArtifact {
+            macBriefBody(report)
+        } else {
+            layeredTodayBody
+        }
+        #else
+        layeredTodayBody
+        #endif
+    }
+
+    /// The compact-client composition remains one continuous page of live day
+    /// context followed by its synthesis. macOS only uses this as the fallback
+    /// until a complete Brief artifact is available.
+    private var layeredTodayBody: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 // The plate. The day's art, its dateline and its edition title,
@@ -133,6 +153,57 @@ struct TodayView: View {
             }
         }
     }
+
+    #if os(macOS)
+    /// The editorial Brief experience the desktop had before Today became a
+    /// dashboard. It deliberately reuses the same masthead, lede, document,
+    /// footer, review flow, and legacy HTML renderer rather than creating a
+    /// second interpretation of report data.
+    @ViewBuilder
+    private func macBriefBody(_ report: DailyReportModel) -> some View {
+        if let document = report.document, Self.rendersNativeDocument(report) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
+                    DailyBriefLede(text: document.summary)
+                    BriefDocumentView(
+                        document: document,
+                        isComposing: report.artifactStatus == "composing",
+                        onReview: { artifactReview = $0 }
+                    )
+                    DailyBriefFooter(report: report)
+                        .padding(.bottom, 32)
+                }
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+            }
+            .background(environment.theme.paperColor)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                Self.mastheadScrolledPast(
+                    offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                    containerWidth: min(geometry.containerSize.width, 920)
+                )
+            } action: { _, crossed in
+                showsInlineDate = crossed
+            }
+            .refreshable { await store.refreshToday() }
+        } else {
+            ScrollView {
+                DailyBriefView(
+                    report: report,
+                    lastRefresh: store.lastRefresh,
+                    isOffline: store.briefError != nil,
+                    onAction: handleBriefAction
+                )
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 32)
+            }
+            .background(environment.theme.paperColor)
+            .refreshable { await store.refreshToday() }
+        }
+    }
+    #endif
 
     /// The deck under the plate: one sentence about the shape of the day. The
     /// plate already carries the date, so this never repeats it.

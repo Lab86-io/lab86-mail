@@ -32,8 +32,10 @@ struct AlbatrossCommands: Commands {
             .keyboardShortcut("h", modifiers: [.command, .shift])
             #endif
 
-            Button("Search Mail") {
-                environment.navigation.selectPrimary(.mail)
+            Button("Search Mail…") {
+                environment.navigation.requestMailSearch()
+                // When Mail is already mounted, focus it immediately. When it
+                // is not, pendingMailSearch is consumed on MailView.onAppear.
                 NotificationCenter.default.post(name: .albatrossFocusMailSearch, object: nil)
             }
             .keyboardShortcut("f", modifiers: .command)
