@@ -34,6 +34,22 @@ const packet = {
 const props = { to: 'alex@example.test', subject: 'Atlas', body: 'Keep my draft', onApply: mock(() => {}) };
 
 describe('narrative drafting interaction', () => {
+  test('malformed successful meeting responses stay inside the recoverable panel error state', async () => {
+    for (const payload of [
+      {},
+      { context: {} },
+      { context: { coverage: 'test', evidence: [] }, points: [null], questions: [], mode: 'generated' },
+      { context: { coverage: {}, evidence: [] }, points: [], questions: [], mode: 'empty' },
+    ]) {
+      globalThis.fetch = (async () => Response.json(payload)) as typeof fetch;
+      await act(async () => {
+        view = create(<NarrativeMeetingPrep accountId="a" calendarId="c" eventId="e" />);
+      });
+      await act(async () => button('Prepare meeting').props.onClick());
+      expect(text(view.root.findByProps({ role: 'alert' }))).toContain('Meeting prep is unavailable');
+      await act(async () => view.unmount());
+    }
+  });
   test('non-JSON proxy failures show safe draft and meeting messages', async () => {
     globalThis.fetch = (async () =>
       new Response('<html>proxy details</html>', { status: 503 })) as typeof fetch;
@@ -77,7 +93,8 @@ describe('narrative drafting interaction', () => {
         .findByProps({ 'aria-label': 'Suggested email draft' })
         .props.onChange({ target: { value: 'Edited preview' } }),
     );
-    await act(async () => button('Use draft').props.onClick());
+    expect(text(view.root)).toContain('including any quoted text');
+    await act(async () => button('Replace message').props.onClick());
     expect(apply).toHaveBeenCalledWith('Edited preview');
     expect(requests.some((request) => request.url === '/api/compose')).toBe(false);
   });

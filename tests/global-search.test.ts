@@ -45,6 +45,47 @@ const mockTool = (fn: (name: string, args: Record<string, unknown>, signal?: Abo
   (async (name, args, signal) => fn(name, args, signal)) as SearchTool;
 
 describe('global search sources', () => {
+  test('malformed collections produce actionable errors, not raw TypeErrors or false empty results', async () => {
+    for (const payload of [null, {}, { events: null }, { events: [null] }, { events: [{}] }]) {
+      await expect(
+        searchCalendar(
+          'plan',
+          mockTool(() => payload),
+        ),
+      ).rejects.toThrow('Calendar search returned an incomplete response');
+    }
+    for (const payload of [
+      null,
+      {},
+      { files: null },
+      { files: [null] },
+      { files: [{}] },
+      { files: [{ ...file, webUrl: {} }] },
+    ]) {
+      await expect(
+        searchCloudFiles(
+          'plan',
+          mockTool(() => payload),
+        ),
+      ).rejects.toThrow('File search returned an incomplete response');
+    }
+    expect(
+      (
+        await searchCalendar(
+          'plan',
+          mockTool(() => ({ events: [] })),
+        )
+      ).items,
+    ).toEqual([]);
+    expect(
+      (
+        await searchCloudFiles(
+          'plan',
+          mockTool(() => ({ files: [] })),
+        )
+      ).items,
+    ).toEqual([]);
+  });
   test('distant calendar targets restore the current range when cleared', () => {
     const normal = { startAt: Date.parse('2026-06-01'), endAt: Date.parse('2027-06-01') };
     for (const date of ['2024-01-01', '2029-01-01']) {

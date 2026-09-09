@@ -258,7 +258,7 @@ function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply
                   close();
                 }}
               >
-                Use draft
+                {body.trim() ? 'Replace message' : 'Use draft'}
               </Button>
             ) : (
               <Button
@@ -278,6 +278,11 @@ function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply
               Cancel
             </Button>
           </div>
+          {draft && body.trim() ? (
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Replaces the current message, including any quoted text. Nothing is sent until you send it.
+            </p>
+          ) : null}
         </div>
       )}
     </section>
