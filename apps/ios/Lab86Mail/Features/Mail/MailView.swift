@@ -198,20 +198,38 @@ struct MailView: View {
                     }
                 }
             }
+            #if os(macOS)
+            if isSearchFocused || !searchText.isEmpty {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close Search", systemImage: "xmark") {
+                        searchText = ""
+                        isSearchFocused = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Clear and close search (Escape)")
+                    .accessibilityHint("Clears the query and returns keyboard focus to the inbox.")
+                }
+            }
+            #endif
         }
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search this inbox")
         .onReceive(NotificationCenter.default.publisher(for: .albatrossFocusMailSearch)) { _ in
             isSearchFocused = true
         }
         .onAppear {
-            if let pending = environment.navigation.pendingMailSearch {
-                searchText = pending
-                environment.navigation.pendingMailSearch = nil
+            if let query = environment.navigation.consumeMailSearch(currentQuery: searchText) {
+                searchText = query
+                isSearchFocused = true
             }
             if let raw = environment.navigation.pendingMailCategory {
                 categoryScope = MailCategoryScope.from(raw: raw)
                 environment.navigation.pendingMailCategory = nil
             }
+        }
+        .onChange(of: environment.navigation.pendingMailSearch) { _, _ in
+            guard let query = environment.navigation.consumeMailSearch(currentQuery: searchText) else { return }
+            searchText = query
+            isSearchFocused = true
         }
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }

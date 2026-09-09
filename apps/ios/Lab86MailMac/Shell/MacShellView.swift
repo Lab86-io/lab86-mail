@@ -132,6 +132,9 @@ struct MacSourceList: View {
     var body: some View {
         List {
             Section {
+                searchRow
+            }
+            Section {
                 ForEach(primaries) { destination in
                     sourceRow(destination)
                 }
@@ -163,6 +166,41 @@ struct MacSourceList: View {
             }
         }
         .navigationTitle("Albatross")
+    }
+
+    private var searchRow: some View {
+        Button {
+            environment.navigation.requestMailSearch()
+            NotificationCenter.default.post(name: .albatrossFocusMailSearch, object: nil)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                Text("Search mail")
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                Text("⌘F")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .background(environment.theme.paperColor.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Search mail (Command-F)")
+        .accessibilityLabel("Search mail")
+        .accessibilityHint("Opens Mail and places keyboard focus in search. Shortcut: Command-F.")
+        .accessibilityIdentifier("mac-search-mail")
     }
 
     private func sourceRow(_ destination: PrimaryTab) -> some View {

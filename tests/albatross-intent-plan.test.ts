@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  attachNarrativePlanRefs,
+  attachNarrativeResearchRefs,
   attachResearchRefs,
   escapePlanHtml,
   mergePlanQuestions,
@@ -8,6 +10,7 @@ import {
   parsePlanGeneration,
   resolveSourceRefs,
 } from '../lib/albatross/intent-plan';
+import { emptyNarrativeContext, type NarrativeContextPacket } from '../lib/narrative/context';
 
 const validPlan = {
   title: 'Finish passport application',
@@ -328,10 +331,13 @@ describe('generateIntentPlan orchestration', () => {
     artifactText?: string | Error;
     currentPlan?: Record<string, unknown> | null;
     workDetail?: Record<string, unknown> | null;
+    narrative?: NarrativeContextPacket;
+    research?: { signal?: AbortSignal; result?: any };
   }) {
-    const calls: { mutations: Array<{ fn: string; args: any }>; generations: any[] } = {
+    const calls: { mutations: Array<{ fn: string; args: any }>; generations: any[]; narrative: any[] } = {
       mutations: [],
       generations: [],
+      narrative: [],
     };
     const intent = {
       _id: 'intent_1',
@@ -342,6 +348,20 @@ describe('generateIntentPlan orchestration', () => {
     };
     __setIntentPlanDepsForTest({
       api: fakeApi,
+      getNarrativeTaskContext: async (...args: any[]) => {
+        calls.narrative.push(args);
+        return overrides.narrative || emptyNarrativeContext('work');
+      },
+      narrativeResearchTools: (_userId: string, signal: AbortSignal) => {
+        if (overrides.research) overrides.research.signal = signal;
+        return {
+          narrative_read: {
+            execute: async () => ({
+              entry: { _id: 'research-decision', level: 'observation', title: 'Earlier choice' },
+            }),
+          },
+        };
+      },
       convexQuery: async (fn: string) => {
         if (fn === 'q:getIntentWorkbench') return { intent, plan: overrides.currentPlan ?? null };
         if (fn === 'q:workDetail') return overrides.workDetail ?? null;
@@ -388,6 +408,16 @@ describe('generateIntentPlan orchestration', () => {
       generateTextForCurrentUser: async (options: any) => {
         calls.generations.push(options);
         if (options.feature === 'albatross_plan') {
+          if (overrides.research) {
+            const result = await options.tools.narrative_read.execute({ id: 'research-decision' });
+            overrides.research.result = result;
+            return {
+              text: JSON.stringify({
+                ...goodGeneration,
+                sourceRefIds: result.sourceRefIds.map((ref: any) => ref.refId),
+              }),
+            };
+          }
           return { text: overrides.planText ?? JSON.stringify(goodGeneration) };
         }
         if (overrides.artifactText instanceof Error) throw overrides.artifactText;
@@ -415,6 +445,104 @@ describe('generateIntentPlan orchestration', () => {
     });
     return { calls, intent };
   }
+
+  test('narrative Work/Area decisions reach generation and are usable as grounded plan citations', async () => {
+    const packet: NarrativeContextPacket = {
+      ...emptyNarrativeContext('work'),
+      enabled: true,
+      evidence: [
+        {
+          id: 'decision',
+          title: 'Earlier decision',
+          text: 'You chose to finish QA before deployment.',
+          source: 'work',
+          topics: ['area:area_apps'],
+          trust: 'reported',
+          occurredAt: 1,
+          observedAt: 1,
+        },
+      ],
+    };
+    const { calls } = wire({ narrative: packet, intent: { areaId: 'area_apps' } });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    expect(calls.narrative[0][1]).toMatchObject({
+      purpose: 'work',
+      topics: ['work:intent_1', 'area:area_apps'],
+      query: 'make sure I upload my nys taxes yes',
+    });
+    expect(calls.narrative[0][2]).toBeInstanceOf(AbortSignal);
+    const prompt = calls.generations.find((row) => row.feature === 'albatross_plan').prompt;
+    expect(prompt).toContain('You chose to finish QA before deployment.');
+    expect(prompt).toContain('Narrative citation handles');
+    const refs: PlanContextRef[] = [];
+    expect(attachNarrativePlanRefs(emptyNarrativeContext('work'), refs)).toBe('');
+    attachNarrativePlanRefs(packet, refs);
+    attachNarrativePlanRefs(packet, refs);
+    expect(refs).toHaveLength(1);
+    expect(resolveSourceRefs(['ref1'], refs)).toEqual([
+      {
+        kind: 'narrative',
+        id: 'decision',
+        label: 'Earlier decision',
+        accountId: undefined,
+        url: '/narrative?id=decision',
+      },
+    ]);
+    const result = attachNarrativeResearchRefs(
+      {
+        entries: [
+          { _id: 'other', level: 'observation', title: 'New evidence' },
+          { _id: 'summary', level: 'day' },
+        ],
+      },
+      refs,
+    );
+    expect(result.sourceRefIds).toEqual([{ observationId: 'other', refId: 'ref2' }]);
+    expect(attachNarrativeResearchRefs(null, refs)).toBeNull();
+    expect(attachNarrativeResearchRefs({ truncated: true }, refs)).toEqual({ truncated: true });
+    expect(refs).toHaveLength(2);
+  });
+
+  test('long intents reserve retrieval space for answer values without model instructions', async () => {
+    const { calls } = wire({
+      intent: {
+        rawText: 'Long project background. '.repeat(40),
+        questions: [{ id: 'review', prompt: 'Which reviewer?', answer: 'Sam handles Atlas QA.' }],
+      },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const query = calls.narrative[0][1].query;
+    expect(query.length).toBeLessThanOrEqual(240);
+    expect(query).toContain('Sam handles Atlas QA.');
+    expect(query).not.toContain('Which reviewer?');
+    expect(query).not.toContain('The user answered');
+  });
+
+  test('enabled narrative research shares generation cancellation and persists discovered citations', async () => {
+    const oldFlag = process.env.LAB86_NARRATIVE_ENABLED;
+    const oldUsers = process.env.LAB86_NARRATIVE_USER_IDS;
+    process.env.LAB86_NARRATIVE_ENABLED = 'true';
+    process.env.LAB86_NARRATIVE_USER_IDS = 'user_1';
+    try {
+      const research: { signal?: AbortSignal; result?: any } = {};
+      const { calls } = wire({ research });
+      await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+      const generation = calls.generations.find((row) => row.feature === 'albatross_plan');
+      expect(research.signal).toBe(generation.abortSignal);
+      expect(research.result.sourceRefIds).toEqual([
+        { observationId: 'research-decision', refId: expect.stringMatching(/^ref\d+$/) },
+      ]);
+      const save = calls.mutations.find((row) => row.fn === 'm:savePlan');
+      expect(save?.args.sourceRefs).toEqual([
+        expect.objectContaining({ kind: 'narrative', id: 'research-decision' }),
+      ]);
+    } finally {
+      if (oldFlag === undefined) delete process.env.LAB86_NARRATIVE_ENABLED;
+      else process.env.LAB86_NARRATIVE_ENABLED = oldFlag;
+      if (oldUsers === undefined) delete process.env.LAB86_NARRATIVE_USER_IDS;
+      else process.env.LAB86_NARRATIVE_USER_IDS = oldUsers;
+    }
+  });
 
   test('happy path: saves a grounded plan with area match, clamped refs, artifact, and project title', async () => {
     const { calls } = wire({});
@@ -483,6 +611,7 @@ describe('generateIntentPlan orchestration', () => {
         'browserbase_fetch',
       ]),
     );
+    expect(Object.keys(calls.generations[0].tools).some((name) => name.startsWith('narrative_'))).toBe(false);
   });
 
   test('document composition gets step keys verbatim and routes questions to attached chat', async () => {

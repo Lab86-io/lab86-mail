@@ -18,6 +18,7 @@ import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
+import { NarrativeMeetingPrep } from '@/components/narrative/NarrativeMeetingPrep';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +36,7 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -43,10 +45,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 
-interface IProps {
+type IProps = {
   event: IEvent;
-  children: ReactNode;
-}
+  children?: ReactNode;
+} & (
+  | { open: boolean; onOpenChange: (open: boolean) => void }
+  | { open?: undefined; onOpenChange?: (open: boolean) => void }
+);
 
 const RSVP_LABEL: Record<string, string> = {
   yes: 'Going',
@@ -55,15 +60,27 @@ const RSVP_LABEL: Record<string, string> = {
   noreply: 'No reply',
 };
 
+/** Observing an uncontrolled dialog must not accidentally make it controlled. */
+export function useEventDialogOpen(controlledOpen?: boolean, onOpenChange?: (open: boolean) => void) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : localOpen;
+  const setOpen = (next: boolean) => {
+    if (!isControlled) setLocalOpen(next);
+    onOpenChange?.(next);
+  };
+  return [open, setOpen] as const;
+}
+
 // Dedicated event viewer: everything the synced event knows — times in the
 // user's clock format, owning calendar, location with an embedded map,
 // attendees with RSVP state, conferencing link, recurrence and notes.
-export function EventDetailsDialog({ event, children }: IProps) {
+export function EventDetailsDialog({ event, children, open: controlledOpen, onOpenChange }: IProps) {
   const startDate = parseISO(event.startDate);
   const endDate = parseISO(event.endDate);
   const { use24HourFormat, removeEvent } = useCalendar();
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useEventDialogOpen(controlledOpen, onOpenChange);
   // Only subscribe to linked cards while the dialog is open — otherwise every
   // rendered event card on a dense calendar holds a live Convex subscription.
   const linkedCardsQuery = useConvexQuery({
@@ -79,13 +96,33 @@ export function EventDetailsDialog({ event, children }: IProps) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
+      {children ? <DialogTrigger asChild>{children}</DialogTrigger> : null}
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="pr-6 font-display text-[18px] leading-snug">{event.title}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Event date, location, attendees, and calendar details.
+          </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 pr-3">
+            {open && event.accountId && event.calendarId && !event.pending && (
+              <NarrativeMeetingPrep
+                key={JSON.stringify([
+                  event.id,
+                  event.startDate,
+                  event.endDate,
+                  event.title,
+                  event.description,
+                  event.status,
+                  event.participants,
+                  event.organizer,
+                ])}
+                accountId={event.accountId}
+                calendarId={event.calendarId}
+                eventId={event.id}
+              />
+            )}
             {/* When */}
             <div className="flex items-start gap-2.5">
               <Clock className="mt-0.5 size-4 shrink-0 text-[var(--color-text-faint)]" />

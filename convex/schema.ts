@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { narrativeTables } from './narrativeSchema';
 
 const albatrossSourceRef = v.object({
   kind: v.string(),
@@ -70,6 +71,7 @@ const albatrossConfirmationRef = v.object({
 });
 
 export default defineSchema({
+  ...narrativeTables,
   users: defineTable({
     clerkUserId: v.string(),
     email: v.string(),
@@ -289,6 +291,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_user_lastDate', ['userId', 'lastDate'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_grant', ['grantId'])
     .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
@@ -407,6 +410,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_kind', ['userId', 'kind'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_external', ['userId', 'externalId']),
 
   areaFacts: defineTable({
@@ -436,6 +440,7 @@ export default defineSchema({
     .index('by_area', ['areaId'])
     .index('by_area_status', ['areaId', 'status'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
     .index('by_user_kind', ['userId', 'kind'])
     .index('by_user_external', ['userId', 'externalId']),
@@ -1592,6 +1597,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_start', ['userId', 'startAt'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account_event', ['accountId', 'providerEventId'])
     .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
@@ -2080,8 +2086,10 @@ export default defineSchema({
     undoClaimExpiresAt: v.optional(v.number()),
     createdAt: v.number(),
     undoneAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_batch', ['userId', 'batchId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt']),
 
@@ -2346,6 +2354,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_date', ['userId', 'localDate'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_status_date', ['userId', 'status', 'localDate'])
     .index('by_reflection_reconcile', ['reflectionReconcileStatus', 'reflectionReconcileNextAt'])
     .index('by_tomorrow_plan', ['tomorrowPlanStatus', 'tomorrowPlanNextAt']),
@@ -2482,6 +2491,7 @@ export default defineSchema({
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_user_connection_updated', ['userId', 'connectionId', 'updatedAtSource'])
     .index('by_connection_external', ['connectionId', 'externalId'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_updated', ['userId', 'updatedAtSource'])
     .searchIndex('by_search_text', {
       searchField: 'searchText',

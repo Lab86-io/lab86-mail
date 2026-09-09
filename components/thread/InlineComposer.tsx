@@ -21,6 +21,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { type DurableComposeDraft, usePendingSend } from '@/components/compose/PendingSendProvider';
+import { NarrativeDraftAssistant } from '@/components/narrative/NarrativeDraftAssistant';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -707,6 +708,17 @@ export function InlineComposer({
           </div>
         )}
       </div>
+
+      <NarrativeDraftAssistant
+        key={`${account}:${fromAccount}:${anchorMessageId || ''}:${composerMode}`}
+        recipientsKey={JSON.stringify([cc, bcc])}
+        to={to || replyToLabel || ''}
+        subject={subject}
+        body={body}
+        topic={threadId ? `mail:${account}:${threadId}` : undefined}
+        disabled={phase === 'sending' || phase === 'sent'}
+        onApply={setBody}
+      />
 
       {files.length > 0 ? (
         <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-3 py-2">

@@ -6,6 +6,8 @@ import {
   stepCountIs,
 } from 'ai';
 import { z } from 'zod';
+import { narrativePrompt } from '../narrative/service';
+import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
@@ -14,7 +16,50 @@ import { generateTextForCurrentUser, hasPlatformAi } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
+/** Search text only, never attachment bytes or opaque tool/image payloads. */
+export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
+  return (
+    typeof content === 'string'
+      ? content
+      : (content || [])
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join(' ')
+  ).slice(0, 240);
+}
+
+export async function boundedAgentNarrativeContext(
+  userId: string | null | undefined,
+  query: string,
+  read = narrativePrompt,
+  topics?: string[],
+  signal?: AbortSignal,
+) {
+  const contextSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(8000)]);
+  return withDeadline(read(userId, query, topics, contextSignal), 8000, 'Agent narrative context').catch(
+    () => '',
+  );
+}
+
+/** Short follow-ups retain their recent subject without admitting attachment bytes. */
+export function narrativeQueryFromMessages(messages: ModelMessage[]): string {
+  return messages
+    .filter((message) => message.role === 'user')
+    .slice(-3)
+    .reverse()
+    .map((message) => narrativeQueryFromContent(message.content))
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 240);
+}
+
 export const AGENT_TOOL_NAMES = new Set([
+  'narrative_search',
+  'narrative_task_context',
+  'narrative_read',
+  'narrative_sources',
+  'narrative_changes_since',
+  'narrative_record_change',
   'list_accounts',
   'search_threads',
   'corpus_search',
@@ -575,6 +620,8 @@ export interface AgentRunOpts {
   userName?: string | null;
   /** IANA timezone reported by the client (e.g. America/New_York). */
   userTimezone?: string;
+  narrativeTopics?: string[];
+  signal?: AbortSignal;
 }
 
 export async function runAgent({
@@ -584,6 +631,8 @@ export async function runAgent({
   userEmail,
   userName,
   userTimezone,
+  narrativeTopics,
+  signal,
 }: AgentRunOpts) {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
@@ -608,7 +657,16 @@ export async function runAgent({
     timeStyle: 'long',
   }).format(new Date());
   const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
-  const system = `${base}\n\n${timeContext}${extraSystem ? `\n\n${extraSystem}` : ''}`;
+  const memoryQuery = narrativeQueryFromMessages(messages);
+  const narrative = await boundedAgentNarrativeContext(
+    userId,
+    memoryQuery,
+    narrativePrompt,
+    narrativeTopics,
+    signal,
+  );
+  signal?.throwIfAborted();
+  const system = `${base}\n\n${timeContext}${narrative ? `\n\n${narrative}` : ''}${extraSystem ? `\n\n${extraSystem}` : ''}`;
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
@@ -623,6 +681,7 @@ export async function runAgent({
       // tools and multi-step plans; the fast model was both weaker and the source
       // of intermittent empty completions.
       speed: 'primary',
+      abortSignal: signal,
       system,
       messages,
       tools: liftToolsForAgent(operationBatchId, timezone),

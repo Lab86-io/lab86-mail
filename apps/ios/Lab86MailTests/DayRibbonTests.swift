@@ -237,6 +237,33 @@ struct DayRibbonTests {
         #expect(stacked[0].top + stacked[0].height <= 1.0001)
     }
 
+    @Test func defaultLabelsFollowTheRibbonCalendarTimeZone() {
+        let meeting = event("a", from: at(9, 15), to: at(9, 25))
+        var utc = calendar
+        utc.timeZone = .gmt
+        for (displayCalendar, expectedTime) in [(calendar, "9:15"), (utc, "1:15")] {
+            let window = DayRibbon.window(events: [meeting], now: at(12), calendar: displayCalendar)
+            let blocks = DayRibbon.blocks(
+                events: [meeting], window: window, now: at(12), calendar: displayCalendar
+            )
+            #expect(blocks[0].label.contains(expectedTime))
+        }
+    }
+
+    @Test func anExplicitLabelFormatterIsPreserved() {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .gmt
+        formatter.dateFormat = "HH:mm"
+        let meeting = event("a", from: at(9, 15), to: at(9, 25))
+        let window = DayRibbon.window(events: [meeting], now: at(12), calendar: calendar)
+        let blocks = DayRibbon.blocks(
+            events: [meeting], window: window, now: at(12), calendar: calendar, formatter: formatter
+        )
+        #expect(blocks[0].label == "13:15 – 13:25")
+        #expect(formatter.timeZone == TimeZone.gmt)
+    }
+
     @Test func roomyDayIsLeftExactlyWhereItBelongs() {
         let window = DayRibbon.window(events: [], now: at(12), calendar: calendar)
         let blocks = DayRibbon.blocks(

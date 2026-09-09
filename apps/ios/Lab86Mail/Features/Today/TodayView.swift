@@ -3,6 +3,9 @@ import SwiftUI
 struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var narrative = NarrativeBriefStore()
+    @State private var emptyEditionDate = Date.now
     @State private var showsHistory = false
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var isRegenerating = false
@@ -11,8 +14,11 @@ struct TodayView: View {
     private var store: ProductStore { environment.store }
 
     private var dateline: String {
-        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        Self.editionDate(report: store.dailyReport, now: emptyEditionDate)
+            .formatted(.dateTime.weekday(.wide).month(.wide).day())
     }
+
+    static func editionDate(report: DailyReportModel?, now: Date) -> Date { report?.generatedAt ?? now }
 
     // The single source of truth for "this report renders the native v2
     // document" — the toolbar dateline and artifactBody must agree, or the
@@ -78,9 +84,34 @@ struct TodayView: View {
             }
         }
         .shellToolbar()
+        .task(id: "\(store.dailyReport?.generatedAt.timeIntervalSince1970 ?? 0):\(scenePhase)") {
+            guard scenePhase == .active else { narrative.clear(); return }
+            emptyEditionDate = .now
+            while !Task.isCancelled {
+                await reloadNarrative()
+                do { try await Task.sleep(for: .seconds(narrative.running ? 8 : 60)) } catch { return }
+            }
+        }
+        .onDisappear { narrative.clear() }
     }
 
-    /// Today is one page read in layers down one scroll.
+    private func reloadNarrative() async {
+        let date = Self.editionDate(report: store.dailyReport, now: emptyEditionDate)
+        let backend = environment.backend
+        await narrative.load(.brief(date)) { try await backend.get(path: $0) }
+    }
+
+    private func regenerateBrief() async {
+        let backend = environment.backend
+        await narrative.requestRefresh {
+            try await backend.post(path: "/api/narrative", body: .object(["action": .string("refresh")]))
+        }
+        await store.generateBrief()
+        await reloadNarrative()
+    }
+
+    /// On compact Apple platforms, Today is one page read in layers down one
+    /// scroll. The Mac branch below restores the written Brief as the page.
     ///
     /// The live layer comes first and is read from live work, approvals and
     /// calendar rows, so the top of the page can never be stale. The brief's
@@ -89,14 +120,33 @@ struct TodayView: View {
     /// It used to be two whole surfaces: when a brief existed the live day
     /// vanished behind it, and a three-week-old edition could present itself as
     /// the current one. The web merged them; this is the same page.
+    @ViewBuilder
     private var todayBody: some View {
+        #if os(macOS)
+        // Restore the desktop Today surface to its strongest identity: when a
+        // written edition exists, the brief is the page. Live operational
+        // modules remain the useful fallback while an edition is unavailable.
+        if let report = store.dailyReport, report.hasArtifact {
+            macBriefBody(report)
+        } else {
+            layeredTodayBody
+        }
+        #else
+        layeredTodayBody
+        #endif
+    }
+
+    /// The compact-client composition remains one continuous page of live day
+    /// context followed by its synthesis. macOS only uses this as the fallback
+    /// until a complete Brief artifact is available.
+    private var layeredTodayBody: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 // The plate. The day's art, its dateline and its edition title,
                 // carried by the day itself rather than by the brief — so it is
                 // right on a morning when nothing has been written yet, and
                 // there is only ever one of it on the page.
-                DailyBriefMasthead(generatedAt: Date.now, art: store.dailyReport?.art)
+                DailyBriefMasthead(generatedAt: Self.editionDate(report: store.dailyReport, now: emptyEditionDate), art: store.dailyReport?.art)
                 todayDeck
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     liveLayer(now: context.date)
@@ -116,6 +166,7 @@ struct TodayView: View {
         .refreshable {
             await store.refreshToday()
             await store.refreshExecution()
+            await reloadNarrative()
         }
         .task(id: "today-execution-poll") {
             while !Task.isCancelled {
@@ -133,6 +184,63 @@ struct TodayView: View {
             }
         }
     }
+
+    #if os(macOS)
+    /// The editorial Brief experience the desktop had before Today became a
+    /// dashboard. It deliberately reuses the same masthead, lede, document,
+    /// footer, review flow, and legacy HTML renderer rather than creating a
+    /// second interpretation of report data.
+    private func macBriefBody(_ report: DailyReportModel) -> some View {
+        ScrollView {
+            if let document = report.document, Self.rendersNativeDocument(report) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
+                    NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    if narrative.entry == nil {
+                        DailyBriefLede(text: document.summary)
+                    }
+                    BriefDocumentView(
+                        document: document,
+                        isComposing: report.artifactStatus == "composing",
+                        onReview: { artifactReview = $0 }
+                    )
+                    DailyBriefFooter(report: report)
+                        .padding(.bottom, 32)
+                }
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    DailyBriefView(
+                        report: report,
+                        lastRefresh: store.lastRefresh,
+                        isOffline: store.briefError != nil,
+                        onAction: handleBriefAction
+                    )
+                }
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 32)
+            }
+        }
+        .background(environment.theme.paperColor)
+        // Both native and legacy editions carry a masthead, so the shared
+        // scroller must hand its dateline to the toolbar for either renderer.
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            Self.mastheadScrolledPast(
+                offset: geometry.contentOffset.y + geometry.contentInsets.top,
+                containerWidth: min(geometry.containerSize.width, 920)
+            )
+        } action: { _, crossed in
+            showsInlineDate = crossed
+        }
+        .refreshable {
+            await store.refreshToday()
+            await reloadNarrative()
+        }
+    }
+    #endif
 
     /// The deck under the plate: one sentence about the shape of the day. The
     /// plate already carries the date, so this never repeats it.
@@ -239,7 +347,7 @@ struct TodayView: View {
         return Button {
             isRegenerating = true
             Task {
-                await store.generateBrief()
+                await regenerateBrief()
                 isRegenerating = false
             }
         } label: {
@@ -274,7 +382,7 @@ struct TodayView: View {
                 Button {
                     isRegenerating = true
                     Task {
-                        await store.generateBrief()
+                        await regenerateBrief()
                         isRegenerating = false
                     }
                 } label: {
@@ -292,11 +400,12 @@ struct TodayView: View {
 
     @ViewBuilder
     private func briefContent(_ report: DailyReportModel?) -> some View {
+        NarrativeBriefView(memory: narrative, backend: environment.backend)
         if let report, report.hasArtifact {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 // Today has already given the date, so the brief brings no
                 // masthead of its own into the same scroll.
-                DailyBriefLede(text: document.summary)
+                if narrative.entry == nil { DailyBriefLede(text: document.summary) }
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",

@@ -115,7 +115,32 @@ struct AreaDetailView: View {
 
     // MARK: - Loaded
 
+    @ViewBuilder
     private func loadedBody(_ detail: AreaDetail) -> some View {
+        #if os(macOS)
+        // An Area on a desktop is a working context, not a pair of mutually
+        // exclusive tabs. Keep its living brief visible while the complete
+        // Area inbox remains available beside it; the divider is draggable.
+        HSplitView {
+            VStack(spacing: 0) {
+                areaBriefHeader(detail)
+                Divider()
+                briefSurface(detail)
+            }
+            .frame(minWidth: 360, idealWidth: 620, maxWidth: .infinity)
+
+            VStack(spacing: 0) {
+                areaInboxHeader(detail)
+                Divider()
+                inboxSurface(detail)
+            }
+            .frame(minWidth: 280, idealWidth: 380, maxWidth: 520)
+        }
+        .background(environment.theme.paperColor)
+        .accessibilityElement(children: .contain)
+        #else
+        // iPhone keeps the compact Brief | Inbox switch and its existing
+        // navigation behavior.
         Group {
             switch surface {
             case .brief:
@@ -125,7 +150,57 @@ struct AreaDetailView: View {
             }
         }
         .background(environment.theme.paperColor)
+        #endif
     }
+
+    #if os(macOS)
+    private func areaBriefHeader(_ detail: AreaDetail) -> some View {
+        HStack(spacing: 10) {
+            Label("Brief", systemImage: "doc.text.image")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            if detail.livingBrief?.status == "generating" || isRefreshingBrief {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(refreshLabel)
+            }
+            Spacer(minLength: 8)
+            Button("Refresh", systemImage: "arrow.clockwise") {
+                Task { await refreshBrief() }
+            }
+            .disabled(isRefreshingBrief)
+            .help(refreshLabel)
+            .accessibilityLabel("Refresh Area brief")
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+        .background(.bar)
+    }
+
+    private func areaInboxHeader(_ detail: AreaDetail) -> some View {
+        HStack(spacing: 10) {
+            Label("Inbox", systemImage: "tray")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            if detail.counts.mail > 0 {
+                Text(detail.counts.mail, format: .number)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("\(detail.counts.mail) conversations")
+            }
+            Spacer(minLength: 8)
+            Button(inboxEditMode.isEditing ? "Done" : "Select") {
+                toggleInboxSelection()
+            }
+            .help(inboxEditMode.isEditing ? "Finish selecting conversations" : "Select conversations")
+        }
+        .padding(.leading, 14)
+        // The trailing space keeps this header clear of the floating Area menu.
+        .padding(.trailing, 62)
+        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+        .background(.bar)
+    }
+    #endif
 
     // Frosted controls floating over the document: source list on the left
     // (compact widths only — regular widths keep the visible sidebar), the
@@ -147,6 +222,7 @@ struct AreaDetailView: View {
             }
             Spacer(minLength: 0)
             if detail != nil {
+                #if !os(macOS)
                 Picker("Area view", selection: $surface) {
                     ForEach(AreaSurface.allCases) { choice in
                         Text(choice.title).tag(choice)
@@ -158,6 +234,7 @@ struct AreaDetailView: View {
                 .labelsHidden()
                 .frame(width: 164)
                 .accessibilityIdentifier("area-surface-picker")
+                #endif
                 Menu {
                     Button("Reload") {
                         Task { await load(initial: false) }
@@ -182,12 +259,17 @@ struct AreaDetailView: View {
                     Button("Manage Area", systemImage: "slider.horizontal.3") {
                         showsManagement = true
                     }
+                    #if os(macOS)
+                    Button(inboxEditMode.isEditing ? "Done selecting" : "Select conversations") {
+                        toggleInboxSelection()
+                    }
+                    #else
                     if surface == .inbox {
                         Button(inboxEditMode.isEditing ? "Done selecting" : "Select conversations") {
-                            inboxEditMode = inboxEditMode.isEditing ? .inactive : .active
-                            if !inboxEditMode.isEditing { inboxSelection.removeAll() }
+                            toggleInboxSelection()
                         }
                     }
+                    #endif
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.body.weight(.medium))
@@ -202,6 +284,11 @@ struct AreaDetailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.top, 4)
+    }
+
+    private func toggleInboxSelection() {
+        inboxEditMode = inboxEditMode.isEditing ? .inactive : .active
+        if !inboxEditMode.isEditing { inboxSelection.removeAll() }
     }
 
     private var isRefreshingBrief: Bool {
@@ -272,8 +359,13 @@ struct AreaDetailView: View {
         .listStyle(.plain)
         .environment(\.editMode, $inboxEditMode)
         .scrollContentBackground(.hidden)
+        #if os(macOS)
+        // The desktop column has its own fixed header above the list.
+        .contentMargins(.top, 0, for: .scrollContent)
+        #else
         // Clearance for the floating controls the hidden bar used to provide.
         .contentMargins(.top, 52, for: .scrollContent)
+        #endif
         .refreshable { await load(initial: false) }
         .safeAreaInset(edge: .bottom) {
             if inboxEditMode.isEditing, !inboxSelection.isEmpty {
@@ -345,7 +437,11 @@ struct AreaDetailView: View {
                     rendersLede: true,
                     onReview: { artifactReview = $0 }
                 )
+                #if os(macOS)
+                .padding(.top, 0)
+                #else
                 .padding(.top, 50)
+                #endif
                 .padding(.bottom, 24)
             }
             .refreshable { await load(initial: false) }
@@ -387,9 +483,11 @@ struct AreaDetailView: View {
             }
             .padding(.bottom, 32)
             }
+            #if !os(macOS)
             // Only successfully loaded art slides under the status bar. Invalid
             // or exhausted candidates keep the text-first fallback below it.
             .ignoresSafeArea(edges: hasLoadedAreaMasthead ? .top : [])
+            #endif
             .refreshable { await load(initial: false) }
         }
     }
@@ -807,9 +905,15 @@ private struct AreaBriefLead: View {
             }
         }
         .padding(.horizontal, 20)
+        #if os(macOS)
+        // The desktop column header already clears the controls. Keep only
+        // the image inset that balances the masthead's full-bleed offset.
+        .padding(.top, mastheadURL == nil ? 0 : 20)
+        #else
         // Text-first briefs clear the floating glass controls; a masthead
         // picture slides beneath them instead.
         .padding(.top, mastheadURL == nil ? 60 : 20)
+        #endif
         .padding(.bottom, 24)
         .onAppear {
             onMastheadAvailabilityChanged(mastheadWalk.hasResolvedSource)

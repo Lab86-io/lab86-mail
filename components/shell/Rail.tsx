@@ -13,8 +13,6 @@ import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
-import { CalendarDaysIcon } from '@/components/ui/calendar-days';
-import { CircleCheckIcon } from '@/components/ui/circle-check';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -24,9 +22,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { FileTextIcon } from '@/components/ui/file-text';
-import { FolderIcon } from '@/components/ui/folder';
-import { MailCheckIcon } from '@/components/ui/mail-check';
 import { PlusIcon } from '@/components/ui/plus';
 import { RowIcon, rowIcon } from '@/components/ui/row-icon';
 import { SettingsIcon } from '@/components/ui/settings';
@@ -53,9 +48,11 @@ import { orderedAreaImageSources } from '@/lib/albatross/area-image';
 import { railWorkBadge } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
+import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { ThemePanel } from './ThemePanel';
 
 // Top-level surfaces of the product, in the order a person meets them: the
@@ -65,11 +62,11 @@ const SURFACES: Array<{
   label: string;
   Icon: any;
 }> = [
-  { view: 'today', label: 'Today', Icon: rowIcon(FileTextIcon) },
-  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(CircleCheckIcon) },
-  { view: 'mail', label: 'Mail', Icon: rowIcon(MailCheckIcon) },
-  { view: 'calendar', label: 'Calendar', Icon: rowIcon(CalendarDaysIcon) },
-  { view: 'files', label: 'Files', Icon: rowIcon(FolderIcon) },
+  { view: 'today', label: 'Today', Icon: rowIcon(RAIL_SURFACE_ICONS.today) },
+  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(RAIL_SURFACE_ICONS.albatrosses) },
+  { view: 'mail', label: 'Mail', Icon: rowIcon(RAIL_SURFACE_ICONS.mail) },
+  { view: 'calendar', label: 'Calendar', Icon: rowIcon(RAIL_SURFACE_ICONS.calendar) },
+  { view: 'files', label: 'Files', Icon: rowIcon(RAIL_SURFACE_ICONS.files) },
 ];
 
 export const ALL_ACCOUNTS = '__all__';
@@ -140,14 +137,24 @@ export function Rail({
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
+  const paletteOpen = useClientStore((s) => s.paletteOpen);
   const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  useEffect(() => {
+    if (isMobile && openMobile && paletteOpen) setOpenMobile(false);
+  }, [isMobile, openMobile, paletteOpen, setOpenMobile]);
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };
   const [addingArea, setAddingArea] = useState(false);
   const [newAreaName, setNewAreaName] = useState('');
   const [creatingArea, setCreatingArea] = useState(false);
+  // Keep the server and first client render identical, then specialize the
+  // label once the browser platform is known.
+  const [searchShortcut, setSearchShortcut] = useState('⌘/Ctrl F');
+  useEffect(() => {
+    setSearchShortcut(mailSearchShortcutLabel(navigator.platform));
+  }, []);
   const createAreaMutation = useConvexMutation(api.albatross.createArea);
   const createArea = async () => {
     const name = newAreaName.trim();
@@ -254,6 +261,11 @@ export function Rail({
     <Sidebar
       collapsible="icon"
       className="rail-wash bg-[var(--rail-bg)] font-display"
+      onMobileCloseAutoFocus={(event) => {
+        if (!paletteOpen) return;
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('[data-global-search-input]')?.focus();
+      }}
       onClickCapture={(event) => {
         if (!isMobile) return;
         const target = event.target as HTMLElement | null;
@@ -304,6 +316,27 @@ export function Rail({
               />
               <PlusIcon size={16} />
               <span>{CAPTURE_BUTTON_LABEL}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip={`Search everything (${searchShortcut} or /)`}
+              aria-label={`Search everything (${searchShortcut} or slash)`}
+              aria-keyshortcuts="Meta+F Control+F /"
+              title={`Search everything (${searchShortcut} or /)`}
+              onClick={() => setPaletteOpen(true)}
+              className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] font-medium shadow-[var(--shadow-soft)] hover:border-[var(--color-accent)]/45 focus-visible:ring-[var(--color-accent)]"
+            >
+              <Search className="size-4 shrink-0" aria-hidden />
+              <span>Search</span>
+              <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
+                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
+                  {searchShortcut}
+                </kbd>
+                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
+                  /
+                </kbd>
+              </span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -460,18 +493,6 @@ export function Rail({
           <RailDivider />
           <SidebarGroupContent>
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="Search"
-                  onClick={() => {
-                    setPaletteOpen(true);
-                    closeMobileSidebar();
-                  }}
-                >
-                  <Search className="size-4 shrink-0" aria-hidden />
-                  <span>Search</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   isActive={visiblePrimaryView === 'activity'}

@@ -5,6 +5,13 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
 import {
+  emptyNarrativeContext,
+  formatNarrativeContext,
+  type NarrativeContextPacket,
+} from '@/lib/narrative/context';
+import { NARRATIVE_SKILL } from '@/lib/narrative/core';
+import { getNarrativeTaskContext, narrativeEnabled, narrativeResearchTools } from '@/lib/narrative/service';
+import {
   type BriefDocumentV2,
   type BriefRegion,
   parseBriefDocument,
@@ -39,6 +46,8 @@ const defaultDeps = {
   generateTextForCurrentUser,
   invokeTool,
   httpGetJson,
+  getNarrativeTaskContext,
+  narrativeResearchTools,
 };
 
 let deps = defaultDeps;
@@ -384,6 +393,47 @@ export function resolveSourceRefs(refIds: string[] | undefined, pack: PlanContex
     refs.push({ kind: ref.kind, id: ref.id, label: ref.label, accountId: ref.accountId, url: ref.url });
   }
   return refs;
+}
+
+export function attachNarrativePlanRefs(packet: NarrativeContextPacket, refs: PlanContextRef[]) {
+  if (!packet.enabled) return '';
+  const cited = packet.evidence.map((entry) => {
+    const existing = refs.find((ref) => ref.kind === 'narrative' && ref.id === entry.id);
+    const refId = existing?.refId || `ref${refs.length + 1}`;
+    if (!existing)
+      refs.push({
+        refId,
+        kind: 'narrative',
+        id: entry.id,
+        label: entry.title,
+        url: `/narrative?id=${encodeURIComponent(entry.id)}`,
+      });
+    return { id: entry.id, refId };
+  });
+  return `${NARRATIVE_SKILL}\n${formatNarrativeContext(packet)}\nNarrative citation handles for sourceRefIds: ${JSON.stringify(cited)}\nUse relevant prior decisions and open commitments to inform this plan. Current answers override older history. Do not re-ask an already answered question unless evidence conflicts; generated plans and reported steps are not completed outcomes.`;
+}
+
+/** Research can discover additional observations after the initial packet. Give
+ * only those observed records stable plan citation handles, never summary prose. */
+export function attachNarrativeResearchRefs(result: any, refs: PlanContextRef[]) {
+  if (!result || typeof result !== 'object' || result.truncated) return result;
+  const rows = [result.entry, ...(result.entries || []), ...(result.sources || [])]
+    .filter((row) => row?.level === 'observation' && typeof row._id === 'string')
+    .slice(0, 25);
+  const sourceRefIds = rows.map((row) => {
+    const existing = refs.find((ref) => ref.kind === 'narrative' && ref.id === row._id);
+    const refId = existing?.refId || `ref${refs.length + 1}`;
+    if (!existing)
+      refs.push({
+        refId,
+        kind: 'narrative',
+        id: row._id,
+        label: String(row.title || 'Narrative evidence').slice(0, 180),
+        url: `/narrative?id=${encodeURIComponent(row._id)}`,
+      });
+    return { observationId: row._id, refId };
+  });
+  return { ...result, sourceRefIds };
 }
 
 function planArtifactServiceIds(refs: Array<Omit<PlanContextRef, 'refId'>>): string[] {
@@ -899,7 +949,14 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
   });
 
   try {
-    const [{ refs, contextText, areas }, nearby, workDetail] = await Promise.all([
+    const planStartedAt = Date.now();
+    const contextSignal = AbortSignal.timeout(8000);
+    const areaTopic = intent.primaryAreaId || intent.areaId;
+    const narrativeAnswers = (intent.questions || [])
+      .map((question: any) => question.answer)
+      .filter(Boolean)
+      .join(' ');
+    const [{ refs, contextText, areas }, nearby, workDetail, narrative] = await Promise.all([
       buildContextPack(input.userId, intent.rawText, intent.primaryAreaId || intent.areaId),
       nearbyEvidence(input, intent.rawText),
       (deps.api as any).albatrossWorkV2?.workDetail
@@ -910,6 +967,21 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
             })
             .catch(() => null)
         : Promise.resolve(null),
+      withDeadline(
+        deps.getNarrativeTaskContext(
+          input.userId,
+          {
+            purpose: 'work',
+            query: [intent.rawText.slice(0, narrativeAnswers ? 160 : 240), narrativeAnswers.slice(0, 79)]
+              .filter(Boolean)
+              .join(' '),
+            topics: [`work:${input.intentId}`, ...(areaTopic ? [`area:${areaTopic}`] : [])],
+          },
+          contextSignal,
+        ),
+        8000,
+        'Plan narrative context',
+      ).catch(() => emptyNarrativeContext('work')),
     ]);
     const nowIso = new Date().toISOString();
     const prompt = [
@@ -925,24 +997,44 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       currentWorkBlock(workbench, workDetail),
       '',
       contextText,
+      attachNarrativePlanRefs(narrative, refs),
       nearby.block,
     ]
       .filter(Boolean)
       .join('\n');
 
+    const planRemainingMs = Math.max(1, 150_000 - (Date.now() - planStartedAt));
+    const planSignal = AbortSignal.timeout(planRemainingMs);
+    const narrativeTools =
+      input.userId && narrativeEnabled(input.userId)
+        ? Object.fromEntries(
+            Object.entries(deps.narrativeResearchTools(input.userId, planSignal)).map(([name, spec]) => [
+              name,
+              {
+                ...spec,
+                execute: async (...args: any[]) =>
+                  attachNarrativeResearchRefs(await (spec.execute as any)(...args), refs),
+              },
+            ]),
+          )
+        : {};
     const { text } = await withDeadline(
       deps.generateTextForCurrentUser({
         feature: 'albatross_plan',
+        abortSignal: planSignal,
         speed: 'primary',
         userId: input.userId,
         userEmail: input.userEmail,
         userName: input.userName,
         system: PLAN_SYSTEM,
         prompt,
-        tools: plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
+        tools: {
+          ...plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
+          ...narrativeTools,
+        },
         stopWhen: stepCountIs(12),
       }),
-      150_000,
+      planRemainingMs,
       'Plan generation',
     );
     const generation = parsePlanGeneration(text);

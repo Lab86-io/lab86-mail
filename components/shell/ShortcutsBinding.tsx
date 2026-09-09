@@ -6,13 +6,7 @@ import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
-
-const editable = (el: EventTarget | null) => {
-  if (!el || !(el instanceof HTMLElement)) return false;
-  const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  return el.isContentEditable;
-};
+import { isEditableSearchTarget } from '@/lib/mail/search/focus-contract';
 
 export function ShortcutsBinding() {
   // Thread shortcuts (archive/trash/triage/summary) act on the open thread, so
@@ -37,13 +31,11 @@ export function ShortcutsBinding() {
   useEffect(() => {
     let pendingG = 0;
     const handler = async (e: KeyboardEvent) => {
-      if (editable(e.target)) return;
-      // ⌘P / ctrl+P → palette
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setPaletteOpen(true);
-        return;
-      }
+      if (e.defaultPrevented || e.isComposing) return;
+      // The global dialog owns search keys and dismissal. Never let a focused
+      // source filter/action leak mail shortcuts to the page behind it.
+      if (paletteOpen) return;
+      if (isEditableSearchTarget(e.target)) return;
       // Let browser/OS editing shortcuts work everywhere: copy, paste, select
       // all, undo/redo, save, find, open link in new tab, etc. The single-key
       // mail shortcuts below are only for unmodified keys.
@@ -91,10 +83,6 @@ export function ShortcutsBinding() {
         case 'c':
           e.preventDefault();
           openComposeNew();
-          break;
-        case '/':
-          e.preventDefault();
-          (document.querySelector('input[placeholder^="Ask for mail"]') as HTMLInputElement | null)?.focus();
           break;
         case '?':
           e.preventDefault();

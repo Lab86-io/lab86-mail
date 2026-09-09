@@ -1,6 +1,7 @@
 'use client';
 
 import type { CSSProperties } from 'react';
+import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
 import { Avatar } from '@/components/ui/avatar';
 import { briefRefKey } from '@/lib/brief/hydration';
 import {
@@ -64,7 +65,11 @@ export function BriefLetter({
         if (region.id === 'lede') {
           return (
             <section key={region.id} data-brief-region={region.id} className="blur-in">
-              <LetterLede node={region.tree} />
+              {kind === 'daily' ? (
+                <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
+              ) : (
+                <LetterLede node={region.tree} />
+              )}
               <div aria-hidden className="flex justify-center py-5">
                 <span className="h-px w-10 bg-[var(--color-border-strong)]" />
               </div>

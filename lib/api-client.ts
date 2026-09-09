@@ -4,7 +4,12 @@
  * Type-light RPC client over `/api/tools/[name]`. Used by client components
  * via TanStack Query. The same registry that the AI agent and Codex see.
  */
-export async function callTool<T = any>(name: string, args: any = {}, headers: HeadersInit = {}): Promise<T> {
+export async function callTool<T = any>(
+  name: string,
+  args: any = {},
+  headers: HeadersInit = {},
+  signal?: AbortSignal,
+): Promise<T> {
   // Tools that parse naive date/times (e.g. calendar_create_event) need the
   // user's timezone. The agent passes it explicitly, but direct UI calls didn't
   // carry one, so created events landed in the wrong zone. Send the browser tz.
@@ -22,6 +27,7 @@ export async function callTool<T = any>(name: string, args: any = {}, headers: H
       ...headers,
     },
     body: JSON.stringify(args),
+    ...(signal ? { signal } : {}),
   });
   let data: any = null;
   let raw = '';
@@ -55,4 +61,15 @@ export async function health(): Promise<any> {
 export async function listTools(): Promise<any> {
   const r = await fetch('/api/tools', { cache: 'no-store' });
   return r.json();
+}
+
+/** Search list endpoints use an envelope distinct from the tool RPC. */
+export async function readSearchSource<T>(url: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(url, { signal });
+  const data = await response.json().catch(() => null);
+  signal.throwIfAborted();
+  if (!response.ok || data === null || data?.ok === false) {
+    throw new Error(typeof data?.error === 'string' ? data.error : 'Could not search this source.');
+  }
+  return data as T;
 }

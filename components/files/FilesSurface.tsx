@@ -296,7 +296,11 @@ export function FilesSurface() {
       readOpenFile();
     };
     window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+    window.addEventListener('lab86-mail:files-navigate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('lab86-mail:files-navigate', onPopState);
+    };
   }, []);
 
   const openDocument = (documentId: string) => {

@@ -21,6 +21,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
@@ -40,6 +41,8 @@ import {
 } from '@/components/hosted/ai-options';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { NarrativeSettings } from '@/components/narrative/Narrative';
+import { CommandPalette } from '@/components/palette/CommandPalette';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -77,6 +80,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
   ai: () => <AiSection />,
+  narrative: () => <NarrativeSettings />,
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
   account: () => <AccountSection />,
@@ -136,8 +140,19 @@ function SettingsPageBody() {
   return (
     <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
       <DotGridGlow />
+      <CommandPalette />
       <div className="relative z-10 mx-auto max-w-5xl px-5 py-8 sm:py-12">
-        <header className="mb-8">
+        <header className="relative mb-8">
+          <button
+            type="button"
+            onClick={() => useClientStore.getState().setPaletteOpen(true)}
+            aria-label="Search everything"
+            title="Search everything (⌘/Ctrl F or /)"
+            className="absolute right-0 top-0 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <Search className="size-4" />
+            Search
+          </button>
           <Link
             href="/"
             className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"

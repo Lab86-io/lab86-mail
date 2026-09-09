@@ -3,6 +3,7 @@ import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
+import { narrativePrompt } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
@@ -18,12 +19,16 @@ interface AreaLivingBriefDependencies {
   convexMutation: typeof convexMutation;
   convexQuery: typeof convexQuery;
   generateTextForCurrentUser: typeof generateTextForCurrentUser;
+  narrativePrompt: typeof narrativePrompt;
+  withDeadline: typeof withDeadline;
 }
 
 const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
   convexMutation,
   convexQuery,
   generateTextForCurrentUser,
+  narrativePrompt,
+  withDeadline,
 };
 
 let areaLivingBriefDependencies = defaultAreaLivingBriefDependencies;
@@ -404,8 +409,22 @@ export async function writeAreaPulse(
   input: { userId: string; userEmail?: string | null; userName?: string | null },
 ): Promise<AreaPulse> {
   const fallback = fallbackAreaPulse(context);
+  const startedAt = Date.now();
   try {
-    const { text } = await withDeadline(
+    const memory = await areaLivingBriefDependencies
+      .withDeadline(
+        areaLivingBriefDependencies.narrativePrompt(
+          input.userId,
+          '',
+          `area:${context.area?.id || context.area?.areaId || ''}`,
+        ),
+        Math.min(8000, AREA_PULSE_DEADLINE_MS),
+        'Area pulse context',
+      )
+      .catch(() => '');
+    const remainingMs = AREA_PULSE_DEADLINE_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) return fallback;
+    const { text } = await areaLivingBriefDependencies.withDeadline(
       areaLivingBriefDependencies.generateTextForCurrentUser({
         feature: 'albatross_area_pulse',
         speed: 'fast',
@@ -413,9 +432,10 @@ export async function writeAreaPulse(
         userEmail: input.userEmail,
         userName: input.userName,
         system: AREA_PULSE_SYSTEM_PROMPT,
-        prompt: JSON.stringify(context, null, 2),
+        prompt: `${JSON.stringify(context, null, 2)}\n${memory}`,
+        abortSignal: AbortSignal.timeout(remainingMs),
       }),
-      AREA_PULSE_DEADLINE_MS,
+      remainingMs,
       'Area pulse composition',
     );
     const parsed = parseAreaPulse(text, fallback);

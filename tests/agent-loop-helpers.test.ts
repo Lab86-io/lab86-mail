@@ -1,11 +1,70 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  boundedAgentNarrativeContext,
   errorText,
   isAuthError,
   isRecoverableAgentProviderError,
+  narrativeQueryFromContent,
+  narrativeQueryFromMessages,
   safeAuthErrorText,
   writeDelayedAgentResult,
 } from '../lib/ai/loop';
+
+test('bounded agent narrative context preserves identity and falls back on retrieval failure', async () => {
+  const calls: unknown[][] = [];
+  expect(
+    await boundedAgentNarrativeContext('owner', 'Atlas', async (...args) => {
+      calls.push(args);
+      return 'Relevant context';
+    }),
+  ).toBe('Relevant context');
+  expect(calls).toEqual([['owner', 'Atlas', undefined, expect.any(AbortSignal)]]);
+  expect(
+    await boundedAgentNarrativeContext('owner', 'Atlas', async () => {
+      throw new Error('Context unavailable');
+    }),
+  ).toBe('');
+});
+
+test('chat narrative retrieval carries work and area scope, follows cancellation and keeps short follow-ups grounded', async () => {
+  const abort = new AbortController();
+  let signal: AbortSignal | undefined;
+  let topics: string | string[] | undefined;
+  await boundedAgentNarrativeContext(
+    'owner',
+    'What next?',
+    async (_owner, _query, anchors, inputSignal) => {
+      topics = anchors;
+      signal = inputSignal;
+      return 'context';
+    },
+    ['work:one', 'area:two'],
+    abort.signal,
+  );
+  expect(topics).toEqual(['work:one', 'area:two']);
+  abort.abort();
+  expect(signal?.aborted).toBe(true);
+  expect(
+    narrativeQueryFromMessages([
+      { role: 'user', content: [{ type: 'file', data: 'PRIVATE', mediaType: 'text/plain' }] },
+      { role: 'user', content: 'Atlas launch review' },
+      { role: 'assistant', content: 'UNTRUSTED ASSISTANT CLAIM' },
+      { role: 'user', content: 'What next?' },
+    ]),
+  ).toBe('What next? Atlas launch review');
+});
+
+test('narrative retrieval uses bounded text rather than attachment or tool payloads', () => {
+  expect(narrativeQueryFromContent(undefined)).toBe('');
+  expect(narrativeQueryFromContent('x'.repeat(1000))).toHaveLength(240);
+  expect(
+    narrativeQueryFromContent([
+      { type: 'text', text: 'Atlas' },
+      { type: 'file', data: 'PRIVATE-BINARY', mediaType: 'text/plain' },
+      { type: 'text', text: 'review' },
+    ]),
+  ).toBe('Atlas review');
+});
 
 describe('errorText / safeAuthErrorText', () => {
   test('renders errors, strings, and objects', () => {
