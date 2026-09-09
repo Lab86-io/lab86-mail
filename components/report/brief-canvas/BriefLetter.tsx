@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from 'react';
 import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
+import { TodayWeather } from '@/components/narrative/TodayWorkspace';
 import { Avatar } from '@/components/ui/avatar';
 import { briefRefKey } from '@/lib/brief/hydration';
 import {
@@ -65,6 +66,7 @@ export function BriefLetter({
         if (region.id === 'lede') {
           return (
             <section key={region.id} data-brief-region={region.id} className="blur-in">
+              {kind === 'daily' ? <TodayWeather /> : null}
               {kind === 'daily' ? (
                 <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
               ) : (

@@ -383,7 +383,11 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
       // One Albatross when the user picked one, otherwise the whole list.
       return (
         <SurfaceErrorBoundary surface="Albatrosses">
-          {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AlbatrossesSurface />}
+          {selectedWorkId ? (
+            <WorkDetail key={selectedWorkId} workId={selectedWorkId} />
+          ) : (
+            <AlbatrossesSurface />
+          )}
         </SurfaceErrorBoundary>
       );
     case 'areas':
@@ -391,7 +395,7 @@ function PrimarySurface({ view, selectedWorkId }: { view: PrimaryView; selectedW
       // area. Management/teach flows live in /settings?tab=areas now.
       return (
         <SurfaceErrorBoundary surface="Areas">
-          {selectedWorkId ? <WorkDetail workId={selectedWorkId} /> : <AreaHome />}
+          {selectedWorkId ? <WorkDetail key={selectedWorkId} workId={selectedWorkId} /> : <AreaHome />}
         </SurfaceErrorBoundary>
       );
     case 'activity':

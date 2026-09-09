@@ -8,9 +8,16 @@ import { build, file, serve } from 'bun';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const built = await build({
-  entrypoints: [resolve(root, 'scripts/fixtures/narrative-tools-preview.tsx')],
+  entrypoints: [
+    resolve(
+      root,
+      process.argv.includes('--today')
+        ? 'scripts/fixtures/today-workspace-preview.tsx'
+        : 'scripts/fixtures/narrative-tools-preview.tsx',
+    ),
+  ],
   target: 'browser',
-  define: { 'process.env.NODE_ENV': '"development"' },
+  define: { 'process.env.NODE_ENV': '"development"', 'process.env': '{}' },
 });
 if (!built.success) throw new Error(built.logs.map(String).join('\n'));
 const script = await built.outputs[0].text();
