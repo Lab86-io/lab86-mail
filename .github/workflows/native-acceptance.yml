@@ -1,0 +1,49 @@
+name: Native acceptance
+
+on:
+  pull_request:
+    branches: [staging, main]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/native-acceptance.yml'
+      - '.github/scripts/native-acceptance.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native ${{ matrix.platform }} build and checks
+    # Xcode 27's preview runner contains the iOS 27 simulator and macOS 27 SDK.
+    # Its host is macOS 26: compile Mac tests, execute shared tests on iOS.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, macos]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Generate native project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec apps/ios/project.yml
+          xcodebuild -version
+      - name: Build and verify
+        run: bash .github/scripts/native-acceptance.sh '${{ matrix.platform }}'
+      - name: Preserve build and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            native-evidence/
+            apps/ios/Lab86Mail.xcodeproj/project.pbxproj
+          retention-days: 7

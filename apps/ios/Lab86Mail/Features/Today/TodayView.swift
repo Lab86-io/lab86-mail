@@ -3,6 +3,9 @@ import SwiftUI
 struct TodayView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var narrative = NarrativeBriefStore()
+    @State private var emptyEditionDate = Date.now
     @State private var showsHistory = false
     @State private var artifactReview: ArtifactReviewRequest?
     @State private var isRegenerating = false
@@ -11,8 +14,11 @@ struct TodayView: View {
     private var store: ProductStore { environment.store }
 
     private var dateline: String {
-        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        Self.editionDate(report: store.dailyReport, now: emptyEditionDate)
+            .formatted(.dateTime.weekday(.wide).month(.wide).day())
     }
+
+    static func editionDate(report: DailyReportModel?, now: Date) -> Date { report?.generatedAt ?? now }
 
     // The single source of truth for "this report renders the native v2
     // document" — the toolbar dateline and artifactBody must agree, or the
@@ -78,6 +84,30 @@ struct TodayView: View {
             }
         }
         .shellToolbar()
+        .task(id: "\(store.dailyReport?.generatedAt.timeIntervalSince1970 ?? 0):\(scenePhase)") {
+            guard scenePhase == .active else { narrative.clear(); return }
+            emptyEditionDate = .now
+            while !Task.isCancelled {
+                await reloadNarrative()
+                do { try await Task.sleep(for: .seconds(narrative.running ? 8 : 60)) } catch { return }
+            }
+        }
+        .onDisappear { narrative.clear() }
+    }
+
+    private func reloadNarrative() async {
+        let date = Self.editionDate(report: store.dailyReport, now: emptyEditionDate)
+        let backend = environment.backend
+        await narrative.load(.brief(date)) { try await backend.get(path: $0) }
+    }
+
+    private func regenerateBrief() async {
+        let backend = environment.backend
+        await narrative.requestRefresh {
+            try await backend.post(path: "/api/narrative", body: .object(["action": .string("refresh")]))
+        }
+        await store.generateBrief()
+        await reloadNarrative()
     }
 
     /// On compact Apple platforms, Today is one page read in layers down one
@@ -116,7 +146,7 @@ struct TodayView: View {
                 // carried by the day itself rather than by the brief — so it is
                 // right on a morning when nothing has been written yet, and
                 // there is only ever one of it on the page.
-                DailyBriefMasthead(generatedAt: Date.now, art: store.dailyReport?.art)
+                DailyBriefMasthead(generatedAt: Self.editionDate(report: store.dailyReport, now: emptyEditionDate), art: store.dailyReport?.art)
                 todayDeck
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     liveLayer(now: context.date)
@@ -136,6 +166,7 @@ struct TodayView: View {
         .refreshable {
             await store.refreshToday()
             await store.refreshExecution()
+            await reloadNarrative()
         }
         .task(id: "today-execution-poll") {
             while !Task.isCancelled {
@@ -164,7 +195,12 @@ struct TodayView: View {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
-                    DailyBriefLede(text: document.summary)
+                    if narrative.entry != nil {
+                        NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    } else {
+                        DailyBriefLede(text: document.summary)
+                        NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    }
                     BriefDocumentView(
                         document: document,
                         isComposing: report.artifactStatus == "composing",
@@ -176,6 +212,7 @@ struct TodayView: View {
                 .frame(maxWidth: 920)
                 .frame(maxWidth: .infinity)
             } else {
+                NarrativeBriefView(memory: narrative, backend: environment.backend)
                 DailyBriefView(
                     report: report,
                     lastRefresh: store.lastRefresh,
@@ -198,7 +235,10 @@ struct TodayView: View {
         } action: { _, crossed in
             showsInlineDate = crossed
         }
-        .refreshable { await store.refreshToday() }
+        .refreshable {
+            await store.refreshToday()
+            await reloadNarrative()
+        }
     }
     #endif
 
@@ -307,7 +347,7 @@ struct TodayView: View {
         return Button {
             isRegenerating = true
             Task {
-                await store.generateBrief()
+                await regenerateBrief()
                 isRegenerating = false
             }
         } label: {
@@ -342,7 +382,7 @@ struct TodayView: View {
                 Button {
                     isRegenerating = true
                     Task {
-                        await store.generateBrief()
+                        await regenerateBrief()
                         isRegenerating = false
                     }
                 } label: {
@@ -360,11 +400,12 @@ struct TodayView: View {
 
     @ViewBuilder
     private func briefContent(_ report: DailyReportModel?) -> some View {
+        NarrativeBriefView(memory: narrative, backend: environment.backend)
         if let report, report.hasArtifact {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 // Today has already given the date, so the brief brings no
                 // masthead of its own into the same scroll.
-                DailyBriefLede(text: document.summary)
+                if narrative.entry == nil { DailyBriefLede(text: document.summary) }
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",
