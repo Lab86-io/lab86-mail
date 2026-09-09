@@ -45,15 +45,38 @@ const chapter = {
   sourceIds: ['evidence1'],
 };
 function setup(
-  overrides: { price?: string; generate?: (request: any) => Promise<any>; revoked?: boolean } = {},
+  overrides: {
+    price?: string;
+    generate?: (request: any) => Promise<any>;
+    revoked?: boolean;
+    sources?: number;
+    pending?: number;
+    skipResearchTools?: boolean;
+    limits?: { researchMs: number; writeMs: number };
+  } = {},
 ) {
   const writes: Array<{ name: string; args: any }> = [],
     requests: any[] = [];
   __setNarrativeDepsForTest({
     query: (async (fn: any) =>
       getFunctionName(fn) === 'narrative:read'
-        ? { entry: chapter, sources: [observation], revision: 4 }
-        : { enabled: true, entries: [], revision: 4 }) as any,
+        ? {
+            entry: chapter,
+            sources: Array.from({ length: overrides.sources ?? 1 }, (_, index) => ({
+              ...observation,
+              _id: `evidence${index + 1}`,
+            })),
+            revision: 4,
+          }
+        : getFunctionName(fn) === 'narrative:pending'
+          ? {
+              entries: Array.from({ length: overrides.pending || 0 }, (_, index) => ({
+                ...chapter,
+                _id: `past${index}`,
+                key: `past:${index}`,
+              })),
+            }
+          : { enabled: true, entries: [], revision: 4 }) as any,
     mutation: (async (fn: any, args: any) => {
       const name = getFunctionName(fn);
       writes.push({ name, args });
@@ -75,7 +98,7 @@ function setup(
       })) as any,
     generate: (async (request) => {
       requests.push(request);
-      if (request.toolChoice !== 'none')
+      if (request.toolChoice !== 'none' && !overrides.skipResearchTools)
         await request.tools.narrative_start.execute({}, { toolCallId: 'test-start', messages: [] });
       return overrides.generate
         ? overrides.generate(request)
@@ -88,6 +111,7 @@ function setup(
             totalUsage: { inputTokens: 30, outputTokens: 20 },
           };
     }) as any,
+    ...(overrides.limits ? { limits: overrides.limits } : {}),
   });
   return { writes, requests };
 }
@@ -116,13 +140,13 @@ describe('narrative agent run', () => {
     expect(state.writes).toEqual([]);
   });
   test('research uses read-only tools, cancellation, explicit model, and bounded generation', async () => {
-    const { writes, requests } = setup();
+    const { writes, requests } = setup({ sources: 4 });
     expect((await refreshNarrative('pilot', 'brief')).status).toBe('ready');
     expect(requests).toHaveLength(2);
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
     expect(requests[1].messages.at(-1).content).toContain('{"code":"E1","id":"evidence1"}');
-    expect(requests[0].stopWhen({ steps: [{}] })).toBe(true);
+    expect(requests[0].stopWhen({ steps: [{}, {}, {}, {}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',
@@ -135,9 +159,7 @@ describe('narrative agent run', () => {
     expect(requests[0].maxOutputTokens).toBe(4000);
     expect(requests[0].maxRetries).toBe(0);
     expect(requests[0].prepareStep({ messages: [], stepNumber: 4 })).toEqual({ toolChoice: 'none' });
-    expect(requests[0].prepareStep({ messages: [], stepNumber: 0 })).toEqual({
-      toolChoice: { type: 'tool', toolName: 'narrative_start' },
-    });
+    expect(requests[0].prepareStep({ messages: [], stepNumber: 0 })).toEqual({});
     expect(writes.find((w) => w.name === 'narrative:publish')?.args.sourceIds).toEqual(['evidence1']);
     expect(writes.at(-1)?.name).toBe('narrative:finish');
     expect(writes.at(-1)?.args.inputTokens).toBe(60);
@@ -151,6 +173,7 @@ describe('narrative agent run', () => {
   });
   test('research progress is never published; the tool-disabled writing call must finish the account', async () => {
     const { writes, requests } = setup({
+      sources: 4,
       generate: async (request) =>
         request.feature === 'narrative_research'
           ? {
@@ -169,6 +192,121 @@ describe('narrative agent run', () => {
     expect(requests[1].toolChoice).toBe('none');
     expect(writes.find((w) => w.name === 'narrative:publish')?.args.text).toContain('finish QA');
     expect(writes.find((w) => w.name === 'narrative:publish')?.args.text).not.toContain('Checking');
+  });
+  test('sparse evidence writes directly and defers historical chapters without marking the brief failed', async () => {
+    const { writes, requests } = setup({ pending: 2 });
+    expect(await refreshNarrative('pilot')).toMatchObject({
+      status: 'ready',
+      publishedCount: 1,
+      deferredCount: 2,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].feature).toBe('narrative_write');
+    expect(requests[0].tools).toBeUndefined();
+    expect(requests[0].messages[0].content).toContain('finish review tomorrow');
+    expect(writes.filter((row) => row.name === 'narrative:publish')).toHaveLength(1);
+  });
+  test('an optional research timeout still writes from host-read evidence and aborts the lookup', async () => {
+    let researchSignal: AbortSignal | undefined;
+    const { requests } = setup({
+      sources: 4,
+      limits: { researchMs: 5, writeMs: 1000 },
+      generate: async (request) => {
+        if (request.feature === 'narrative_research') {
+          researchSignal = request.abortSignal;
+          return new Promise(() => {});
+        }
+        return {
+          output: {
+            text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
+            sourceIds: ['E1'],
+          },
+        };
+      },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect(researchSignal?.aborted).toBe(true);
+    expect(requests).toHaveLength(2);
+  });
+  test('a rich research response that skips tools still writes from the host packet, never its claims', async () => {
+    const { requests } = setup({
+      sources: 4,
+      skipResearchTools: true,
+      generate: async (request) =>
+        request.feature === 'narrative_research'
+          ? { text: 'Unverified claim: everything deployed.', response: { messages: [] } }
+          : {
+              output: {
+                text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
+                sourceIds: ['E1'],
+              },
+            },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1].messages)).toContain('finish review tomorrow');
+    expect(JSON.stringify(requests[1].messages)).not.toContain('everything deployed');
+  });
+  test('empty provider output gets one bounded retry, while citation validation is never bypassed', async () => {
+    let attempts = 0;
+    const { requests } = setup({
+      generate: async () =>
+        ++attempts === 1
+          ? { text: '', totalUsage: { inputTokens: 3 } }
+          : {
+              output: {
+                text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
+                sourceIds: ['E1'],
+              },
+            },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect(requests.map((request) => request.maxOutputTokens)).toEqual([4000, 2000]);
+  });
+  test('failed host evidence reads never start a writer and all research tools forward cancellation', async () => {
+    const state = setup({ sources: 0 });
+    expect((await refreshNarrative('pilot')).status).toBe('partial');
+    expect(state.requests).toHaveLength(0);
+    const signals: unknown[] = [];
+    const signal = new AbortController().signal;
+    __setNarrativeDepsForTest({
+      query: (async (_fn: any, _args: any, received: unknown) => {
+        signals.push(received);
+        return { entries: [] };
+      }) as any,
+    });
+    const research = narrativeResearchTools('pilot', signal);
+    for (const [name, tool] of Object.entries(research))
+      await (tool.execute as any)(
+        name === 'narrative_changes_since'
+          ? { since: 1 }
+          : name === 'narrative_search'
+            ? { query: 'Atlas' }
+            : { id: 'one' },
+      );
+    expect(signals).toEqual([signal, signal, signal, signal]);
+  });
+  test('a stuck writing attempt is cancelled and retried once within its own budget', async () => {
+    let attempts = 0;
+    let firstSignal: AbortSignal | undefined;
+    setup({
+      limits: { researchMs: 5, writeMs: 10 },
+      generate: async (request) => {
+        if (++attempts === 1) {
+          firstSignal = request.abortSignal;
+          return new Promise(() => {});
+        }
+        return {
+          output: {
+            text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
+            sourceIds: ['E1'],
+          },
+        };
+      },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect(firstSignal?.aborted).toBe(true);
+    expect(attempts).toBe(2);
   });
   test('failed evidence reads are recoverable and do not leak server error bodies', async () => {
     __setNarrativeDepsForTest({

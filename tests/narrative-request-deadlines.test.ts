@@ -10,11 +10,12 @@ test('optional context timeout releases a stalled caller with its empty fallback
   expect(agent).toMatch(/withDeadline\(\s*captureNarrativeTurn\(/);
   expect(agent).toContain("'Narrative turn capture'");
   const planner = readFileSync('lib/albatross/intent-plan.ts', 'utf8');
-  expect(planner).toMatch(/withDeadline\(\s*narrativePrompt\(/);
+  expect(planner).toMatch(/withDeadline\(\s*deps.getNarrativeTaskContext\(/);
   expect(planner).toContain('150_000 - (Date.now() - planStartedAt)');
-  expect(planner).toContain('abortSignal: AbortSignal.timeout(planRemainingMs)');
+  expect(planner).toContain('const planSignal = AbortSignal.timeout(planRemainingMs)');
+  expect(planner).toContain('abortSignal: planSignal');
   const loop = readFileSync('lib/ai/loop.ts', 'utf8');
-  expect(loop).toContain('withDeadline(read(userId, query), 8000,');
-  expect(loop).toContain('await boundedAgentNarrativeContext(userId, memoryQuery)');
+  expect(loop).toContain('read(userId, query, topics, contextSignal)');
+  expect(loop).toContain('await boundedAgentNarrativeContext(');
   expect(loop).toContain("'Agent narrative context'");
 });

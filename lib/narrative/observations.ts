@@ -142,6 +142,35 @@ export function observationsForRow(table: string, row: any): Observation[] {
         pinned: !['done', 'archived', 'released'].includes(state),
         trust: 'reported',
       }),
+      ...(row.questions || [])
+        .filter((question: any) => question.id && question.answer)
+        .slice(0, 24)
+        .map((question: any) =>
+          make(
+            {
+              source: 'work',
+              title: `Your decision · ${row.title || row.rawText}`,
+              text: `Planning question (reference data): ${question.prompt}. Your answer: ${question.answer}. This records your stated choice, not completion of an action.`,
+              topics: workTopics,
+              trust: 'reported',
+              occurredAt: question.answeredAt || row.updatedAt || row.createdAt,
+            },
+            `:answer:${question.id}`,
+          ),
+        ),
+      ...(row.pendingPlanId || row.latestPlanId
+        ? [
+            make(
+              {
+                source: 'work',
+                title: `Plan prepared · ${row.title || row.rawText}`,
+                text: `Albatross saved a proposed plan for the requested outcome: ${row.rawText}. Plan record: ${row.pendingPlanId || row.latestPlanId}. Generated steps are proposals, not proof that anything was done or that you accepted the plan.`,
+                topics: workTopics,
+              },
+              ':plan',
+            ),
+          ]
+        : []),
       ...(row.stepProgress || []).slice(0, 60).map((step: any) =>
         make(
           {

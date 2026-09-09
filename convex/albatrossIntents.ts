@@ -15,6 +15,7 @@ import { internalAction, internalMutation, internalQuery, mutation, query } from
 import { normalizeSourceRefs, normalizeText } from './albatrossModel';
 import { recordCompletionEvent } from './albatrossWork';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { scheduleNarrativeSource } from './narrative';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -235,6 +236,7 @@ export const createIntent = mutation({
           agentState: existing.agentState || 'researching',
           updatedAt: now(),
         });
+        await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(existing._id));
         return args.returnMetadata ? { workId: existing._id, changed } : existing._id;
       }
     }
@@ -259,6 +261,7 @@ export const createIntent = mutation({
       updatedAt: ts,
     });
     await ctx.db.patch(intentId, { conversationId: `work_${String(intentId)}` });
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(intentId));
     return args.returnMetadata ? { workId: intentId, changed: true } : intentId;
   },
 });
@@ -364,6 +367,7 @@ export const updateIntent = mutation({
     }
     if (args.planError !== undefined) patch.planError = bounded(args.planError, 500) || undefined;
     await ctx.db.patch(args.intentId, patch);
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     // Completion history (issue #87/#18): only a real transition into 'done'
     // records an event; re-saving an already-done intent does not.
     if (args.status === 'done' && intent.status !== 'done') {
@@ -519,6 +523,7 @@ export const answerQuestions = mutation({
       status: unanswered ? 'needs_answers' : intent.status === 'needs_answers' ? 'captured' : intent.status,
       updatedAt: ts,
     });
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     return { questions, unanswered };
   },
 });
@@ -677,6 +682,7 @@ export const savePlan = mutation({
       updatedAt: ts,
     });
 
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     return planId;
   },
 });

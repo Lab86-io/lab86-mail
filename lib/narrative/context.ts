@@ -5,6 +5,8 @@ export interface NarrativeContextRequest {
   purpose: NarrativePurpose;
   query?: string;
   topic?: string;
+  /** Server-owned Work/Area anchors; bounded together, never whole-history injection. */
+  topics?: string[];
   /** Outgoing drafts may use only evidence the user explicitly selected. */
   evidenceIds?: string[];
   since?: number;
@@ -72,6 +74,15 @@ const STOP_WORDS = new Set([
   'and',
   'for',
 ]);
+export function narrativeContextTopics(request: NarrativeContextRequest): string[] {
+  return [
+    ...new Set(
+      [request.topic, ...(request.topics || [])].filter(
+        (id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 240,
+      ),
+    ),
+  ].slice(0, 4);
+}
 export function narrativeTerms(text: string): string[] {
   return [
     ...new Set(
@@ -89,12 +100,13 @@ export function contextRelevance(
   const title = entry.title.toLowerCase();
   const text = `${title} ${entry.text} ${entry.topics.join(' ')}`.toLowerCase();
   const terms = narrativeTerms(request.query || '');
-  let score = request.topic && entry.topics.includes(request.topic) ? 30 : 0;
+  const topics = narrativeContextTopics(request);
+  let score = topics.some((topic) => entry.topics.includes(topic)) ? 30 : 0;
   for (const term of terms) if (text.includes(term)) score += title.includes(term) ? 5 : 2;
   // Priority is conditional on relevance; a random meeting must not displace
   // the actual project simply because it came from Granola.
   if (score > 0 && request.purpose === 'meeting' && /\bgranola\b/i.test(entry.text)) score += 4;
-  if (!request.query?.trim() && !request.topic && request.purpose === 'brief') {
+  if (!request.query?.trim() && !topics.length && request.purpose === 'brief') {
     score += entry.source === 'checkins' ? 12 : entry.pinned ? 8 : 1;
   }
   return score;
@@ -107,10 +119,11 @@ export async function retrieveNarrativeContext(
   deps: NarrativeContextDependencies,
 ): Promise<NarrativeContextPacket> {
   const query = cleanNarrativeText(request.query || '', 240);
+  const topics = narrativeContextTopics(request);
   const explicit = [...new Set(request.evidenceIds || [])].slice(0, 12);
   const state = await deps.search({
     query: request.purpose === 'compose' ? '' : query,
-    topic: request.topic,
+    topic: topics[0],
     limit: 12,
   });
   const packet = {
@@ -131,9 +144,9 @@ export async function retrieveNarrativeContext(
       ...new Set([...terms.slice(0, 2), ...terms.filter((term) => term.includes('@')).slice(0, 2)]),
     ];
     const queries: Record<string, unknown>[] = searchTerms.map((term) => ({ query: term, limit: 8 }));
-    if (request.topic) queries.push({ query: '', topic: request.topic, limit: 12 });
+    for (const topic of topics) queries.push({ query: '', topic, limit: 12 });
     if (request.since !== undefined)
-      queries.push({ changedSince: request.since, topic: request.topic, limit: 8 });
+      queries.push({ changedSince: request.since, topic: topics[0], limit: 8 });
     for (let index = 0; index < queries.length; index += 3) {
       for (const found of await Promise.all(
         queries.slice(index, index + 3).map((input) => deps.search(input)),

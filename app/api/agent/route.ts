@@ -187,15 +187,16 @@ export async function POST(req: NextRequest) {
       ),
     );
     const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
+    const narrativeTopics = [
+      ...contextAttachments.map((item) => `work:${item.id}`),
+      ...(areaDiscoveryContext && body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
+        ? [`area:${body.areaDiscovery.areaId}`]
+        : []),
+    ];
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
     const memoryId = latestUser
       ? await withDeadline(
-          captureNarrativeTurn(
-            user.userId,
-            latestUser.id,
-            messageText(latestUser),
-            contextAttachments.filter((item) => item.kind === 'work').map((item) => `work:${item.id}`),
-          ),
+          captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
           3000,
           'Narrative turn capture',
         ).catch(() => null)
@@ -218,6 +219,8 @@ export async function POST(req: NextRequest) {
       userEmail: user.email,
       userName: user.name,
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
+      narrativeTopics,
+      signal: req.signal,
     });
     // The loop that always closes: after every Work-scoped turn, the server
     // reconciles the turn back into the Work document — chat-created artifacts,

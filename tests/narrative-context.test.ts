@@ -4,6 +4,7 @@ import {
   emptyNarrativeContext,
   formatNarrativeContext,
   narrativeContextStamp,
+  narrativeContextTopics,
   narrativeTerms,
   retrieveNarrativeContext,
 } from '../lib/narrative/context';
@@ -49,6 +50,30 @@ function harness(entries: NarrativeEntry[]) {
 }
 
 describe('shared task-specific narrative context', () => {
+  test('multiple Work/Area anchors locate related decisions without admitting unrelated history', async () => {
+    const state = harness([
+      evidence('work'),
+      evidence('area', {
+        title: 'Previously chosen direction',
+        text: 'Wait for signoff',
+        topics: ['area:launch'],
+      }),
+      evidence('private', { title: 'Unrelated', text: 'Private note', topics: [] }),
+    ]);
+    const packet = await retrieveNarrativeContext(
+      { purpose: 'chat', query: 'What next?', topics: ['work:atlas', 'area:launch'] },
+      state.deps,
+    );
+    expect(packet.evidence.map((row) => row.id).sort()).toEqual(['area', 'work']);
+    expect(state.searches).toContainEqual({ query: '', topic: 'area:launch', limit: 12 });
+    expect(
+      narrativeContextTopics({
+        purpose: 'work',
+        topic: 'work:a',
+        topics: ['work:a', '', 'x'.repeat(241), 'area:b', 'work:c', 'work:d', 'work:e'],
+      }),
+    ).toEqual(['work:a', 'area:b', 'work:c', 'work:d']);
+  });
   test('independent evidence reads start together and preserve selected ordering', async () => {
     const { deps, reads } = harness([evidence('one'), evidence('two')]);
     const release: Array<() => void> = [];

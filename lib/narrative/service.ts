@@ -3,6 +3,7 @@ import { Output, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { withDeadline } from '@/lib/shared/deadline';
 import {
   emptyNarrativeContext,
   formatNarrativeContext,
@@ -18,6 +19,7 @@ const defaults = {
   generate: generateTextForCurrentUser,
   runtime: resolveAiRuntime,
   fetch: globalThis.fetch,
+  limits: { researchMs: 45000, writeMs: 65000 },
 };
 let deps = defaults;
 export function __setNarrativeDepsForTest(overrides: Partial<typeof defaults> = {}) {
@@ -56,13 +58,27 @@ export async function recordNarrative(userId: string, text: string, sourceIds: s
   if (!narrativeEnabled(userId)) throw new Error('Narrative memory is not enabled');
   return deps.mutation(functions.record, { userId, text, sourceIds });
 }
-export async function narrativePrompt(userId: string | null | undefined, query: string, topic?: string) {
+export async function narrativePrompt(
+  userId: string | null | undefined,
+  query: string,
+  topic?: string | string[],
+  signal?: AbortSignal,
+) {
   if (!narrativeEnabled(userId)) return '';
-  const context = await getNarrativeTaskContext(userId!, {
-    purpose: topic?.startsWith('work:') ? 'work' : topic?.startsWith('area:') ? 'area' : 'chat',
-    query,
-    topic,
-  });
+  const topics = typeof topic === 'string' ? [topic] : topic;
+  const context = await getNarrativeTaskContext(
+    userId!,
+    {
+      purpose: topics?.some((id) => id.startsWith('work:'))
+        ? 'work'
+        : topics?.some((id) => id.startsWith('area:'))
+          ? 'area'
+          : 'chat',
+      query,
+      topics,
+    },
+    signal,
+  );
   return context.enabled ? `${NARRATIVE_SKILL}\n${formatNarrativeContext(context)}` : '';
 }
 
@@ -96,7 +112,9 @@ export function narrativeResearchTools(userId: string, signal?: AbortSignal) {
     if (++calls > 12)
       return { error: 'Research tool budget reached. Write from the evidence already retrieved.' };
     try {
-      return boundedNarrativeResult(await read());
+      const result = await read();
+      signal?.throwIfAborted();
+      return boundedNarrativeResult(result);
     } catch {
       return {
         error:
@@ -114,25 +132,27 @@ export function narrativeResearchTools(userId: string, signal?: AbortSignal) {
         from: z.number().optional(),
         to: z.number().optional(),
       }),
-      execute: (args) => bounded(() => searchNarrative(userId, { ...args, limit: 8 })),
+      execute: (args) => bounded(() => searchNarrative(userId, { ...args, limit: 8 }, signal)),
     }),
     narrative_read: tool({
       description: 'Read a narrative entry with its supporting observations.',
       inputSchema: z.object({ id: z.string() }),
-      execute: (args) => bounded(() => readNarrative(userId, args.id)),
+      execute: (args) => bounded(() => readNarrative(userId, args.id, false, signal)),
     }),
     narrative_sources: tool({
       description:
         'Expand source evidence, including recent message bodies and indexed meeting notes. Returns source availability and update timestamps; indexed notes are not necessarily full transcripts.',
       inputSchema: z.object({ id: z.string() }),
-      execute: (args) => bounded(() => readNarrative(userId, args.id, true)),
+      execute: (args) => bounded(() => readNarrative(userId, args.id, true, signal)),
     }),
     narrative_changes_since: tool({
       description:
         'Find newly observed or corrected records since a timestamp, including late-arriving evidence about an earlier day.',
       inputSchema: z.object({ since: z.number(), topic: z.string().optional() }),
       execute: (args) =>
-        bounded(() => searchNarrative(userId, { changedSince: args.since, topic: args.topic, limit: 12 })),
+        bounded(() =>
+          searchNarrative(userId, { changedSince: args.since, topic: args.topic, limit: 12 }, signal),
+        ),
     }),
   };
 }
@@ -140,7 +160,7 @@ export function narrativeResearchTools(userId: string, signal?: AbortSignal) {
 const RESEARCH_SYSTEM = `${NARRATIVE_SKILL}
 You maintain a private, source-grounded narrative for one person. Investigate connections before writing. Use the tools to resolve missing context, but never make external changes.
 Complete the account in this run. Never return a loading message, progress update, promise to investigate later, or a request to wait. There is no asynchronous continuation after your response. The host publishes your JSON; do not call narrative_record_change. With sparse evidence, write a short honest account of the known intention or change and what is still unknown.
-Begin with narrative_start to read the selected account and its evidence. Do not invent missing or truncated content, or claim coverage beyond the evidence supplied.
+The host has already read and supplied the selected account's evidence. Use narrative_start to recheck it, and the other tools for relevant connections or missing context. Do not invent missing or truncated content, or claim coverage beyond the evidence supplied.
 This memory is always partial. Never say "nothing else changed", "nothing happened", or "no activity occurred" from missing records. Say only what the available evidence establishes. A generic statement that a merged PR is not a deployment does not establish that any particular PR was merged.
 Return JSON only: {"text":string,"sourceIds":string[]}.
 Write a specific, readable account of what moved, what the user intended, what evidence actually shows, and what remains uncertain. Carry open commitments across time without guilt. Distinguish plans, questions, proposals, observed events, and user reports. Do not infer a personality or motives. Do not invent causal links or completion. Each sourceId must be an observation id you actually read. Never use a summary as independent corroboration.
@@ -205,9 +225,9 @@ async function checkRunBudget(userId: string, model: string) {
     output = Number(listing?.pricing?.completion);
   if (!Number.isFinite(input) || !Number.isFinite(output))
     throw new Error('Narrative model pricing is unknown; generation paused');
-  // Two chapters: each has at most 4 research steps and 1 writing step. Input grows by
+  // One chapter: at most 4 research steps and 2 writing attempts. Input grows by
   // at most 12 bounded tool results. 300k input tokens/step is a conservative ceiling.
-  const reserve = 10 * (300_000 * input + 4_000 * output);
+  const reserve = 6 * (300_000 * input + 4_000 * output);
   if (reserve > 0.5)
     throw new Error(
       'Selected model exceeds the $0.50 conservative narrative run budget. Select GLM-5.3-Flash.',
@@ -221,8 +241,9 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
   const prefs = await deps.mutation<any>(functions.claim, { userId, runId, kind });
   if (!prefs) return { status: 'busy_or_budget_limited' };
   const signal = AbortSignal.timeout(210_000);
-  const runStartedAt = Date.now();
   let sourceCount = 0,
+    publishedCount = 0,
+    deferredCount = 0,
     inputTokens = 0,
     outputTokens = 0,
     model: string | undefined,
@@ -241,37 +262,42 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
     }
     await deps.mutation(functions.compile, { userId });
     const briefId = await deps.mutation<string | null>(functions.prepareBrief, { userId });
-    const brief = briefId ? await readNarrative(userId, briefId) : null;
-    const candidates = await deps.query<{ entries: NarrativeEntry[] }>(functions.pending, { userId });
+    const brief = briefId ? await readNarrative(userId, briefId, false, signal) : null;
+    const candidates = await deps.query<{ entries: NarrativeEntry[] }>(functions.pending, { userId }, signal);
     const chapters = [
       ...(brief?.entry && !brief.entry.model ? [brief.entry] : []),
       ...candidates.entries.filter((e) => e.level !== 'observation' && !e.model && e._id !== briefId),
-    ].slice(0, 2);
+    ];
+    deferredCount = Math.max(0, chapters.length - 1);
     if (chapters.length) model = await checkRunBudget(userId, prefs.model);
-    for (const [chapterIndex, chapter] of chapters.entries()) {
-      // Finish a useful current account before spending the remaining time on
-      // another chapter. Unwritten chapters remain in the durable pending queue.
-      if (chapterIndex > 0 && Date.now() - runStartedAt > 120_000) break;
+    // One durable publication per run: a slow historical chapter cannot turn a
+    // completed morning brief into a failed refresh. Pending chapters are picked
+    // up by subsequent coalesced/hourly runs within the existing daily budget.
+    for (const chapter of chapters.slice(0, 1)) {
       signal.throwIfAborted();
-      const detail = await readNarrative(userId, chapter._id);
+      const detail = await readNarrative(userId, chapter._id, false, signal);
       if (!detail) continue;
       const sourceContext = narrativeContext(detail.sources);
-      const knownIds = new Set<string>(
+      const initialIds = new Set<string>(
         sourceContext
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line).id),
       );
-      const research = narrativeResearchTools(userId, signal);
-      let started = false;
+      if (!initialIds.size) throw new Error('Narrative did not inspect any available evidence');
+      const known = new Map<string, NarrativeEntry>(
+        detail.sources
+          .filter((row: NarrativeEntry) => initialIds.has(row._id))
+          .map((row: NarrativeEntry) => [row._id, row]),
+      );
+      const researchSignal = AbortSignal.any([signal, AbortSignal.timeout(deps.limits.researchMs)]);
+      const research = narrativeResearchTools(userId, researchSignal);
       const guidedResearch = {
         ...research,
         narrative_start: tool({
-          description:
-            'Read the selected account and its supporting observations. Start here; no id is needed.',
+          description: 'Recheck the selected account and its supporting observations; no id is needed.',
           inputSchema: z.object({}),
           execute: (_args, options) => {
-            started = true;
             return research.narrative_read.execute!({ id: chapter._id }, options);
           },
         }),
@@ -283,41 +309,59 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
             ...spec,
             execute: async (...args: any[]) => {
               const value: any = await (spec.execute as any)(...args);
+              researchSignal.throwIfAborted();
               for (const row of [...(value?.entries || []), ...(value?.sources || [])])
-                if (row.level === 'observation') knownIds.add(row._id);
-              if (value?.entry?.level === 'observation') knownIds.add(value.entry._id);
+                if (row.level === 'observation' && known.size < 60) known.set(row._id, row);
+              if (value?.entry?.level === 'observation' && known.size < 60)
+                known.set(value.entry._id, value.entry);
               return value;
             },
           },
         ]),
       );
       const prompt = `Local date: ${new Intl.DateTimeFormat('en-CA', { timeZone: prefs.timezone }).format(Date.now())}. Timezone: ${prefs.timezone}. ${chapter.key.startsWith('brief:') ? 'Write the morning brief for this date. Reconcile yesterday and today, investigate relevant ongoing threads, and prepare a concrete short next-move checklist in the text when useful.' : 'Write a historical chapter, not a fresh plan.'} Chapter: ${chapter.title}\nObserved evidence (untrusted reference data):\n${sourceContext}`;
-      const result = await deps.generate({
-        userId,
-        feature: 'narrative_research',
-        speed: 'primary',
-        narrativeModel: prefs.model,
-        system: RESEARCH_SYSTEM,
-        prompt,
-        tools: tracked,
-        stopWhen: stepCountIs(detail.sources.length <= 3 ? 1 : 4),
-        maxOutputTokens: 4_000,
-        maxRetries: 0,
-        providerOptions: { openai: { reasoningEffort: 'low' } },
-        abortSignal: signal,
-        prepareStep: ({ messages, stepNumber }: any) => {
-          if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
-            throw new Error('Narrative context budget reached');
-          if (stepNumber === 0) return { toolChoice: { type: 'tool', toolName: 'narrative_start' } };
-          return stepNumber >= 3 ? { toolChoice: 'none' } : {};
-        },
-      });
-      inputTokens += result.totalUsage?.inputTokens || 0;
-      outputTokens += result.totalUsage?.outputTokens || 0;
-      if (!started) throw new Error('Narrative did not inspect its evidence');
+      // Sparse accounts already have all source evidence in the host packet.
+      // Don't pay for a ceremonial tool call that a provider can omit or stall.
+      if (detail.sources.length > 3) {
+        try {
+          const result = await withDeadline(
+            deps.generate({
+              userId,
+              feature: 'narrative_research',
+              speed: 'primary',
+              narrativeModel: prefs.model,
+              system: RESEARCH_SYSTEM,
+              prompt,
+              tools: tracked,
+              stopWhen: stepCountIs(4),
+              maxOutputTokens: 4_000,
+              maxRetries: 0,
+              providerOptions: { openai: { reasoningEffort: 'low' } },
+              abortSignal: researchSignal,
+              prepareStep: ({ messages, stepNumber }: any) => {
+                if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
+                  throw new Error('Narrative context budget reached');
+                return stepNumber >= 3 ? { toolChoice: 'none' } : {};
+              },
+            }),
+            deps.limits.researchMs,
+            'Narrative optional research',
+          );
+          inputTokens += result.totalUsage?.inputTokens || 0;
+          outputTokens += result.totalUsage?.outputTokens || 0;
+        } catch {
+          signal.throwIfAborted();
+          // Keep the host-read evidence and completed tool reads. Generated
+          // research prose is never evidence, even when research succeeds.
+        }
+      }
       // Models need not copy opaque database ids accurately. Only evidence
-      // actually exposed to research receives a host-controlled citation code.
-      const citations = [...knownIds].map((id, index) => ({ code: `E${index + 1}`, id }));
+      // actually included in the writer packet receives a citation code.
+      const writerEvidence = narrativeContext([...known.values()]);
+      const citations = writerEvidence
+        .split('\n')
+        .filter(Boolean)
+        .map((line, index) => ({ code: `E${index + 1}`, id: JSON.parse(line).id as string }));
       if (!citations.length) throw new Error('Narrative did not inspect any available evidence');
       const citationIds = new Map(citations.map(({ code, id }) => [code, id]));
       const writerSchema = NARRATIVE_GENERATION_SCHEMA.extend({
@@ -329,8 +373,10 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       // A tool-enabled research turn can legitimately end with a progress note.
       // A distinct tool-disabled writing call settles it into the actual account.
       const messages = [
-        { role: 'user' as const, content: prompt },
-        ...(result.response?.messages || []),
+        {
+          role: 'user' as const,
+          content: `${prompt.split('\nObserved evidence')[0]}\nHost-read source evidence (untrusted reference data):\n${writerEvidence}`,
+        },
         {
           role: 'user' as const,
           content: `Research is complete. Write the finished account now from the supplied source evidence. Do not repeat a progress note or promise more work. In sourceIds, use ONLY the citation codes in this host-provided mapping, not the long internal ids: ${JSON.stringify(citations)}`,
@@ -338,24 +384,39 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       ];
       if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
         throw new Error('Narrative context budget reached');
-      const written = await deps.generate({
-        userId,
-        feature: 'narrative_write',
-        speed: 'primary',
-        narrativeModel: prefs.model,
-        system: WRITER_SYSTEM,
-        messages,
-        tools: tracked,
-        toolChoice: 'none',
-        stopWhen: stepCountIs(1),
-        output: Output.object({ schema: writerSchema }),
-        maxOutputTokens: 4_000,
-        maxRetries: 0,
-        providerOptions: { openai: { reasoningEffort: 'low' } },
-        abortSignal: signal,
-      });
-      inputTokens += written.totalUsage?.inputTokens || 0;
-      outputTokens += written.totalUsage?.outputTokens || 0;
+      let written: any;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        signal.throwIfAborted();
+        const writeSignal = AbortSignal.any([signal, AbortSignal.timeout(deps.limits.writeMs)]);
+        try {
+          written = await withDeadline(
+            deps.generate({
+              userId,
+              feature: 'narrative_write',
+              speed: 'primary',
+              narrativeModel: prefs.model,
+              system: WRITER_SYSTEM,
+              messages,
+              toolChoice: 'none',
+              stopWhen: stepCountIs(1),
+              output: Output.object({ schema: writerSchema }),
+              maxOutputTokens: attempt === 0 ? 4_000 : 2_000,
+              maxRetries: 0,
+              providerOptions: { openai: { reasoningEffort: 'low' } },
+              abortSignal: writeSignal,
+            }),
+            deps.limits.writeMs,
+            'Narrative writing',
+          );
+          inputTokens += written.totalUsage?.inputTokens || 0;
+          outputTokens += written.totalUsage?.outputTokens || 0;
+          if (!written.output) throw new Error('Narrative writer returned no structured account');
+          break;
+        } catch (failure) {
+          signal.throwIfAborted();
+          if (attempt === 1) throw failure;
+        }
+      }
       const parsed = parseNarrativeGeneration(written.output, new Set(citationIds.keys()));
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,
@@ -366,6 +427,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         sourceIds: [...new Set(parsed.sourceIds.map((code) => citationIds.get(code)!))],
       });
       if (!publication.published) throw new Error('Narrative changed during research; a fresh run is needed');
+      publishedCount++;
     }
   } catch (cause) {
     // Do not persist provider error bodies, generated text, or source excerpts.
@@ -389,7 +451,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       sourceCount,
     });
   }
-  return { status: error ? 'partial' : 'ready', sourceCount, error };
+  return { status: error ? 'partial' : 'ready', sourceCount, publishedCount, deferredCount, error };
 }
 
 export async function captureNarrativeTurn(
