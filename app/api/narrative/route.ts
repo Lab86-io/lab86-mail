@@ -72,6 +72,7 @@ export function createNarrativeRoutes(
       const user = await deps.requireCurrentUser();
       if (!deps.enabled(user.userId))
         return NextResponse.json({ available: false, entries: [], enabled: false });
+      await deps.rateLimit({ userId: user.userId, key: 'narrative-read', limit: 120, windowMs: 60_000 });
       const params = req.nextUrl.searchParams;
       if (params.get('op') === 'brief')
         return NextResponse.json({
@@ -124,11 +125,26 @@ export function createNarrativeRoutes(
           return NextResponse.json({ error: 'Choose a valid timezone.' }, { status: 400 });
         }
         await deps.mutation(functions.configure, { userId: user.userId, ...preferences });
-        if (input.enabled) deps.after(() => deps.refresh(user.userId).then(() => undefined));
+        if (input.enabled)
+          deps.after(() =>
+            deps
+              .refresh(user.userId)
+              .then(() => undefined)
+              .catch((error) => {
+                console.error('[narrative] background refresh failed', error);
+              }),
+          );
         return NextResponse.json({ ok: true });
       }
       if (input.action === 'refresh') {
-        deps.after(() => deps.refresh(user.userId, 'manual').then(() => undefined));
+        deps.after(() =>
+          deps
+            .refresh(user.userId, 'manual')
+            .then(() => undefined)
+            .catch((error) => {
+              console.error('[narrative] background refresh failed', error);
+            }),
+        );
         return NextResponse.json({ ok: true, status: 'queued' }, { status: 202 });
       }
       if (input.action === 'erase')

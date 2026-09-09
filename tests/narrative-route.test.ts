@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createNarrativeRoutes } from '../app/api/narrative/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
+import { RateLimitError } from '../lib/rate-limit';
 
 function setup(overrides: Record<string, unknown> = {}) {
   const writes: any[] = [],
@@ -43,6 +44,34 @@ const configure = {
   model: 'z-ai/glm-5.3-flash',
 };
 describe('narrative API boundary', () => {
+  test('enabled reads have a separate quota and background failures are contained', async () => {
+    const state = setup({
+      rateLimit: async ({ key }: { key: string }) => {
+        expect(key).toBe('narrative-read');
+        throw new RateLimitError('Slow down', 1000, 120);
+      },
+    });
+    expect((await state.GET(new NextRequest('https://example.test/api/narrative?op=status'))).status).toBe(
+      429,
+    );
+    expect(state.reads).toEqual([]);
+    const disabled = setup({
+      enabled: () => false,
+      rateLimit: async () => {
+        throw new Error('must not run');
+      },
+    });
+    expect((await disabled.GET(new NextRequest('https://example.test/api/narrative'))).status).toBe(200);
+    for (const body of [configure, { action: 'refresh' }]) {
+      const failing = setup({
+        refresh: async () => {
+          throw new Error('synthetic finish failure');
+        },
+      });
+      await failing.POST(req(body));
+      await expect(failing.queued[0]()).resolves.toBeUndefined();
+    }
+  });
   test('requires authentication and rejects nonpilot writes without touching data', async () => {
     const anonymous = setup({
       requireCurrentUser: async () => {

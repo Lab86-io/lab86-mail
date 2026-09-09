@@ -27,8 +27,8 @@ function MeetingPanel(selector: MeetingSelector) {
         body: JSON.stringify(selector),
         signal: controller.signal,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Meeting prep is unavailable.');
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data) throw new Error(data?.error || 'Meeting prep is unavailable.');
       if (!controller.signal.aborted) setResult(data);
     } catch (failure) {
       if (!controller.signal.aborted)

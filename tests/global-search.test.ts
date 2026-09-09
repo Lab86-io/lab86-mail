@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { persistedClientState, useClientStore } from '../lib/client-state';
-import { calendarSearchEvent, type SearchEventDetail } from '../lib/search/calendar-event';
+import {
+  calendarSearchEvent,
+  calendarSearchWindow,
+  type SearchEventDetail,
+} from '../lib/search/calendar-event';
 import {
   cloudFileResult,
   localFileResults,
@@ -41,6 +45,18 @@ const mockTool = (fn: (name: string, args: Record<string, unknown>, signal?: Abo
   (async (name, args, signal) => fn(name, args, signal)) as SearchTool;
 
 describe('global search sources', () => {
+  test('distant calendar targets restore the current range when cleared', () => {
+    const normal = { startAt: Date.parse('2026-06-01'), endAt: Date.parse('2027-06-01') };
+    for (const date of ['2024-01-01', '2029-01-01']) {
+      const shifted = calendarSearchWindow(normal, date);
+      expect(shifted.startAt).toBeLessThan(Date.parse(date));
+      expect(shifted.endAt).toBeGreaterThan(Date.parse(date));
+      expect(shifted).not.toBe(normal);
+      expect(calendarSearchWindow(normal)).toBe(normal);
+    }
+    expect(calendarSearchWindow(normal, '2026-09-09')).toBe(normal);
+    expect(calendarSearchWindow(normal, 'invalid')).toBe(normal);
+  });
   test('page aliases, multiple words, case and empty queries', () => {
     expect(searchPages('')).toHaveLength(9);
     expect(searchPages('narrative')[0].target).toEqual({ kind: 'narrative' });
@@ -374,6 +390,18 @@ describe('search navigation and selection', () => {
     );
     expect(readFileSync('components/calendar/CalendarSurface.tsx', 'utf8')).toContain(
       '<CalendarSearchSelection />',
+    );
+  });
+  test('search feedback is outside the listbox and interpretation is not a warning', () => {
+    const source = readFileSync('components/palette/CommandPalette.tsx', 'utf8');
+    const listEnd = source.indexOf('</CommandList>');
+    expect(listEnd).toBeGreaterThan(-1);
+    expect(source.indexOf('{sectionStatuses}')).toBeGreaterThan(listEnd);
+    expect(source).toContain('extraErrors: string[] = []');
+    expect(source).toContain('notice?: string');
+    expect(source).not.toContain('[`Interpreted as:');
+    expect(source).toMatch(
+      /<CommandGroup forceMount heading=\{label\}>\s*\{items.map\(row\)\}\s*<\/CommandGroup>/,
     );
   });
 });

@@ -9,6 +9,18 @@ import {
 } from '../lib/ai/budget';
 
 describe('estimateAiUsageCost', () => {
+  test('GLM variants retain the vendor prefix and use the same base rate', () => {
+    for (const model of ['z-ai/glm-5.3-flash', 'z-ai/glm-5.3-flash:batch', 'Z-AI/GLM-5.3-FLASH:nitro']) {
+      expect(
+        estimateAiUsageCost({
+          provider: 'openrouter',
+          model,
+          promptTokens: 1000000,
+          completionTokens: 1000000,
+        }).estimatedCostUsd,
+      ).toBeCloseTo(0.325);
+    }
+  });
   test('prices OpenAI GPT-5.5 at list rates', () => {
     const cost = estimateAiUsageCost({
       provider: 'openai',

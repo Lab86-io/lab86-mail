@@ -34,7 +34,11 @@ export function narrativeEnabled(userId?: string | null) {
     (!allowed.length || allowed.includes(userId!))
   );
 }
-export async function searchNarrative(userId: string, input: Record<string, unknown> = {}) {
+export async function searchNarrative(
+  userId: string,
+  input: Record<string, unknown> = {},
+  signal?: AbortSignal,
+) {
   if (!narrativeEnabled(userId)) return { entries: [] as NarrativeEntry[], enabled: false, revision: 0 };
   return deps.query<{
     entries: NarrativeEntry[];
@@ -42,11 +46,11 @@ export async function searchNarrative(userId: string, input: Record<string, unkn
     revision: number;
     lastRunAt?: number;
     coverage?: string;
-  }>(functions.search, { ...input, userId });
+  }>(functions.search, { ...input, userId }, signal);
 }
-export async function readNarrative(userId: string, id: string, sources = false) {
+export async function readNarrative(userId: string, id: string, sources = false, signal?: AbortSignal) {
   if (!narrativeEnabled(userId)) return null;
-  return deps.query<any>(functions.read, { userId, id, sources });
+  return deps.query<any>(functions.read, { userId, id, sources }, signal);
 }
 export async function recordNarrative(userId: string, text: string, sourceIds: string[]) {
   if (!narrativeEnabled(userId)) throw new Error('Narrative memory is not enabled');
@@ -62,11 +66,15 @@ export async function narrativePrompt(userId: string | null | undefined, query: 
   return context.enabled ? `${NARRATIVE_SKILL}\n${formatNarrativeContext(context)}` : '';
 }
 
-export async function getNarrativeTaskContext(userId: string, request: NarrativeContextRequest) {
+export async function getNarrativeTaskContext(
+  userId: string,
+  request: NarrativeContextRequest,
+  signal?: AbortSignal,
+) {
   if (!narrativeEnabled(userId)) return emptyNarrativeContext(request.purpose);
   return retrieveNarrativeContext(request, {
-    search: (input) => searchNarrative(userId, input),
-    read: (id) => readNarrative(userId, id),
+    search: (input) => searchNarrative(userId, input, signal),
+    read: (id) => readNarrative(userId, id, false, signal),
   });
 }
 
@@ -144,11 +152,13 @@ export const NARRATIVE_GENERATION_SCHEMA = z.object({
   text: z.string().min(80).max(4_000),
   sourceIds: z.array(z.string()).min(1).max(60),
 });
-export function parseNarrativeGeneration(text: string, knownIds: Set<string>) {
-  const start = text.indexOf('{'),
-    end = text.lastIndexOf('}');
-  const decoded = JSON.parse(text.slice(start, end + 1));
-  const candidate: string = typeof decoded?.text === 'string' ? decoded.text : '';
+export function parseNarrativeGeneration(value: unknown, knownIds: Set<string>) {
+  const decoded =
+    typeof value === 'string'
+      ? JSON.parse(value.slice(value.indexOf('{'), value.lastIndexOf('}') + 1))
+      : value;
+  const candidate =
+    typeof (decoded as { text?: unknown })?.text === 'string' ? (decoded as { text: string }).text : '';
   if (
     candidate.length < 220 &&
     /^(loading|gathering|researching|preparing|checking|looking)\b.{0,180}\b(context|brief|chapter|narrative|history|evidence|information|data|records|episodes)\b/i.test(
@@ -346,7 +356,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       });
       inputTokens += written.totalUsage?.inputTokens || 0;
       outputTokens += written.totalUsage?.outputTokens || 0;
-      const parsed = parseNarrativeGeneration(written.text, new Set(citationIds.keys()));
+      const parsed = parseNarrativeGeneration(written.output, new Set(citationIds.keys()));
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,
         revision: detail.revision,

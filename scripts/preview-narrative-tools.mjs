@@ -14,12 +14,26 @@ const built = await build({
 });
 if (!built.success) throw new Error(built.logs.map(String).join('\n'));
 const script = await built.outputs[0].text();
-const cssRoot = resolve(root, '.next/static/chunks');
-const candidates = await Promise.all(
-  (await readdir(cssRoot))
-    .filter((name) => name.endsWith('.css'))
-    .map(async (name) => ({ name, size: (await stat(resolve(cssRoot, name))).size })),
-);
+// Turbopack emits CSS in chunks; Webpack builds may use static/css.
+const candidates = (
+  await Promise.all(
+    ['chunks', 'css'].map(async (directory) => {
+      const cssRoot = resolve(root, '.next/static', directory);
+      const names = await readdir(cssRoot).catch((error) => {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      });
+      return Promise.all(
+        names
+          .filter((name) => name.endsWith('.css'))
+          .map(async (name) => {
+            const path = resolve(cssRoot, name);
+            return { path, size: (await stat(path)).size };
+          }),
+      );
+    }),
+  )
+).flat();
 const css = candidates.sort((a, b) => b.size - a.size)[0];
 if (!css) throw new Error('Build the app before previewing its actual styles.');
 const server = serve({
@@ -29,7 +43,7 @@ const server = serve({
     const path = new URL(request.url).pathname;
     if (path === '/preview.js')
       return new Response(script, { headers: { 'content-type': 'text/javascript' } });
-    if (path === '/preview.css') return new Response(file(resolve(cssRoot, css.name)));
+    if (path === '/preview.css') return new Response(file(css.path));
     if (path === '/')
       return new Response(
         '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Narrative tools · synthetic preview</title><link rel="stylesheet" href="/preview.css"></head><body><div id="root"></div><script type="module" src="/preview.js"></script></body></html>',

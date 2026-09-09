@@ -45,12 +45,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { api } from '@/convex/_generated/api';
 import { useClientStore } from '@/lib/client-state';
 
-interface IProps {
+type IProps = {
   event: IEvent;
   children?: ReactNode;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-}
+} & (
+  | { open: boolean; onOpenChange: (open: boolean) => void }
+  | { open?: undefined; onOpenChange?: (open: boolean) => void }
+);
 
 const RSVP_LABEL: Record<string, string> = {
   yes: 'Going',
@@ -58,6 +59,18 @@ const RSVP_LABEL: Record<string, string> = {
   maybe: 'Maybe',
   noreply: 'No reply',
 };
+
+/** Observing an uncontrolled dialog must not accidentally make it controlled. */
+export function useEventDialogOpen(controlledOpen?: boolean, onOpenChange?: (open: boolean) => void) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : localOpen;
+  const setOpen = (next: boolean) => {
+    if (!isControlled) setLocalOpen(next);
+    onOpenChange?.(next);
+  };
+  return [open, setOpen] as const;
+}
 
 // Dedicated event viewer: everything the synced event knows — times in the
 // user's clock format, owning calendar, location with an embedded map,
@@ -67,9 +80,7 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
   const endDate = parseISO(event.endDate);
   const { use24HourFormat, removeEvent } = useCalendar();
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
-  const [localOpen, setLocalOpen] = useState(false);
-  const open = controlledOpen ?? localOpen;
-  const setOpen = onOpenChange ?? setLocalOpen;
+  const [open, setOpen] = useEventDialogOpen(controlledOpen, onOpenChange);
   // Only subscribe to linked cards while the dialog is open — otherwise every
   // rendered event card on a dense calendar holds a live Convex subscription.
   const linkedCardsQuery = useConvexQuery({

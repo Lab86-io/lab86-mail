@@ -24,6 +24,9 @@ export function createNarrativeMeetingPost(deps = defaults) {
         return NextResponse.json({ error: 'Select a synced calendar event first.' }, { status: 400 });
       if (error instanceof MeetingContextError)
         return NextResponse.json({ error: error.message }, { status: error.status });
+      console.error('[narrative] meeting prep failed', {
+        name: error instanceof Error ? error.name : 'UnknownError',
+      });
       return NextResponse.json(
         { error: 'Meeting prep is unavailable. Your calendar is unchanged.' },
         { status: 503 },

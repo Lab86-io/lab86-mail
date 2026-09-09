@@ -3,9 +3,22 @@ import {
   errorText,
   isAuthError,
   isRecoverableAgentProviderError,
+  narrativeQueryFromContent,
   safeAuthErrorText,
   writeDelayedAgentResult,
 } from '../lib/ai/loop';
+
+test('narrative retrieval uses bounded text rather than attachment or tool payloads', () => {
+  expect(narrativeQueryFromContent(undefined)).toBe('');
+  expect(narrativeQueryFromContent('x'.repeat(1000))).toHaveLength(240);
+  expect(
+    narrativeQueryFromContent([
+      { type: 'text', text: 'Atlas' },
+      { type: 'file', data: 'PRIVATE-BINARY', mediaType: 'text/plain' },
+      { type: 'text', text: 'review' },
+    ]),
+  ).toBe('Atlas review');
+});
 
 describe('errorText / safeAuthErrorText', () => {
   test('renders errors, strings, and objects', () => {

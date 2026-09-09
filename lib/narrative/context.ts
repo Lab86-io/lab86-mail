@@ -134,10 +134,14 @@ export async function retrieveNarrativeContext(
     if (request.topic) queries.push({ query: '', topic: request.topic, limit: 12 });
     if (request.since !== undefined)
       queries.push({ changedSince: request.since, topic: request.topic, limit: 8 });
-    for (const input of queries) {
-      const found = await deps.search(input);
-      if (!found.enabled || found.revision !== state.revision) return emptyNarrativeContext(request.purpose);
-      for (const entry of found.entries) candidates.set(entry._id, entry);
+    for (let index = 0; index < queries.length; index += 3) {
+      for (const found of await Promise.all(
+        queries.slice(index, index + 3).map((input) => deps.search(input)),
+      )) {
+        if (!found.enabled || found.revision !== state.revision)
+          return emptyNarrativeContext(request.purpose);
+        for (const entry of found.entries) candidates.set(entry._id, entry);
+      }
     }
   }
   const selected =
@@ -152,8 +156,7 @@ export async function retrieveNarrativeContext(
           .slice(0, 8)
           .map((entry) => entry._id);
   const observations = new Map<string, NarrativeEntry>();
-  for (const id of selected) {
-    const detail = await deps.read(id);
+  for (const detail of await Promise.all(selected.map((id) => deps.read(id)))) {
     if (!detail) continue;
     if (detail.revision !== state.revision) return emptyNarrativeContext(request.purpose);
     const rows = detail.entry.level === 'observation' ? [detail.entry] : detail.sources;

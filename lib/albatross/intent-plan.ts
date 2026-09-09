@@ -4,7 +4,7 @@ import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
-import { narrativePrompt, narrativeResearchTools } from '@/lib/narrative/service';
+import { narrativeEnabled, narrativePrompt, narrativeResearchTools } from '@/lib/narrative/service';
 import {
   type BriefDocumentV2,
   type BriefRegion,
@@ -943,7 +943,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         prompt,
         tools: {
           ...plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
-          ...(input.userId ? narrativeResearchTools(input.userId) : {}),
+          ...(input.userId && narrativeEnabled(input.userId) ? narrativeResearchTools(input.userId) : {}),
         },
         stopWhen: stepCountIs(12),
       }),

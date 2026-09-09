@@ -31,7 +31,7 @@ export function createNarrativeContextGet(deps = defaults) {
       if (error instanceof z.ZodError)
         return NextResponse.json({ error: 'Invalid context request.' }, { status: 400 });
       return NextResponse.json(
-        { error: 'Context is unavailable. Retry without changing your draft.' },
+        { error: 'Context is temporarily unavailable. Please try again.' },
         { status: 503 },
       );
     }

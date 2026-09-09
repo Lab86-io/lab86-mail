@@ -201,7 +201,6 @@ export const configure = mutation({
         .withIndex('by_user', (q) => q.eq('userId', args.userId))
         .collect();
       for (const cursor of cursors) await ctx.db.delete(cursor._id);
-      await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, { userId: args.userId });
     }
     return { ok: true };
   },
@@ -301,11 +300,13 @@ export const search = query({
 });
 
 export const read = query({
-  args: { ...caller, id: v.id('narrativeEntries'), sources: v.optional(v.boolean()) },
+  args: { ...caller, id: v.string(), sources: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     const userId = await owner(ctx, args),
       prefs = await settings(ctx, userId);
-    const row = await ctx.db.get(args.id);
+    const id = ctx.db.normalizeId('narrativeEntries', args.id);
+    if (!id) return null;
+    const row = await ctx.db.get(id);
     if (!(await visible(ctx, row, prefs))) return null;
     const sources: any[] = [];
     for (const id of row!.level === 'observation' ? [String(row!._id)] : row!.sourceIds) {
@@ -427,7 +428,9 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
  * already queryable; the model is never on the critical path of an action. */
 async function queueRefresh(ctx: MutationCtx, userId: string) {
   const prefs = await settings(ctx, userId);
-  if (!prefs?.enabled || prefs.cleaning || prefs.refreshToken) return;
+  if (!prefs?.enabled || prefs.cleaning) return;
+  // A failed scheduler execution must not suppress all later refresh requests.
+  if (prefs.refreshToken && (prefs.refreshScheduledAt || 0) + 300_000 > Date.now()) return;
   const at = Math.max(Date.now() + 30_000, (prefs.lastRunAt || 0) + 300_000, (prefs.leaseUntil || 0) + 1000);
   const token = `${Date.now()}:${prefs.revision}`;
   await ctx.db.patch(prefs._id, { refreshToken: token, refreshScheduledAt: at });
@@ -505,7 +508,10 @@ export const refreshUser = internalAction({
   },
 });
 
-const groups: Record<string, { table: string; index: string; kind?: string; prefix: string }> = {
+const groups: Record<
+  string,
+  { table: string; index: string; kind?: string; prefix: string; timestamp?: 'createdAt' }
+> = {
   checkins: { table: 'albatrossDailyCheckins', index: 'by_narrative_updated', prefix: 'checkins' },
   work: { table: 'albatrossIntents', index: 'by_user_updatedAt', prefix: 'work' },
   areas: { table: 'areas', index: 'by_narrative_updated', prefix: 'areas' },
@@ -516,6 +522,14 @@ const groups: Record<string, { table: string; index: string; kind?: string; pref
   chat: { table: 'userDocs', index: 'by_user_kind_updatedAt', kind: 'chatSession', prefix: 'chat' },
   documents: { table: 'documents', index: 'by_user_updated', prefix: 'documents' },
   operations: { table: 'aiOperations', index: 'by_narrative_updated', prefix: '' },
+  // Pre-rollout receipts have no updatedAt. A separate bounded cursor recovers
+  // recent history without rewriting original action logs or missing undo updates.
+  operationHistory: {
+    table: 'aiOperations',
+    index: 'by_user_created',
+    prefix: '',
+    timestamp: 'createdAt',
+  },
 };
 export const ingest = mutation({
   args: { internalSecret: v.string(), userId: v.string(), group: v.string() },
@@ -536,8 +550,8 @@ export const ingest = mutation({
     const query = (ctx.db as any).query(group.table).withIndex(group.index, (q: any) => {
       const index = q.eq('userId', args.userId);
       return (group.kind ? index.eq('kind', group.kind) : index)
-        .gte('updatedAt', since)
-        .lte('updatedAt', until);
+        .gte(group.timestamp || 'updatedAt', since)
+        .lte(group.timestamp || 'updatedAt', until);
     });
     const page = await query.paginate({ cursor: previous?.cursor || null, numItems: 40 });
     let changed = 0;
@@ -570,7 +584,7 @@ export const ingest = mutation({
                   )
                   .map((link) => `area:${link.areaId}`),
               ]),
-            ];
+            ].slice(0, 40);
             item.sourceVersion += `:${item.topics.join('|')}`;
           }
         }
@@ -747,6 +761,79 @@ export const captureTurn = mutation({
   },
 });
 
+const compileBucketArgs = {
+  userId: v.string(),
+  revision: v.number(),
+  key: v.string(),
+  level: v.union(v.literal('day'), v.literal('week'), v.literal('month'), v.literal('thread')),
+  period: v.string(),
+  ids: v.array(v.id('narrativeEntries')),
+  truncated: v.boolean(),
+};
+
+/** At most 60 candidates and 60 existing sources per transaction. No model work. */
+async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
+  const entries: any[] = [];
+  for (const id of bucket.ids.slice(0, 60)) {
+    const row = await ctx.db.get(id);
+    if (
+      row &&
+      (row as any).level === 'observation' &&
+      (bucket.level !== 'thread' || (row as any).current) &&
+      (await visible(ctx, row, prefs))
+    )
+      entries.push(row);
+  }
+  if (!entries.length) return;
+  const existing = await ctx.db
+    .query('narrativeEntries')
+    .withIndex('by_user_key', (q) => q.eq('userId', prefs.userId).eq('key', bucket.key))
+    .first();
+  const ids = entries.map((row) => String(row._id));
+  if (
+    existing &&
+    existing.sourceIds.length <= 60 &&
+    ids.every((id) => existing.sourceIds.includes(id)) &&
+    (await visible(ctx, existing, prefs))
+  )
+    return;
+  const doc = {
+    userId: prefs.userId,
+    key: bucket.key,
+    level: bucket.level,
+    period: bucket.period,
+    source: 'derived',
+    title:
+      bucket.level === 'thread'
+        ? entries[0].title
+        : `${bucket.level === 'day' ? 'Day' : bucket.level === 'week' ? 'Week of' : 'Month'} · ${bucket.period}`,
+    text: fallbackChapter(entries, prefs.timezone),
+    sourceIds: ids,
+    sourceVersions: Object.fromEntries(entries.map((row) => [row._id, row.sourceVersion || ''])),
+    model: undefined,
+    topics: [...new Set(entries.flatMap((row) => row.topics))].slice(0, 30) as string[],
+    trust: 'inferred' as const,
+    occurredAt: Math.max(...entries.map((row) => row.occurredAt)),
+    observedAt: Date.now(),
+    updatedAt: Date.now(),
+    current: true,
+    pinned: entries.some((row) => row.pinned),
+    coverage: `${entries.length} linked observations; ${bucket.truncated ? 'bounded recent observation window, older evidence remains searchable' : 'indexed observations'}. Display text may be condensed; expand sources for full detail.`,
+  };
+  if (existing) await ctx.db.patch(existing._id, doc);
+  else await ctx.db.insert('narrativeEntries', doc);
+}
+
+/** Durable continuation; changes to consent/evidence make old queued work obsolete. */
+export const compileBucket = internalMutation({
+  args: compileBucketArgs,
+  handler: async (ctx, args) => {
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning || prefs.revision !== args.revision) return;
+    await writeNarrativeBucket(ctx, prefs, args);
+  },
+});
+
 export const compile = mutation({
   args: { internalSecret: v.string(), userId: v.string() },
   handler: async (ctx, args) => {
@@ -775,7 +862,8 @@ export const compile = mutation({
       { level: 'day' | 'week' | 'month' | 'thread'; period: string; entries: any[] }
     >();
     for (const row of rows) {
-      if (!(await visible(ctx, row, prefs))) continue;
+      // Only group metadata here. Source visibility is checked in small writes
+      // below, never across all 960 candidates and 160 chapters in one transaction.
       const periods = narrativePeriods(row.occurredAt, prefs.timezone);
       const keys = [
         ...Object.entries(periods),
@@ -787,44 +875,20 @@ export const compile = mutation({
         buckets.get(key)!.entries.push(row);
       }
     }
-    for (const [key, bucket] of [...buckets].slice(0, 160)) {
-      const entries = bucket.entries.slice(0, 60);
-      const existing = await ctx.db
-        .query('narrativeEntries')
-        .withIndex('by_user_key', (q) => q.eq('userId', args.userId).eq('key', key))
-        .first();
-      const ids = entries.map((r) => String(r._id));
-      if (
-        existing &&
-        ids.every((id) => existing.sourceIds.includes(id)) &&
-        (await visible(ctx, existing, prefs))
-      )
-        continue;
-      const doc = {
+    for (const [index, [key, bucket]] of [...buckets].slice(0, 160).entries()) {
+      const job = {
         userId: args.userId,
+        revision: prefs.revision,
         key,
         level: bucket.level,
         period: bucket.period,
-        source: 'derived',
-        title:
-          bucket.level === 'thread'
-            ? entries[0].title
-            : `${bucket.level === 'day' ? 'Day' : bucket.level === 'week' ? 'Week of' : 'Month'} · ${bucket.period}`,
-        text: fallbackChapter(entries, prefs.timezone),
-        sourceIds: ids,
-        sourceVersions: Object.fromEntries(entries.map((r) => [r._id, r.sourceVersion || ''])),
-        model: undefined,
-        topics: [...new Set(entries.flatMap((r) => r.topics))].slice(0, 30) as string[],
-        trust: 'inferred' as const,
-        occurredAt: Math.max(...entries.map((r) => r.occurredAt)),
-        observedAt: Date.now(),
-        updatedAt: Date.now(),
-        current: true,
-        pinned: entries.some((r) => r.pinned),
-        coverage: `${entries.length} linked observations; ${rows.length === 800 ? 'recent 800-observation window, older evidence remains searchable' : 'indexed observations'}. Display text may be condensed; expand sources for full detail.`,
+        ids: bucket.entries.slice(0, 60).map((row) => row._id),
+        truncated: recent.length === 800 || pinned.length === 160,
       };
-      if (existing) await ctx.db.patch(existing._id, doc);
-      else await ctx.db.insert('narrativeEntries', doc);
+      // Four immediate buckets stay below 2,000 worst-case range reads (plus
+      // two bounded scans). The remaining buckets each get their own transaction.
+      if (index < 4) await writeNarrativeBucket(ctx, prefs, job);
+      else await ctx.scheduler.runAfter(0, (internal as any).narrative.compileBucket, job);
     }
     return { count: buckets.size };
   },

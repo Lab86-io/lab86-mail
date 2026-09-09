@@ -34,6 +34,21 @@ const packet = {
 const props = { to: 'alex@example.test', subject: 'Atlas', body: 'Keep my draft', onApply: mock(() => {}) };
 
 describe('narrative drafting interaction', () => {
+  test('non-JSON proxy failures show safe draft and meeting messages', async () => {
+    globalThis.fetch = (async () =>
+      new Response('<html>proxy details</html>', { status: 503 })) as typeof fetch;
+    await act(async () => {
+      view = create(<NarrativeDraftAssistant {...props} />);
+    });
+    await act(async () => button('Draft with context').props.onClick());
+    expect(text(view.root)).toContain('Context is unavailable');
+    await act(async () => button('Generate draft').props.onClick());
+    expect(text(view.root)).toContain('Your message is unchanged');
+    await act(async () => view.update(<NarrativeMeetingPrep accountId="a" calendarId="c" eventId="e" />));
+    await act(async () => button('Prepare meeting').props.onClick());
+    expect(text(view.root)).toContain('Meeting prep is unavailable');
+    expect(text(view.root)).not.toContain('proxy details');
+  });
   test('context starts unchecked, generation does not edit the message, acceptance is explicit', async () => {
     const requests: Array<{ url: string; body: any }> = [];
     globalThis.fetch = (async (url, init) => {
@@ -107,6 +122,40 @@ describe('narrative drafting interaction', () => {
     expect(text(view.root.findByProps({ role: 'alert' }))).toContain('Context changed');
     await act(async () => button('Refresh context').props.onClick());
     expect(text(view.root)).not.toContain('Use draft');
+  });
+  test('editing the message preserves instructions but invalidates selected evidence and late drafts', async () => {
+    let finish: (response: Response) => void = () => {};
+    let signal: AbortSignal | undefined;
+    const requests: any[] = [];
+    globalThis.fetch = (async (url, init) => {
+      if (String(url).includes('/context')) return Response.json(packet);
+      requests.push(JSON.parse(String(init?.body)));
+      signal = init?.signal as AbortSignal;
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    }) as typeof fetch;
+    await act(async () => {
+      view = create(<NarrativeDraftAssistant {...props} />);
+    });
+    await act(async () => button('Draft with context').props.onClick());
+    await act(async () =>
+      view.root.findByType('textarea').props.onChange({ target: { value: 'Keep it short' } }),
+    );
+    await act(async () => view.root.findByType('input').props.onChange({ target: { checked: true } }));
+    await act(async () => button('Generate draft').props.onClick());
+    await act(async () =>
+      view.update(<NarrativeDraftAssistant {...props} body="Updated message" subject="Updated subject" />),
+    );
+    expect(signal?.aborted).toBe(true);
+    await act(async () => finish(Response.json({ draft: 'Obsolete draft' })));
+    expect(button('Draft with context').props['aria-expanded']).toBe(true);
+    expect(view.root.findByType('textarea').props.value).toBe('Keep it short');
+    expect(view.root.findAllByType('input')).toHaveLength(0);
+    expect(text(view.root)).not.toContain('Use draft');
+    await act(async () => button('Generate draft').props.onClick());
+    expect(requests.at(-1)).toMatchObject({ contextIds: [], subject: 'Updated subject' });
+    expect(requests.at(-1).instructions).toContain('Updated message');
   });
 });
 

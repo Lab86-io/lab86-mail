@@ -74,7 +74,7 @@ if (!result.text.includes('{'))
       2,
     ),
   );
-const parsed = parseNarrativeGeneration(result.text, new Set(evidence.map((e) => e.id)));
+const parsed = parseNarrativeGeneration(result.output, new Set(evidence.map((e) => e.id)));
 if (!reads || !parsed.sourceIds.includes('correction'))
   throw new Error('Evaluation failed: omitted source retrieval or current correction');
 console.log(

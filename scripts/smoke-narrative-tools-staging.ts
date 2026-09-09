@@ -26,6 +26,7 @@ const model = createOpenAI({
 }).chat('z-ai/glm-5.3-flash');
 const f = api.narrative;
 const event = { title: 'Planning', startAt: Date.now() + 86400000, endAt: Date.now() + 88200000 };
+const failures: unknown[] = [];
 try {
   await convexMutation(f.configure, {
     userId,
@@ -98,9 +99,16 @@ try {
       fixture: 'synthetic calendar and narrative; deployed Convex; live GLM generation',
     }),
   );
+} catch (error) {
+  failures.push(error);
 } finally {
-  await convexMutation(f.erase, { userId });
-  const cleared = await convexQuery<any>(f.search, { userId });
-  assert(!cleared.enabled && cleared.entries.length === 0, 'Synthetic memory was not revoked');
-  console.log('Synthetic memory revoked; bounded cleanup scheduled. Real accounts unchanged.');
+  try {
+    await convexMutation(f.erase, { userId });
+    const cleared = await convexQuery<any>(f.search, { userId });
+    assert(!cleared.enabled && cleared.entries.length === 0, 'Synthetic memory was not revoked');
+    console.log('Synthetic memory revoked; bounded cleanup scheduled. Real accounts unchanged.');
+  } catch (cleanupError) {
+    failures.push(cleanupError);
+  }
 }
+if (failures.length) throw new AggregateError(failures, `Synthetic verification failed for ${userId}`);
