@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createComposeDraftPost } from '../app/api/compose/draft/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
@@ -51,6 +51,52 @@ async function invoke(deps: ReturnType<typeof dependencies>, body: unknown) {
 }
 
 describe('compose draft route', () => {
+  test('cancellation before or during context lookup never starts generation', async () => {
+    for (const cancelBefore of [true, false]) {
+      const deps = dependencies();
+      const controller = new AbortController();
+      const req = new NextRequest('http://localhost/api/compose/draft', {
+        method: 'POST',
+        body: JSON.stringify({ instructions: 'Follow up', contextIds: ['selected'] }),
+        signal: controller.signal,
+      });
+      if (cancelBefore) controller.abort();
+      else
+        deps.context.mockImplementation(async () => {
+          controller.abort();
+          return new Promise(() => {});
+        });
+      const response = await createComposeDraftPost(deps)(req);
+      expect(response.status).toBe(499);
+      expect(deps.generateTextForCurrentUser).not.toHaveBeenCalled();
+      expect(deps.reportUnexpectedError).not.toHaveBeenCalled();
+    }
+  });
+  test('one deadline covers generation and a stalled post-generation evidence recheck', async () => {
+    const deps = dependencies();
+    const deadline = new AbortController();
+    const timeout = spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    try {
+      const packet = await deps.context();
+      let reads = 0;
+      deps.context.mockImplementation(async () => {
+        if (++reads === 1) return packet;
+        deadline.abort(new DOMException('Timeout', 'TimeoutError'));
+        return new Promise(() => {});
+      });
+      const response = await invoke(deps, {
+        instructions: 'Follow up',
+        contextIds: ['selected'],
+        contextVersions: { selected: '' },
+      });
+      expect(response.status).toBe(504);
+      expect(await response.text()).not.toContain('Hello from Albatross');
+      expect(deps.generateTextForCurrentUser.mock.calls[0][0].abortSignal.aborted).toBe(true);
+      expect(timeout).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
   test('selected evidence is owned, bounded, rechecked, and never sent', async () => {
     const deps = dependencies();
     const response = await invoke(deps, {
@@ -62,6 +108,7 @@ describe('compose draft route', () => {
     expect(response.status).toBe(200);
     expect(deps.context).toHaveBeenCalledTimes(2);
     expect(deps.context.mock.calls[0][0]).toBe(user.userId);
+    expect(deps.context.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
     expect(deps.context.mock.calls[0][1]).toMatchObject({ purpose: 'compose', evidenceIds: ['selected'] });
     expect(deps.generateTextForCurrentUser.mock.calls[0][0]).toMatchObject({
       userId: user.userId,

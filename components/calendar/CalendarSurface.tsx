@@ -21,6 +21,7 @@ import { callTool } from '@/lib/api-client';
 import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
 import { useCalendarResync } from '@/lib/calendar/use-calendar-resync';
 import { useClientStore } from '@/lib/client-state';
+import { calendarSearchWindow } from '@/lib/search/calendar-event';
 import { TABLEAU10 } from '@/lib/shared/format';
 
 // Tableau-10 categorical palette now lives in lib/shared/format (re-exported
@@ -48,17 +49,14 @@ export function CalendarSurface() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const reduceMotion = useReducedMotion() ?? false;
   // Stable bounds: recomputing per render would resubscribe the live query.
-  const [window, setWindow] = useState(() => ({
+  const [normalWindow] = useState(() => ({
     startAt: Date.now() - WINDOW_PAST_MS,
     endAt: Date.now() + WINDOW_FUTURE_MS,
   }));
-  useEffect(() => {
-    if (!searchTarget) return;
-    const date = Date.parse(searchTarget.startIso);
-    if (Number.isFinite(date) && (date < window.startAt || date > window.endAt)) {
-      setWindow({ startAt: date - WINDOW_PAST_MS, endAt: date + WINDOW_FUTURE_MS });
-    }
-  }, [searchTarget, window]);
+  const window = useMemo(
+    () => calendarSearchWindow(normalWindow, searchTarget?.startIso),
+    [searchTarget, normalWindow],
+  );
 
   const liveCalendars = useConvexQuery({
     query: (api as any).calendarData.liveCalendars,

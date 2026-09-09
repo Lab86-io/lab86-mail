@@ -27,7 +27,7 @@ describe('narrative surfaces', () => {
     });
     expect(html).toContain('type="checkbox"');
     expect(html).not.toContain('checked=""');
-    expect(html).toContain('disabled=""');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Enable narrative memory<\/button>/);
     expect(html).toContain('Forget all narrative memory…');
     expect(html).not.toContain('Confirm: forget narrative');
     expect(html).toContain('OpenRouter');

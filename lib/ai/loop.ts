@@ -15,6 +15,18 @@ import { generateTextForCurrentUser, hasPlatformAi } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
+/** Search text only, never attachment bytes or opaque tool/image payloads. */
+export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
+  return (
+    typeof content === 'string'
+      ? content
+      : (content || [])
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join(' ')
+  ).slice(0, 240);
+}
+
 export const AGENT_TOOL_NAMES = new Set([
   'narrative_search',
   'narrative_task_context',
@@ -616,8 +628,7 @@ export async function runAgent({
   }).format(new Date());
   const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
   const latestUser = [...messages].reverse().find((message) => message.role === 'user');
-  const memoryQuery =
-    typeof latestUser?.content === 'string' ? latestUser.content : JSON.stringify(latestUser?.content || '');
+  const memoryQuery = narrativeQueryFromContent(latestUser?.content);
   const narrative = await narrativePrompt(userId, memoryQuery).catch(() => '');
   const system = `${base}\n\n${timeContext}${narrative ? `\n\n${narrative}` : ''}${extraSystem ? `\n\n${extraSystem}` : ''}`;
   // One batch id per agent turn: every mutating tool call inside this run

@@ -38,3 +38,20 @@ Granola is a source into Albatross, not a consumer of Albatross memory. The exis
 - Authenticated staging browser access verified through its existing Basic gate. No real user's memory consent was changed.
 
 Known scope: source quality still depends on the existing Granola sync and selected source coverage. Indexed meeting notes are not guaranteed complete transcripts. Generated prep can fall back when its model is unavailable. A separate outbound API-key/MCP product remains a distinct integration decision; no new Granola credential is required here.
+
+## Review hardening
+
+The first full main review is [CodeRabbit review 5149707339](https://github.com/Lab86-io/lab86-mail/pull/230#pullrequestreview-5149707339), covering `ed9c2eb`. Its web/shared-backend findings are addressed in the follow-up staging increment:
+
+- Compaction groups at most 960 candidate observations without recursively checking them all in one transaction. Four small buckets are written immediately; the remaining bounded buckets run as durable, revision-checked continuations. Each bucket checks at most 60 candidate observations and 60 existing sources. Stale jobs cannot restore corrected or revoked context.
+- Recent pre-rollout action receipts have a separate creation-time history cursor; original receipts are never rewritten. Incremental update ingestion still catches undo changes.
+- One draft deadline covers auth, retrieval, generation and the final source recheck. Cancelled context lookups cannot start a paid generation. Ordinary message/CC/BCC edits invalidate evidence and preview without discarding instructions; identity changes still reset the assistant.
+- Meeting preparation ignores sync bookkeeping when checking freshness, while agenda/participant/time changes and cancellations still invalidate it.
+- Correction editors start from the latest source; turning memory off clears unsaved selections; HTML proxy failures show an actionable message; the brief polls only during an active writer.
+- Search feedback/recovery controls sit outside the listbox. Successful mail interpretation is a notice, not an error. Clearing a distant calendar target restores the normal query window. Uncontrolled event dialogs remain functional when an observer callback is supplied.
+- Area context retrieval has an eight-second sub-budget within the existing one-minute pulse deadline. Text-only chat queries are bounded; independent evidence reads overlap; disabled planners omit narrative tools; malformed read IDs return unavailable instead of crashing a turn. Structured narrative generation consumes the SDK's validated output.
+- The actual Turbopack build emits CSS in `.next/static/chunks`; the preview harness retains that verified path and also supports `.next/static/css` with a clear missing-build error. Both synthetic smoke scripts preserve primary and cleanup failures.
+
+Native findings for mounted iOS mail-search delivery and historical macOS toolbar dates remain explicitly assigned to the Apple-platform owner (Claude), per `AGENTS.md`. No native files were edited in this increment. Main remains unmerged. The legacy PR template's Claude-only web checkboxes are superseded by the current ownership instructions, which permit direct Codex web implementation; no Claude or Mobbin run is falsely claimed.
+
+Signed-in staging verification of the initial integration passed: editable draft generation without accepting/sending, on-demand source-linked calendar prep, authenticated context reads, and the exact deployed release health. Granola is not connected on the checked account yet; the user must connect it and opt it into narrative sources. Existing connector code is ready, not an assertion that the user's Granola account is already linked.

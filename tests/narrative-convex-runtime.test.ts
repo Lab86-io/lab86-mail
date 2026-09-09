@@ -42,6 +42,114 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('a stale failed refresh token cannot suppress future captures', async () => {
+    const t = harness();
+    await enable(t);
+    await t.run(async (ctx) => {
+      const prefs = (await ctx.db.query('narrativeSettings').collect())[0];
+      await ctx.db.patch(prefs._id, { refreshToken: 'stuck-token', refreshScheduledAt: Date.now() - 600000 });
+    });
+    await capture(t);
+    const prefs = await t.run(async (ctx) => (await ctx.db.query('narrativeSettings').collect())[0]);
+    expect(prefs.refreshToken).not.toBe('stuck-token');
+    expect(prefs.refreshScheduledAt).toBeGreaterThan(Date.now());
+  });
+  test('malformed narrative IDs are recoverable reads, not internal validation failures', async () => {
+    const t = harness();
+    await enable(t);
+    expect(await t.query(f.read, { ...args, id: 'not-a-convex-id' })).toBeNull();
+    expect(await t.query(f.read, { ...args, id: '', sources: true })).toBeNull();
+  });
+  test('large compactions schedule bounded continuations and reject obsolete revisions', async () => {
+    const t = harness();
+    await enable(t);
+    const observation = await capture(t);
+    await t.run(async (ctx) => {
+      const template = (await ctx.db.get(observation))!;
+      const { _id, _creationTime, ...data } = template;
+      for (let day = 0; day < 80; day++)
+        await ctx.db.insert('narrativeEntries', {
+          ...data,
+          key: `stress:${day}`,
+          occurredAt: Date.now() - day * 86400000,
+          topics: [`work:project-${day}`],
+        });
+    });
+    const result = await t.mutation(f.compile, args);
+    expect(result.count).toBeGreaterThan(80);
+    const initial = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    expect(initial.filter((row) => row.level !== 'observation')).toHaveLength(4);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishAllScheduledFunctions(() => {});
+    const finished = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    expect(finished.filter((row) => row.level !== 'observation').length).toBeGreaterThan(80);
+    const revision = (await t.query(f.status, args)).settings.revision;
+    await t.mutation(f.edit, { ...args, id: observation, text: 'Changed after scheduling' });
+    await t.mutation((internal as any).narrative.compileBucket, {
+      userId,
+      revision,
+      key: 'thread:obsolete',
+      level: 'thread',
+      period: 'obsolete',
+      ids: [observation],
+      truncated: false,
+    });
+    expect((await t.query(f.search, { ...args, query: 'obsolete' })).entries).toEqual([]);
+  });
+  test('legacy operation receipts have a bounded, owned, consent-checked history cursor', async () => {
+    const t = harness();
+    await enable(t, ['work']);
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 42; index++) {
+        await ctx.db.insert('aiOperations', {
+          userId,
+          agent: 'ai',
+          tool: 'tasks_create_card',
+          surface: 'tasks',
+          summary: `Legacy action ${index}`,
+          target: { kind: 'card', id: `card-${index}` },
+          status: index === 0 ? 'undone' : 'applied',
+          createdAt: now - 1000,
+          ...(index === 0 ? { undoneAt: now - 500 } : {}),
+        });
+      }
+      const operation = {
+        userId,
+        agent: 'ai' as const,
+        tool: 'tasks_create_card',
+        surface: 'tasks' as const,
+        summary: 'Not in scope',
+        target: { kind: 'card', id: 'hidden' },
+        status: 'applied' as const,
+        createdAt: now - 1000,
+      };
+      await ctx.db.insert('aiOperations', { ...operation, userId: 'another-user' });
+      await ctx.db.insert('aiOperations', { ...operation, createdAt: now - 31 * 86400000 });
+      await ctx.db.insert('aiOperations', {
+        ...operation,
+        surface: 'mail',
+        target: { kind: 'mail', accountId: 'unselected' },
+      });
+    });
+    const first = await t.mutation(f.ingest, { ...args, group: 'operationHistory' });
+    expect(first).toEqual({ done: false, changed: 40 });
+    expect(await t.mutation(f.ingest, { ...args, group: 'operationHistory' })).toEqual({
+      done: true,
+      changed: 2,
+    });
+    expect((await t.mutation(f.ingest, { ...args, group: 'operationHistory' })).changed).toBe(0);
+    const rows = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    expect(rows).toHaveLength(42);
+    expect(rows.every((row) => row.userId === userId && row.source === 'work')).toBe(true);
+    expect(rows.some((row) => row.text.includes('was undone'))).toBe(true);
+    // Importing narrative history never rewrites the original action log.
+    expect(
+      (await t.run((ctx) => ctx.db.query('aiOperations').collect())).every(
+        (row) => row.updatedAt === undefined,
+      ),
+    ).toBe(true);
+  });
   test('applied operations are captured from owned receipts and undo invalidates the old current fact', async () => {
     const t = harness();
     await enable(t, ['work']);

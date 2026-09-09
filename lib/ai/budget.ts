@@ -76,7 +76,7 @@ export function shouldDepleteLab86Budget(source: 'lab86' | 'byok') {
 }
 
 function ratesForModel(provider: AiProvider, model: string) {
-  const normalized = model.toLowerCase();
+  const normalized = model.toLowerCase().split(':')[0];
   // OpenRouter catalog, verified 2026-09-08. Runs separately check live prices.
   if (normalized === 'z-ai/glm-5.3-flash') return rate(0.075, 0.015, 0.075, 0.25);
   if (provider === 'anthropic' || normalized.includes('anthropic/') || normalized.includes('claude')) {

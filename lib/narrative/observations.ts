@@ -55,6 +55,7 @@ export function observationsForRow(table: string, row: any): Observation[] {
     const result = { ...base, topics: [], ...value, key: `${table}:${sourceId}${suffix}`, sourceVersion: '' };
     result.title = clean(result.title, 240);
     result.text = clean(result.text);
+    result.topics = [...new Set(result.topics)].slice(0, 40);
     result.sourceVersion = fingerprint(
       JSON.stringify([result.title, result.text, result.topics, result.pinned, result.url]),
     );

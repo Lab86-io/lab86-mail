@@ -94,6 +94,17 @@ describe('narrative memory contracts', () => {
     expect(item.topics).toContain('Sam');
     expect(item.text).toContain('Participants: alex@example.test, Alex, Sam');
     expect(item.text).toContain('Budget decision');
+    const large = observationsForRow('mcpItems', {
+      ...row,
+      raw: {
+        attendees: Array.from({ length: 100 }, (_, index) => ({
+          name: `Person ${index}`,
+          email: `p${index}@example.test`,
+        })),
+      },
+    })[0];
+    expect(large.topics).toHaveLength(40);
+    expect(new Set(large.topics).size).toBe(40);
     expect(
       observationsForRow('calendarEvents', {
         _id: 'e',

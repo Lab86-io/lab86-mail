@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, CornerDownLeft, Loader2, Mail, Moon, Pencil, Sun, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { SearchResultIcon } from '@/components/palette/SearchResultIcon';
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -273,66 +273,76 @@ function SearchContent({
       </CommandItem>
     );
   };
+  const sectionStatuses: ReactNode[] = [];
   const section = (
     label: string,
     result: { data?: SearchGroup; isFetching: boolean; error: Error | null; refetch: () => unknown },
     extraItems: SearchResult[] = [],
     extraErrors: string[] = [],
+    notice?: string,
   ) => {
     const items = settled ? [...extraItems, ...(result.data?.items || [])] : [];
     const warnings = [...extraErrors, ...(settled ? result.data?.warnings || [] : [])];
+    sectionStatuses.push(
+      <div
+        key={label}
+        role="status"
+        aria-label={`${label} search status`}
+        className="px-4 text-[11px] text-[var(--color-text-muted)]"
+      >
+        {notice ? <p className="py-2">{notice}</p> : null}
+        {!settled || result.isFetching ? (
+          <span className="flex items-center gap-2 py-3">
+            <Loader2 className="size-3 motion-safe:animate-spin" />
+            Searching…
+          </span>
+        ) : null}
+        {result.error ? <p className="py-2 text-[var(--color-danger)]">{result.error.message}</p> : null}
+        {warnings.map((warning) => (
+          <p key={warning} className="py-2">
+            {warning}
+          </p>
+        ))}
+        {settled && !result.isFetching && (result.error || warnings.length) ? (
+          <button
+            type="button"
+            className="pb-2 text-[var(--color-accent)] hover:underline"
+            onClick={() => {
+              void result.refetch();
+              if (label.startsWith('Mail')) {
+                void accounts.refetch();
+                if (natural) void translation.refetch();
+              }
+              if (label === 'Files') {
+                void documents.refetch();
+                void uploads.refetch();
+              }
+            }}
+          >
+            Retry search
+          </button>
+        ) : null}
+        {label === 'Files' && (result.error || warnings.length) ? (
+          <button
+            type="button"
+            className="ml-4 pb-2 text-[var(--color-accent)] hover:underline"
+            onClick={() =>
+              onNavigate(() =>
+                navigateSearchTarget({ kind: 'page', view: 'files' }, useClientStore.getState(), go),
+              )
+            }
+          >
+            Check file connections
+          </button>
+        ) : null}
+        {settled && !result.isFetching && !result.error && !warnings.length && !items.length ? (
+          <p className="py-3">No matches in {label.toLowerCase()}.</p>
+        ) : null}
+      </div>,
+    );
     return (
       <CommandGroup forceMount heading={label}>
         {items.map(row)}
-        <div role="status" className="px-4 text-[11px] text-[var(--color-text-muted)]">
-          {!settled || result.isFetching ? (
-            <span className="flex items-center gap-2 py-3">
-              <Loader2 className="size-3 motion-safe:animate-spin" />
-              Searching…
-            </span>
-          ) : null}
-          {result.error ? <p className="py-2 text-[var(--color-danger)]">{result.error.message}</p> : null}
-          {warnings.map((warning) => (
-            <p key={warning} className="py-2">
-              {warning}
-            </p>
-          ))}
-          {settled && !result.isFetching && (result.error || warnings.length) ? (
-            <button
-              type="button"
-              className="pb-2 text-[var(--color-accent)] hover:underline"
-              onClick={() => {
-                void result.refetch();
-                if (label.startsWith('Mail')) {
-                  void accounts.refetch();
-                  if (natural) void translation.refetch();
-                }
-                if (label === 'Files') {
-                  void documents.refetch();
-                  void uploads.refetch();
-                }
-              }}
-            >
-              Retry search
-            </button>
-          ) : null}
-          {label === 'Files' && (result.error || warnings.length) ? (
-            <button
-              type="button"
-              className="ml-4 pb-2 text-[var(--color-accent)] hover:underline"
-              onClick={() =>
-                onNavigate(() =>
-                  navigateSearchTarget({ kind: 'page', view: 'files' }, useClientStore.getState(), go),
-                )
-              }
-            >
-              Check file connections
-            </button>
-          ) : null}
-          {settled && !result.isFetching && !result.error && !warnings.length && !items.length ? (
-            <p className="py-3">No matches in {label.toLowerCase()}.</p>
-          ) : null}
-        </div>
       </CommandGroup>
     );
   };
@@ -435,7 +445,8 @@ function SearchContent({
                     error: accounts.error || translation.error || mail.error,
                   },
                   [],
-                  natural && translation.data ? [`Interpreted as: ${translation.data.query}`] : [],
+                  [],
+                  natural && translation.data ? `Interpreted as: ${translation.data.query}` : undefined,
                 )
               : null}
             {scope === 'all' || scope === 'files'
@@ -451,13 +462,7 @@ function SearchContent({
               : null}
             {scope === 'all' || scope === 'calendar' ? section('Calendar', calendar) : null}
           </>
-        ) : (
-          <p className="px-4 py-3 text-[12px] text-[var(--color-text-muted)]">
-            {trimmed
-              ? 'Keep typing to search across your sources.'
-              : 'Jump to a page, or type to find mail, files, and events.'}
-          </p>
-        )}
+        ) : null}
         {scope === 'all' && narrative.data?.length ? (
           <CommandGroup heading={trimmed ? 'Related history' : 'Pick up a thread'}>
             {narrative.data.map(row)}
@@ -554,6 +559,16 @@ function SearchContent({
           </CommandGroup>
         ) : null}
       </CommandList>
+      <div className="max-h-[25dvh] shrink-0 overflow-y-auto">
+        {sectionStatuses}
+        {trimmed.length < 2 ? (
+          <p className="px-4 py-3 text-[12px] text-[var(--color-text-muted)]">
+            {trimmed
+              ? 'Keep typing to search across your sources.'
+              : 'Jump to a page, or type to find mail, files, and events.'}
+          </p>
+        ) : null}
+      </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3 text-[10px] text-[var(--color-text-muted)]">
         <span>
           <kbd>↑ ↓</kbd> navigate

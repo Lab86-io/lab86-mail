@@ -78,6 +78,7 @@ const f = api.narrative;
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);
 };
+const failures: unknown[] = [];
 try {
   await convexMutation(f.configure, {
     userId,
@@ -137,10 +138,18 @@ try {
       2,
     ),
   );
+} catch (error) {
+  failures.push(error);
 } finally {
-  await convexMutation(f.erase, { userId });
-  const cleared = await convexQuery<any>(f.search, { userId });
-  assert(!cleared.enabled && cleared.entries.length === 0, 'Synthetic memory was not revoked');
-  __setNarrativeDepsForTest();
-  console.log('Synthetic memory revoked; bounded cleanup scheduled. No real account was opted in.');
+  try {
+    await convexMutation(f.erase, { userId });
+    const cleared = await convexQuery<any>(f.search, { userId });
+    assert(!cleared.enabled && cleared.entries.length === 0, 'Synthetic memory was not revoked');
+    console.log('Synthetic memory revoked; bounded cleanup scheduled. No real account was opted in.');
+  } catch (cleanupError) {
+    failures.push(cleanupError);
+  } finally {
+    __setNarrativeDepsForTest();
+  }
 }
+if (failures.length) throw new AggregateError(failures, `Synthetic verification failed for ${userId}`);

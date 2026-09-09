@@ -483,6 +483,7 @@ describe('generateIntentPlan orchestration', () => {
         'browserbase_fetch',
       ]),
     );
+    expect(Object.keys(calls.generations[0].tools).some((name) => name.startsWith('narrative_'))).toBe(false);
   });
 
   test('document composition gets step keys verbatim and routes questions to attached chat', async () => {

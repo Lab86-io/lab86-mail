@@ -24,8 +24,21 @@ export function convexArgs<T extends Record<string, unknown>>(args: T): T & { in
   return internalSecret ? { ...args, internalSecret } : args;
 }
 
-export async function convexQuery<T>(fn: any, args: Record<string, unknown>): Promise<T> {
-  return (await requireConvexClient().query(fn, convexArgs(args))) as T;
+export async function convexQuery<T>(
+  fn: any,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  signal?.throwIfAborted();
+  // A scoped client avoids attaching one user's cancellation to the shared client.
+  const scoped = signal
+    ? new ConvexHttpClient(convexUrl(), {
+        logger: false,
+        skipConvexDeploymentUrlCheck: convexUrl().startsWith('http://127.0.0.1'),
+        fetch: (input, init) => fetch(input, { ...init, signal }),
+      })
+    : requireConvexClient();
+  return (await scoped.query(fn, convexArgs(args))) as T;
 }
 
 export async function convexMutation<T>(fn: any, args: Record<string, unknown>): Promise<T> {

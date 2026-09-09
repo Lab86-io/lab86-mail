@@ -18,7 +18,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal) {
     body: body ? JSON.stringify(body) : undefined,
     signal,
   });
-  const result = await response.json();
+  const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Narrative request failed');
   return result;
 }
@@ -148,13 +148,21 @@ export function NarrativeSettings() {
             variant="outline"
             disabled={command.isPending}
             onClick={() =>
-              command.mutate({
-                action: 'configure',
-                enabled: false,
-                sources: [],
-                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                model: model ?? settings.model,
-              })
+              command.mutate(
+                {
+                  action: 'configure',
+                  enabled: false,
+                  sources: [],
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  model: model ?? settings.model,
+                },
+                {
+                  onSuccess: () => {
+                    setSources(null);
+                    setModel(null);
+                  },
+                },
+              )
             }
           >
             Turn off and remove memory
@@ -214,7 +222,7 @@ export function NarrativeSettings() {
   );
 }
 
-function ObservationCard({ entry, onChange }: { entry: NarrativeEntry; onChange: () => void }) {
+export function ObservationCard({ entry, onChange }: { entry: NarrativeEntry; onChange: () => void }) {
   const command = useNarrativeCommand();
   const [editing, setEditing] = useState(false),
     [confirmForget, setConfirmForget] = useState(false),
@@ -281,7 +289,13 @@ function ObservationCard({ entry, onChange }: { entry: NarrativeEntry; onChange:
             Open original source ↗
           </a>
         ) : null}
-        <button type="button" onClick={() => setEditing(true)}>
+        <button
+          type="button"
+          onClick={() => {
+            if (!editing) setText(entry.text);
+            setEditing(true);
+          }}
+        >
           Correct
         </button>
         <button

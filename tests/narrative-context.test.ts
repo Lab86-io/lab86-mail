@@ -49,6 +49,25 @@ function harness(entries: NarrativeEntry[]) {
 }
 
 describe('shared task-specific narrative context', () => {
+  test('independent evidence reads start together and preserve selected ordering', async () => {
+    const { deps, reads } = harness([evidence('one'), evidence('two')]);
+    const release: Array<() => void> = [];
+    const originalRead = deps.read;
+    deps.read = async (id) => {
+      const result = originalRead(id);
+      await new Promise<void>((resolve) => {
+        release.push(resolve);
+      });
+      return result;
+    };
+    const pending = retrieveNarrativeContext({ purpose: 'compose', evidenceIds: ['one', 'two'] }, deps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reads).toEqual(['one', 'two']);
+    release.reverse().forEach((finish) => {
+      finish();
+    });
+    expect((await pending).evidence.map((entry) => entry.id)).toEqual(['one', 'two']);
+  });
   test('selects relevant current evidence, expands summaries, and excludes unrelated records', async () => {
     const rows = [
       evidence('one'),

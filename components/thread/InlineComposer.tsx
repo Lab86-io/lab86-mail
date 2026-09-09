@@ -710,7 +710,8 @@ export function InlineComposer({
       </div>
 
       <NarrativeDraftAssistant
-        key={`${account}:${fromAccount}:${anchorMessageId || ''}:${composerMode}:${cc}:${bcc}`}
+        key={`${account}:${fromAccount}:${anchorMessageId || ''}:${composerMode}`}
+        recipientsKey={JSON.stringify([cc, bcc])}
         to={to || replyToLabel || ''}
         subject={subject}
         body={body}

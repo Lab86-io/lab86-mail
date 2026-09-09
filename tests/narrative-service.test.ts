@@ -80,10 +80,11 @@ function setup(
       return overrides.generate
         ? overrides.generate(request)
         : {
-            text: JSON.stringify({
+            text: '',
+            output: {
               text: 'You planned to finish the review. Completion is not yet established by the available evidence. Check QA before deployment.',
               sourceIds: ['E1'],
-            }),
+            },
             totalUsage: { inputTokens: 30, outputTokens: 20 },
           };
     }) as any,
@@ -157,10 +158,11 @@ describe('narrative agent run', () => {
               response: { messages: [{ role: 'assistant', content: 'Checking for more records...' }] },
             }
           : {
-              text: JSON.stringify({
+              text: '',
+              output: {
                 text: 'You planned to finish QA before deployment. Preparing for the review remains your stated priority; completion is not established by the evidence.',
                 sourceIds: ['E1'],
-              }),
+              },
             },
     });
     expect((await refreshNarrative('pilot')).status).toBe('ready');
@@ -184,10 +186,10 @@ describe('narrative agent run', () => {
   test('fabricated citations do not publish and lease completion records failure', async () => {
     const { writes } = setup({
       generate: async () => ({
-        text: JSON.stringify({
+        output: {
           text: 'You planned to finish the review. Completion is not yet established by the available evidence. Check QA before deployment.',
           sourceIds: ['E999'],
-        }),
+        },
       }),
     });
     expect((await refreshNarrative('pilot')).status).toBe('partial');

@@ -151,7 +151,7 @@ export function narrativeContext(entries: NarrativeEntry[], maxChars = NARRATIVE
       title: row.title,
       text: row.text,
       trust: row.trust,
-      currentSourceVersion: row.current,
+      current: row.current,
       correctedByUser: row.corrected || false,
       occurredAt: new Date(row.occurredAt).toISOString(),
       observedAt: new Date(row.observedAt).toISOString(),

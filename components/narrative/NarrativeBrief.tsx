@@ -5,6 +5,11 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { NarrativeEntry } from '@/lib/narrative/core';
 
+/** Poll only for an active writer; focus and local corrections also invalidate reads. */
+export function narrativeBriefPollInterval(data?: { enabled?: boolean; running?: boolean }) {
+  return data?.enabled && data.running ? 8000 : false;
+}
+
 /** Read through the memory permission boundary, never a stale copy embedded
  * in an immutable DailyReport. Corrections/deletion therefore reach Today. */
 export function NarrativeBrief({ at, fallback }: { at: number; fallback: ReactNode }) {
@@ -21,7 +26,7 @@ export function NarrativeBrief({ at, fallback }: { at: number; fallback: ReactNo
       }>;
     },
     staleTime: 0,
-    refetchInterval: 8000,
+    refetchInterval: (query) => narrativeBriefPollInterval(query.state.data),
     retry: false,
   });
   const entry = memory.data?.entry;

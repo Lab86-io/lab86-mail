@@ -10,16 +10,17 @@ interface Props {
   subject: string;
   body: string;
   topic?: string;
+  recipientsKey?: string;
   disabled?: boolean;
   onApply: (body: string) => void;
 }
 
-/** Changing the message invalidates every selection and pending draft. */
+/** Recipient/thread changes reset the assistant; ordinary edits retain instructions. */
 export function NarrativeDraftAssistant(props: Props) {
-  return <DraftPanel key={JSON.stringify([props.to, props.subject, props.body, props.topic])} {...props} />;
+  return <DraftPanel key={JSON.stringify([props.to, props.topic])} {...props} />;
 }
 
-function DraftPanel({ to, subject, body, topic, disabled, onApply }: Props) {
+function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply }: Props) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [instructions, setInstructions] = useState('');
@@ -29,7 +30,21 @@ function DraftPanel({ to, subject, body, topic, disabled, onApply }: Props) {
   const [phase, setPhase] = useState<'idle' | 'context' | 'draft'>('idle');
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
+  const messageVersion = JSON.stringify([body, subject, recipientsKey]);
+  const previousMessage = useRef(messageVersion);
   useEffect(() => () => pending.current?.abort(), []);
+  useEffect(() => {
+    if (previousMessage.current === messageVersion) return;
+    previousMessage.current = messageVersion;
+    // Keep the user's instructions and open panel while invalidating work based
+    // on an older message. Late responses must never overwrite the new body.
+    pending.current?.abort();
+    setPhase('idle');
+    setDraft('');
+    setSelected([]);
+    setContext(null);
+    setError('');
+  }, [messageVersion]);
   useEffect(() => {
     if (disabled) {
       pending.current?.abort();
@@ -54,9 +69,9 @@ function DraftPanel({ to, subject, body, topic, disabled, onApply }: Props) {
     if (topic) params.set('topic', topic);
     try {
       const response = await fetch(`/api/narrative/context?${params}`, { signal: controller.signal });
-      const result = await response.json();
-      if (!response.ok)
-        throw new Error(result.error || 'Context is unavailable. You can still draft without it.');
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result)
+        throw new Error(result?.error || 'Context is unavailable. You can still draft without it.');
       if (!controller.signal.aborted) setContext(result);
     } catch (failure) {
       if (!controller.signal.aborted)
@@ -91,8 +106,9 @@ function DraftPanel({ to, subject, body, topic, disabled, onApply }: Props) {
           ),
         }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Drafting failed. Your message is unchanged.');
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result)
+        throw new Error(result?.error || 'Drafting failed. Your message is unchanged.');
       if (!controller.signal.aborted) setDraft(result.draft);
     } catch (failure) {
       if (!controller.signal.aborted)

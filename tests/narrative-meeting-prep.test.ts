@@ -97,6 +97,7 @@ describe('narrative meeting prep', () => {
     await expect(prepareNarrativeMeeting('owner', selector, abort.signal, deps)).rejects.toMatchObject({
       status: 499,
     });
+    expect(deps.generate).not.toHaveBeenCalled();
     deps.event.mockResolvedValueOnce(record).mockResolvedValueOnce(null);
     await expect(prepareNarrativeMeeting('owner', selector, undefined, deps)).rejects.toMatchObject({
       status: 409,
@@ -107,5 +108,31 @@ describe('narrative meeting prep', () => {
     await expect(prepareNarrativeMeeting('owner', selector, undefined, deps)).rejects.toMatchObject({
       status: 409,
     });
+  });
+  test('mirror bookkeeping does not invalidate prep, but real agenda changes do', async () => {
+    const deps = harness();
+    deps.event
+      .mockResolvedValueOnce({ ...record, updatedAt: 1, revision: 1 })
+      .mockResolvedValueOnce({ ...record, updatedAt: 2, revision: 2 });
+    expect((await prepareNarrativeMeeting('owner', selector, undefined, deps)).mode).toBe('generated');
+    deps.event
+      .mockResolvedValueOnce(record)
+      .mockResolvedValueOnce({ ...record, description: 'Changed agenda' });
+    await expect(prepareNarrativeMeeting('owner', selector, undefined, deps)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+  test('cancellation during context retrieval avoids a paid generation', async () => {
+    const deps = harness();
+    const abort = new AbortController();
+    const packet = await deps.context();
+    deps.context.mockImplementation(async () => {
+      abort.abort();
+      return packet;
+    });
+    await expect(prepareNarrativeMeeting('owner', selector, abort.signal, deps)).rejects.toMatchObject({
+      status: 499,
+    });
+    expect(deps.generate).not.toHaveBeenCalled();
   });
 });
