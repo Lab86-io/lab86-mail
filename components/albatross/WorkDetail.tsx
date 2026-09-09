@@ -260,6 +260,8 @@ async function postJson(url: string, body: Record<string, unknown>, fallback: st
 export function WorkDetail({ workId }: { workId: string }) {
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
+  const guidedWorkId = useClientStore((state) => state.guidedWorkId);
+  const setGuidedWorkId = useClientStore((state) => state.setGuidedWorkId);
   const setSelectedAreaId = useClientStore((state) => state.setSelectedAreaId);
   const setAiBarOpen = useClientStore((state) => state.setAiBarOpen);
   const setChatScope = useClientStore((state) => state.setChatScope);
@@ -276,6 +278,11 @@ export function WorkDetail({ workId }: { workId: string }) {
   const [splitting, setSplitting] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [guided, setGuided] = useState(false);
+  useEffect(() => {
+    if (guidedWorkId !== workId || detail === undefined) return;
+    setGuided(!!detail?.execution?.currentStep);
+    setGuidedWorkId(null);
+  }, [guidedWorkId, workId, detail, setGuidedWorkId]);
   const [activeGuideId, setActiveGuideId] = useState<string>();
   const [optimisticCompletedSteps, setOptimisticCompletedSteps] = useState<ReadonlySet<string>>(
     () => new Set(),

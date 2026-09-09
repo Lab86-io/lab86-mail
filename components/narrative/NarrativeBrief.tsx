@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { NarrativeEntry } from '@/lib/narrative/core';
+import { TodayWorkspace } from './TodayWorkspace';
 
 /** Poll only for an active writer; focus and local corrections also invalidate reads. */
 export function narrativeBriefPollInterval(data?: { enabled?: boolean; running?: boolean }) {
@@ -68,6 +69,7 @@ export function NarrativeBrief({ at, fallback }: { at: number; fallback: ReactNo
             : 'The narrative writer has not finished this edition.'}
         </p>
       ) : null}
+      <TodayWorkspace key={`${entry._id}:${entry.updatedAt}`} at={at} revision={entry.updatedAt} />
     </div>
   );
 }
