@@ -56,6 +56,7 @@ describe('compose draft route', () => {
     const response = await invoke(deps, {
       instructions: 'Follow up',
       contextIds: ['selected'],
+      contextVersions: { selected: '' },
       userId: 'forged',
     });
     expect(response.status).toBe(200);
@@ -77,7 +78,11 @@ describe('compose draft route', () => {
     let reads = 0;
     const packet = await deps.context();
     deps.context.mockImplementation(async () => (++reads === 1 ? packet : emptyNarrativeContext('compose')));
-    const response = await invoke(deps, { instructions: 'Follow up', contextIds: ['selected'] });
+    const response = await invoke(deps, {
+      instructions: 'Follow up',
+      contextIds: ['selected'],
+      contextVersions: { selected: '' },
+    });
     expect(response.status).toBe(409);
     expect(await response.text()).not.toContain('Hello from Albatross');
   });
@@ -91,6 +96,21 @@ describe('compose draft route', () => {
       expect((await invoke(deps, body)).status).toBe(400);
     }
     expect(deps.context).not.toHaveBeenCalled();
+  });
+  test('a corrected source must be selected again before being used in an outgoing draft', async () => {
+    const deps = dependencies();
+    const packet = await deps.context();
+    deps.context.mockResolvedValue({
+      ...packet,
+      evidence: [{ ...packet.evidence[0], sourceVersion: 'new-version' }],
+    });
+    const response = await invoke(deps, {
+      instructions: 'Follow up',
+      contextIds: ['selected'],
+      contextVersions: { selected: 'old-version' },
+    });
+    expect(response.status).toBe(409);
+    expect(deps.generateTextForCurrentUser).not.toHaveBeenCalled();
   });
   test('requires authentication', async () => {
     const deps = dependencies();

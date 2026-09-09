@@ -33,6 +33,10 @@ const draftInput = z.object({
   subject: z.string().max(500).default(''),
   instructions: z.string().max(12000).default(''),
   contextIds: z.array(z.string().min(1).max(200)).max(8).default([]),
+  contextVersions: z
+    .record(z.string().min(1).max(200), z.string().max(8000))
+    .refine((value) => Object.keys(value).length <= 8)
+    .default({}),
 });
 
 export function createComposeDraftPost(deps: ComposeDraftDependencies = defaultDependencies) {
@@ -58,7 +62,14 @@ export function createComposeDraftPost(deps: ComposeDraftDependencies = defaultD
       const contextRequest = { purpose: 'compose' as const, evidenceIds: input.contextIds, maxChars: 12000 };
       const context = input.contextIds.length ? await deps.context(user.userId, contextRequest) : null;
       const available = new Set(context?.evidence.map((item) => item.id) || []);
-      if (input.contextIds.some((id) => !available.has(id))) {
+      if (
+        input.contextIds.some(
+          (id) =>
+            !available.has(id) ||
+            input.contextVersions[id] !==
+              (context?.evidence.find((item) => item.id === id)?.sourceVersion || ''),
+        )
+      ) {
         return NextResponse.json(
           {
             ok: false,

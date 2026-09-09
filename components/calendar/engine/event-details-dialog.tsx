@@ -97,7 +97,16 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
           <div className="space-y-4 pr-3">
             {open && event.accountId && event.calendarId && !event.pending && (
               <NarrativeMeetingPrep
-                key={`${event.id}:${event.startDate}:${event.title}`}
+                key={JSON.stringify([
+                  event.id,
+                  event.startDate,
+                  event.endDate,
+                  event.title,
+                  event.description,
+                  event.status,
+                  event.participants,
+                  event.organizer,
+                ])}
                 accountId={event.accountId}
                 calendarId={event.calendarId}
                 eventId={event.id}

@@ -53,6 +53,7 @@ describe('narrative drafting interaction', () => {
     await act(async () => button('Generate draft').props.onClick());
     expect(requests.at(-1)?.body).toMatchObject({
       contextIds: ['one'],
+      contextVersions: { one: '' },
       instructions: 'Existing draft:\nKeep my draft',
     });
     expect(apply).not.toHaveBeenCalled();

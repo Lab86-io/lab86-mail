@@ -83,6 +83,12 @@ function DraftPanel({ to, subject, body, topic, disabled, onApply }: Props) {
           subject,
           instructions: [instructions, body && `Existing draft:\n${body}`].filter(Boolean).join('\n\n'),
           contextIds: selected,
+          contextVersions: Object.fromEntries(
+            selected.map((id) => [
+              id,
+              context?.evidence.find((entry) => entry.id === id)?.sourceVersion || '',
+            ]),
+          ),
         }),
       });
       const result = await response.json();
