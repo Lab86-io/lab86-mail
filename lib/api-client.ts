@@ -67,6 +67,7 @@ export async function listTools(): Promise<any> {
 export async function readSearchSource<T>(url: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
   const data = await response.json().catch(() => null);
+  signal.throwIfAborted();
   if (!response.ok || data === null || data?.ok === false) {
     throw new Error(typeof data?.error === 'string' ? data.error : 'Could not search this source.');
   }

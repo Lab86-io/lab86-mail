@@ -373,12 +373,13 @@ export async function generateObjectForCurrentUser<T>(
     maxOutputTokens,
     reasoningEffort = 'none',
     providerOptions,
+    narrativeModel,
     ...rest
   } = options as any;
   const resolveRuntime = objectGenerationDeps.resolveAiRuntime ?? resolveAiRuntime;
   const generateStructuredObject = objectGenerationDeps.generateObject ?? generateObject;
   const recordStructuredUsage = objectGenerationDeps.recordUsage ?? recordUsage;
-  const runtime = await resolveRuntime({ userId, speed, feature });
+  const runtime = await resolveRuntime({ userId, speed, feature, narrativeModel });
   return runWithAiRequestContext({ userId: runtime.userId, agent: 'ai' }, async () => {
     try {
       const result = await generateStructuredObject({
@@ -476,9 +477,10 @@ export async function streamTextForUser(
     maxOutputTokens,
     onFinish,
     onError,
+    narrativeModel,
     ...rest
   } = options as any;
-  const runtime = await resolveAiRuntime({ userId, speed, feature });
+  const runtime = await resolveAiRuntime({ userId, speed, feature, narrativeModel });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, () =>
     streamText({
       ...rest,

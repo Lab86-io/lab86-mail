@@ -55,3 +55,14 @@ The first full main review is [CodeRabbit review 5149707339](https://github.com/
 Native findings for mounted iOS mail-search delivery and historical macOS toolbar dates remain explicitly assigned to the Apple-platform owner (Claude), per `AGENTS.md`. No native files were edited in this increment. Main remains unmerged. The legacy PR template's Claude-only web checkboxes are superseded by the current ownership instructions, which permit direct Codex web implementation; no Claude or Mobbin run is falsely claimed.
 
 Signed-in staging verification of the initial integration passed: editable draft generation without accepting/sending, on-demand source-linked calendar prep, authenticated context reads, and the exact deployed release health. Granola is not connected on the checked account yet; the user must connect it and opt it into narrative sources. Existing connector code is ready, not an assertion that the user's Granola account is already linked.
+
+## Second review follow-up
+
+[Second full CodeRabbit review 5149871818](https://github.com/Lab86-io/lab86-mail/pull/230#pullrequestreview-5149871818) completed on the original `ed9c2eb` head while #231 was being deployed. This is a second completed review, not an approval of the later fixes. A subsequent full-review request failed at the reviewer service; a retry was requested. Main stays open pending final disposition and Apple-owner review.
+
+- Forgotten source-key opt-outs survive full memory erasure and re-enablement; they retain no source text. The confirmation explains this explicitly. Historical versions use an indexed current-version lookup. Forget revokes all versions and their derived chapters immediately, while deletion proceeds in durable batches of 20. Regression coverage includes 241 versions and preservation of an unrelated source.
+- Hourly refresh dispatch rotates through enabled users using a least-recently-dispatched index; coverage exercises 204 enabled users across three batches rather than repeatedly selecting the first 100.
+- Optional chat capture has a three-second ceiling. Planning context has an eight-second sub-budget inside the existing model deadline. Search-body aborts remain cancellations, and meeting quota is checked before body parsing.
+- Structured and streaming generation both pass the narrative model override to runtime selection, not to the provider SDK. The queued refresh route test executes its callback and checks the authenticated owner.
+
+Review triage: the Granola boost deliberately checks normalized provider text because source IDs are `mcp:<opaque connection ID>`, not `mcp:granola`; switching to the suggested source-string match would break real connections. Existing relevance filtering still applies. Broad test-renderer replacement, unused-index cleanup and selector/formatting nits are deferred rather than expanded into a new migration. No native Apple edits were made.

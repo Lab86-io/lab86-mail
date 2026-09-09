@@ -183,7 +183,8 @@ export function NarrativeSettings() {
         <p>
           Forget narrative memory, including generated chapters. Original emails, meetings, files, Work, and
           existing chat transcripts and saved Work artifacts are unchanged. Previously generated answers are
-          not rewritten. You can enable collection again later.
+          not rewritten. Source opt-outs are retained so individually forgotten items do not return if you
+          enable collection again later.
         </p>
         {!erase ? (
           <Button variant="ghost" onClick={() => setErase(true)}>
