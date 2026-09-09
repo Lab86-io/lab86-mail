@@ -350,6 +350,25 @@ describe('narrative agent run', () => {
       );
     expect(signals).toEqual([signal, signal, signal, signal]);
   });
+
+  test('retry citations cannot name evidence omitted from the smaller packet', async () => {
+    let writes = 0;
+    const state = setup({
+      sources: 30,
+      generate: async (request) => {
+        if (request.feature === 'narrative_write' && ++writes === 1) throw new Error('Timed out');
+        return {
+          output: {
+            text: 'You planned to finish the review. Completion is not established by the available records. Confirm QA before deciding the next move.',
+            sourceIds: ['E7'],
+          },
+        };
+      },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('partial');
+    expect(state.writes.some((write) => write.name === 'narrative:publish')).toBe(false);
+    expect(state.writes.at(-1)?.args.error).toContain('cited evidence it did not read');
+  });
   test('a stuck writing attempt is cancelled and retried once within its own budget', async () => {
     let attempts = 0;
     let firstSignal: AbortSignal | undefined;

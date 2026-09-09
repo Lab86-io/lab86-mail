@@ -59,7 +59,8 @@ async function allowed(
   meter?: EvidenceReadMeter,
 ) {
   if (!prefs?.enabled || !prefs.sources.includes(source)) return false;
-  // One meter belongs to one user's bucket transaction. Never cache across reads.
+  // Reuse consent only inside one user's bucket transaction. Later transactions
+  // always recheck it, including after an account is disconnected.
   const cached = meter?.consent?.get(source);
   if (cached !== undefined) return cached;
   const remember = (value: boolean) => {

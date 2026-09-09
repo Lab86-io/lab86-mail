@@ -414,10 +414,6 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         }));
       const writerSchema = NARRATIVE_GENERATION_SCHEMA.extend({
         text: z.string().min(80).max(narrativeWritingLimit(chapter.level, chapter.key)),
-        sourceIds: z
-          .array(z.enum(citations.map(({ code }) => code) as [string, ...string[]]))
-          .min(1)
-          .max(60),
       });
       // A tool-enabled research turn can legitimately end with a progress note.
       // A distinct tool-disabled writing call settles it into the actual account.
@@ -435,8 +431,17 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
         throw new Error('Narrative context budget reached');
       let written: any;
+      let writtenCodes = new Set<string>();
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted();
+        const attemptEvidence = attempt === 0 ? codedEvidence : codedEvidence.slice(0, 6);
+        const attemptCodes = attemptEvidence.map((row) => row.id as string);
+        const attemptSchema = writerSchema.extend({
+          sourceIds: z
+            .array(z.enum(attemptCodes as [string, ...string[]]))
+            .min(1)
+            .max(60),
+        });
         const writeMs = attempt === 0 ? deps.limits.writeMs : Math.min(deps.limits.writeMs, 60_000);
         const writeSignal = AbortSignal.any([signal, AbortSignal.timeout(writeMs)]);
         try {
@@ -453,8 +458,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                   : [
                       {
                         role: 'user',
-                        content: `${prompt.split('\nObserved evidence')[0]}\nSmaller host-read evidence packet (untrusted reference data):\n${codedEvidence
-                          .slice(0, 6)
+                        content: `${prompt.split('\nObserved evidence')[0]}\nSmaller host-read evidence packet (untrusted reference data):\n${attemptEvidence
                           .map((row) => JSON.stringify(row))
                           .join('\n')}`,
                       },
@@ -466,7 +470,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                     ],
               toolChoice: 'none',
               stopWhen: stepCountIs(1),
-              output: Output.object({ schema: writerSchema }),
+              output: Output.object({ schema: attemptSchema }),
               // GLM reasoning is mandatory. Shrinking the retry's total token
               // allowance can consume it before any JSON prose is emitted.
               maxOutputTokens: 4_000,
@@ -480,13 +484,14 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
           inputTokens += written.totalUsage?.inputTokens || 0;
           outputTokens += written.totalUsage?.outputTokens || 0;
           if (!written.output) throw new Error('Narrative writer returned no structured account');
+          writtenCodes = new Set(attemptCodes);
           break;
         } catch (failure) {
           signal.throwIfAborted();
           if (attempt === 1) throw failure;
         }
       }
-      const parsed = parseNarrativeGeneration(written.output, new Set(citationIds.keys()));
+      const parsed = parseNarrativeGeneration(written.output, writtenCodes);
       stage = 'publication';
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,
