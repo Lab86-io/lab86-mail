@@ -100,11 +100,35 @@ describe('shared narrative runtime', () => {
       ...args,
       enabled: true,
       sources: ['work', 'chat', 'chat'],
-      timezone: 'UTC',
+      timezone: 'America/New_York',
       model: 'current',
     });
     expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toEqual(cursors);
     expect(await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).toEqual(queued);
+  });
+  test('timezone changes revoke old chapters immediately and rebuild without losing observations or new editions', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    await t.mutation(f.compact, args);
+    const old = (await t.query(f.search, { ...args, level: 'day' })).entries[0];
+    expect(old).toBeDefined();
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['chat'],
+      timezone: 'Asia/Tokyo',
+      model: 'current',
+    });
+    expect(await t.query(f.read, { ...args, id: old._id })).toBeNull();
+    expect(await t.query(f.read, { ...args, id })).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toHaveLength(0);
+    await t.mutation(f.compact, args);
+    await t.mutation(internal.narrative.cleanup, { userId });
+    const rebuilt = (await t.query(f.search, { ...args, level: 'day' })).entries;
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0].derivedEpoch).toBe(1);
+    expect(rebuilt[0].sourceIds).toContain(String(id));
   });
   test('pausing retains observations and sweep cursor even if earlier cleanup jobs execute; erase still removes them', async () => {
     const t = harness();
@@ -116,7 +140,7 @@ describe('shared narrative runtime', () => {
       ...args,
       enabled: false,
       sources: ['chat'],
-      timezone: 'UTC',
+      timezone: 'America/New_York',
       model: 'current',
     });
     await t.mutation(internal.narrative.cleanup, { userId });
@@ -127,7 +151,7 @@ describe('shared narrative runtime', () => {
       ...args,
       enabled: true,
       sources: ['chat'],
-      timezone: 'UTC',
+      timezone: 'America/New_York',
       model: 'current',
     });
     expect((await t.query(f.read, { ...args, id })).entry._id).toBe(id);

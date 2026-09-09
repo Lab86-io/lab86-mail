@@ -111,6 +111,7 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any, meter?
     }
     return true;
   }
+  if ((row.derivedEpoch || 0) !== (prefs.derivedEpoch || 0)) return false;
   for (const id of row.sourceIds) {
     const child: any = await meteredRead(meter, () => ctx.db.get(id));
     if (!child || child.level !== 'observation' || !(await visible(ctx, child, prefs, meter))) return false;
@@ -217,6 +218,7 @@ export const configure = mutation({
     if (prev?.cleaning) throw new Error('Memory removal is still finishing. Try again shortly.');
     const sources = [...new Set(args.sources)].sort();
     const sourcesChanged = JSON.stringify([...(prev?.sources || [])].sort()) !== JSON.stringify(sources);
+    const timezoneChanged = Boolean(prev && prev.timezone !== args.timezone);
     const changed = sourcesChanged || prev?.enabled !== args.enabled;
     const doc = {
       userId: args.userId,
@@ -225,6 +227,7 @@ export const configure = mutation({
       timezone: args.timezone,
       model: args.model,
       revision: (prev?.revision || 0) + 1,
+      derivedEpoch: (prev?.derivedEpoch || 0) + Number(timezoneChanged),
       updatedAt: Date.now(),
       lease: undefined,
       leaseUntil: undefined,
@@ -236,15 +239,20 @@ export const configure = mutation({
     if (changed) {
       await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
         userId: args.userId,
-        derivedOnly: !sourcesChanged,
       });
     }
-    if (sourcesChanged) {
+    if (timezoneChanged) {
+      // The epoch hides old calendar keys immediately. Read-validated cleanup
+      // removes only stale editions, even if the new sweep has already begun.
+      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId: args.userId });
+    }
+    if (sourcesChanged || timezoneChanged) {
       const cursors = await ctx.db
         .query('narrativeCursors')
         .withIndex('by_user', (q) => q.eq('userId', args.userId))
         .collect();
-      for (const cursor of cursors) await ctx.db.delete(cursor._id);
+      for (const cursor of cursors)
+        if (sourcesChanged || cursor.group === 'compaction-v1') await ctx.db.delete(cursor._id);
     }
     return { ok: true };
   },
@@ -869,7 +877,8 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     .withIndex('by_user_key', (q) => q.eq('userId', prefs.userId).eq('key', bucket.key))
     .first();
   const meter: EvidenceReadMeter = { bytes: 0, reads: 0 };
-  const prior = (existing?.sourceIds || []).slice(0, 80);
+  const sameEpoch = (existing?.derivedEpoch || 0) === (prefs.derivedEpoch || 0);
+  const prior = (sameEpoch ? existing?.sourceIds || [] : []).slice(0, 80);
   const candidates = [...new Set([...prior, ...bucket.ids.slice(0, 60)])];
   let limited = false;
   // Validate the prior window first so a later page cannot erase its evidence
@@ -896,6 +905,7 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
   const ids = evidence.map((row) => String(row._id));
   if (
     existing &&
+    sameEpoch &&
     existing.sourceIds.length <= 60 &&
     ids.every((id) => existing.sourceIds.includes(id)) &&
     ids.length === existing.sourceIds.length &&
@@ -915,6 +925,7 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     level: bucket.level,
     period: bucket.period,
     source: 'derived',
+    derivedEpoch: prefs.derivedEpoch || 0,
     title:
       bucket.level === 'thread'
         ? entries[0].title
@@ -932,8 +943,14 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     current: true,
     pinned: evidence.some((row) => row.current && row.pinned),
     ...(bucket.compacted ? { compactionVersion: COMPACTION_POLICY_VERSION, compactedAt: Date.now() } : {}),
-    evidenceFrom: Math.min(existing?.evidenceFrom ?? Infinity, ...entries.map((row) => row.occurredAt)),
-    evidenceTo: Math.max(existing?.evidenceTo ?? 0, ...entries.map((row) => row.occurredAt)),
+    evidenceFrom: Math.min(
+      (sameEpoch ? existing?.evidenceFrom : undefined) ?? Infinity,
+      ...entries.map((row) => row.occurredAt),
+    ),
+    evidenceTo: Math.max(
+      (sameEpoch ? existing?.evidenceTo : undefined) ?? 0,
+      ...entries.map((row) => row.occurredAt),
+    ),
     coverage: `${evidence.length} representative linked observations; ${limited || bucket.truncated || entries.length > evidence.length ? 'bounded overview, additional evidence remains searchable' : 'indexed observations'}. Older detail is retained, not deleted. Expand sources or search this period for the full record.`,
   };
   if (existing) await ctx.db.patch(existing._id, doc);
@@ -1197,6 +1214,7 @@ export const prepareBrief = mutation({
       level: 'day' as const,
       period: day,
       title: 'Your day in context',
+      derivedEpoch: prefs.derivedEpoch || 0,
       text: fallbackChapter(selected, prefs.timezone),
       source: 'derived',
       sourceIds,
