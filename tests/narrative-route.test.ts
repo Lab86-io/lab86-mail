@@ -44,6 +44,17 @@ const configure = {
   model: 'z-ai/glm-5.3-flash',
 };
 describe('narrative API boundary', () => {
+  test('saving enabled preferences requests a fresh manual brief', async () => {
+    const calls: unknown[][] = [];
+    const state = setup({
+      refresh: async (...args: unknown[]) => {
+        calls.push(args);
+      },
+    });
+    expect((await state.POST(req(configure))).status).toBe(200);
+    await state.queued[0]();
+    expect(calls).toEqual([['owner', 'manual']]);
+  });
   test('enabled reads have a separate quota and background failures are contained', async () => {
     const state = setup({
       rateLimit: async ({ key }: { key: string }) => {

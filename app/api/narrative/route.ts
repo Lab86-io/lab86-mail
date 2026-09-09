@@ -128,7 +128,7 @@ export function createNarrativeRoutes(
         if (input.enabled)
           deps.after(() =>
             deps
-              .refresh(user.userId)
+              .refresh(user.userId, 'manual')
               .then(() => undefined)
               .catch((error) => {
                 console.error('[narrative] background refresh failed', error);

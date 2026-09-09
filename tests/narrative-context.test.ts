@@ -50,6 +50,104 @@ function harness(entries: NarrativeEntry[]) {
 }
 
 describe('shared task-specific narrative context', () => {
+  test('semantic paraphrases find a decision without original-keyword overlap and follow one cross-service hop', async () => {
+    const rows = [
+      evidence('meeting', {
+        source: 'mcp:granola',
+        title: 'Release postponed',
+        text: 'Launch delayed until security signs off',
+        topics: ['owner@example.com', 'repo:atlas'],
+        pinned: false,
+      }),
+      evidence('commit', {
+        source: 'mcp:github',
+        title: 'Security fix merged',
+        text: 'Changeset abcd is in the default branch',
+        topics: ['repo:atlas'],
+        pinned: false,
+      }),
+      evidence('email', {
+        source: 'mail:one',
+        title: 'Approval pending',
+        text: 'The owner requested a review of the remaining findings',
+        topics: ['owner@example.com'],
+        pinned: false,
+      }),
+      evidence('unrelated', {
+        title: 'Lunch',
+        text: 'Personal lunch booking',
+        topics: ['area:general'],
+        pinned: false,
+      }),
+    ];
+    const searches: Record<string, unknown>[] = [];
+    const packet = await retrieveNarrativeContext(
+      { purpose: 'chat', query: 'Why did the shipping date slip?' },
+      {
+        expand: async (query) => {
+          expect(query).toContain('slip');
+          return ['postponed', 'delayed'];
+        },
+        search: async (input) => {
+          searches.push(input);
+          return {
+            enabled: true,
+            revision: 1,
+            model: 'current',
+            entries: rows.filter((row) =>
+              input.topic
+                ? row.topics.includes(String(input.topic))
+                : row.text.toLowerCase().includes(String(input.query)) ||
+                  row.title.toLowerCase().includes(String(input.query)),
+            ),
+          };
+        },
+        read: async (id) => ({ entry: rows.find((row) => row._id === id)!, sources: [], revision: 1 }),
+      },
+    );
+    expect(new Set(packet.evidence.map((row) => row.id))).toEqual(new Set(['meeting', 'commit', 'email']));
+    expect(searches.some((input) => input.topic === 'area:general')).toBe(false);
+    expect(formatNarrativeContext(packet)).toContain('do not establish causation');
+  });
+  test('semantic outage falls back and outgoing draft selection never invokes expansion', async () => {
+    const { deps } = harness([evidence('one')]);
+    let calls = 0;
+    const expanded = {
+      ...deps,
+      search: async (input: Record<string, unknown>) => ({ ...(await deps.search(input)), model: 'current' }),
+      expand: async () => {
+        calls++;
+        throw new Error('provider unavailable');
+      },
+    };
+    expect(
+      (await retrieveNarrativeContext({ purpose: 'chat', query: 'Atlas' }, expanded)).evidence,
+    ).toHaveLength(1);
+    expect(calls).toBe(1);
+    expect(
+      (await retrieveNarrativeContext({ purpose: 'compose', query: 'Atlas', evidenceIds: ['one'] }, expanded))
+        .evidence,
+    ).toHaveLength(1);
+    expect(calls).toBe(1);
+  });
+  test('semantic terms are bounded and a relationship revision change discards the whole packet', async () => {
+    const { deps } = harness([evidence('one')]);
+    const terms: string[] = [];
+    const result = await retrieveNarrativeContext(
+      { purpose: 'chat', query: 'Atlas' },
+      {
+        ...deps,
+        expand: async () => ['launch', 'release', 'postponed', 'delayed', 'ignored', 17 as any],
+        search: async (input) => {
+          if (input.query) terms.push(String(input.query));
+          return { ...(await deps.search(input)), model: 'current', revision: input.topic ? 3 : 2 };
+        },
+      },
+    );
+    expect(result.enabled).toBe(false);
+    expect(terms).toContain('delayed');
+    expect(terms).not.toContain('ignored');
+  });
   test('multiple Work/Area anchors locate related decisions without admitting unrelated history', async () => {
     const state = harness([
       evidence('work'),
@@ -193,5 +291,6 @@ describe('shared task-specific narrative context', () => {
       ),
     ).toBe(0);
     expect(narrativeTerms('The Atlas review with Atlas')).toEqual(['atlas']);
+    expect(narrativeTerms('Why was the shipment delayed?')).toEqual(['shipment', 'delayed']);
   });
 });

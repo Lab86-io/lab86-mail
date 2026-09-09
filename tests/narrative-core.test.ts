@@ -5,6 +5,7 @@ import {
   type NarrativeEntry,
   narrativeContext,
   narrativePeriods,
+  narrativeSearchQuery,
   nextNarrativeDay,
   rankNarrative,
   safeNarrativeUrl,
@@ -32,6 +33,41 @@ function entry(overrides: Partial<NarrativeEntry> = {}): NarrativeEntry {
   };
 }
 describe('narrative memory contracts', () => {
+  test('text and topic expressions fit Convex token limits including punctuation-separated topics', () => {
+    expect(narrativeSearchQuery('repo:org/project-name')).toBe('repo org project name');
+    expect(
+      narrativeSearchQuery(Array.from({ length: 40 }, (_, i) => `term${i}`).join(':')).split(' '),
+    ).toHaveLength(16);
+    expect(narrativeSearchQuery('x'.repeat(33))).toBe('');
+    expect(narrativeSearchQuery('')).toBe('');
+  });
+  test('duplicate planning answers keep the same first-source version used by visibility checks', () => {
+    const rows = observationsForRow('albatrossIntents', {
+      _id: 'w',
+      rawText: 'Launch',
+      updatedAt: 1,
+      questions: [
+        { id: 'q', prompt: 'When?', answer: 'Friday' },
+        { id: 'q', prompt: 'When?', answer: 'Monday' },
+      ],
+    });
+    expect(rows.filter((row) => row.key.endsWith(':answer:q'))).toHaveLength(1);
+    expect(rows[1].text).toContain('Friday');
+  });
+  test('invalid calendar dates cannot abort the complete ingestion batch', () => {
+    for (const value of [NaN, Infinity, 1e99]) {
+      const record = observationsForRow('calendarEvents', {
+        _id: 'event',
+        accountId: 'a',
+        title: 'Review',
+        startAt: value,
+        endAt: value,
+        updatedAt: 1,
+      })[0];
+      expect(record.text).toContain('an unrecorded time');
+      expect(record.occurredAt).toBe(1);
+    }
+  });
   test('saved Albatross plans are proposals, while planning answers are explicit user reports', () => {
     const rows = observationsForRow('albatrossIntents', {
       _id: 'work',

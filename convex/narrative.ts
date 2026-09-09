@@ -1,10 +1,17 @@
-import { v } from 'convex/values';
+import { convexToJson, v } from 'convex/values';
+import {
+  COMPACTION_POLICY_VERSION,
+  compactionBucket,
+  narrativeAgeTier,
+  selectCompactionEvidence,
+} from '../lib/narrative/compaction';
 import {
   cleanNarrativeProse,
   cleanNarrativeText,
   fallbackChapter,
   type NarrativeEntry,
   narrativePeriods,
+  narrativeSearchQuery,
   rankNarrative,
   selectBriefEvidence,
 } from '../lib/narrative/core';
@@ -32,39 +39,63 @@ async function settings(ctx: QueryCtx | MutationCtx, userId: string) {
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .unique();
 }
-async function allowed(ctx: QueryCtx | MutationCtx, userId: string, source: string, prefs: any) {
+type EvidenceReadMeter = { bytes: number; reads: number };
+class EvidenceReadLimit extends Error {}
+async function meteredRead<T>(meter: EvidenceReadMeter | undefined, read: () => Promise<T>): Promise<T> {
+  // Leave room for the caller's indexed scan and a maximum-size final document.
+  if (meter && (meter.bytes >= 3 * 1024 * 1024 || meter.reads >= 512)) throw new EvidenceReadLimit();
+  const result = await read();
+  if (meter) {
+    meter.reads++;
+    meter.bytes += new TextEncoder().encode(JSON.stringify(convexToJson(result as any))).length + 256;
+  }
+  return result;
+}
+async function allowed(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  source: string,
+  prefs: any,
+  meter?: EvidenceReadMeter,
+) {
   if (!prefs?.enabled || !prefs.sources.includes(source)) return false;
   if (source.startsWith('mcp:')) {
-    const connection = await ctx.db
-      .query('mcpConnections')
-      .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(4)))
-      .unique();
+    const connection = await meteredRead(meter, () =>
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(4)))
+        .unique(),
+    );
     return Boolean(connection && connection.status !== 'disconnected');
   }
   if (/^(mail|calendar):/.test(source)) {
-    const account = await ctx.db
-      .query('connectedAccounts')
-      .withIndex('by_user_account', (q) =>
-        q.eq('userId', userId).eq('accountId', source.slice(source.indexOf(':') + 1)),
-      )
-      .unique();
+    const account = await meteredRead(meter, () =>
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) =>
+          q.eq('userId', userId).eq('accountId', source.slice(source.indexOf(':') + 1)),
+        )
+        .unique(),
+    );
     return Boolean(account && account.status !== 'disconnected');
   }
   return true;
 }
-async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
+async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any, meter?: EvidenceReadMeter) {
   if (!row || row.userId !== prefs?.userId || !prefs.enabled) return false;
   if (row.level === 'observation') {
-    if (!(await allowed(ctx, row.userId, row.source, prefs))) return false;
+    if (!(await allowed(ctx, row.userId, row.source, prefs, meter))) return false;
     if (
-      await ctx.db
-        .query('narrativeExclusions')
-        .withIndex('by_user_key', (q) => q.eq('userId', row.userId).eq('key', row.key))
-        .unique()
+      await meteredRead(meter, () =>
+        ctx.db
+          .query('narrativeExclusions')
+          .withIndex('by_user_key', (q) => q.eq('userId', row.userId).eq('key', row.key))
+          .unique(),
+      )
     )
       return false;
     if (row.sourceTable && row.sourceId) {
-      const original: any = await ctx.db.get(row.sourceId);
+      const original: any = await meteredRead(meter, () => ctx.db.get(row.sourceId));
       if (
         !original ||
         original.userId !== row.userId ||
@@ -80,9 +111,10 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
     }
     return true;
   }
+  if ((row.derivedEpoch || 0) !== (prefs.derivedEpoch || 0)) return false;
   for (const id of row.sourceIds) {
-    const child: any = await ctx.db.get(id);
-    if (!child || child.level !== 'observation' || !(await visible(ctx, child, prefs))) return false;
+    const child: any = await meteredRead(meter, () => ctx.db.get(id));
+    if (!child || child.level !== 'observation' || !(await visible(ctx, child, prefs, meter))) return false;
     if (row.sourceVersions && row.sourceVersions[id] !== (child.sourceVersion || '')) return false;
     // Old chapters can explain what used to be true. Current Work threads and
     // the morning account must instead resolve against current source versions.
@@ -184,15 +216,18 @@ export const configure = mutation({
       throw new Error('Unsupported narrative model');
     const prev = await settings(ctx, args.userId);
     if (prev?.cleaning) throw new Error('Memory removal is still finishing. Try again shortly.');
-    const changed =
-      JSON.stringify(prev?.sources) !== JSON.stringify(args.sources) || prev?.enabled !== args.enabled;
+    const sources = [...new Set(args.sources)].sort();
+    const sourcesChanged = JSON.stringify([...(prev?.sources || [])].sort()) !== JSON.stringify(sources);
+    const timezoneChanged = Boolean(prev && prev.timezone !== args.timezone);
+    const changed = sourcesChanged || prev?.enabled !== args.enabled;
     const doc = {
       userId: args.userId,
       enabled: args.enabled,
-      sources: [...new Set(args.sources)],
+      sources,
       timezone: args.timezone,
       model: args.model,
       revision: (prev?.revision || 0) + 1,
+      derivedEpoch: (prev?.derivedEpoch || 0) + Number(timezoneChanged),
       updatedAt: Date.now(),
       lease: undefined,
       leaseUntil: undefined,
@@ -202,12 +237,22 @@ export const configure = mutation({
     if (prev) await ctx.db.patch(prev._id, doc);
     else await ctx.db.insert('narrativeSettings', { ...doc, createdAt: Date.now() });
     if (changed) {
-      await invalidate(ctx, args.userId);
+      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
+        userId: args.userId,
+      });
+    }
+    if (timezoneChanged) {
+      // The epoch hides old calendar keys immediately. Read-validated cleanup
+      // removes only stale editions, even if the new sweep has already begun.
+      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId: args.userId });
+    }
+    if (sourcesChanged || timezoneChanged) {
       const cursors = await ctx.db
         .query('narrativeCursors')
         .withIndex('by_user', (q) => q.eq('userId', args.userId))
         .collect();
-      for (const cursor of cursors) await ctx.db.delete(cursor._id);
+      for (const cursor of cursors)
+        if (sourcesChanged || cursor.group === 'compaction-v1') await ctx.db.delete(cursor._id);
     }
     return { ok: true };
   },
@@ -265,11 +310,13 @@ export const search = query({
               )
               .order('desc')
               .take(200);
-    const matches = args.query?.trim()
+    const textQuery = narrativeSearchQuery(args.query || '');
+    const topicQuery = narrativeSearchQuery(args.topic || '');
+    const matches = textQuery
       ? await ctx.db
           .query('narrativeEntries')
           .withSearchIndex('by_text', (q) =>
-            q.search('text', args.query!.slice(0, 300)).eq('userId', userId).eq('current', true),
+            q.search('text', textQuery).eq('userId', userId).eq('current', true),
           )
           .take(80)
       : [];
@@ -280,8 +327,14 @@ export const search = query({
       )
       .order('desc')
       .take(80);
+    const linked = topicQuery
+      ? await ctx.db
+          .query('narrativeEntries')
+          .withSearchIndex('by_topics', (q) => q.search('topicText', topicQuery).eq('userId', userId))
+          .take(80)
+      : [];
     const candidates = [
-      ...new Map([...matches, ...recent, ...pinned].map((r) => [r._id, r])).values(),
+      ...new Map([...matches, ...linked, ...recent, ...pinned].map((r) => [r._id, r])).values(),
     ].filter(
       (r) =>
         r.current &&
@@ -300,6 +353,7 @@ export const search = query({
       entries,
       enabled: true,
       revision: prefs.revision,
+      model: prefs.model,
       coverage: 'Bounded indexed retrieval from opted-in sources. Empty results do not prove inactivity.',
       lastRunAt: prefs.lastRunAt,
     };
@@ -391,7 +445,21 @@ export const read = query({
       }
       sources.push({ ...evidence, ...(args.sources ? { detail, sourceAvailable: Boolean(detail) } : {}) });
     }
-    return { entry: row, sources, revision: prefs!.revision };
+    return {
+      entry: row,
+      sources,
+      revision: prefs!.revision,
+      ...(row!.evidenceFrom !== undefined
+        ? {
+            navigation: {
+              from: row!.evidenceFrom,
+              to: row!.evidenceTo,
+              instruction:
+                'Search this date range with a relevant query or level=observation to drill into retained evidence. This overview is representative, not exhaustive.',
+            },
+          }
+        : {}),
+    };
   },
 });
 
@@ -419,6 +487,7 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
   if (current) await ctx.db.patch(current._id, { current: false, pinned: false, updatedAt: Date.now() });
   await ctx.db.insert('narrativeEntries', {
     ...value,
+    topicText: value.topics.join(' '),
     userId,
     level: 'observation',
     sourceIds: [],
@@ -719,6 +788,7 @@ export const record = mutation({
       sourceIds: args.sourceIds,
       sourceVersions: Object.fromEntries(sources.map((s) => [s._id, s.sourceVersion || ''])),
       topics: [...new Set(sources.flatMap((s) => s.topics))].slice(0, 20),
+      topicText: [...new Set(sources.flatMap((s) => s.topics))].slice(0, 20).join(' '),
       trust: 'inferred' as const,
       occurredAt: Math.max(...sources.map((s) => s.occurredAt)),
       observedAt: Date.now(),
@@ -774,6 +844,7 @@ export const captureTurn = mutation({
       text: `You said: ${text}`,
       sourceIds: [],
       topics: args.topics.slice(0, 8),
+      topicText: args.topics.slice(0, 8).join(' '),
       trust: 'reported',
       occurredAt: Date.now(),
       observedAt: Date.now(),
@@ -795,32 +866,57 @@ const compileBucketArgs = {
   period: v.string(),
   ids: v.array(v.id('narrativeEntries')),
   truncated: v.boolean(),
+  compacted: v.optional(v.boolean()),
 };
 
 /** At most 60 candidates and 60 existing sources per transaction. No model work. */
 async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
   const entries: any[] = [];
-  for (const id of bucket.ids.slice(0, 60)) {
-    const row = await ctx.db.get(id);
-    if (
-      row &&
-      (row as any).level === 'observation' &&
-      (bucket.level !== 'thread' || (row as any).current) &&
-      (await visible(ctx, row, prefs))
-    )
-      entries.push(row);
-  }
-  if (!entries.length) return;
   const existing = await ctx.db
     .query('narrativeEntries')
     .withIndex('by_user_key', (q) => q.eq('userId', prefs.userId).eq('key', bucket.key))
     .first();
-  const ids = entries.map((row) => String(row._id));
+  const meter: EvidenceReadMeter = { bytes: 0, reads: 0 };
+  const sameEpoch = (existing?.derivedEpoch || 0) === (prefs.derivedEpoch || 0);
+  const prior = (sameEpoch ? existing?.sourceIds || [] : []).slice(0, 80);
+  const candidates = [...new Set([...prior, ...bucket.ids.slice(0, 60)])];
+  let limited = false;
+  // Validate the prior window first so a later page cannot erase its evidence
+  // merely by spending the read budget on new, potentially large originals.
+  for (const [index, id] of candidates.entries()) {
+    try {
+      const row = await meteredRead(meter, () => ctx.db.get(id as any));
+      if (
+        row &&
+        (row as any).level === 'observation' &&
+        (bucket.level !== 'thread' || (row as any).current) &&
+        (await visible(ctx, row, prefs, meter))
+      )
+        entries.push(row);
+    } catch (error) {
+      if (!(error instanceof EvidenceReadLimit)) throw error;
+      if (index < prior.length) return; // Keep the prior account; never partially authorize it.
+      limited = true;
+      break;
+    }
+  }
+  if (!entries.length) return;
+  const evidence = selectCompactionEvidence(entries);
+  const ids = evidence.map((row) => String(row._id));
   if (
     existing &&
+    sameEpoch &&
     existing.sourceIds.length <= 60 &&
     ids.every((id) => existing.sourceIds.includes(id)) &&
-    (await visible(ctx, existing, prefs))
+    ids.length === existing.sourceIds.length &&
+    (!bucket.compacted || existing.compactionVersion === COMPACTION_POLICY_VERSION) &&
+    existing.sourceIds.every((id: string) =>
+      entries.some(
+        (row) =>
+          String(row._id) === id &&
+          (!existing.sourceVersions || existing.sourceVersions[id] === (row.sourceVersion || '')),
+      ),
+    )
   )
     return;
   const doc = {
@@ -829,22 +925,33 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     level: bucket.level,
     period: bucket.period,
     source: 'derived',
+    derivedEpoch: prefs.derivedEpoch || 0,
     title:
       bucket.level === 'thread'
         ? entries[0].title
         : `${bucket.level === 'day' ? 'Day' : bucket.level === 'week' ? 'Week of' : 'Month'} · ${bucket.period}`,
-    text: fallbackChapter(entries, prefs.timezone),
+    text: fallbackChapter(evidence, prefs.timezone),
     sourceIds: ids,
-    sourceVersions: Object.fromEntries(entries.map((row) => [row._id, row.sourceVersion || ''])),
+    sourceVersions: Object.fromEntries(evidence.map((row) => [row._id, row.sourceVersion || ''])),
     model: undefined,
-    topics: [...new Set(entries.flatMap((row) => row.topics))].slice(0, 30) as string[],
+    topics: [...new Set(evidence.flatMap((row) => row.topics))].slice(0, 30) as string[],
+    topicText: [...new Set(evidence.flatMap((row) => row.topics))].slice(0, 30).join(' '),
     trust: 'inferred' as const,
-    occurredAt: Math.max(...entries.map((row) => row.occurredAt)),
+    occurredAt: Math.max(...evidence.map((row) => row.occurredAt)),
     observedAt: Date.now(),
     updatedAt: Date.now(),
     current: true,
-    pinned: entries.some((row) => row.pinned),
-    coverage: `${entries.length} linked observations; ${bucket.truncated ? 'bounded recent observation window, older evidence remains searchable' : 'indexed observations'}. Display text may be condensed; expand sources for full detail.`,
+    pinned: evidence.some((row) => row.current && row.pinned),
+    ...(bucket.compacted ? { compactionVersion: COMPACTION_POLICY_VERSION, compactedAt: Date.now() } : {}),
+    evidenceFrom: Math.min(
+      (sameEpoch ? existing?.evidenceFrom : undefined) ?? Infinity,
+      ...entries.map((row) => row.occurredAt),
+    ),
+    evidenceTo: Math.max(
+      (sameEpoch ? existing?.evidenceTo : undefined) ?? 0,
+      ...entries.map((row) => row.occurredAt),
+    ),
+    coverage: `${evidence.length} representative linked observations; ${limited || bucket.truncated || entries.length > evidence.length ? 'bounded overview, additional evidence remains searchable' : 'indexed observations'}. Older detail is retained, not deleted. Expand sources or search this period for the full record.`,
   };
   if (existing) await ctx.db.patch(existing._id, doc);
   else await ctx.db.insert('narrativeEntries', doc);
@@ -857,6 +964,60 @@ export const compileBucket = internalMutation({
     const prefs = await settings(ctx, args.userId);
     if (!prefs?.enabled || prefs.cleaning || prefs.revision !== args.revision) return;
     await writeNarrativeBucket(ctx, prefs, args);
+  },
+});
+
+/** A durable, resumable sweep across ALL stored observations, not only the
+ * latest 800. Recent days stay detailed; closed history becomes week/month
+ * overviews. Existing observations/day chapters remain available for drill-down. */
+export const compact = mutation({
+  args: { internalSecret: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning) return { done: true, scanned: 0, chapters: 0 };
+    const group = `compaction-v${COMPACTION_POLICY_VERSION}`;
+    const previous = await ctx.db
+      .query('narrativeCursors')
+      .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
+      .unique();
+    const page = await ctx.db
+      .query('narrativeEntries')
+      .withIndex('by_user_level_time', (q) => q.eq('userId', args.userId).eq('level', 'observation'))
+      .order('asc')
+      .paginate({ cursor: previous?.cursor || null, numItems: 80 });
+    const buckets = new Map<string, any>();
+    for (const row of page.page) {
+      if (row.topicText !== row.topics.join(' '))
+        await ctx.db.patch(row._id, { topicText: row.topics.join(' ') });
+      const bucket = compactionBucket(row as NarrativeEntry, prefs.timezone);
+      if (!buckets.has(bucket.key)) buckets.set(bucket.key, { ...bucket, rows: [] });
+      buckets.get(bucket.key).rows.push(row);
+    }
+    for (const [index, bucket] of [...buckets.values()].entries()) {
+      const { rows, ...identity } = bucket;
+      const job = {
+        ...identity,
+        userId: args.userId,
+        revision: prefs.revision,
+        ids: selectCompactionEvidence(rows).map((row) => row._id),
+        truncated: rows.length > 60,
+        compacted: true,
+      };
+      if (index < 1) await writeNarrativeBucket(ctx, prefs, job);
+      else await ctx.scheduler.runAfter(0, internal.narrative.compileBucket, job);
+    }
+    const cursorDoc = {
+      userId: args.userId,
+      group,
+      cursor: page.isDone ? undefined : page.continueCursor,
+      since: 0,
+      until: Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (previous) await ctx.db.patch(previous._id, cursorDoc);
+    else await ctx.db.insert('narrativeCursors', cursorDoc);
+    return { done: page.isDone, scanned: page.page.length, chapters: buckets.size };
   },
 });
 
@@ -890,9 +1051,9 @@ export const compile = mutation({
     for (const row of rows) {
       // Only group metadata here. Source visibility is checked in small writes
       // below, never across all 960 candidates and 160 chapters in one transaction.
-      const periods = narrativePeriods(row.occurredAt, prefs.timezone);
+      const aged = compactionBucket(row as NarrativeEntry, prefs.timezone);
       const keys = [
-        ...Object.entries(periods),
+        [aged.level, aged.period],
         ...row.topics.filter((t) => row.current && /^(work|area|repo):/.test(t)).map((t) => ['thread', t]),
       ];
       for (const [level, period] of keys) {
@@ -908,12 +1069,13 @@ export const compile = mutation({
         key,
         level: bucket.level,
         period: bucket.period,
-        ids: bucket.entries.slice(0, 60).map((row) => row._id),
+        ids: selectCompactionEvidence(bucket.entries).map((row) => row._id),
         truncated: recent.length === 800 || pinned.length === 160,
+        compacted: bucket.level !== 'thread',
       };
-      // Four immediate buckets stay below 2,000 worst-case range reads (plus
-      // two bounded scans). The remaining buckets each get their own transaction.
-      if (index < 4) await writeNarrativeBucket(ctx, prefs, job);
+      // Merging earlier windows also rechecks their provenance. One immediate
+      // bucket leaves room below Convex's read cap; others get their own transaction.
+      if (index < 1) await writeNarrativeBucket(ctx, prefs, job);
       else await ctx.scheduler.runAfter(0, (internal as any).narrative.compileBucket, job);
     }
     return { count: buckets.size };
@@ -938,6 +1100,11 @@ export const pending = query({
         .take(4);
       for (const row of rows) if (await visible(ctx, row, prefs)) entries.push(row);
     }
+    entries.sort(
+      (a, b) =>
+        Number(b.level === narrativeAgeTier(b.occurredAt)) -
+          Number(a.level === narrativeAgeTier(a.occurredAt)) || a.occurredAt - b.occurredAt,
+    );
     return { entries };
   },
 });
@@ -1047,11 +1214,13 @@ export const prepareBrief = mutation({
       level: 'day' as const,
       period: day,
       title: 'Your day in context',
+      derivedEpoch: prefs.derivedEpoch || 0,
       text: fallbackChapter(selected, prefs.timezone),
       source: 'derived',
       sourceIds,
       sourceVersions: Object.fromEntries(selected.map((r) => [r._id, r.sourceVersion || ''])),
       topics: [...new Set(selected.flatMap((row) => row.topics))].slice(0, 30),
+      topicText: [...new Set(selected.flatMap((row) => row.topics))].slice(0, 30).join(' '),
       trust: 'inferred' as const,
       occurredAt: Date.now(),
       observedAt: Date.now(),
@@ -1166,9 +1335,19 @@ export const cleanup = internalMutation({
       .query('narrativeEntries')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .paginate({ cursor: args.cursor || null, numItems: 20 });
-    for (const row of page.page)
-      if (args.all || (args.derivedOnly ? row.level !== 'observation' : !(await visible(ctx, row, prefs))))
+    for (const row of page.page) {
+      // Pausing collection is not erasure. Already-queued cleanup still checks
+      // exclusions and source withdrawals, without deleting otherwise retained observations.
+      const retentionPrefs =
+        !prefs?.enabled && !prefs?.cleaning && row.level === 'observation'
+          ? { ...prefs, enabled: true }
+          : prefs;
+      if (
+        args.all ||
+        (args.derivedOnly ? row.level !== 'observation' : !(await visible(ctx, row, retentionPrefs)))
+      )
         await ctx.db.delete(row._id);
+    }
     if (!page.isDone)
       await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, {
         ...args,

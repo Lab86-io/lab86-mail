@@ -43,6 +43,214 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('large original records share a byte budget across new and prior compaction evidence', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    const ids = await t.run(async (ctx) => {
+      const { _id, _creationTime, ...template } = (await ctx.db.get(id))!;
+      await ctx.db.delete(id);
+      const result = [];
+      for (let i = 0; i < 10; i++) {
+        const original = await ctx.db.insert('userDocs', {
+          userId,
+          kind: 'chatSession',
+          key: `large:${i}`,
+          doc: { content: 'x'.repeat(900000) },
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        result.push(
+          await ctx.db.insert('narrativeEntries', {
+            ...template,
+            key: `large:${i}`,
+            sourceTable: 'userDocs',
+            sourceId: String(original),
+            topics: [],
+          }),
+        );
+      }
+      return result;
+    });
+    await t.mutation(f.compact, args);
+    const chapters = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    const chapter = chapters.find((row) => row.level === 'day')!;
+    expect(chapter.sourceIds.length).toBeGreaterThan(0);
+    expect(chapter.sourceIds.length).toBeLessThanOrEqual(4);
+    expect(chapter.coverage).toContain('bounded overview');
+    expect(chapters.filter((row) => row.level === 'observation')).toHaveLength(10);
+    await t.run((ctx) =>
+      ctx.db.patch(chapter._id, {
+        sourceIds: ids.map(String),
+        model: 'prior-publication',
+        text: 'Preserved prior account',
+      }),
+    );
+    await t.mutation(f.compact, args);
+    expect((await t.run((ctx) => ctx.db.get(chapter._id)))?.model).toBe('prior-publication');
+  });
+  test('reordered or duplicate source choices do not reset ingestion and compaction cursors', async () => {
+    const t = harness();
+    await enable(t, ['chat', 'work']);
+    await capture(t);
+    await t.mutation(f.compact, args);
+    const cursors = await t.run((ctx) => ctx.db.query('narrativeCursors').collect());
+    const queued = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['work', 'chat', 'chat'],
+      timezone: 'America/New_York',
+      model: 'current',
+    });
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toEqual(cursors);
+    expect(await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).toEqual(queued);
+  });
+  test('timezone changes revoke old chapters immediately and rebuild without losing observations or new editions', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    await t.mutation(f.compact, args);
+    const old = (await t.query(f.search, { ...args, level: 'day' })).entries[0];
+    expect(old).toBeDefined();
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['chat'],
+      timezone: 'Asia/Tokyo',
+      model: 'current',
+    });
+    expect(await t.query(f.read, { ...args, id: old._id })).toBeNull();
+    expect(await t.query(f.read, { ...args, id })).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toHaveLength(0);
+    await t.mutation(f.compact, args);
+    await t.mutation(internal.narrative.cleanup, { userId });
+    const rebuilt = (await t.query(f.search, { ...args, level: 'day' })).entries;
+    expect(rebuilt).toHaveLength(1);
+    expect(rebuilt[0].derivedEpoch).toBe(1);
+    expect(rebuilt[0].sourceIds).toContain(String(id));
+  });
+  test('pausing retains observations and sweep cursor even if earlier cleanup jobs execute; erase still removes them', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    await t.mutation(f.compact, args);
+    const cursors = await t.run((ctx) => ctx.db.query('narrativeCursors').collect());
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: false,
+      sources: ['chat'],
+      timezone: 'America/New_York',
+      model: 'current',
+    });
+    await t.mutation(internal.narrative.cleanup, { userId });
+    expect(await t.query(f.read, { ...args, id })).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toEqual(cursors);
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['chat'],
+      timezone: 'America/New_York',
+      model: 'current',
+    });
+    expect((await t.query(f.read, { ...args, id })).entry._id).toBe(id);
+    await t.mutation(f.erase, args);
+    await t.mutation(internal.narrative.cleanup, { userId, all: true });
+    expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
+  });
+  test('durable age sweep reaches beyond 800 recent records, retains provenance, and converges', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    const earliest = Date.UTC(2024, 0, 15, 12);
+    await t.run(async (ctx) => {
+      const { _id, _creationTime, ...template } = (await ctx.db.get(id))!;
+      await ctx.db.patch(id, { occurredAt: earliest, topics: ['repo:older'] });
+      for (let i = 1; i <= 900; i++)
+        await ctx.db.insert('narrativeEntries', {
+          ...template,
+          key: `history:${i}`,
+          occurredAt: earliest + i * 1000,
+          topics: ['repo:older'],
+        });
+    });
+    let pages = 0,
+      done = false;
+    while (!done && pages++ < 20) {
+      done = (await t.mutation(f.compact, args)).done;
+      await t.finishAllScheduledFunctions(() => {});
+    }
+    expect(done).toBe(true);
+    expect(pages).toBeGreaterThan(10);
+    const entries = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    expect(entries.filter((row) => row.level === 'observation')).toHaveLength(901);
+    const month = entries.find((row) => row.level === 'month')!;
+    expect(month.compactionVersion).toBe(1);
+    expect(month.sourceIds).toHaveLength(60);
+    expect(month.sourceIds).toContain(id);
+    expect(month.evidenceFrom).toBe(earliest);
+    expect(month.evidenceTo).toBe(earliest + 900000);
+    expect(month.coverage).toContain('representative');
+    const detail = await t.query(f.read, { ...args, id: month._id });
+    expect(detail.navigation.from).toBe(earliest);
+    expect(detail.sources).toHaveLength(60);
+    const before = month.sourceIds;
+    do {
+      done = (await t.mutation(f.compact, args)).done;
+      await t.finishAllScheduledFunctions(() => {});
+    } while (!done);
+    expect((await t.query(f.read, { ...args, id: month._id })).entry.sourceIds).toEqual(before);
+    await t.mutation(f.edit, { ...args, id, text: 'Correction: the old release was postponed' });
+    expect(await t.query(f.read, { ...args, id: month._id })).toBeNull();
+    await t.mutation(f.compact, args);
+    expect(
+      (await t.query(f.read, { ...args, id: month._id })).sources.find((row: any) => row._id === id)
+        .corrected,
+    ).toBe(true);
+    await t.mutation(f.edit, { ...args, id, forget: true });
+    expect(await t.query(f.read, { ...args, id: month._id })).toBeNull();
+  });
+  test('age policy writes week and month tiers; old exact relationships are indexed outside recent windows', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const old = await capture(t, 'A historical decision', 'old');
+    const week = await capture(t, 'A recent-week decision', 'week');
+    await t.run(async (ctx) => {
+      await ctx.db.patch(old, {
+        occurredAt: Date.now() - 180 * 86400000,
+        topics: ['repo:needle'],
+        topicText: undefined,
+      });
+      await ctx.db.patch(week, { occurredAt: Date.now() - 30 * 86400000, topics: [] });
+      const { _id, _creationTime, ...template } = (await ctx.db.get(week))!;
+      for (let i = 0; i < 250; i++)
+        await ctx.db.insert('narrativeEntries', {
+          ...template,
+          key: `noise:${i}`,
+          occurredAt: Date.now() - i,
+          topics: [],
+          topicText: '',
+        });
+    });
+    await t.mutation(f.compact, args);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishAllScheduledFunctions(() => {});
+    const linked = await t.query(f.search, { ...args, topic: 'repo:needle', level: 'observation' });
+    expect(linked.entries.map((row: any) => row._id)).toEqual([old]);
+    expect((await t.query(f.search, { ...args, level: 'month' })).entries.length).toBeGreaterThan(0);
+    expect((await t.query(f.search, { ...args, level: 'week' })).entries.length).toBeGreaterThan(0);
+    expect((await t.query(f.search, { ...args, userId: 'other', topic: 'repo:needle' })).entries).toEqual([]);
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: false,
+      sources: ['chat'],
+      timezone: 'UTC',
+      model: 'current',
+    });
+    expect((await t.mutation(f.compact, args)).scanned).toBe(0);
+    expect((await t.query(f.search, { ...args, topic: 'repo:needle' })).entries).toEqual([]);
+  });
   test('Work creation, plan generation, and user answers enqueue owned narrative changes with no completion inflation', async () => {
     const t = harness();
     await enable(t, ['work']);
@@ -76,11 +284,21 @@ describe('shared narrative runtime', () => {
     expect(found.some((entry: any) => entry.text.includes('Your answer: Friday'))).toBe(true);
     expect(found.some((entry: any) => entry.text.includes('Generated steps are proposals'))).toBe(true);
     const decision = found.find((entry: any) => entry.key.endsWith(':answer:day'));
+    const beforeJobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
     await t.mutation(api.albatrossIntents.answerQuestions, {
       ...args,
       intentId: id as any,
       answers: [{ id: 'day', answer: '' }],
     });
+    const afterJobs = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(
+      afterJobs.some(
+        (job) =>
+          !beforeJobs.some((previous) => previous._id === job._id) &&
+          job.name === 'narrative:captureSource' &&
+          job.args[0].id === String(id),
+      ),
+    ).toBe(true);
     expect(await t.query(f.read, { ...args, id: decision._id })).toBeNull();
     const prefs = await t.run(async (ctx) => (await ctx.db.query('narrativeSettings').collect())[0]);
     expect(prefs.refreshToken).toBeTruthy();
@@ -160,7 +378,7 @@ describe('shared narrative runtime', () => {
     const result = await t.mutation(f.compile, args);
     expect(result.count).toBeGreaterThan(80);
     const initial = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
-    expect(initial.filter((row) => row.level !== 'observation')).toHaveLength(4);
+    expect(initial.filter((row) => row.level !== 'observation')).toHaveLength(1);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await t.finishAllScheduledFunctions(() => {});
     const finished = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
@@ -506,16 +724,18 @@ describe('shared narrative runtime', () => {
     expect(await capture(t)).toBe(id);
     expect((await t.query(f.search, args)).entries).toHaveLength(1);
   });
-  test('compaction builds day/week/month/thread chapters with evidence and trust', async () => {
+  test('recent history builds detailed day and active thread chapters with evidence and trust', async () => {
     const t = harness();
     await enable(t);
     const id = await capture(t);
     await t.mutation(f.compile, args);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishAllScheduledFunctions(() => {});
     const result = await t.query(f.search, args);
     expect(new Set(result.entries.map((e: any) => e.level))).toEqual(
-      new Set(['observation', 'day', 'week', 'month', 'thread']),
+      new Set(['observation', 'day', 'thread']),
     );
-    const chapter = result.entries.find((e: any) => e.level === 'week');
+    const chapter = result.entries.find((e: any) => e.level === 'day');
     expect(chapter.trust).toBe('inferred');
     expect(chapter.sourceIds).toEqual([id]);
     expect((await t.query(f.read, { ...args, id: chapter._id })).sources[0].trust).toBe('reported');
