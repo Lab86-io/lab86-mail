@@ -37,6 +37,17 @@ export function observationsForRow(table: string, row: any): Observation[] {
   };
   const topic = (kind: string, id: unknown) => (id ? [`${kind}:${id}`] : []);
   const workTopics = [...topic('work', row._id), ...topic('area', row.primaryAreaId || row.areaId)];
+  const people = (rows: unknown): string[] =>
+    Array.isArray(rows)
+      ? rows
+          .slice(0, 30)
+          .flatMap((person) =>
+            typeof person === 'string'
+              ? [clean(person, 150)]
+              : [clean(person?.email, 150), clean(person?.name || person?.display_name, 150)],
+          )
+          .filter(Boolean)
+      : [];
   const make = (
     value: Partial<Observation> & { source: string; title: string; text: string },
     suffix = '',
@@ -49,6 +60,45 @@ export function observationsForRow(table: string, row: any): Observation[] {
     );
     return result;
   };
+  if (table === 'aiOperations') {
+    const target = row.target || {};
+    const source =
+      target.kind === 'document'
+        ? 'documents'
+        : ['mail', 'calendar'].includes(row.surface) && target.accountId
+          ? `${row.surface}:${target.accountId}`
+          : ['tasks', 'albatross'].includes(row.surface)
+            ? 'work'
+            : null;
+    if (!source || !['applied', 'undoing', 'undone', 'undo_failed'].includes(row.status)) return [];
+    const state =
+      row.status === 'undone'
+        ? 'The recorded action was undone.'
+        : row.status === 'undoing'
+          ? 'Undo is in progress; reversal is not yet confirmed.'
+          : row.status === 'undo_failed'
+            ? 'An undo attempt failed; current external state may need verification.'
+            : 'The server recorded the action as applied.';
+    return [
+      make({
+        source,
+        accountId: target.accountId,
+        title: `Action receipt · ${row.tool}`,
+        text: `${state} Tool: ${row.tool}. Recorded description (reference data): ${row.summary}. A saved draft is not sent mail; creating a task is not completing it; a calendar mutation is not attendance. This receipt confirms the tool operation, not the entire Work outcome.`,
+        topics: [
+          ...topic('operation', row._id),
+          ...topic('work', target.workId || (target.kind === 'albatrossIntent' ? target.id : undefined)),
+          ...topic('area', target.areaId),
+          ...topic('document', target.kind === 'document' ? target.id : undefined),
+          ...(target.threadId && target.accountId ? [`mail:${target.accountId}:${target.threadId}`] : []),
+          ...(target.kind === 'calendarEvent' && target.accountId
+            ? [`event:${target.accountId}:${target.id}`]
+            : []),
+        ],
+        occurredAt: row.undoneAt || row.updatedAt || row.createdAt,
+      }),
+    ];
+  }
   if (table === 'albatrossDailyCheckins') {
     const entries: Observation[] = [];
     if (row.responseText)
@@ -99,7 +149,9 @@ export function observationsForRow(table: string, row: any): Observation[] {
             text: `Recorded step completion: ${step.title}.${step.note ? ` Your note: ${step.note}` : ''} Recorded by: ${step.source}. This settles the step, not necessarily the entire outcome.`,
             topics: workTopics,
             occurredAt: step.completedAt,
-            trust: step.source === 'user' ? 'reported' : 'observed',
+            // The ledger permits user-entered source labels; only an operation
+            // receipt independently verifies an applied external action.
+            trust: 'reported',
           },
           `:step:${step.identity}`,
         ),
@@ -144,7 +196,11 @@ export function observationsForRow(table: string, row: any): Observation[] {
         source: `calendar:${row.accountId}`,
         title: row.title,
         text: `Calendar record: ${row.title}. Starts ${new Date(row.startAt).toISOString()}; ends ${new Date(row.endAt).toISOString()}. Status: ${row.status || 'scheduled'}. ${row.description || ''} This is a calendar record, not proof of attendance.`,
-        topics: [`event:${row.accountId}:${row.providerEventId}`],
+        topics: [
+          `event:${row.accountId}:${row.providerEventId}`,
+          ...people(row.participants),
+          ...people(row.organizer ? [row.organizer] : []),
+        ],
       }),
     ];
   if (table === 'mcpItems')
@@ -152,12 +208,13 @@ export function observationsForRow(table: string, row: any): Observation[] {
       make({
         source: `mcp:${row.connectionId}`,
         title: row.title,
-        text: `${row.server} ${row.kind}: ${row.title}. State: ${row.state || 'unspecified'}. ${row.summary || ''}`,
+        text: `${row.server} ${row.kind}: ${row.title}. State: ${row.state || 'unspecified'}. ${people(row.raw?.attendees).length ? `Participants: ${people(row.raw?.attendees).join(', ')}. ` : ''}${row.summary || ''}`,
         occurredAt: row.updatedAtSource || row.updatedAt,
         topics: [
           row.repository && `repo:${row.repository}`,
           row.author,
           `${row.server}:${row.externalId}`,
+          ...people(row.raw?.attendees),
         ].filter(Boolean),
       }),
     ];

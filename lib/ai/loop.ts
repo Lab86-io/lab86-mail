@@ -17,6 +17,7 @@ import { buildSystemPrompt } from './system-prompt';
 
 export const AGENT_TOOL_NAMES = new Set([
   'narrative_search',
+  'narrative_task_context',
   'narrative_read',
   'narrative_sources',
   'narrative_changes_since',

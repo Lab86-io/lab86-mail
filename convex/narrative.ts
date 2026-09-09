@@ -65,6 +65,11 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
         ['rejected', 'superseded'].includes(original.status)
       )
         return false;
+      if (row.current && row.sourceTable === 'aiOperations') {
+        const baseline = row.corrected ? row.sourceBaseVersion : row.sourceVersion;
+        const receipt = observationsForRow('aiOperations', original)[0];
+        if (!receipt || (baseline && receipt.sourceVersion !== baseline)) return false;
+      }
     }
     return true;
   }
@@ -184,6 +189,8 @@ export const configure = mutation({
       updatedAt: Date.now(),
       lease: undefined,
       leaseUntil: undefined,
+      refreshToken: undefined,
+      refreshScheduledAt: undefined,
     };
     if (prev) await ctx.db.patch(prev._id, doc);
     else await ctx.db.insert('narrativeSettings', { ...doc, createdAt: Date.now() });
@@ -416,6 +423,88 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
   return true;
 }
 
+/** Coalesce a burst of changes into one durable refresh. The observations are
+ * already queryable; the model is never on the critical path of an action. */
+async function queueRefresh(ctx: MutationCtx, userId: string) {
+  const prefs = await settings(ctx, userId);
+  if (!prefs?.enabled || prefs.cleaning || prefs.refreshToken) return;
+  const at = Math.max(Date.now() + 30_000, (prefs.lastRunAt || 0) + 300_000, (prefs.leaseUntil || 0) + 1000);
+  const token = `${Date.now()}:${prefs.revision}`;
+  await ctx.db.patch(prefs._id, { refreshToken: token, refreshScheduledAt: at });
+  await ctx.scheduler.runAt(at, (internal as any).narrative.flushRefresh, { userId, token });
+}
+
+export async function scheduleNarrativeSource(
+  ctx: MutationCtx,
+  userId: string,
+  table: 'aiOperations' | 'albatrossIntents',
+  id: string,
+) {
+  const prefs = await settings(ctx, userId);
+  if (!prefs?.enabled || prefs.cleaning) return;
+  await ctx.scheduler.runAfter(0, (internal as any).narrative.captureSource, { userId, table, id });
+}
+
+// Only internal server mutations can supply source identities. No text supplied
+// by a chat/model is accepted as an action receipt.
+export const captureSource = internalMutation({
+  args: {
+    userId: v.string(),
+    table: v.union(v.literal('aiOperations'), v.literal('albatrossIntents')),
+    id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning) return { changed: 0 };
+    const id = ctx.db.normalizeId(args.table, args.id);
+    const row = id ? await ctx.db.get(id) : null;
+    if (!row || row.userId !== args.userId) return { changed: 0 };
+    let changed = 0;
+    for (const item of observationsForRow(args.table, row)) {
+      if (await allowed(ctx, args.userId, item.source, prefs))
+        changed += Number(await putObservation(ctx, args.userId, item));
+    }
+    if (changed) {
+      await ctx.db.patch(prefs._id, { revision: prefs.revision + 1 });
+      await queueRefresh(ctx, args.userId);
+    }
+    return { changed };
+  },
+});
+
+export const flushRefresh = internalMutation({
+  args: { userId: v.string(), token: v.string() },
+  handler: async (ctx, args) => {
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning || prefs.refreshToken !== args.token) return;
+    const at = Math.max((prefs.leaseUntil || 0) + 1000, (prefs.lastRunAt || 0) + 300_000);
+    if (at > Date.now()) {
+      await ctx.db.patch(prefs._id, { refreshScheduledAt: at });
+      await ctx.scheduler.runAt(at, (internal as any).narrative.flushRefresh, args);
+      return;
+    }
+    await ctx.db.patch(prefs._id, { refreshToken: undefined, refreshScheduledAt: undefined });
+    await ctx.scheduler.runAfter(0, (internal as any).narrative.refreshUser, { userId: args.userId });
+  },
+});
+export const refreshTarget = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => Boolean((await settings(ctx, args.userId))?.enabled),
+});
+export const refreshUser = internalAction({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const url = process.env.LAB86_MAIL_PUBLIC_URL,
+      secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    if (!url || !secret || !(await ctx.runQuery((internal as any).narrative.refreshTarget, args))) return;
+    await fanOutInternalPost(`${url.replace(/\/$/, '')}/api/cron/narrative`, secret, [args], {
+      concurrency: 1,
+      timeoutMs: 230_000,
+      label: 'narrative-change',
+    });
+  },
+});
+
 const groups: Record<string, { table: string; index: string; kind?: string; prefix: string }> = {
   checkins: { table: 'albatrossDailyCheckins', index: 'by_narrative_updated', prefix: 'checkins' },
   work: { table: 'albatrossIntents', index: 'by_user_updatedAt', prefix: 'work' },
@@ -426,6 +515,7 @@ const groups: Record<string, { table: string; index: string; kind?: string; pref
   mcp: { table: 'mcpItems', index: 'by_narrative_updated', prefix: 'mcp:' },
   chat: { table: 'userDocs', index: 'by_user_kind_updatedAt', kind: 'chatSession', prefix: 'chat' },
   documents: { table: 'documents', index: 'by_user_updated', prefix: 'documents' },
+  operations: { table: 'aiOperations', index: 'by_narrative_updated', prefix: '' },
 };
 export const ingest = mutation({
   args: { internalSecret: v.string(), userId: v.string(), group: v.string() },
@@ -652,6 +742,7 @@ export const captureTurn = mutation({
       pinned: false,
     });
     await ctx.db.patch(prefs._id, { revision: prefs.revision + 1 });
+    await queueRefresh(ctx, args.userId);
     return id;
   },
 });
@@ -1026,6 +1117,8 @@ export const erase = mutation({
         leaseUntil: undefined,
         lastError: undefined,
         cleaning: true,
+        refreshToken: undefined,
+        refreshScheduledAt: undefined,
       });
     await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, { userId, all: true });
     return {

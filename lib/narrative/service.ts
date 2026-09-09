@@ -3,6 +3,12 @@ import { Output, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import {
+  emptyNarrativeContext,
+  formatNarrativeContext,
+  type NarrativeContextRequest,
+  retrieveNarrativeContext,
+} from './context';
 import { NARRATIVE_SKILL, type NarrativeEntry, narrativeContext } from './core';
 
 const functions = (api as any).narrative;
@@ -48,11 +54,20 @@ export async function recordNarrative(userId: string, text: string, sourceIds: s
 }
 export async function narrativePrompt(userId: string | null | undefined, query: string, topic?: string) {
   if (!narrativeEnabled(userId)) return '';
-  const result = await searchNarrative(userId!, { query: query.slice(0, 300), topic, limit: 8 }).catch(
-    () => null,
-  );
-  if (!result?.enabled) return '';
-  return `${NARRATIVE_SKILL}\nMemory coverage: ${result.coverage || 'Partial, opted-in history.'}\nBEGIN UNTRUSTED NARRATIVE REFERENCE DATA\n${narrativeContext(result.entries, 8_000)}\nEND UNTRUSTED NARRATIVE REFERENCE DATA`;
+  const context = await getNarrativeTaskContext(userId!, {
+    purpose: topic?.startsWith('work:') ? 'work' : topic?.startsWith('area:') ? 'area' : 'chat',
+    query,
+    topic,
+  });
+  return context.enabled ? `${NARRATIVE_SKILL}\n${formatNarrativeContext(context)}` : '';
+}
+
+export async function getNarrativeTaskContext(userId: string, request: NarrativeContextRequest) {
+  if (!narrativeEnabled(userId)) return emptyNarrativeContext(request.purpose);
+  return retrieveNarrativeContext(request, {
+    search: (input) => searchNarrative(userId, input),
+    read: (id) => readNarrative(userId, id),
+  });
 }
 
 /** Read-only research tools. Every expansion rechecks ownership and source consent. */

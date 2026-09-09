@@ -6,6 +6,7 @@ import schema from '../convex/schema';
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/albatrossWorkV2.ts': () => import('../convex/albatrossWorkV2'),
+  '../convex/narrative.ts': () => import('../convex/narrative'),
 };
 
 const SECRET = 'albatross-work-v2-runtime-secret';
@@ -74,6 +75,51 @@ async function seedMailThread(t: any, accountId: string, providerThreadId: strin
 }
 
 describe('Albatross Work v2 Area Brief reads', () => {
+  test('completing a step queues owned narrative progress without promoting it to a verified whole outcome', async () => {
+    const { t, workId } = await seedAreaWork();
+    const caller = { internalSecret: SECRET, userId };
+    await t.mutation((api as any).narrative.configure, {
+      ...caller,
+      enabled: true,
+      sources: ['work'],
+      timezone: 'UTC',
+      model: 'current',
+    });
+    await t.run(async (ctx) => {
+      const planId = await ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'applied',
+        digitalActions: [
+          { key: 'qa', actionKey: 'qa', kind: 'task', title: 'Check keyboard navigation' },
+          { key: 'release', actionKey: 'release', kind: 'task', title: 'Release after QA' },
+        ],
+        physicalActions: [],
+        assumptions: [],
+        sourceRefs: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.patch(workId, { latestPlanId: planId });
+    });
+    await t.mutation(api.albatrossWorkV2.completeStep, {
+      ...caller,
+      workId,
+      stepKey: 'qa',
+      source: 'evidence',
+      note: 'Keyboard testing passed',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishAllScheduledFunctions(() => {});
+    const entries = (await t.query((api as any).narrative.search, { ...caller, level: 'observation' }))
+      .entries;
+    const step = entries.find((entry: any) => entry.title === 'Check keyboard navigation');
+    expect(step.text).toContain('Keyboard testing passed');
+    expect(step.text).toContain('not necessarily the entire outcome');
+    expect(step.trust).toBe('reported');
+    expect(step.topics).toContain(`work:${workId}`);
+    expect(entries.some((entry: any) => entry.title === 'Release after QA')).toBe(false);
+  });
   test('Railway internal caller can load area Work and Work detail', async () => {
     const { t, areaId, workId } = await seedAreaWork();
     const caller = { internalSecret: SECRET, userId };

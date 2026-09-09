@@ -37,6 +37,7 @@ import { internalAction, internalMutation, internalQuery, mutation, query } from
 import { recordCompletionEvent } from './albatrossWork';
 import { completeCardForWork } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
+import { scheduleNarrativeSource } from './narrative';
 import {
   albatrossHorizonValidator,
   albatrossMetricValidator,
@@ -909,6 +910,7 @@ export const completeStep = mutation({
       // the recovery path if this immediate conductor run is interrupted.
       await ctx.scheduler.runAfter(0, internal.albatrossWorkV2.stepEvidenceMaterializeTick, {});
     }
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.workId));
     return {
       stepKey: args.stepKey,
       stepIdentity: selected.identity,
