@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { convexToJson, v } from 'convex/values';
 import {
   COMPACTION_POLICY_VERSION,
   compactionBucket,
@@ -11,6 +11,7 @@ import {
   fallbackChapter,
   type NarrativeEntry,
   narrativePeriods,
+  narrativeSearchQuery,
   rankNarrative,
   selectBriefEvidence,
 } from '../lib/narrative/core';
@@ -38,39 +39,63 @@ async function settings(ctx: QueryCtx | MutationCtx, userId: string) {
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .unique();
 }
-async function allowed(ctx: QueryCtx | MutationCtx, userId: string, source: string, prefs: any) {
+type EvidenceReadMeter = { bytes: number; reads: number };
+class EvidenceReadLimit extends Error {}
+async function meteredRead<T>(meter: EvidenceReadMeter | undefined, read: () => Promise<T>): Promise<T> {
+  // Leave room for the caller's indexed scan and a maximum-size final document.
+  if (meter && (meter.bytes >= 3 * 1024 * 1024 || meter.reads >= 512)) throw new EvidenceReadLimit();
+  const result = await read();
+  if (meter) {
+    meter.reads++;
+    meter.bytes += new TextEncoder().encode(JSON.stringify(convexToJson(result as any))).length + 256;
+  }
+  return result;
+}
+async function allowed(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  source: string,
+  prefs: any,
+  meter?: EvidenceReadMeter,
+) {
   if (!prefs?.enabled || !prefs.sources.includes(source)) return false;
   if (source.startsWith('mcp:')) {
-    const connection = await ctx.db
-      .query('mcpConnections')
-      .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(4)))
-      .unique();
+    const connection = await meteredRead(meter, () =>
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(4)))
+        .unique(),
+    );
     return Boolean(connection && connection.status !== 'disconnected');
   }
   if (/^(mail|calendar):/.test(source)) {
-    const account = await ctx.db
-      .query('connectedAccounts')
-      .withIndex('by_user_account', (q) =>
-        q.eq('userId', userId).eq('accountId', source.slice(source.indexOf(':') + 1)),
-      )
-      .unique();
+    const account = await meteredRead(meter, () =>
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user_account', (q) =>
+          q.eq('userId', userId).eq('accountId', source.slice(source.indexOf(':') + 1)),
+        )
+        .unique(),
+    );
     return Boolean(account && account.status !== 'disconnected');
   }
   return true;
 }
-async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
+async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any, meter?: EvidenceReadMeter) {
   if (!row || row.userId !== prefs?.userId || !prefs.enabled) return false;
   if (row.level === 'observation') {
-    if (!(await allowed(ctx, row.userId, row.source, prefs))) return false;
+    if (!(await allowed(ctx, row.userId, row.source, prefs, meter))) return false;
     if (
-      await ctx.db
-        .query('narrativeExclusions')
-        .withIndex('by_user_key', (q) => q.eq('userId', row.userId).eq('key', row.key))
-        .unique()
+      await meteredRead(meter, () =>
+        ctx.db
+          .query('narrativeExclusions')
+          .withIndex('by_user_key', (q) => q.eq('userId', row.userId).eq('key', row.key))
+          .unique(),
+      )
     )
       return false;
     if (row.sourceTable && row.sourceId) {
-      const original: any = await ctx.db.get(row.sourceId);
+      const original: any = await meteredRead(meter, () => ctx.db.get(row.sourceId));
       if (
         !original ||
         original.userId !== row.userId ||
@@ -87,8 +112,8 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
     return true;
   }
   for (const id of row.sourceIds) {
-    const child: any = await ctx.db.get(id);
-    if (!child || child.level !== 'observation' || !(await visible(ctx, child, prefs))) return false;
+    const child: any = await meteredRead(meter, () => ctx.db.get(id));
+    if (!child || child.level !== 'observation' || !(await visible(ctx, child, prefs, meter))) return false;
     if (row.sourceVersions && row.sourceVersions[id] !== (child.sourceVersion || '')) return false;
     // Old chapters can explain what used to be true. Current Work threads and
     // the morning account must instead resolve against current source versions.
@@ -190,12 +215,13 @@ export const configure = mutation({
       throw new Error('Unsupported narrative model');
     const prev = await settings(ctx, args.userId);
     if (prev?.cleaning) throw new Error('Memory removal is still finishing. Try again shortly.');
-    const sourcesChanged = JSON.stringify(prev?.sources) !== JSON.stringify(args.sources);
+    const sources = [...new Set(args.sources)].sort();
+    const sourcesChanged = JSON.stringify([...(prev?.sources || [])].sort()) !== JSON.stringify(sources);
     const changed = sourcesChanged || prev?.enabled !== args.enabled;
     const doc = {
       userId: args.userId,
       enabled: args.enabled,
-      sources: [...new Set(args.sources)],
+      sources,
       timezone: args.timezone,
       model: args.model,
       revision: (prev?.revision || 0) + 1,
@@ -276,11 +302,13 @@ export const search = query({
               )
               .order('desc')
               .take(200);
-    const matches = args.query?.trim()
+    const textQuery = narrativeSearchQuery(args.query || '');
+    const topicQuery = narrativeSearchQuery(args.topic || '');
+    const matches = textQuery
       ? await ctx.db
           .query('narrativeEntries')
           .withSearchIndex('by_text', (q) =>
-            q.search('text', args.query!.slice(0, 300)).eq('userId', userId).eq('current', true),
+            q.search('text', textQuery).eq('userId', userId).eq('current', true),
           )
           .take(80)
       : [];
@@ -291,10 +319,10 @@ export const search = query({
       )
       .order('desc')
       .take(80);
-    const linked = args.topic
+    const linked = topicQuery
       ? await ctx.db
           .query('narrativeEntries')
-          .withSearchIndex('by_topics', (q) => q.search('topicText', args.topic!).eq('userId', userId))
+          .withSearchIndex('by_topics', (q) => q.search('topicText', topicQuery).eq('userId', userId))
           .take(80)
       : [];
     const candidates = [
@@ -836,34 +864,34 @@ const compileBucketArgs = {
 /** At most 60 candidates and 60 existing sources per transaction. No model work. */
 async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
   const entries: any[] = [];
-  for (const id of bucket.ids.slice(0, 60)) {
-    const row = await ctx.db.get(id);
-    if (
-      row &&
-      (row as any).level === 'observation' &&
-      (bucket.level !== 'thread' || (row as any).current) &&
-      (await visible(ctx, row, prefs))
-    )
-      entries.push(row);
-  }
-  if (!entries.length) return;
   const existing = await ctx.db
     .query('narrativeEntries')
     .withIndex('by_user_key', (q) => q.eq('userId', prefs.userId).eq('key', bucket.key))
     .first();
-  // A later scan window must not overwrite an older part of the same period.
-  // Keep immutable source records; compact only the representative overview.
-  for (const id of (existing?.sourceIds || []).slice(0, 80)) {
-    if (entries.some((row) => String(row._id) === id)) continue;
-    const row = await ctx.db.get(id as any);
-    if (
-      row &&
-      (row as any).level === 'observation' &&
-      (bucket.level !== 'thread' || (row as any).current) &&
-      (await visible(ctx, row, prefs))
-    )
-      entries.push(row);
+  const meter: EvidenceReadMeter = { bytes: 0, reads: 0 };
+  const prior = (existing?.sourceIds || []).slice(0, 80);
+  const candidates = [...new Set([...prior, ...bucket.ids.slice(0, 60)])];
+  let limited = false;
+  // Validate the prior window first so a later page cannot erase its evidence
+  // merely by spending the read budget on new, potentially large originals.
+  for (const [index, id] of candidates.entries()) {
+    try {
+      const row = await meteredRead(meter, () => ctx.db.get(id as any));
+      if (
+        row &&
+        (row as any).level === 'observation' &&
+        (bucket.level !== 'thread' || (row as any).current) &&
+        (await visible(ctx, row, prefs, meter))
+      )
+        entries.push(row);
+    } catch (error) {
+      if (!(error instanceof EvidenceReadLimit)) throw error;
+      if (index < prior.length) return; // Keep the prior account; never partially authorize it.
+      limited = true;
+      break;
+    }
   }
+  if (!entries.length) return;
   const evidence = selectCompactionEvidence(entries);
   const ids = evidence.map((row) => String(row._id));
   if (
@@ -872,7 +900,13 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     ids.every((id) => existing.sourceIds.includes(id)) &&
     ids.length === existing.sourceIds.length &&
     (!bucket.compacted || existing.compactionVersion === COMPACTION_POLICY_VERSION) &&
-    (await visible(ctx, existing, prefs))
+    existing.sourceIds.every((id: string) =>
+      entries.some(
+        (row) =>
+          String(row._id) === id &&
+          (!existing.sourceVersions || existing.sourceVersions[id] === (row.sourceVersion || '')),
+      ),
+    )
   )
     return;
   const doc = {
@@ -900,7 +934,7 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     ...(bucket.compacted ? { compactionVersion: COMPACTION_POLICY_VERSION, compactedAt: Date.now() } : {}),
     evidenceFrom: Math.min(existing?.evidenceFrom ?? Infinity, ...entries.map((row) => row.occurredAt)),
     evidenceTo: Math.max(existing?.evidenceTo ?? 0, ...entries.map((row) => row.occurredAt)),
-    coverage: `${evidence.length} representative linked observations; ${bucket.truncated || entries.length > evidence.length ? 'bounded overview, additional evidence remains searchable' : 'indexed observations'}. Older detail is retained, not deleted. Expand sources or search this period for the full record.`,
+    coverage: `${evidence.length} representative linked observations; ${limited || bucket.truncated || entries.length > evidence.length ? 'bounded overview, additional evidence remains searchable' : 'indexed observations'}. Older detail is retained, not deleted. Expand sources or search this period for the full record.`,
   };
   if (existing) await ctx.db.patch(existing._id, doc);
   else await ctx.db.insert('narrativeEntries', doc);

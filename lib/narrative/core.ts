@@ -77,6 +77,15 @@ export function safeNarrativeUrl(value: unknown) {
   }
 }
 
+/** Convex's SimpleTokenizer splits punctuation; each expression permits 16
+ * terms of at most 32 characters. Keep provider limits out of caller prose. */
+export function narrativeSearchQuery(value: string) {
+  return (value.slice(0, 300).match(/[\p{L}\p{N}]+/gu) || [])
+    .filter((term) => term.length <= 32)
+    .slice(0, 16)
+    .join(' ');
+}
+
 /** Reserve room for intention, open work, and fresh changes across providers. */
 export function selectBriefEvidence<T extends NarrativeEntry>(entries: T[], now = Date.now()): T[] {
   const ordered = entries

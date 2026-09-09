@@ -29,6 +29,17 @@ function row(i: number, overrides: Partial<NarrativeEntry> = {}): NarrativeEntry
   };
 }
 describe('age-aware evidence compaction', () => {
+  test('a full brief packet reserves recent reflections and tomorrow intentions before sampling other work', () => {
+    const now = Date.now();
+    const entries = Array.from({ length: 60 }, (_, i) => row(i, { occurredAt: now - i, source: 'mail:one' }));
+    const reflections = Array.from({ length: 6 }, (_, i) =>
+      row(100 + i, { source: 'checkins', occurredAt: now - i * 1000, text: `Intention or reflection ${i}` }),
+    );
+    const selected = writerEvidenceRows([...entries, ...reflections], 10000, true);
+    for (const reflection of reflections)
+      expect(selected.some((row) => row._id === reflection._id)).toBe(true);
+    expect(selected[0].source).toBe('checkins');
+  });
   test('ages days into weeks and months with precise boundaries and local period keys', () => {
     const now = Date.parse('2026-09-09T01:00:00Z');
     expect([0, 13.99, 14, 89.99, 90, 900].map((age) => narrativeAgeTier(now - age * day, now))).toEqual([
@@ -90,6 +101,7 @@ describe('age-aware evidence compaction', () => {
     expect(chosen.map((r) => r._id)).toContain('e2');
     expect(narrativeContext(chosen).length).toBeLessThan(1800);
     expect(writerEvidenceRows(rows)[0].text.length).toBe(700);
+    expect(writerEvidenceRows(rows)[0].coverage).toContain('truncated');
     expect(writerEvidenceRows(rows)[0].title.length).toBe(160);
     expect(writerEvidenceRows(rows)[0].topics.length).toBe(8);
     expect(writerEvidenceRows(rows, 1)).toEqual([]);

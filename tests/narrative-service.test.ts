@@ -149,7 +149,7 @@ describe('narrative agent run', () => {
     const controller = new AbortController();
     controller.abort();
     await getNarrativeTaskContext('pilot', { purpose: 'chat', query: 'shipping' }, controller.signal);
-    expect(requests[1].abortSignal.aborted).toBe(true);
+    expect(requests[1]?.abortSignal.aborted).toBe(true);
   });
   test('all private consumers share gated task context instead of full-history injection', async () => {
     const inputs: any[] = [];
@@ -180,6 +180,8 @@ describe('narrative agent run', () => {
     expect(requests).toHaveLength(2);
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
+    expect(requests[1].system).not.toContain('80–4000');
+    expect(requests[1].system).toContain('2200 characters');
     expect(requests[1].messages.at(-1).content).toContain('{"code":"E1","id":"evidence1"}');
     expect(requests[0].stopWhen({ steps: [{}, {}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([

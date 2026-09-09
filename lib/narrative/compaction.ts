@@ -1,4 +1,4 @@
-import { type NarrativeEntry, narrativePeriods } from './core';
+import { type NarrativeEntry, narrativePeriods, selectBriefEvidence } from './core';
 
 export const COMPACTION_POLICY_VERSION = 1;
 const DAY = 86_400_000;
@@ -58,7 +58,9 @@ export function narrativeWritingLimit(level: string, key: string) {
 /** Size each record before enforcing the packet budget: one long record must
  * not suppress every later source (the previous serializer stopped at it). */
 export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000, brief = false) {
-  const chosen = selectCompactionEvidence(entries, 24);
+  // Briefs reserve the actual recent intentions/reflections before historical
+  // sampling. Sorting after sampling alone could already have lost yesterday.
+  const chosen = brief ? selectBriefEvidence(entries).slice(0, 24) : selectCompactionEvidence(entries, 24);
   if (brief)
     chosen.sort(
       (a, b) =>
@@ -71,6 +73,10 @@ export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000,
     ...row,
     title: row.title.slice(0, 160),
     text: row.text.slice(0, 700),
+    coverage:
+      row.text.length > 700
+        ? 'Source excerpt truncated; consult the original for complete wording.'
+        : row.coverage,
     topics: row.topics.slice(0, 8),
   }));
   const selected: NarrativeEntry[] = [];

@@ -57,6 +57,25 @@ to 12 records / the consumer's character and time limits. Outgoing drafts bypass
 semantic/relationship expansion and require explicit individual evidence selection.
 This is hybrid semantic query expansion plus exact relationships, not vector search.
 
+Topic/text expressions respect [Convex's token limits](https://docs.convex.dev/search/text-search).
+Compaction meters new and existing evidence plus underlying source reads, stopping
+at a conservative byte/read allowance. An oversized existing account is retained
+if its prior evidence cannot be fully revalidated within that allowance; raw
+evidence remains available. This protects the transaction rather than pretending
+to have processed every large source document.
+
+## Review disposition
+
+GitHub CodeRabbit review 5151620099 and a separate local CodeRabbit pass completed.
+Valid findings addressed include consistent writer limits, preserved brief
+intentions, explicit source-excerpt truncation, normalized source-set comparison,
+bounded topic expressions, configure-triggered manual refresh, source read budgets,
+and deterministic/isolated acceptance tests. Two optional optimizations were
+deferred: per-query relevance memoization and removal of the cached client's
+configuration guard. The reported duplicate module-level loop tail is not present
+in the actual file; typechecking and executable tests confirm the function parses.
+Request a follow-up review of the fixes before staging promotion.
+
 ## Acceptance
 
 Focused tests cover boundaries, local periods, 901-record resumable sweeps,

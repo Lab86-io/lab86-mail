@@ -5,6 +5,7 @@ import {
   type NarrativeEntry,
   narrativeContext,
   narrativePeriods,
+  narrativeSearchQuery,
   nextNarrativeDay,
   rankNarrative,
   safeNarrativeUrl,
@@ -32,6 +33,14 @@ function entry(overrides: Partial<NarrativeEntry> = {}): NarrativeEntry {
   };
 }
 describe('narrative memory contracts', () => {
+  test('text and topic expressions fit Convex token limits including punctuation-separated topics', () => {
+    expect(narrativeSearchQuery('repo:org/project-name')).toBe('repo org project name');
+    expect(
+      narrativeSearchQuery(Array.from({ length: 40 }, (_, i) => `term${i}`).join(':')).split(' '),
+    ).toHaveLength(16);
+    expect(narrativeSearchQuery('x'.repeat(33))).toBe('');
+    expect(narrativeSearchQuery('')).toBe('');
+  });
   test('duplicate planning answers keep the same first-source version used by visibility checks', () => {
     const rows = observationsForRow('albatrossIntents', {
       _id: 'w',

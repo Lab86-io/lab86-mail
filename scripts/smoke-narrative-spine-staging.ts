@@ -66,7 +66,7 @@ try {
     timezone: 'UTC',
     model: 'z-ai/glm-5.3-flash',
   });
-  const old = Date.now() - 180 * 86400000;
+  const old = Date.UTC(new Date().getUTCFullYear() - 1, 0, 15, 12);
   const items = Array.from({ length: 125 }, (_, i) => ({
     externalId: `history-${i}`,
     kind: 'note',
@@ -131,6 +131,7 @@ try {
   for (let attempt = 0; attempt < 20; attempt++) {
     chapters = (await convexQuery<any>(f.search, { userId, level: 'month' })).entries;
     if (chapters[0]?.sourceIds?.length === 60) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
   const month = chapters[0];
   assert(month?.sourceIds.length === 60, 'Monthly overview did not compact evidence');
@@ -153,11 +154,14 @@ try {
     !packet.evidence.some((row) => row.title.startsWith('Historical sample')),
     'Unrelated history entered the task packet',
   );
-  for (let run = 0; run < 2; run++) {
+  let polished: any;
+  for (let run = 0; run < 4; run++) {
     const result = await refreshNarrative(userId, 'synthetic-spine-acceptance');
     assert(result.status === 'ready', `Writer failed: ${JSON.stringify(result)}`);
+    polished = await convexQuery<any>(f.read, { userId, id: month._id });
+    if (polished?.entry.model) break;
   }
-  const polished = await convexQuery<any>(f.read, { userId, id: month._id });
+  assert((await convexQuery<any>(f.brief, { userId })).entry?.model, 'Brief was not model-written');
   assert(
     polished.entry.model === 'z-ai/glm-5.3-flash' && polished.entry.text.length <= 1400,
     'Monthly model compaction did not publish at its tighter bound',

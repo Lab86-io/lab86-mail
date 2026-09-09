@@ -43,6 +43,69 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('large original records share a byte budget across new and prior compaction evidence', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await capture(t);
+    const ids = await t.run(async (ctx) => {
+      const { _id, _creationTime, ...template } = (await ctx.db.get(id))!;
+      await ctx.db.delete(id);
+      const result = [];
+      for (let i = 0; i < 10; i++) {
+        const original = await ctx.db.insert('userDocs', {
+          userId,
+          kind: 'chatSession',
+          key: `large:${i}`,
+          doc: { content: 'x'.repeat(900000) },
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        result.push(
+          await ctx.db.insert('narrativeEntries', {
+            ...template,
+            key: `large:${i}`,
+            sourceTable: 'userDocs',
+            sourceId: String(original),
+            topics: [],
+          }),
+        );
+      }
+      return result;
+    });
+    await t.mutation(f.compact, args);
+    const chapters = await t.run((ctx) => ctx.db.query('narrativeEntries').collect());
+    const chapter = chapters.find((row) => row.level === 'day')!;
+    expect(chapter.sourceIds.length).toBeGreaterThan(0);
+    expect(chapter.sourceIds.length).toBeLessThanOrEqual(4);
+    expect(chapter.coverage).toContain('bounded overview');
+    expect(chapters.filter((row) => row.level === 'observation')).toHaveLength(10);
+    await t.run((ctx) =>
+      ctx.db.patch(chapter._id, {
+        sourceIds: ids.map(String),
+        model: 'prior-publication',
+        text: 'Preserved prior account',
+      }),
+    );
+    await t.mutation(f.compact, args);
+    expect((await t.run((ctx) => ctx.db.get(chapter._id)))?.model).toBe('prior-publication');
+  });
+  test('reordered or duplicate source choices do not reset ingestion and compaction cursors', async () => {
+    const t = harness();
+    await enable(t, ['chat', 'work']);
+    await capture(t);
+    await t.mutation(f.compact, args);
+    const cursors = await t.run((ctx) => ctx.db.query('narrativeCursors').collect());
+    const queued = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['work', 'chat', 'chat'],
+      timezone: 'UTC',
+      model: 'current',
+    });
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toEqual(cursors);
+    expect(await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect())).toEqual(queued);
+  });
   test('pausing retains observations and sweep cursor even if earlier cleanup jobs execute; erase still removes them', async () => {
     const t = harness();
     await enable(t, ['chat']);
@@ -76,7 +139,7 @@ describe('shared narrative runtime', () => {
     const t = harness();
     await enable(t, ['chat']);
     const id = await capture(t);
-    const earliest = Date.now() - 400 * 86400000;
+    const earliest = Date.UTC(2024, 0, 15, 12);
     await t.run(async (ctx) => {
       const { _id, _creationTime, ...template } = (await ctx.db.get(id))!;
       await ctx.db.patch(id, { occurredAt: earliest, topics: ['repo:older'] });
