@@ -40,7 +40,8 @@ function harness() {
 describe('narrative meeting prep', () => {
   test('uses owned calendar records, related people, aliases and current source references', async () => {
     const deps = harness();
-    const result = await prepareNarrativeMeeting('owner', selector, undefined, deps);
+    const controller = new AbortController();
+    const result = await prepareNarrativeMeeting('owner', selector, controller.signal, deps);
     expect(result.mode).toBe('generated');
     expect(result.points).toEqual([{ text: 'Launch is waiting on QA.', sourceIds: ['source'] }]);
     expect(deps.event).toHaveBeenCalledWith('owner', selector);
@@ -56,6 +57,10 @@ describe('narrative meeting prep', () => {
     });
     expect(deps.generate.mock.calls[0][0].prompt).toContain('"id":"E1"');
     expect(deps.context).toHaveBeenCalledTimes(2);
+    expect(deps.context.mock.calls.map((call: unknown[]) => call[2])).toEqual([
+      controller.signal,
+      controller.signal,
+    ]);
   });
   test('missing or cancelled events do not read private context', async () => {
     const deps = harness();

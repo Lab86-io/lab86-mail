@@ -15,9 +15,9 @@ interface Props {
   onApply: (body: string) => void;
 }
 
-/** Recipient/thread changes reset the assistant; ordinary edits retain instructions. */
+/** Thread changes reset the assistant; message/recipient edits retain instructions. */
 export function NarrativeDraftAssistant(props: Props) {
-  return <DraftPanel key={JSON.stringify([props.to, props.topic])} {...props} />;
+  return <DraftPanel key={props.topic || ''} {...props} />;
 }
 
 function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply }: Props) {
@@ -30,7 +30,7 @@ function DraftPanel({ to, subject, body, topic, recipientsKey, disabled, onApply
   const [phase, setPhase] = useState<'idle' | 'context' | 'draft'>('idle');
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
-  const messageVersion = JSON.stringify([body, subject, recipientsKey]);
+  const messageVersion = JSON.stringify([body, subject, to, recipientsKey]);
   const previousMessage = useRef(messageVersion);
   useEffect(() => () => pending.current?.abort(), []);
   useEffect(() => {

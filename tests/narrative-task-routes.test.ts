@@ -21,6 +21,20 @@ const meeting = (body: any = { accountId: 'a', calendarId: 'c', eventId: 'e' }) 
     body: JSON.stringify(body),
   });
 describe('task context endpoints', () => {
+  test('an aborted meeting lookup remains cancellation rather than a provider failure', async () => {
+    const deps = harness();
+    const controller = new AbortController();
+    const request = new NextRequest('https://example.test/api/narrative/meeting', {
+      method: 'POST',
+      body: JSON.stringify({ accountId: 'a', calendarId: 'c', eventId: 'e' }),
+      signal: controller.signal,
+    });
+    deps.prepare.mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException('Cancelled', 'AbortError');
+    });
+    expect((await createNarrativeMeetingPost(deps)(request)).status).toBe(499);
+  });
   test('malformed authenticated meeting requests still consume the quota', async () => {
     const deps = harness();
     expect((await createNarrativeMeetingPost(deps)(meeting({}))).status).toBe(400);

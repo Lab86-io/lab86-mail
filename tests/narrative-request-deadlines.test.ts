@@ -13,4 +13,8 @@ test('optional context timeout releases a stalled caller with its empty fallback
   expect(planner).toMatch(/withDeadline\(\s*narrativePrompt\(/);
   expect(planner).toContain('150_000 - (Date.now() - planStartedAt)');
   expect(planner).toContain('abortSignal: AbortSignal.timeout(planRemainingMs)');
+  const loop = readFileSync('lib/ai/loop.ts', 'utf8');
+  expect(loop).toContain('withDeadline(read(userId, query), 8000,');
+  expect(loop).toContain('await boundedAgentNarrativeContext(userId, memoryQuery)');
+  expect(loop).toContain("'Agent narrative context'");
 });

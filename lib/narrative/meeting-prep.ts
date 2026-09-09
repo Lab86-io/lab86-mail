@@ -98,7 +98,7 @@ export async function prepareNarrativeMeeting(
     query: [event.title, ...people].join(' ').slice(0, 240),
     topic: `event:${selector.accountId}:${selector.eventId}`,
   };
-  const context = await deps.context(userId, request);
+  const context = await deps.context(userId, request, signal);
   if (signal?.aborted) throw new MeetingContextError('Meeting preparation cancelled.', 499);
   const result: MeetingPrep = {
     title: cleanNarrativeText(event.title, 240),
@@ -148,7 +148,7 @@ export async function prepareNarrativeMeeting(
   if (signal?.aborted) throw new MeetingContextError('Meeting preparation cancelled.', 499);
   const [latestEvent, latestContext] = await Promise.all([
     deps.event(userId, selector),
-    deps.context(userId, request),
+    deps.context(userId, request, signal),
   ]);
   if (
     meetingStamp(latestEvent) !== meetingStamp(event) ||
