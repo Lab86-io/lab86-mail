@@ -24,6 +24,7 @@ The second review additionally hardened both read/generated response validation
 against malformed successful JSON and made cancellation settle immediately for
 each waiter without evicting or cancelling the shared operation. Regression tests
 assert cancellation before releasing the simulated provider gate.
+
 # Main release review
 
 PR #242's additional findings were checked against the implementation. The release follow-up validates weather payloads before rendering, rejects empty model compositions with a retryable evidence fallback, consumes structured model output with a text fallback, and uses mobile-safe correction text sizing. The browser harness now uses Playwright's browser or an explicit CHROMIUM_PATH and documents its preview prerequisite. The grouped-evidence assertion now requires exactly one thread for the shared work topic. Focused regression tests cover malformed weather, structured-output fallback, and empty model output.
