@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
+import { scheduleNarrativeSource } from './narrative';
 
 // Operation log backing the AI's act-then-undo trust model (see
 // docs/productivity-platform-spec.md). Writes come from the Next server
@@ -29,7 +30,15 @@ export const record = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const { internalSecret: _secret, ...doc } = args;
-    return ctx.db.insert('aiOperations', { ...doc, status: 'applied', createdAt: now() });
+    const ts = now();
+    const id = await ctx.db.insert('aiOperations', {
+      ...doc,
+      status: 'applied',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await scheduleNarrativeSource(ctx, args.userId, 'aiOperations', String(id));
+    return id;
   },
 });
 
@@ -121,11 +130,13 @@ export const claimUndo = mutation({
     }
     await ctx.db.patch(args.operationId, {
       status: 'undoing',
+      updatedAt: ts,
       undoClaimToken: args.claimToken,
       undoClaimExpiresAt: ts + Math.max(args.leaseMs, 1_000),
       error: undefined,
       undoneAt: undefined,
     });
+    await scheduleNarrativeSource(ctx, args.userId, 'aiOperations', String(args.operationId));
     return {
       state: 'claimed' as const,
       tool: row.tool,
@@ -153,11 +164,13 @@ export const completeUndo = mutation({
     }
     await ctx.db.patch(args.operationId, {
       status: 'undone',
+      updatedAt: now(),
       undoneAt: now(),
       undoClaimToken: undefined,
       undoClaimExpiresAt: undefined,
       error: undefined,
     });
+    await scheduleNarrativeSource(ctx, args.userId, 'aiOperations', String(args.operationId));
     return ctx.db.get(args.operationId);
   },
 });
@@ -177,10 +190,12 @@ export const markUndoFailed = mutation({
     if (row.status !== 'undoing' || row.undoClaimToken !== args.claimToken) return;
     await ctx.db.patch(args.operationId, {
       status: 'undo_failed',
+      updatedAt: now(),
       error: args.error.slice(0, 500),
       undoneAt: undefined,
       undoClaimToken: undefined,
       undoClaimExpiresAt: undefined,
     });
+    await scheduleNarrativeSource(ctx, args.userId, 'aiOperations', String(args.operationId));
   },
 });

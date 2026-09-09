@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createComposeDraftPost } from '../app/api/compose/draft/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
+import { emptyNarrativeContext } from '../lib/narrative/context';
 import { RateLimitError } from '../lib/rate-limit';
 
 const user = {
@@ -26,6 +27,22 @@ function dependencies() {
     runWithAiRequestContext: mock(async (_context: unknown, run: () => Promise<unknown>) => run()) as any,
     generateTextForCurrentUser: mock(async () => ({ text: 'Hello from Albatross.' })) as any,
     reportUnexpectedError: mock(() => undefined),
+    context: mock(async () => ({
+      ...emptyNarrativeContext('compose'),
+      enabled: true,
+      evidence: [
+        {
+          id: 'selected',
+          title: 'Atlas',
+          text: 'Decision: ship Friday',
+          source: 'work',
+          topics: [],
+          trust: 'reported',
+          occurredAt: 1,
+          observedAt: 1,
+        },
+      ],
+    })) as any,
   };
 }
 
@@ -34,6 +51,47 @@ async function invoke(deps: ReturnType<typeof dependencies>, body: unknown) {
 }
 
 describe('compose draft route', () => {
+  test('selected evidence is owned, bounded, rechecked, and never sent', async () => {
+    const deps = dependencies();
+    const response = await invoke(deps, {
+      instructions: 'Follow up',
+      contextIds: ['selected'],
+      userId: 'forged',
+    });
+    expect(response.status).toBe(200);
+    expect(deps.context).toHaveBeenCalledTimes(2);
+    expect(deps.context.mock.calls[0][0]).toBe(user.userId);
+    expect(deps.context.mock.calls[0][1]).toMatchObject({ purpose: 'compose', evidenceIds: ['selected'] });
+    expect(deps.generateTextForCurrentUser.mock.calls[0][0]).toMatchObject({
+      userId: user.userId,
+      maxRetries: 0,
+      maxOutputTokens: 1800,
+    });
+    expect(deps.generateTextForCurrentUser.mock.calls[0][0].prompt).toContain('Decision: ship Friday');
+    expect((await response.json()).context.sourceIds).toEqual(['selected']);
+  });
+  test('missing and revoked context fails closed before or after generation', async () => {
+    const deps = dependencies();
+    expect((await invoke(deps, { instructions: 'Follow up', contextIds: ['foreign'] })).status).toBe(409);
+    expect(deps.generateTextForCurrentUser).not.toHaveBeenCalled();
+    let reads = 0;
+    const packet = await deps.context();
+    deps.context.mockImplementation(async () => (++reads === 1 ? packet : emptyNarrativeContext('compose')));
+    const response = await invoke(deps, { instructions: 'Follow up', contextIds: ['selected'] });
+    expect(response.status).toBe(409);
+    expect(await response.text()).not.toContain('Hello from Albatross');
+  });
+  test('rejects malformed or oversized draft context', async () => {
+    const deps = dependencies();
+    for (const body of [
+      { contextIds: Array(9).fill('id') },
+      { instructions: 'x'.repeat(12001) },
+      { to: 17 },
+    ]) {
+      expect((await invoke(deps, body)).status).toBe(400);
+    }
+    expect(deps.context).not.toHaveBeenCalled();
+  });
   test('requires authentication', async () => {
     const deps = dependencies();
     deps.requireCurrentUser.mockImplementation(async () => {

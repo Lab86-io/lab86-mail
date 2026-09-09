@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   boundedNarrativeResult,
+  getNarrativeTaskContext,
   readNarrative,
   recordNarrative,
   searchNarrative,
@@ -27,6 +28,21 @@ export const narrativeSearch = defineTool({
   }),
   output: z.any(),
   handler: (args, ctx) => searchNarrative(owner(ctx), args).then(boundedNarrativeResult),
+});
+export const narrativeTaskContext = defineTool({
+  name: 'narrative_task_context',
+  description:
+    'Retrieve a small, task-specific packet of current evidence for private chat, Work, Area planning, meeting preparation, search, or a brief. Rechecks ownership, consent, and source versions. Prefer this to loading the entire narrative. Does not authorize including private context in an outgoing email.',
+  category: 'memory',
+  mutating: false,
+  input: z.object({
+    purpose: z.enum(['chat', 'work', 'area', 'meeting', 'brief', 'search']),
+    query: z.string().max(240).default(''),
+    topic: z.string().max(500).optional(),
+    since: z.number().optional(),
+  }),
+  output: z.any(),
+  handler: (args, ctx) => getNarrativeTaskContext(owner(ctx), args),
 });
 export const narrativeRead = defineTool({
   name: 'narrative_read',
@@ -72,6 +88,7 @@ export const narrativeRecordChange = defineTool({
   handler: (args, ctx) => recordNarrative(owner(ctx), args.text, args.sourceIds),
 });
 export const NARRATIVE_TOOLS = [
+  narrativeTaskContext,
   narrativeSearch,
   narrativeRead,
   narrativeSources,

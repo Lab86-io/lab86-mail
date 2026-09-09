@@ -18,6 +18,7 @@ import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { extractConferencingUrl, formatTime } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
+import { NarrativeMeetingPrep } from '@/components/narrative/NarrativeMeetingPrep';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -94,6 +95,14 @@ export function EventDetailsDialog({ event, children, open: controlledOpen, onOp
         </DialogHeader>
         <ScrollArea className="max-h-[70vh]">
           <div className="space-y-4 pr-3">
+            {open && event.accountId && event.calendarId && !event.pending && (
+              <NarrativeMeetingPrep
+                key={`${event.id}:${event.startDate}:${event.title}`}
+                accountId={event.accountId}
+                calendarId={event.calendarId}
+                eventId={event.id}
+              />
+            )}
             {/* When */}
             <div className="flex items-start gap-2.5">
               <Clock className="mt-0.5 size-4 shrink-0 text-[var(--color-text-faint)]" />

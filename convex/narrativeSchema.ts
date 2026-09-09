@@ -27,6 +27,8 @@ export const narrativeTables = {
     leaseUntil: v.optional(v.number()),
     dailyRunDate: v.optional(v.string()),
     dailyRuns: v.optional(v.number()),
+    refreshToken: v.optional(v.string()),
+    refreshScheduledAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_enabled', ['enabled']),

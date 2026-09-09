@@ -2086,8 +2086,10 @@ export default defineSchema({
     undoClaimExpiresAt: v.optional(v.number()),
     createdAt: v.number(),
     undoneAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_batch', ['userId', 'batchId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt']),
 

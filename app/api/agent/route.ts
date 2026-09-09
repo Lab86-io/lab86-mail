@@ -11,7 +11,7 @@ import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { captureNarrativeTurn, refreshNarrative } from '@/lib/narrative/service';
+import { captureNarrativeTurn } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -222,7 +222,6 @@ export async function POST(req: NextRequest) {
     // turn's artifacts and answers cannot be attributed to one of them, and
     // fanning out would cross-pollinate evidence between Works.
     const workAttachments = contextAttachments.filter((attachment) => attachment.kind === 'work');
-    if (memoryId) after(() => refreshNarrative(user.userId, 'conversation').then(() => undefined));
     if (workAttachments.length === 1) {
       const workId = workAttachments[0].id;
       after(() =>

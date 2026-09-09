@@ -3,7 +3,9 @@ import { getFunctionName } from 'convex/server';
 import { estimateAiUsageCost } from '../lib/ai/budget';
 import {
   __setNarrativeDepsForTest,
+  getNarrativeTaskContext,
   narrativeEnabled,
+  narrativePrompt,
   narrativeResearchTools,
   parseNarrativeGeneration,
   refreshNarrative,
@@ -89,6 +91,22 @@ function setup(
   return { writes, requests };
 }
 describe('narrative agent run', () => {
+  test('all private consumers share gated task context instead of full-history injection', async () => {
+    const inputs: any[] = [];
+    __setNarrativeDepsForTest({
+      query: (async (_fn: any, input: any) => {
+        inputs.push(input);
+        return { enabled: true, entries: [], revision: 1 };
+      }) as any,
+    });
+    expect((await getNarrativeTaskContext('not-pilot', { purpose: 'chat' })).enabled).toBe(false);
+    expect(await narrativePrompt(undefined, 'Atlas')).toBe('');
+    for (const topic of [undefined, 'work:one', 'area:one'])
+      expect(await narrativePrompt('pilot', 'Atlas', topic)).toContain('Do not load the entire history');
+    expect(inputs.every((input) => input.userId === 'pilot')).toBe(true);
+    __setNarrativeDepsForTest({ query: (async () => ({ enabled: false, entries: [], revision: 2 })) as any });
+    expect(await narrativePrompt('pilot', 'Atlas')).toBe('');
+  });
   test('feature and pilot gates reject all unapproved users', async () => {
     const state = setup();
     expect(narrativeEnabled('pilot')).toBe(true);

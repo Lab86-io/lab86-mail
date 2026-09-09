@@ -6,6 +6,7 @@ import schema from '../convex/schema';
 const modules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/narrative.ts': () => import('../convex/narrative'),
+  '../convex/operations.ts': () => import('../convex/operations'),
 };
 const f = (api as any).narrative;
 const secret = 'narrative-runtime-secret',
@@ -41,6 +42,109 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('applied operations are captured from owned receipts and undo invalidates the old current fact', async () => {
+    const t = harness();
+    await enable(t, ['work']);
+    const id = await t.mutation(api.operations.record, {
+      ...args,
+      agent: 'ai',
+      tool: 'tasks_create_card',
+      surface: 'tasks',
+      summary: 'Added Atlas QA',
+      target: { kind: 'card', id: 'card', workId: 'atlas' },
+      inverse: { kind: 'tasks.delete_card', payload: { cardId: 'card' } },
+    });
+    // Exercise the durable worker directly as well as its scheduled retry.
+    await t.mutation((internal as any).narrative.captureSource, {
+      userId,
+      table: 'aiOperations',
+      id: String(id),
+    });
+    await t.finishAllScheduledFunctions(() => {});
+    const old = (await t.query(f.search, { ...args, level: 'observation' })).entries[0];
+    expect(old.sourceTable).toBe('aiOperations');
+    expect(old.trust).toBe('observed');
+    expect(old.topics).toContain('work:atlas');
+    expect(old.text).toContain('not completing it');
+    expect(
+      (
+        await t.mutation((internal as any).narrative.captureSource, {
+          userId,
+          table: 'aiOperations',
+          id: String(id),
+        })
+      ).changed,
+    ).toBe(0);
+    const caller = { ...args, operationId: id, claimToken: 'claim' };
+    await t.mutation(api.operations.claimUndo, { ...caller, leaseMs: 1000 });
+    expect(await t.query(f.read, { ...args, id: old._id })).toBeNull();
+    await t.mutation(api.operations.completeUndo, caller);
+    await t.mutation((internal as any).narrative.captureSource, {
+      userId,
+      table: 'aiOperations',
+      id: String(id),
+    });
+    const current = (await t.query(f.search, { ...args, level: 'observation' })).entries.find(
+      (entry: any) => entry.current,
+    );
+    expect(current.text).toContain('was undone');
+    expect((await t.query(f.read, { ...args, id: old._id })).entry.current).toBe(false);
+    // Removing the original receipt also revokes derived access.
+    await t.run((ctx) => ctx.db.delete(id));
+    expect(await t.query(f.read, { ...args, id: current._id })).toBeNull();
+  });
+  test('capture rejects cross-user source ids and respects explicit source consent', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const id = await t.run((ctx) =>
+      ctx.db.insert('albatrossIntents', {
+        userId,
+        rawText: 'Atlas',
+        source: 'text',
+        status: 'captured',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const capture = (who: string, sourceId = String(id)) =>
+      t.mutation((internal as any).narrative.captureSource, {
+        userId: who,
+        table: 'albatrossIntents',
+        id: sourceId,
+      });
+    expect((await capture(userId)).changed).toBe(0);
+    expect((await capture('someone-else')).changed).toBe(0);
+    await enable(t, ['work']);
+    expect((await capture(userId, 'invalid')).changed).toBe(0);
+    expect((await capture(userId)).changed).toBe(1);
+    await t.run((ctx) => ctx.db.patch(id, { userId: 'someone-else' }));
+    expect((await capture(userId)).changed).toBe(0);
+  });
+  test('bursts coalesce into a durable refresh, wait for active runs, and cannot survive disable', async () => {
+    const t = harness();
+    await enable(t);
+    await capture(t, 'First plan', 'first');
+    const prefs = () => t.run((ctx) => ctx.db.query('narrativeSettings').first());
+    const queued = await prefs();
+    expect(queued?.refreshToken).toBeDefined();
+    expect(queued?.refreshScheduledAt).toBeGreaterThan(Date.now());
+    await capture(t, 'Another plan', 'second');
+    expect((await prefs())?.refreshToken).toBe(queued?.refreshToken);
+    await t.mutation(f.claim, { ...args, runId: 'active', kind: 'test' });
+    await t.mutation((internal as any).narrative.flushRefresh, { userId, token: queued!.refreshToken });
+    expect((await prefs())?.refreshScheduledAt).toBeGreaterThan((await prefs())!.leaseUntil!);
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: false,
+      sources: [],
+      timezone: 'UTC',
+      model: 'current',
+    });
+    expect((await prefs())?.refreshToken).toBeUndefined();
+    await t.mutation((internal as any).narrative.flushRefresh, { userId, token: queued!.refreshToken });
+    expect(await t.query((internal as any).narrative.refreshTarget, { userId })).toBe(false);
+    await t.action((internal as any).narrative.refreshUser, { userId });
+  });
   test.each([
     false,
     true,
