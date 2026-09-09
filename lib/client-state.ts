@@ -402,7 +402,11 @@ export const useClientStore = create<ClientState>()(
           querySource: smartCategory ? 'category' : 'typed',
         }),
       setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
-      setSelectedWorkId: (selectedWorkId) => set({ selectedWorkId }),
+      setSelectedWorkId: (selectedWorkId) =>
+        set((state) => ({
+          selectedWorkId,
+          guidedWorkId: state.guidedWorkId === selectedWorkId ? state.guidedWorkId : null,
+        })),
       setGuidedWorkId: (guidedWorkId) => set({ guidedWorkId }),
       setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),

@@ -88,6 +88,8 @@ describe('Today working surface', () => {
       primaryView: 'albatrosses',
     });
     expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('guidedWorkId');
+    useClientStore.getState().setSelectedWorkId('different-work');
+    expect(useClientStore.getState().guidedWorkId).toBeNull();
     openWorkspaceWork('other', false);
     expect(useClientStore.getState().guidedWorkId).toBeNull();
   });
