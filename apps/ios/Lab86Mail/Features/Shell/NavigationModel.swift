@@ -223,6 +223,14 @@ final class NavigationModel {
         pendingMailSearch = query
     }
 
+    /// Both mounted and newly presented Mail views consume the same request.
+    /// An empty request focuses search without erasing the user's current query.
+    func consumeMailSearch(currentQuery: String) -> String? {
+        guard let pendingMailSearch else { return nil }
+        self.pendingMailSearch = nil
+        return pendingMailSearch.isEmpty ? currentQuery : pendingMailSearch
+    }
+
     // When opened from an Area, mail remains inside that Area's back stack.
     // Global notification/search routes use Mail as a hidden routable root.
     func openThread(accountID: String, threadID: String, preservingCurrentRoot: Bool = false) {

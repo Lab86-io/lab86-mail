@@ -217,28 +217,20 @@ struct MailView: View {
             isSearchFocused = true
         }
         .onAppear {
-            if let pending = environment.navigation.pendingMailSearch {
-                // Empty is a focus-only request (Command-F). A non-empty
-                // App Intent/deep-link request replaces the current query.
-                if !pending.isEmpty { searchText = pending }
-                environment.navigation.pendingMailSearch = nil
-                #if os(macOS)
+            if let query = environment.navigation.consumeMailSearch(currentQuery: searchText) {
+                searchText = query
                 isSearchFocused = true
-                #endif
             }
             if let raw = environment.navigation.pendingMailCategory {
                 categoryScope = MailCategoryScope.from(raw: raw)
                 environment.navigation.pendingMailCategory = nil
             }
         }
-        #if os(macOS)
-        .onChange(of: environment.navigation.pendingMailSearch) { _, pending in
-            guard let pending else { return }
-            if !pending.isEmpty { searchText = pending }
-            environment.navigation.pendingMailSearch = nil
+        .onChange(of: environment.navigation.pendingMailSearch) { _, _ in
+            guard let query = environment.navigation.consumeMailSearch(currentQuery: searchText) else { return }
+            searchText = query
             isSearchFocused = true
         }
-        #endif
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }
             categoryScope = MailCategoryScope.from(raw: raw)
