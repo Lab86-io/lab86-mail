@@ -96,6 +96,41 @@ struct NarrativeBriefTests {
         #expect(components.queryItems == [URLQueryItem(name: "id", value: id)])
     }
 
+    @Test @MainActor func concurrentPollingDoesNotDiscardRefreshAcknowledgement() async {
+        for accepted in [true, false] {
+            let store = NarrativeBriefStore()
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            let gate = NarrativeReadGate()
+            let refresh = Task { await store.requestRefresh { await gate.wait() } }
+            await gate.started()
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            await gate.finish(.object(["ok": .bool(accepted)]))
+            await refresh.value
+            #expect(store.running == accepted)
+            #expect((store.error != nil) == !accepted)
+        }
+    }
+
+    @Test @MainActor func clearedOrRevokedRefreshCannotRestoreState() async {
+        for revoked in [true, false] {
+            let store = NarrativeBriefStore()
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            let gate = NarrativeReadGate()
+            let refresh = Task { await store.requestRefresh { await gate.wait() } }
+            await gate.started()
+            if revoked {
+                await store.load(.brief(Self.at)) { _ in .object(["enabled": .bool(false)]) }
+            } else {
+                store.clear()
+            }
+            await gate.finish(.object(["ok": .bool(true)]))
+            await refresh.value
+            #expect(!store.running)
+            #expect(!store.enabled)
+            #expect(store.entry == nil)
+        }
+    }
+
     @Test @MainActor func toolbarAndMastheadUseTheSelectedHistoricalEdition() {
         let report = DailyReportModel(json: .object([
             "_id": .string("old"), "generatedAt": .number(Self.at.timeIntervalSince1970 * 1000),

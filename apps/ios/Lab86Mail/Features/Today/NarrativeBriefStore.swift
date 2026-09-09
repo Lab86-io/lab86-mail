@@ -55,10 +55,12 @@ final class NarrativeBriefStore {
     private(set) var isLoading = false
     private(set) var error: String?
     private var revision = 0
+    private var generation = 0
     private var query: Query?
 
     func clear() {
         revision += 1
+        generation += 1
         entry = nil
         sources = []
         enabled = false
@@ -84,6 +86,7 @@ final class NarrativeBriefStore {
             case .brief:
                 guard let allowed = response["enabled"]?.boolValue else { throw BackendError.invalidResponse }
                 enabled = allowed
+                if !allowed { generation += 1 }
                 running = allowed && response["running"]?.boolValue == true
                 entry = allowed ? parsed : nil
                 sources = []
@@ -102,6 +105,8 @@ final class NarrativeBriefStore {
             guard revision == requestRevision, !Task.isCancelled else { return }
             entry = nil
             sources = []
+            enabled = false
+            generation += 1
             running = false
             self.error = "Narrative context is unavailable. Reconnect and try again."
         }
@@ -109,15 +114,15 @@ final class NarrativeBriefStore {
 
     func requestRefresh(post: @Sendable () async throws -> JSONValue) async {
         guard enabled else { return }
-        let requestRevision = revision
+        let requestGeneration = generation
         do {
             let response = try await post()
-            guard revision == requestRevision, !Task.isCancelled else { return }
+            guard generation == requestGeneration, enabled, !Task.isCancelled else { return }
             guard response["ok"]?.boolValue == true else { throw BackendError.invalidResponse }
             running = true
             error = nil
         } catch {
-            guard revision == requestRevision, !Task.isCancelled else { return }
+            guard generation == requestGeneration, enabled, !Task.isCancelled else { return }
             self.error = "The narrative refresh could not be started. Try again."
         }
     }
