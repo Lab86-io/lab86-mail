@@ -120,6 +120,8 @@ enum DayRibbon {
     ) -> [Block] {
         let time = formatter ?? {
             let made = DateFormatter()
+            made.calendar = calendar
+            made.timeZone = calendar.timeZone
             made.dateFormat = "h:mm a"
             return made
         }()

@@ -37,3 +37,10 @@ this limitation is explicit rather than lowering the deployment target.
 
 The signed-in physical-device and macOS runtime/visual checks require reachable
 Apple hardware. Build/test logs and result bundles are retained as CI artifacts.
+
+The first full simulator run executed 418 tests: all 13 narrative tests passed,
+but an existing day-ribbon assertion exposed a timezone mismatch. The default
+label formatter ignored the calendar used to position events. It now shares
+that calendar/timezone, with two regressions covering alternate display zones
+and preserving an explicitly supplied formatter. Final acceptance reruns both
+native targets; the failing assertion was not removed or weakened.
