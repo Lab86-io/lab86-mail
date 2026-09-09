@@ -468,6 +468,7 @@ describe('generateIntentPlan orchestration', () => {
     expect(calls.narrative[0][1]).toMatchObject({
       purpose: 'work',
       topics: ['work:intent_1', 'area:area_apps'],
+      query: 'make sure I upload my nys taxes yes',
     });
     expect(calls.narrative[0][2]).toBeInstanceOf(AbortSignal);
     const prompt = calls.generations.find((row) => row.feature === 'albatross_plan').prompt;
@@ -500,6 +501,21 @@ describe('generateIntentPlan orchestration', () => {
     expect(attachNarrativeResearchRefs(null, refs)).toBeNull();
     expect(attachNarrativeResearchRefs({ truncated: true }, refs)).toEqual({ truncated: true });
     expect(refs).toHaveLength(2);
+  });
+
+  test('long intents reserve retrieval space for answer values without model instructions', async () => {
+    const { calls } = wire({
+      intent: {
+        rawText: 'Long project background. '.repeat(40),
+        questions: [{ id: 'review', prompt: 'Which reviewer?', answer: 'Sam handles Atlas QA.' }],
+      },
+    });
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const query = calls.narrative[0][1].query;
+    expect(query.length).toBeLessThanOrEqual(240);
+    expect(query).toContain('Sam handles Atlas QA.');
+    expect(query).not.toContain('Which reviewer?');
+    expect(query).not.toContain('The user answered');
   });
 
   test('enabled narrative research shares generation cancellation and persists discovered citations', async () => {

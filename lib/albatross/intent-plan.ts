@@ -952,6 +952,10 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     const planStartedAt = Date.now();
     const contextSignal = AbortSignal.timeout(8000);
     const areaTopic = intent.primaryAreaId || intent.areaId;
+    const narrativeAnswers = (intent.questions || [])
+      .map((question: any) => question.answer)
+      .filter(Boolean)
+      .join(' ');
     const [{ refs, contextText, areas }, nearby, workDetail, narrative] = await Promise.all([
       buildContextPack(input.userId, intent.rawText, intent.primaryAreaId || intent.areaId),
       nearbyEvidence(input, intent.rawText),
@@ -968,7 +972,9 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
           input.userId,
           {
             purpose: 'work',
-            query: `${intent.rawText} ${answersBlock(intent.questions || [])}`.slice(0, 240),
+            query: [intent.rawText.slice(0, narrativeAnswers ? 160 : 240), narrativeAnswers.slice(0, 79)]
+              .filter(Boolean)
+              .join(' '),
             topics: [`work:${input.intentId}`, ...(areaTopic ? [`area:${areaTopic}`] : [])],
           },
           contextSignal,
