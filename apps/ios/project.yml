@@ -9,6 +9,9 @@ options:
   xcodeVersion: "27.0"
 
 packages:
+  OpenAPIRuntime:
+    url: https://github.com/apple/swift-openapi-runtime
+    exactVersion: 1.12.0
   MobileAPI:
     path: Packages/MobileAPI
   SwiftSoup:
@@ -83,6 +86,9 @@ targets:
     dependencies:
       - package: MobileAPI
         product: MobileAPI
+      # Generated Client value witnesses and default arguments use runtime symbols.
+      - package: OpenAPIRuntime
+        product: OpenAPIRuntime
       - package: SwiftSoup
         product: SwiftSoup
       - package: SwiftStreamingMarkdown
@@ -150,6 +156,8 @@ targets:
     dependencies:
       - package: MobileAPI
         product: MobileAPI
+      - package: OpenAPIRuntime
+        product: OpenAPIRuntime
       - package: SwiftSoup
         product: SwiftSoup
       - package: SwiftStreamingMarkdown
@@ -201,6 +209,8 @@ targets:
       - target: Lab86MailMac
       - package: MobileAPI
         product: MobileAPI
+      - package: OpenAPIRuntime
+        product: OpenAPIRuntime
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.mactests
@@ -239,6 +249,8 @@ targets:
       - target: Lab86Mail
       - package: MobileAPI
         product: MobileAPI
+      - package: OpenAPIRuntime
+        product: OpenAPIRuntime
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.tests

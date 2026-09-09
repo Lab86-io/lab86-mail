@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AB8600010000000000000001 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AB8600020000000000000001 /* OpenAPIRuntime */; };
+		AB8600010000000000000002 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AB8600020000000000000002 /* OpenAPIRuntime */; };
+		AB8600010000000000000003 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AB8600020000000000000003 /* OpenAPIRuntime */; };
+		AB8600010000000000000004 /* OpenAPIRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AB8600020000000000000004 /* OpenAPIRuntime */; };
 		0036C0BD2630BF79B9FD51F0 /* FilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A781DEE5ED25EA9C3460526 /* FilesView.swift */; };
 		00B60BF4AA1B9601679E6CF5 /* CommandOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01F02F8775A8FD57CD4C1D /* CommandOutbox.swift */; };
 		01885143E6911AE623D51F27 /* NotificationResponseRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3149FFE7B23575158603081F /* NotificationResponseRouter.swift */; };
@@ -617,6 +621,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6716FB643C772E858021E73B /* MobileAPI in Frameworks */,
+				AB8600010000000000000001 /* OpenAPIRuntime in Frameworks */,
 				535D74F86C036BADD4EC0FD1 /* SwiftSoup in Frameworks */,
 				B49E8CC37F29A21EFAA2EB9A /* SwiftStreamingMarkdown in Frameworks */,
 				B50DF861A5C8F15F77D0E2FD /* HorizonCalendar in Frameworks */,
@@ -633,6 +638,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B01AF01D6A6005FAA0D093E /* MobileAPI in Frameworks */,
+				AB8600010000000000000002 /* OpenAPIRuntime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -641,6 +647,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				39A6A323826288E5B752A479 /* MobileAPI in Frameworks */,
+				AB8600010000000000000003 /* OpenAPIRuntime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -649,6 +656,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				FD1855358B6937A57D7816E5 /* MobileAPI in Frameworks */,
+				AB8600010000000000000004 /* OpenAPIRuntime in Frameworks */,
 				CEE1467C7C40299760C17B6D /* SwiftSoup in Frameworks */,
 				29EF8B66DEBB2F86B85F3C8F /* SwiftStreamingMarkdown in Frameworks */,
 				762C0C08CB8F5F5C066C1B70 /* Kingfisher in Frameworks */,
@@ -1266,6 +1274,7 @@
 			name = Lab86MailTests;
 			packageProductDependencies = (
 				CAEBBB6AC9A267385EC7D106 /* MobileAPI */,
+				AB8600020000000000000002 /* OpenAPIRuntime */,
 			);
 			productName = Lab86MailTests;
 			productReference = 19B25F33046F6A9004A8CE0C /* Lab86MailTests.xctest */;
@@ -1286,6 +1295,7 @@
 			name = Lab86MailMacTests;
 			packageProductDependencies = (
 				61D927059C097803A0B4D042 /* MobileAPI */,
+				AB8600020000000000000003 /* OpenAPIRuntime */,
 			);
 			productName = Lab86MailMacTests;
 			productReference = 264A8F7A9D4AA10EF7D5CF06 /* Lab86MailMacTests.xctest */;
@@ -1309,6 +1319,7 @@
 			name = Lab86Mail;
 			packageProductDependencies = (
 				B63F7127038DD8F2F7761046 /* MobileAPI */,
+				AB8600020000000000000001 /* OpenAPIRuntime */,
 				D652A814640E17407A79B961 /* SwiftSoup */,
 				7B9276521619770DDD111399 /* SwiftStreamingMarkdown */,
 				9AA84DE158CD064FAF68DBC6 /* HorizonCalendar */,
@@ -1340,6 +1351,7 @@
 			name = Lab86MailMac;
 			packageProductDependencies = (
 				0DF5A040A076C4148EB82F18 /* MobileAPI */,
+				AB8600020000000000000004 /* OpenAPIRuntime */,
 				CC0F928AA6E73B5B40D98308 /* SwiftSoup */,
 				123DC7C69416065125FA7E5B /* SwiftStreamingMarkdown */,
 				BDD0BA078D3AD09E741A9D76 /* Kingfisher */,
@@ -1412,6 +1424,7 @@
 			mainGroup = 7910A3EA2361B6EE9083AB38;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */,
 				760921D6E9D0F53917896171 /* XCRemoteSwiftPackageReference "clerk-ios" */,
 				66097A04417444C68BAF7410 /* XCRemoteSwiftPackageReference "clerk-convex-swift" */,
 				2CBAF856AC0B1EA6AD1C0825 /* XCRemoteSwiftPackageReference "convex-swift" */,
@@ -2400,6 +2413,11 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-openapi-runtime";
+			requirement = { kind = exactVersion; version = 1.12.0; };
+		};
 		2CBAF856AC0B1EA6AD1C0825 /* XCRemoteSwiftPackageReference "convex-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/get-convex/convex-swift";
@@ -2459,6 +2477,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AB8600020000000000000001 /* OpenAPIRuntime */ = {isa = XCSwiftPackageProductDependency; package = AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */; productName = OpenAPIRuntime; };
+		AB8600020000000000000002 /* OpenAPIRuntime */ = {isa = XCSwiftPackageProductDependency; package = AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */; productName = OpenAPIRuntime; };
+		AB8600020000000000000003 /* OpenAPIRuntime */ = {isa = XCSwiftPackageProductDependency; package = AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */; productName = OpenAPIRuntime; };
+		AB8600020000000000000004 /* OpenAPIRuntime */ = {isa = XCSwiftPackageProductDependency; package = AB8600030000000000000001 /* XCRemoteSwiftPackageReference "swift-openapi-runtime" */; productName = OpenAPIRuntime; };
 		0DF5A040A076C4148EB82F18 /* MobileAPI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MobileAPI;

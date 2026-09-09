@@ -10,6 +10,17 @@ function workflow(name) {
   return readFileSync(new URL(`../workflows/${name}`, import.meta.url), 'utf8');
 }
 
+test('native app and test targets link the generated client runtime explicitly', () => {
+  const project = readFileSync(new URL('../../apps/ios/project.yml', import.meta.url), 'utf8');
+  const manifest = readFileSync(new URL('../../apps/ios/Packages/MobileAPI/Package.swift', import.meta.url), 'utf8');
+  assert.match(project, /OpenAPIRuntime:\s+url: https:\/\/github.com\/apple\/swift-openapi-runtime\s+exactVersion: 1\.12\.0/);
+  assert.match(manifest, /swift-openapi-runtime",\s+exact: "1\.12\.0"/);
+  for (const name of ['Lab86Mail', 'Lab86MailMac', 'Lab86MailTests', 'Lab86MailMacTests']) {
+    const target = project.match(new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [A-Za-z].*:|(?![\\s\\S]))`, 'm'))?.[1];
+    assert.match(target || '', /package: OpenAPIRuntime\s+product: OpenAPIRuntime/);
+  }
+});
+
 test('native acceptance builds both native targets without signing or distributing', () => {
   const contents = workflow('native-acceptance.yml');
   const script = readFileSync(new URL('./native-acceptance.sh', import.meta.url), 'utf8');
