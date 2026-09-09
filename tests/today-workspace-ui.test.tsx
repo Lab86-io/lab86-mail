@@ -58,6 +58,13 @@ describe('Today working surface', () => {
       globalThis.fetch = (async () =>
         Response.json({ error: 'Context changed.' }, { status: 409 })) as typeof fetch;
       await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow('Context changed.');
+      globalThis.fetch = (async () => Response.json({})) as typeof fetch;
+      await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow(
+        'Could not update Today. Please try again.',
+      );
+      await expect(workspaceRequest({ action: 'defer', at: 1 })).rejects.toThrow(
+        'Could not update Today. Please try again.',
+      );
     } finally {
       globalThis.fetch = original;
     }

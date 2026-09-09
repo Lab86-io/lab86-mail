@@ -57,6 +57,28 @@ const cache = new Map<
   { at: number; composition: WorkspaceComposition; mode: 'generated' | 'evidence' }
 >();
 const flights = new Map<string, Promise<NarrativeWorkspace>>();
+function waitForCaller<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', cancelled);
+    const cancelled = () => {
+      cleanup();
+      reject(signal.reason || new DOMException('Cancelled', 'AbortError'));
+    };
+    signal.addEventListener('abort', cancelled, { once: true });
+    pending.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+    if (signal.aborted) cancelled();
+  });
+}
 export function clearWorkspaceCache() {
   cache.clear();
   flights.clear();
@@ -94,6 +116,7 @@ export async function loadNarrativeWorkspace(
   const works = (await Promise.all(workIds.map((id) => deps.work(userId, id).catch(() => null)))).filter(
     (w): w is WorkspaceWork => !!w,
   );
+  signal?.throwIfAborted();
   const hydrate = (composition: WorkspaceComposition, mode: 'generated' | 'evidence') =>
     hydrateWorkspace(composition, entries, works, stamp, mode);
   const cached = cache.get(key);
@@ -101,9 +124,8 @@ export async function loadNarrativeWorkspace(
   const fallback = evidenceComposition(entries);
   if (!generate || !entries.length) return hydrate(fallback, 'evidence');
   const inFlight = flights.get(key);
-  signal?.throwIfAborted();
   if (inFlight) {
-    await inFlight;
+    await waitForCaller(inFlight, signal);
     return loadNarrativeWorkspace(userId, at, false, signal, deps);
   }
   const operation = async () => {
@@ -164,15 +186,11 @@ export async function loadNarrativeWorkspace(
     if (mode === 'generated') cache.set(key, { at: Date.now(), composition, mode });
     return hydrate(composition, mode);
   };
-  const pending = operation();
+  const pending = operation().finally(() => {
+    if (flights.get(key) === pending) flights.delete(key);
+  });
   flights.set(key, pending);
-  try {
-    const result = await pending;
-    signal?.throwIfAborted();
-    return result;
-  } finally {
-    flights.delete(key);
-  }
+  return waitForCaller(pending, signal);
 }
 
 export async function saveWorkspaceFeedback(

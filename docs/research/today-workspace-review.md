@@ -19,3 +19,8 @@ CodeRabbit's late review identified six valid improvements. This follow-up:
 Regression tests cover concurrent cancellation, timezones, invalid timestamps,
 non-JSON errors, malformed responses, and category reservations. No layout redesign,
 native changes, production rollout, consent changes, or external actions.
+
+The second review additionally hardened both read/generated response validation
+against malformed successful JSON and made cancellation settle immediately for
+each waiter without evicting or cancelling the shared operation. Regression tests
+assert cancellation before releasing the simulated provider gate.

@@ -241,8 +241,8 @@ describe('Today workspace composition and trust boundary', () => {
     await entered;
     const second = loadNarrativeWorkspace('owner', now, true, undefined, deps);
     controller.abort();
-    release();
     expect((await first).name).toBe('AbortError');
+    release();
     expect((await second).mode).toBe('generated');
     expect(providerSignal?.aborted).toBe(false);
     expect(deps.generate).toHaveBeenCalledTimes(1);

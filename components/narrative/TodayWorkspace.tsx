@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefWeatherPack } from '@/lib/mail/brief-weather';
 import type { NarrativeWorkspace, WorkspaceSource, WorkspaceThread } from '@/lib/narrative/workspace';
+import { workspaceResponseSchema } from '@/lib/narrative/workspace';
 import { safeExternalUrl } from '@/lib/shared/url';
 
 const control =
@@ -35,7 +36,11 @@ export async function workspaceRequest(body: Record<string, unknown>) {
       (!response.ok && typeof result?.error === 'string' && result.error) ||
         'Could not update Today. Please try again.',
     );
-  return result;
+  if (body.action === 'generate') {
+    const parsed = workspaceResponseSchema.safeParse(result);
+    if (parsed.success) return parsed.data;
+  } else if (result.ok === true) return result;
+  throw new Error('Could not update Today. Please try again.');
 }
 export function openWorkspaceWork(workId: string, guided: boolean) {
   const state = useClientStore.getState();
@@ -53,7 +58,9 @@ export function TodayWorkspace({ at, revision }: { at: number; revision: number 
     queryFn: async ({ signal }) => {
       const response = await fetch(`/api/narrative/workspace?at=${at}`, { signal });
       if (!response.ok) throw new Error('Workspace unavailable');
-      return response.json();
+      const parsed = workspaceResponseSchema.safeParse(await response.json().catch(() => null));
+      if (!parsed.success) throw new Error('Workspace unavailable');
+      return parsed.data;
     },
     staleTime: 30_000,
     retry: false,
