@@ -7,6 +7,7 @@ const modules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/narrative.ts': () => import('../convex/narrative'),
   '../convex/operations.ts': () => import('../convex/operations'),
+  '../convex/albatrossIntents.ts': () => import('../convex/albatrossIntents'),
 };
 const f = (api as any).narrative;
 const secret = 'narrative-runtime-secret',
@@ -42,6 +43,48 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('Work creation, plan generation, and user answers enqueue owned narrative changes with no completion inflation', async () => {
+    const t = harness();
+    await enable(t, ['work']);
+    const id = await t.mutation(api.albatrossIntents.createIntent, {
+      ...args,
+      rawText: 'Prepare Atlas launch',
+      source: 'text',
+    });
+    const queued = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(
+      queued.some((job) => job.name === 'narrative:captureSource' && job.args[0].id === String(id)),
+    ).toBe(true);
+    await t.mutation(internal.narrative.captureSource, { userId, table: 'albatrossIntents', id: String(id) });
+    expect((await t.query(f.search, { ...args, topic: `work:${id}` })).entries).toHaveLength(1);
+    await t.mutation(api.albatrossIntents.savePlan, {
+      ...args,
+      intentId: id as any,
+      questions: [{ id: 'day', prompt: 'Which day?' }],
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+    });
+    await t.mutation(api.albatrossIntents.answerQuestions, {
+      ...args,
+      intentId: id as any,
+      answers: [{ id: 'day', answer: 'Friday' }],
+    });
+    await t.mutation(internal.narrative.captureSource, { userId, table: 'albatrossIntents', id: String(id) });
+    const found = (await t.query(f.search, { ...args, topic: `work:${id}` })).entries;
+    expect(found.some((entry: any) => entry.text.includes('Your answer: Friday'))).toBe(true);
+    expect(found.some((entry: any) => entry.text.includes('Generated steps are proposals'))).toBe(true);
+    const decision = found.find((entry: any) => entry.key.endsWith(':answer:day'));
+    await t.mutation(api.albatrossIntents.answerQuestions, {
+      ...args,
+      intentId: id as any,
+      answers: [{ id: 'day', answer: '' }],
+    });
+    expect(await t.query(f.read, { ...args, id: decision._id })).toBeNull();
+    const prefs = await t.run(async (ctx) => (await ctx.db.query('narrativeSettings').collect())[0]);
+    expect(prefs.refreshToken).toBeTruthy();
+  });
   test('scheduled refresh batches rotate fairly through more than 100 users', async () => {
     const t = harness();
     await t.run(async (ctx) => {

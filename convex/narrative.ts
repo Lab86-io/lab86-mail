@@ -72,9 +72,9 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
         ['rejected', 'superseded'].includes(original.status)
       )
         return false;
-      if (row.current && row.sourceTable === 'aiOperations') {
+      if (row.current && ['aiOperations', 'albatrossIntents'].includes(row.sourceTable)) {
         const baseline = row.corrected ? row.sourceBaseVersion : row.sourceVersion;
-        const receipt = observationsForRow('aiOperations', original)[0];
+        const receipt = observationsForRow(row.sourceTable, original).find((item) => item.key === row.key);
         if (!receipt || (baseline && receipt.sourceVersion !== baseline)) return false;
       }
     }
@@ -728,6 +728,8 @@ export const record = mutation({
     };
     if (existing) await ctx.db.patch(existing._id, doc);
     else await ctx.db.insert('narrativeEntries', doc);
+    await ctx.db.patch(prefs._id, { revision: prefs.revision + 1 });
+    await queueRefresh(ctx, args.userId);
     return {
       ok: true,
       trust: 'inferred',

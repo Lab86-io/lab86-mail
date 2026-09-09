@@ -32,6 +32,29 @@ function entry(overrides: Partial<NarrativeEntry> = {}): NarrativeEntry {
   };
 }
 describe('narrative memory contracts', () => {
+  test('saved Albatross plans are proposals, while planning answers are explicit user reports', () => {
+    const rows = observationsForRow('albatrossIntents', {
+      _id: 'work',
+      rawText: 'Prepare the launch',
+      title: 'Launch',
+      workState: 'active',
+      areaId: 'area',
+      latestPlanId: 'plan-1',
+      updatedAt: 9,
+      questions: [
+        { id: 'q1', prompt: 'Which day?', answer: 'Friday', answeredAt: 8 },
+        { id: 'q2', prompt: 'Who owns it?' },
+      ],
+    });
+    expect(rows).toHaveLength(3);
+    const decision = rows.find((row) => row.key.endsWith(':answer:q1'))!;
+    expect(decision).toMatchObject({ trust: 'reported', occurredAt: 8, topics: ['work:work', 'area:area'] });
+    expect(decision.text).toContain('Your answer: Friday');
+    const plan = rows.find((row) => row.key.endsWith(':plan'))!;
+    expect(plan.trust).toBe('observed');
+    expect(plan.text).toContain('not proof that anything was done');
+    expect(plan.text).toContain('plan-1');
+  });
   test('operation receipts track applied and undone state without inflating completion', () => {
     const row = {
       _id: 'op',
