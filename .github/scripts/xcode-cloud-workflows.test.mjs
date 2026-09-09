@@ -12,11 +12,19 @@ function workflow(name) {
 
 test('native app and test targets link the generated client runtime explicitly', () => {
   const project = readFileSync(new URL('../../apps/ios/project.yml', import.meta.url), 'utf8');
-  const manifest = readFileSync(new URL('../../apps/ios/Packages/MobileAPI/Package.swift', import.meta.url), 'utf8');
-  assert.match(project, /OpenAPIRuntime:\s+url: https:\/\/github.com\/apple\/swift-openapi-runtime\s+exactVersion: 1\.12\.0/);
+  const manifest = readFileSync(
+    new URL('../../apps/ios/Packages/MobileAPI/Package.swift', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    project,
+    /OpenAPIRuntime:\s+url: https:\/\/github.com\/apple\/swift-openapi-runtime\s+exactVersion: 1\.12\.0/,
+  );
   assert.match(manifest, /swift-openapi-runtime",\s+exact: "1\.12\.0"/);
   for (const name of ['Lab86Mail', 'Lab86MailMac', 'Lab86MailTests', 'Lab86MailMacTests']) {
-    const target = project.match(new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [A-Za-z].*:|(?![\\s\\S]))`, 'm'))?.[1];
+    const target = project.match(
+      new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [A-Za-z].*:|(?![\\s\\S]))`, 'm'),
+    )?.[1];
     assert.match(target || '', /package: OpenAPIRuntime\s+product: OpenAPIRuntime/);
   }
 });
