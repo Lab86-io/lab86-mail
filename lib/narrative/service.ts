@@ -430,8 +430,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       ];
       if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
         throw new Error('Narrative context budget reached');
-      let written: any;
-      let writtenCodes = new Set<string>();
+      let parsed: ReturnType<typeof parseNarrativeGeneration> | undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted();
         const attemptEvidence = attempt === 0 ? codedEvidence : codedEvidence.slice(0, 6);
@@ -445,7 +444,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         const writeMs = attempt === 0 ? deps.limits.writeMs : Math.min(deps.limits.writeMs, 60_000);
         const writeSignal = AbortSignal.any([signal, AbortSignal.timeout(writeMs)]);
         try {
-          written = await withDeadline(
+          const written = await withDeadline(
             deps.generate({
               userId,
               feature: 'narrative_write',
@@ -470,7 +469,12 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                     ],
               toolChoice: 'none',
               stopWhen: stepCountIs(1),
-              output: Output.object({ schema: attemptSchema }),
+              // Native GLM endpoints advertise JSON mode, while only some
+              // hosted endpoints enforce JSON Schema. Keep routing compatible;
+              // the host applies the identical schema before publication below.
+              output: /^(?:z-ai\/)?glm-5\.3-flash(?::.*)?$/i.test(model || '')
+                ? Output.json()
+                : Output.object({ schema: attemptSchema }),
               // GLM reasoning is mandatory. Shrinking the retry's total token
               // allowance can consume it before any JSON prose is emitted.
               maxOutputTokens: 4_000,
@@ -484,14 +488,14 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
           inputTokens += written.totalUsage?.inputTokens || 0;
           outputTokens += written.totalUsage?.outputTokens || 0;
           if (!written.output) throw new Error('Narrative writer returned no structured account');
-          writtenCodes = new Set(attemptCodes);
+          parsed = writerSchema.parse(parseNarrativeGeneration(written.output, new Set(attemptCodes)));
           break;
         } catch (failure) {
           signal.throwIfAborted();
           if (attempt === 1) throw failure;
         }
       }
-      const parsed = parseNarrativeGeneration(written.output, writtenCodes);
+      if (!parsed) throw new Error('Narrative writer returned no validated account');
       stage = 'publication';
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,
