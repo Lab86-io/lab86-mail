@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC0909000000000000000011 /* NarrativeBriefStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000001 /* NarrativeBriefStore.swift */; };
+		AC0909000000000000000012 /* NarrativeBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000002 /* NarrativeBriefView.swift */; };
+		AC0909000000000000000013 /* NarrativeBriefTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000003 /* NarrativeBriefTests.swift */; };
+		AC0909000000000000000021 /* NarrativeBriefStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000001 /* NarrativeBriefStore.swift */; };
+		AC0909000000000000000022 /* NarrativeBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000002 /* NarrativeBriefView.swift */; };
+		AC0909000000000000000023 /* NarrativeBriefTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0909000000000000000003 /* NarrativeBriefTests.swift */; };
 		0036C0BD2630BF79B9FD51F0 /* FilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A781DEE5ED25EA9C3460526 /* FilesView.swift */; };
 		00B60BF4AA1B9601679E6CF5 /* CommandOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01F02F8775A8FD57CD4C1D /* CommandOutbox.swift */; };
 		01885143E6911AE623D51F27 /* NotificationResponseRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3149FFE7B23575158603081F /* NotificationResponseRouter.swift */; };
@@ -365,6 +371,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AC0909000000000000000001 /* NarrativeBriefStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeBriefStore.swift; sourceTree = "<group>"; };
+		AC0909000000000000000002 /* NarrativeBriefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeBriefView.swift; sourceTree = "<group>"; };
+		AC0909000000000000000003 /* NarrativeBriefTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeBriefTests.swift; sourceTree = "<group>"; };
 		0021CF95CA9BC1A46B98BEEF /* BriefToolNodeViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefToolNodeViews.swift; sourceTree = "<group>"; };
 		00E76D2B5AE1D6A392957CBA /* AreaManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AreaManagementView.swift; sourceTree = "<group>"; };
 		014E57E3463668EEB5ED8E03 /* Lab86MailUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = Lab86MailUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -638,6 +647,7 @@
 				C782513E22012FEDE41217A2 /* OneTimeCodeVaultTests.swift */,
 				7C16DCD717811987FBCB2F62 /* OutcomeContractTests.swift */,
 				21D1D6D2A36177C626DC55CC /* ShellStateTests.swift */,
+				AC0909000000000000000003 /* NarrativeBriefTests.swift */,
 				AE838E52FB6B48AEA5A28A41 /* SidebarScrubTests.swift */,
 				C85B53019828E559BE7447AE /* TasksProjectsTests.swift */,
 				5D6FF8570807BB483B114261 /* TodayCompositionTests.swift */,
@@ -957,6 +967,8 @@
 			children = (
 				9C3FAE32041306C792DA04A8 /* DailyBriefMasthead.swift */,
 				055A2AE8B0930FD7339A41E9 /* DailyBriefView.swift */,
+				AC0909000000000000000001 /* NarrativeBriefStore.swift */,
+				AC0909000000000000000002 /* NarrativeBriefView.swift */,
 				5F7AB2E4E372DBC62CA267F3 /* DayRibbonView.swift */,
 				388DEB7449351ED54A02E71A /* TodayComposition.swift */,
 				CED2C23484D5DAF611D74F2E /* TodayView.swift */,
@@ -1416,6 +1428,7 @@
 				F1BA4A37DA6680E037A1A519 /* OneTimeCodeVaultTests.swift in Sources */,
 				651DEC804824D0D4471CF43F /* OutcomeContractTests.swift in Sources */,
 				550C3AFC8DFB87A523336B26 /* ShellStateTests.swift in Sources */,
+				AC0909000000000000000013 /* NarrativeBriefTests.swift in Sources */,
 				61573643E6C129BC39CA4117 /* SidebarScrubTests.swift in Sources */,
 				904ED7BFE02ADD0C91BE9612 /* TasksProjectsTests.swift in Sources */,
 				1C45E57512502B77937F3E28 /* TodayCompositionTests.swift in Sources */,
@@ -1471,6 +1484,8 @@
 				965A03684DA9420D7FD8DB03 /* ConnectionsSettingsView.swift in Sources */,
 				26F9C7C6D8EAF32F2FCC1D7A /* DailyBriefMasthead.swift in Sources */,
 				2FAC5C5B1D2587050C85E91F /* DailyBriefView.swift in Sources */,
+				AC0909000000000000000011 /* NarrativeBriefStore.swift in Sources */,
+				AC0909000000000000000012 /* NarrativeBriefView.swift in Sources */,
 				DBA467BF60269D7470CE3D4B /* DayRibbonView.swift in Sources */,
 				BC56FF70CDDE509CE7FDDBE1 /* DocumentEditorView.swift in Sources */,
 				2C8D176E6CAFE139FC530388 /* DocumentModels.swift in Sources */,
@@ -1565,6 +1580,7 @@
 				EF5E16B656C432672CC57053 /* OneTimeCodeVaultTests.swift in Sources */,
 				3C8D9A3F23E764412063ED1A /* OutcomeContractTests.swift in Sources */,
 				B863EA32E300535C1F437D87 /* ShellStateTests.swift in Sources */,
+				AC0909000000000000000023 /* NarrativeBriefTests.swift in Sources */,
 				607CC4B31D20CAB4BAC70878 /* SidebarScrubTests.swift in Sources */,
 				78C9C73963BEBE70D44205D3 /* TasksProjectsTests.swift in Sources */,
 				4EF46A342124E7A1283E83ED /* TodayCompositionTests.swift in Sources */,
@@ -1618,6 +1634,8 @@
 				459CCA82402FD75FE6A0C78D /* ConnectionsSettingsView.swift in Sources */,
 				3E0D890920CDDA928BB6E0B4 /* DailyBriefMasthead.swift in Sources */,
 				F5B5E44E83A5D033B74719F9 /* DailyBriefView.swift in Sources */,
+				AC0909000000000000000021 /* NarrativeBriefStore.swift in Sources */,
+				AC0909000000000000000022 /* NarrativeBriefView.swift in Sources */,
 				308B2D5582C931BC16F27782 /* DayRibbonView.swift in Sources */,
 				997118ED0F7A2F6A3114655D /* DocumentEditorView.swift in Sources */,
 				5A5FD91F8F20DAB861D7E1ED /* DocumentModels.swift in Sources */,
