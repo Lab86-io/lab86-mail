@@ -56,6 +56,7 @@ final class NarrativeBriefStore {
     private(set) var error: String?
     private var revision = 0
     private var generation = 0
+    private var refreshRevision = 0
     private var query: Query?
 
     func clear() {
@@ -75,6 +76,7 @@ final class NarrativeBriefStore {
         query = requested
         revision += 1
         let requestRevision = revision
+        let requestRefreshRevision = refreshRevision
         isLoading = true
         defer { if revision == requestRevision { isLoading = false } }
         do {
@@ -87,7 +89,10 @@ final class NarrativeBriefStore {
                 guard let allowed = response["enabled"]?.boolValue else { throw BackendError.invalidResponse }
                 enabled = allowed
                 if !allowed { generation += 1 }
-                running = allowed && response["running"]?.boolValue == true
+                if !allowed { running = false }
+                else if refreshRevision == requestRefreshRevision {
+                    running = response["running"]?.boolValue == true
+                }
                 entry = allowed ? parsed : nil
                 sources = []
             case .sources(let id):
@@ -100,7 +105,9 @@ final class NarrativeBriefStore {
                 sources = parsed == nil ? [] : decoded
                 running = false
             }
-            error = nil
+            // A poll issued before the POST acknowledgement cannot clear its
+            // running/error feedback. Source revocation still wins above.
+            if refreshRevision == requestRefreshRevision { error = nil }
         } catch {
             guard revision == requestRevision, !Task.isCancelled else { return }
             entry = nil
@@ -119,10 +126,12 @@ final class NarrativeBriefStore {
             let response = try await post()
             guard generation == requestGeneration, enabled, !Task.isCancelled else { return }
             guard response["ok"]?.boolValue == true else { throw BackendError.invalidResponse }
+            refreshRevision += 1
             running = true
             error = nil
         } catch {
             guard generation == requestGeneration, enabled, !Task.isCancelled else { return }
+            refreshRevision += 1
             self.error = "The narrative refresh could not be started. Try again."
         }
     }

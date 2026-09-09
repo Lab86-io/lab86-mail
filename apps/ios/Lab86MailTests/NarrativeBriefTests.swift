@@ -131,6 +131,24 @@ struct NarrativeBriefTests {
         }
     }
 
+    @Test @MainActor func anOlderPollCannotClearNewerRefreshFeedback() async {
+        for accepted in [true, false] {
+            let store = NarrativeBriefStore()
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            let gate = NarrativeReadGate()
+            let poll = Task { await store.load(.brief(Self.at)) { _ in await gate.wait() } }
+            await gate.started()
+            await store.requestRefresh { .object(["ok": .bool(accepted)]) }
+            await gate.finish(Self.brief())
+            await poll.value
+            #expect(store.running == accepted)
+            #expect((store.error != nil) == !accepted)
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            #expect(!store.running)
+            #expect(store.error == nil)
+        }
+    }
+
     @Test @MainActor func toolbarAndMastheadUseTheSelectedHistoricalEdition() {
         let report = DailyReportModel(json: .object([
             "_id": .string("old"), "generatedAt": .number(Self.at.timeIntervalSince1970 * 1000),
