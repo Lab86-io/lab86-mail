@@ -6,11 +6,20 @@ import { gatherBriefWeather } from '../lib/mail/brief-weather';
 import { loadNarrativeWorkspace } from '../lib/narrative/workspace-service';
 import { kvList } from '../lib/store/kv';
 
-assert.equal(process.env.RAILWAY_ENVIRONMENT_ID, 'be41491e-6d1b-45f7-b85a-299540ac125e');
-assert.equal(process.env.NEXT_PUBLIC_CONVEX_URL, 'https://precise-skunk-847.convex.cloud');
-const userId = 'user_3F2uuD9CIn4d6orJmNXmoVO3LLo';
+function required(name: string) {
+  const value = process.env[name];
+  assert(value, `Set ${name} explicitly before running this account-scoped staging smoke.`);
+  return value;
+}
+const expectedEnvironment = required('SMOKE_RAILWAY_ENVIRONMENT_ID');
+const expectedConvex = required('SMOKE_CONVEX_URL');
+const userId = required('SMOKE_USER_ID');
+const expectedEmail = required('SMOKE_USER_EMAIL');
+assert.notEqual(process.env.RAILWAY_ENVIRONMENT_NAME, 'production', 'This smoke is staging-only');
+assert.equal(process.env.RAILWAY_ENVIRONMENT_ID, expectedEnvironment);
+assert.equal(process.env.NEXT_PUBLIC_CONVEX_URL, expectedConvex);
 const user = await convexQuery<any>(api.users.getByClerkId, { userId });
-assert.equal(user?.email, 'jakob@lab86.io');
+assert.equal(user?.email, expectedEmail);
 const before = await convexQuery<any>(api.narrative.status, { userId });
 assert.equal(before.settings.enabled, true, 'Existing opt-in required');
 const consent = (state: any) =>

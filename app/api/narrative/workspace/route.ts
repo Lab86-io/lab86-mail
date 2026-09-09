@@ -57,6 +57,9 @@ export function createWorkspaceRoutes(deps = defaults) {
         return NextResponse.json({ error: 'Invalid workspace request.' }, { status: 400 });
       if (error instanceof WorkspaceError)
         return NextResponse.json({ error: error.message }, { status: error.status });
+      console.error('[narrative-workspace] request failed', {
+        name: error instanceof Error ? error.name : 'UnknownError',
+      });
       return NextResponse.json(
         { error: 'Today’s workspace is unavailable. Your brief and work are unchanged.' },
         { status: 503 },

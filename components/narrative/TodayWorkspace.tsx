@@ -29,8 +29,12 @@ export async function workspaceRequest(body: Record<string, unknown>) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Could not update Today. Please try again.');
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result || typeof result !== 'object' || Array.isArray(result))
+    throw new Error(
+      (!response.ok && typeof result?.error === 'string' && result.error) ||
+        'Could not update Today. Please try again.',
+    );
   return result;
 }
 export function openWorkspaceWork(workId: string, guided: boolean) {
@@ -135,11 +139,18 @@ const sourceLabels = {
   file: 'File',
   context: 'Context',
 };
+export function workspaceSourceDate(at: number, timeZone?: string) {
+  if (!Number.isFinite(at) || !Number.isFinite(new Date(at).getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).format(new Date(at));
+}
 function SourceCard({ source }: { source: WorkspaceSource }) {
   const Icon = sourceIcons[source.kind];
-  const date = Number.isFinite(source.occurredAt)
-    ? new Date(source.occurredAt).toISOString().slice(0, 10)
-    : null;
+  const date = workspaceSourceDate(source.occurredAt);
   const original = safeExternalUrl(source.originalUrl || '');
   return (
     <div className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
