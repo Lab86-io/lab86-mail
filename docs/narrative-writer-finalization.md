@@ -19,6 +19,17 @@ Writer input was 1,383 tokens. Live synthetic acceptance on the preceding
 deployment passed monthly provenance, a semantic paraphrase, cross-service
 connection, model-written brief/month, and correction revocation.
 
+A second real-account run also completed: ready in 119.6 seconds, 771 characters,
+four citations, despite the research phase timing out. The bounded writer used
+already-validated evidence and completed in 84.9 seconds.
+
+CodeRabbit's native PR review also found shared backend issues. This follow-up
+caches source-consent reads only within a single bucket transaction, keeps
+threads eligible alongside age-matched calendar chapters, and schedules one
+cleanup when both timezone and consent change. Runtime tests cover all 140
+candidates with mail, calendar and MCP originals, permission revocation in the
+next transaction, pending ordering, and cleanup deduplication.
+
 Focused tests verify bounded packets, reduced retry context, and restoration of
 exact cited source IDs. Publication still revalidates ownership, consent, source
 versions and the run revision. This is a bounded representative narrative, not

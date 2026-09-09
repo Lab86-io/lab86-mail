@@ -43,6 +43,131 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('shared account consent fits all candidate originals in the read budget and is rechecked next transaction', async () => {
+    for (const kind of ['mail', 'calendar', 'mcp']) {
+      const t = harness();
+      const source = `${kind}:fixture`;
+      await enable(t, ['chat', source]);
+      const id = await capture(t);
+      const seeded = await t.run(async (ctx) => {
+        const account =
+          kind === 'mcp'
+            ? await ctx.db.insert('mcpConnections', {
+                userId,
+                connectionId: 'fixture',
+                server: 'granola',
+                serverUrl: 'https://example.test/mcp',
+                authKind: 'token',
+                status: 'connected',
+                scopes: [],
+                includeInBrief: true,
+                includeInSearch: true,
+                createdAt: 1,
+                updatedAt: 1,
+              })
+            : await ctx.db.insert('connectedAccounts', {
+                userId,
+                accountId: 'fixture',
+                email: 'fixture@example.test',
+                provider: 'google',
+                status: 'connected',
+                scopes: [],
+                grantId: 'fixture',
+                createdAt: 1,
+                updatedAt: 1,
+              });
+        const { _id, _creationTime, ...template } = (await ctx.db.get(id))!;
+        const original = await ctx.db.insert('userDocs', {
+          userId,
+          kind: 'chatSession',
+          key: 'fixture',
+          doc: {},
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const ids = [];
+        for (let i = 0; i < 140; i++)
+          ids.push(
+            await ctx.db.insert('narrativeEntries', {
+              ...template,
+              key: `budget:${i}`,
+              source,
+              sourceTable: 'userDocs',
+              sourceId: String(original),
+              occurredAt: i + 1,
+            }),
+          );
+        const chapter = await ctx.db.insert('narrativeEntries', {
+          ...template,
+          key: 'month:fixture',
+          level: 'month',
+          source: 'derived',
+          sourceIds: ids.slice(0, 80),
+          occurredAt: 80,
+        });
+        const prefs = await ctx.db.query('narrativeSettings').first();
+        return { account, ids, chapter, revision: prefs!.revision };
+      });
+      await t.mutation(internal.narrative.compileBucket, {
+        userId,
+        revision: seeded.revision,
+        key: 'month:fixture',
+        level: 'month',
+        period: 'fixture',
+        ids: seeded.ids.slice(80),
+        truncated: false,
+        compacted: true,
+      });
+      const chapter = await t.run((ctx) => ctx.db.get(seeded.chapter));
+      expect(chapter!.sourceIds).toHaveLength(60);
+      expect(chapter!.sourceIds).toContain(seeded.ids[139]);
+      expect(chapter!.evidenceTo).toBe(140);
+      await t.run((ctx) => ctx.db.patch(seeded.account, { status: 'disconnected' }));
+      expect(await t.query(f.read, { ...args, id: seeded.chapter })).toBeNull();
+    }
+  });
+
+  test('pending prioritizes older threads alongside age-matched calendar chapters', async () => {
+    const t = harness();
+    await enable(t);
+    const id = await capture(t);
+    await t.run((ctx) => ctx.db.patch(id, { occurredAt: Date.now() - 86400000 }));
+    await t.mutation(f.compile, args);
+    const revision = (await t.query(f.read, { ...args, id })).revision;
+    await t.mutation(internal.narrative.compileBucket, {
+      userId,
+      revision,
+      key: 'thread:work:launch',
+      level: 'thread',
+      period: 'work:launch',
+      ids: [id],
+      truncated: false,
+    });
+    const entries = (await t.query(f.pending, args)).entries;
+    const thread = entries.find((row: any) => row.level === 'thread');
+    const day = entries.find((row: any) => row.level === 'day');
+    expect(thread).toBeDefined();
+    expect(day).toBeDefined();
+    await t.run((ctx) => ctx.db.patch(day._id, { occurredAt: Date.now() }));
+    expect((await t.query(f.pending, args)).entries[0]._id).toBe(thread._id);
+  });
+
+  test('combined timezone and consent changes schedule cleanup once', async () => {
+    const t = harness();
+    await enable(t, ['chat']);
+    const before = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    await t.mutation(f.configure, {
+      ...args,
+      enabled: true,
+      sources: ['chat', 'work'],
+      timezone: 'Asia/Tokyo',
+      model: 'current',
+    });
+    const after = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    const added = after.filter((row) => !before.some((old) => old._id === row._id));
+    expect(added.filter((row) => row.name === 'narrative:cleanup')).toHaveLength(1);
+  });
+
   test('large original records share a byte budget across new and prior compaction evidence', async () => {
     const t = harness();
     await enable(t, ['chat']);
