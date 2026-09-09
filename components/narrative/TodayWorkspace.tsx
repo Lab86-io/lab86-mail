@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useClientStore } from '@/lib/client-state';
 import type { BriefWeatherPack } from '@/lib/mail/brief-weather';
 import type { NarrativeWorkspace, WorkspaceSource, WorkspaceThread } from '@/lib/narrative/workspace';
+import { workspaceResponseSchema } from '@/lib/narrative/workspace';
 import { safeExternalUrl } from '@/lib/shared/url';
 
 const control =
@@ -29,9 +30,17 @@ export async function workspaceRequest(body: Record<string, unknown>) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Could not update Today. Please try again.');
-  return result;
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result || typeof result !== 'object' || Array.isArray(result))
+    throw new Error(
+      (!response.ok && typeof result?.error === 'string' && result.error) ||
+        'Could not update Today. Please try again.',
+    );
+  if (body.action === 'generate') {
+    const parsed = workspaceResponseSchema.safeParse(result);
+    if (parsed.success) return parsed.data;
+  } else if (result.ok === true) return result;
+  throw new Error('Could not update Today. Please try again.');
 }
 export function openWorkspaceWork(workId: string, guided: boolean) {
   const state = useClientStore.getState();
@@ -49,7 +58,9 @@ export function TodayWorkspace({ at, revision }: { at: number; revision: number 
     queryFn: async ({ signal }) => {
       const response = await fetch(`/api/narrative/workspace?at=${at}`, { signal });
       if (!response.ok) throw new Error('Workspace unavailable');
-      return response.json();
+      const parsed = workspaceResponseSchema.safeParse(await response.json().catch(() => null));
+      if (!parsed.success) throw new Error('Workspace unavailable');
+      return parsed.data;
     },
     staleTime: 30_000,
     retry: false,
@@ -135,11 +146,18 @@ const sourceLabels = {
   file: 'File',
   context: 'Context',
 };
+export function workspaceSourceDate(at: number, timeZone?: string) {
+  if (!Number.isFinite(at) || !Number.isFinite(new Date(at).getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).format(new Date(at));
+}
 function SourceCard({ source }: { source: WorkspaceSource }) {
   const Icon = sourceIcons[source.kind];
-  const date = Number.isFinite(source.occurredAt)
-    ? new Date(source.occurredAt).toISOString().slice(0, 10)
-    : null;
+  const date = workspaceSourceDate(source.occurredAt);
   const original = safeExternalUrl(source.originalUrl || '');
   return (
     <div className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3">

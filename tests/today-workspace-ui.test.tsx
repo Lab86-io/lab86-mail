@@ -7,6 +7,8 @@ import {
   TodayWeather,
   TodayWorkspace,
   WorkspaceThreadCard,
+  workspaceRequest,
+  workspaceSourceDate,
 } from '../components/narrative/TodayWorkspace';
 import { persistedClientState, useClientStore } from '../lib/client-state';
 import type { WorkspaceThread } from '../lib/narrative/workspace';
@@ -37,6 +39,36 @@ function render(node: ReactNode, key?: unknown[], data?: unknown) {
   return html;
 }
 describe('Today working surface', () => {
+  test('source dates respect the reader’s timezone and reject invalid instants', () => {
+    const evening = Date.UTC(2026, 8, 9, 1);
+    expect(workspaceSourceDate(evening, 'America/Los_Angeles')).toBe('2026-09-08');
+    expect(workspaceSourceDate(evening, 'UTC')).toBe('2026-09-09');
+    expect(workspaceSourceDate(Infinity)).toBeNull();
+    expect(workspaceSourceDate(Number.MAX_VALUE)).toBeNull();
+  });
+  test('non-JSON failures and malformed success payloads show a safe retry message', async () => {
+    const original = globalThis.fetch;
+    try {
+      for (const status of [502, 200]) {
+        globalThis.fetch = (async () => new Response('<html>proxy error</html>', { status })) as typeof fetch;
+        await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow(
+          'Could not update Today. Please try again.',
+        );
+      }
+      globalThis.fetch = (async () =>
+        Response.json({ error: 'Context changed.' }, { status: 409 })) as typeof fetch;
+      await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow('Context changed.');
+      globalThis.fetch = (async () => Response.json({})) as typeof fetch;
+      await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow(
+        'Could not update Today. Please try again.',
+      );
+      await expect(workspaceRequest({ action: 'defer', at: 1 })).rejects.toThrow(
+        'Could not update Today. Please try again.',
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
   test('source cards show dates and trust, work is distinct from suggestions', () => {
     const html = render(<WorkspaceThreadCard thread={thread} at={100} stamp="s" />);
     expect(html).toContain('Open guided work');

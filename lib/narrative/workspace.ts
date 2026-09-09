@@ -54,6 +54,49 @@ export interface NarrativeWorkspace {
   mode: 'generated' | 'evidence' | 'empty';
   threads: WorkspaceThread[];
 }
+// Validate successful HTTP payloads too: a proxy's 200/{} is not a workspace.
+export const workspaceResponseSchema = z.object({
+  enabled: z.boolean(),
+  stamp: z.string(),
+  mode: z.enum(['generated', 'evidence', 'empty']),
+  threads: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string(),
+        summary: z.string(),
+        nextStep: z.string(),
+        sources: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              title: z.string(),
+              excerpt: z.string(),
+              kind: z.enum(['meeting', 'development', 'mail', 'work', 'intention', 'file', 'context']),
+              occurredAt: z.number().finite(),
+              trust: z.enum(['observed', 'reported', 'inferred']),
+              href: z.string().startsWith('/narrative?id='),
+              originalUrl: z
+                .string()
+                .refine((value) => !!safeExternalUrl(value))
+                .optional(),
+            }),
+          )
+          .min(1)
+          .max(4),
+        work: z
+          .object({
+            id: z.string().min(1),
+            title: z.string(),
+            state: z.string(),
+            guided: z.boolean(),
+            nextStep: z.string().optional(),
+          })
+          .optional(),
+      }),
+    )
+    .max(3),
+});
 export function workspaceSource(entry: NarrativeEntry): WorkspaceSource {
   const hint = `${entry.source} ${entry.title} ${entry.url || ''}`.toLowerCase();
   const kind =

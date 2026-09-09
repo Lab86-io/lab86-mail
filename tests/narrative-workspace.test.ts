@@ -111,7 +111,15 @@ describe('Today workspace composition and trust boundary', () => {
       source(`old-${i}`, { occurredAt: now - 30 * 86_400_000 }),
     );
     const candidates = workspaceCandidates(
-      [...rows, source('meeting', { source: 'mcp:granola' }), source('pr', { source: 'mcp:github' })],
+      [
+        ...rows,
+        source('meeting', {
+          source: 'mcp:granola',
+          title: 'Design discussion',
+          occurredAt: now - 5 * 86_400_000,
+        }),
+        source('pr', { source: 'mcp:github', title: 'Integration patch', occurredAt: now - 5 * 86_400_000 }),
+      ],
       'Atlas launch',
       now,
     );
@@ -210,5 +218,33 @@ describe('Today workspace composition and trust boundary', () => {
     controller.abort();
     await expect(loadNarrativeWorkspace('owner', now, true, controller.signal, deps)).rejects.toThrow();
     expect(deps.generate).not.toHaveBeenCalled();
+  });
+  test('one caller cancelling cannot cancel another caller’s shared generation', async () => {
+    const deps = harness();
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let providerSignal: AbortSignal | undefined;
+    deps.generate.mockImplementation(async (options: any) => {
+      providerSignal = options.abortSignal;
+      started();
+      await gate;
+      return { text: JSON.stringify(composition) };
+    });
+    const controller = new AbortController();
+    const first = loadNarrativeWorkspace('owner', now, true, controller.signal, deps).catch((error) => error);
+    await entered;
+    const second = loadNarrativeWorkspace('owner', now, true, undefined, deps);
+    controller.abort();
+    expect((await first).name).toBe('AbortError');
+    release();
+    expect((await second).mode).toBe('generated');
+    expect(providerSignal?.aborted).toBe(false);
+    expect(deps.generate).toHaveBeenCalledTimes(1);
   });
 });
