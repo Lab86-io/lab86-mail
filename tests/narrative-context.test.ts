@@ -291,5 +291,6 @@ describe('shared task-specific narrative context', () => {
       ),
     ).toBe(0);
     expect(narrativeTerms('The Atlas review with Atlas')).toEqual(['atlas']);
+    expect(narrativeTerms('Why was the shipment delayed?')).toEqual(['shipment', 'delayed']);
   });
 });
