@@ -23,6 +23,11 @@ export function fingerprint(value: string) {
   return (hash >>> 0).toString(36);
 }
 
+function calendarInstant(value: unknown) {
+  const date = new Date(Number(value));
+  return Number.isFinite(date.getTime()) ? date.toISOString() : 'an unrecorded time';
+}
+
 /** Only source assertions are observed here. No model is allowed to upgrade activity to completion. */
 export function observationsForRow(table: string, row: any): Observation[] {
   const sourceId = String(row._id);
@@ -133,6 +138,7 @@ export function observationsForRow(table: string, row: any): Observation[] {
   }
   if (table === 'albatrossIntents') {
     const state = row.workState || row.status;
+    const questionIds = new Set<string>();
     return [
       make({
         source: 'work',
@@ -144,6 +150,12 @@ export function observationsForRow(table: string, row: any): Observation[] {
       }),
       ...(row.questions || [])
         .filter((question: any) => question.id && question.answer)
+        .filter((question: any) => {
+          const id = String(question.id);
+          if (questionIds.has(id)) return false;
+          questionIds.add(id);
+          return true;
+        })
         .slice(0, 24)
         .map((question: any) =>
           make(
@@ -225,7 +237,7 @@ export function observationsForRow(table: string, row: any): Observation[] {
       make({
         source: `calendar:${row.accountId}`,
         title: row.title,
-        text: `Calendar record: ${row.title}. Starts ${new Date(row.startAt).toISOString()}; ends ${new Date(row.endAt).toISOString()}. Status: ${row.status || 'scheduled'}. ${row.description || ''} This is a calendar record, not proof of attendance.`,
+        text: `Calendar record: ${row.title}. Starts ${calendarInstant(row.startAt)}; ends ${calendarInstant(row.endAt)}. Status: ${row.status || 'scheduled'}. ${row.description || ''} This is a calendar record, not proof of attendance.`,
         topics: [
           `event:${row.accountId}:${row.providerEventId}`,
           ...people(row.participants),

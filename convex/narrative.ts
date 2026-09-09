@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
 import {
+  COMPACTION_POLICY_VERSION,
+  compactionBucket,
+  narrativeAgeTier,
+  selectCompactionEvidence,
+} from '../lib/narrative/compaction';
+import {
   cleanNarrativeProse,
   cleanNarrativeText,
   fallbackChapter,
@@ -184,8 +190,8 @@ export const configure = mutation({
       throw new Error('Unsupported narrative model');
     const prev = await settings(ctx, args.userId);
     if (prev?.cleaning) throw new Error('Memory removal is still finishing. Try again shortly.');
-    const changed =
-      JSON.stringify(prev?.sources) !== JSON.stringify(args.sources) || prev?.enabled !== args.enabled;
+    const sourcesChanged = JSON.stringify(prev?.sources) !== JSON.stringify(args.sources);
+    const changed = sourcesChanged || prev?.enabled !== args.enabled;
     const doc = {
       userId: args.userId,
       enabled: args.enabled,
@@ -202,7 +208,12 @@ export const configure = mutation({
     if (prev) await ctx.db.patch(prev._id, doc);
     else await ctx.db.insert('narrativeSettings', { ...doc, createdAt: Date.now() });
     if (changed) {
-      await invalidate(ctx, args.userId);
+      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
+        userId: args.userId,
+        derivedOnly: !sourcesChanged,
+      });
+    }
+    if (sourcesChanged) {
       const cursors = await ctx.db
         .query('narrativeCursors')
         .withIndex('by_user', (q) => q.eq('userId', args.userId))
@@ -280,8 +291,14 @@ export const search = query({
       )
       .order('desc')
       .take(80);
+    const linked = args.topic
+      ? await ctx.db
+          .query('narrativeEntries')
+          .withSearchIndex('by_topics', (q) => q.search('topicText', args.topic!).eq('userId', userId))
+          .take(80)
+      : [];
     const candidates = [
-      ...new Map([...matches, ...recent, ...pinned].map((r) => [r._id, r])).values(),
+      ...new Map([...matches, ...linked, ...recent, ...pinned].map((r) => [r._id, r])).values(),
     ].filter(
       (r) =>
         r.current &&
@@ -300,6 +317,7 @@ export const search = query({
       entries,
       enabled: true,
       revision: prefs.revision,
+      model: prefs.model,
       coverage: 'Bounded indexed retrieval from opted-in sources. Empty results do not prove inactivity.',
       lastRunAt: prefs.lastRunAt,
     };
@@ -391,7 +409,21 @@ export const read = query({
       }
       sources.push({ ...evidence, ...(args.sources ? { detail, sourceAvailable: Boolean(detail) } : {}) });
     }
-    return { entry: row, sources, revision: prefs!.revision };
+    return {
+      entry: row,
+      sources,
+      revision: prefs!.revision,
+      ...(row!.evidenceFrom !== undefined
+        ? {
+            navigation: {
+              from: row!.evidenceFrom,
+              to: row!.evidenceTo,
+              instruction:
+                'Search this date range with a relevant query or level=observation to drill into retained evidence. This overview is representative, not exhaustive.',
+            },
+          }
+        : {}),
+    };
   },
 });
 
@@ -419,6 +451,7 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
   if (current) await ctx.db.patch(current._id, { current: false, pinned: false, updatedAt: Date.now() });
   await ctx.db.insert('narrativeEntries', {
     ...value,
+    topicText: value.topics.join(' '),
     userId,
     level: 'observation',
     sourceIds: [],
@@ -719,6 +752,7 @@ export const record = mutation({
       sourceIds: args.sourceIds,
       sourceVersions: Object.fromEntries(sources.map((s) => [s._id, s.sourceVersion || ''])),
       topics: [...new Set(sources.flatMap((s) => s.topics))].slice(0, 20),
+      topicText: [...new Set(sources.flatMap((s) => s.topics))].slice(0, 20).join(' '),
       trust: 'inferred' as const,
       occurredAt: Math.max(...sources.map((s) => s.occurredAt)),
       observedAt: Date.now(),
@@ -774,6 +808,7 @@ export const captureTurn = mutation({
       text: `You said: ${text}`,
       sourceIds: [],
       topics: args.topics.slice(0, 8),
+      topicText: args.topics.slice(0, 8).join(' '),
       trust: 'reported',
       occurredAt: Date.now(),
       observedAt: Date.now(),
@@ -795,6 +830,7 @@ const compileBucketArgs = {
   period: v.string(),
   ids: v.array(v.id('narrativeEntries')),
   truncated: v.boolean(),
+  compacted: v.optional(v.boolean()),
 };
 
 /** At most 60 candidates and 60 existing sources per transaction. No model work. */
@@ -815,11 +851,27 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
     .query('narrativeEntries')
     .withIndex('by_user_key', (q) => q.eq('userId', prefs.userId).eq('key', bucket.key))
     .first();
-  const ids = entries.map((row) => String(row._id));
+  // A later scan window must not overwrite an older part of the same period.
+  // Keep immutable source records; compact only the representative overview.
+  for (const id of (existing?.sourceIds || []).slice(0, 80)) {
+    if (entries.some((row) => String(row._id) === id)) continue;
+    const row = await ctx.db.get(id as any);
+    if (
+      row &&
+      (row as any).level === 'observation' &&
+      (bucket.level !== 'thread' || (row as any).current) &&
+      (await visible(ctx, row, prefs))
+    )
+      entries.push(row);
+  }
+  const evidence = selectCompactionEvidence(entries);
+  const ids = evidence.map((row) => String(row._id));
   if (
     existing &&
     existing.sourceIds.length <= 60 &&
     ids.every((id) => existing.sourceIds.includes(id)) &&
+    ids.length === existing.sourceIds.length &&
+    (!bucket.compacted || existing.compactionVersion === COMPACTION_POLICY_VERSION) &&
     (await visible(ctx, existing, prefs))
   )
     return;
@@ -833,18 +885,22 @@ async function writeNarrativeBucket(ctx: MutationCtx, prefs: any, bucket: any) {
       bucket.level === 'thread'
         ? entries[0].title
         : `${bucket.level === 'day' ? 'Day' : bucket.level === 'week' ? 'Week of' : 'Month'} · ${bucket.period}`,
-    text: fallbackChapter(entries, prefs.timezone),
+    text: fallbackChapter(evidence, prefs.timezone),
     sourceIds: ids,
-    sourceVersions: Object.fromEntries(entries.map((row) => [row._id, row.sourceVersion || ''])),
+    sourceVersions: Object.fromEntries(evidence.map((row) => [row._id, row.sourceVersion || ''])),
     model: undefined,
-    topics: [...new Set(entries.flatMap((row) => row.topics))].slice(0, 30) as string[],
+    topics: [...new Set(evidence.flatMap((row) => row.topics))].slice(0, 30) as string[],
+    topicText: [...new Set(evidence.flatMap((row) => row.topics))].slice(0, 30).join(' '),
     trust: 'inferred' as const,
-    occurredAt: Math.max(...entries.map((row) => row.occurredAt)),
+    occurredAt: Math.max(...evidence.map((row) => row.occurredAt)),
     observedAt: Date.now(),
     updatedAt: Date.now(),
     current: true,
-    pinned: entries.some((row) => row.pinned),
-    coverage: `${entries.length} linked observations; ${bucket.truncated ? 'bounded recent observation window, older evidence remains searchable' : 'indexed observations'}. Display text may be condensed; expand sources for full detail.`,
+    pinned: evidence.some((row) => row.current && row.pinned),
+    ...(bucket.compacted ? { compactionVersion: COMPACTION_POLICY_VERSION, compactedAt: Date.now() } : {}),
+    evidenceFrom: Math.min(existing?.evidenceFrom ?? Infinity, ...entries.map((row) => row.occurredAt)),
+    evidenceTo: Math.max(existing?.evidenceTo ?? 0, ...entries.map((row) => row.occurredAt)),
+    coverage: `${evidence.length} representative linked observations; ${bucket.truncated || entries.length > evidence.length ? 'bounded overview, additional evidence remains searchable' : 'indexed observations'}. Older detail is retained, not deleted. Expand sources or search this period for the full record.`,
   };
   if (existing) await ctx.db.patch(existing._id, doc);
   else await ctx.db.insert('narrativeEntries', doc);
@@ -857,6 +913,60 @@ export const compileBucket = internalMutation({
     const prefs = await settings(ctx, args.userId);
     if (!prefs?.enabled || prefs.cleaning || prefs.revision !== args.revision) return;
     await writeNarrativeBucket(ctx, prefs, args);
+  },
+});
+
+/** A durable, resumable sweep across ALL stored observations, not only the
+ * latest 800. Recent days stay detailed; closed history becomes week/month
+ * overviews. Existing observations/day chapters remain available for drill-down. */
+export const compact = mutation({
+  args: { internalSecret: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning) return { done: true, scanned: 0, chapters: 0 };
+    const group = `compaction-v${COMPACTION_POLICY_VERSION}`;
+    const previous = await ctx.db
+      .query('narrativeCursors')
+      .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
+      .unique();
+    const page = await ctx.db
+      .query('narrativeEntries')
+      .withIndex('by_user_level_time', (q) => q.eq('userId', args.userId).eq('level', 'observation'))
+      .order('asc')
+      .paginate({ cursor: previous?.cursor || null, numItems: 80 });
+    const buckets = new Map<string, any>();
+    for (const row of page.page) {
+      if (row.topicText !== row.topics.join(' '))
+        await ctx.db.patch(row._id, { topicText: row.topics.join(' ') });
+      const bucket = compactionBucket(row as NarrativeEntry, prefs.timezone);
+      if (!buckets.has(bucket.key)) buckets.set(bucket.key, { ...bucket, rows: [] });
+      buckets.get(bucket.key).rows.push(row);
+    }
+    for (const [index, bucket] of [...buckets.values()].entries()) {
+      const { rows, ...identity } = bucket;
+      const job = {
+        ...identity,
+        userId: args.userId,
+        revision: prefs.revision,
+        ids: selectCompactionEvidence(rows).map((row) => row._id),
+        truncated: rows.length > 60,
+        compacted: true,
+      };
+      if (index < 1) await writeNarrativeBucket(ctx, prefs, job);
+      else await ctx.scheduler.runAfter(0, internal.narrative.compileBucket, job);
+    }
+    const cursorDoc = {
+      userId: args.userId,
+      group,
+      cursor: page.isDone ? undefined : page.continueCursor,
+      since: 0,
+      until: Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (previous) await ctx.db.patch(previous._id, cursorDoc);
+    else await ctx.db.insert('narrativeCursors', cursorDoc);
+    return { done: page.isDone, scanned: page.page.length, chapters: buckets.size };
   },
 });
 
@@ -890,9 +1000,9 @@ export const compile = mutation({
     for (const row of rows) {
       // Only group metadata here. Source visibility is checked in small writes
       // below, never across all 960 candidates and 160 chapters in one transaction.
-      const periods = narrativePeriods(row.occurredAt, prefs.timezone);
+      const aged = compactionBucket(row as NarrativeEntry, prefs.timezone);
       const keys = [
-        ...Object.entries(periods),
+        [aged.level, aged.period],
         ...row.topics.filter((t) => row.current && /^(work|area|repo):/.test(t)).map((t) => ['thread', t]),
       ];
       for (const [level, period] of keys) {
@@ -908,12 +1018,13 @@ export const compile = mutation({
         key,
         level: bucket.level,
         period: bucket.period,
-        ids: bucket.entries.slice(0, 60).map((row) => row._id),
+        ids: selectCompactionEvidence(bucket.entries).map((row) => row._id),
         truncated: recent.length === 800 || pinned.length === 160,
+        compacted: bucket.level !== 'thread',
       };
-      // Four immediate buckets stay below 2,000 worst-case range reads (plus
-      // two bounded scans). The remaining buckets each get their own transaction.
-      if (index < 4) await writeNarrativeBucket(ctx, prefs, job);
+      // Merging earlier windows also rechecks their provenance. One immediate
+      // bucket leaves room below Convex's read cap; others get their own transaction.
+      if (index < 1) await writeNarrativeBucket(ctx, prefs, job);
       else await ctx.scheduler.runAfter(0, (internal as any).narrative.compileBucket, job);
     }
     return { count: buckets.size };
@@ -938,6 +1049,11 @@ export const pending = query({
         .take(4);
       for (const row of rows) if (await visible(ctx, row, prefs)) entries.push(row);
     }
+    entries.sort(
+      (a, b) =>
+        Number(b.level === narrativeAgeTier(b.occurredAt)) -
+          Number(a.level === narrativeAgeTier(a.occurredAt)) || a.occurredAt - b.occurredAt,
+    );
     return { entries };
   },
 });
@@ -1052,6 +1168,7 @@ export const prepareBrief = mutation({
       sourceIds,
       sourceVersions: Object.fromEntries(selected.map((r) => [r._id, r.sourceVersion || ''])),
       topics: [...new Set(selected.flatMap((row) => row.topics))].slice(0, 30),
+      topicText: [...new Set(selected.flatMap((row) => row.topics))].slice(0, 30).join(' '),
       trust: 'inferred' as const,
       occurredAt: Date.now(),
       observedAt: Date.now(),
@@ -1166,9 +1283,19 @@ export const cleanup = internalMutation({
       .query('narrativeEntries')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .paginate({ cursor: args.cursor || null, numItems: 20 });
-    for (const row of page.page)
-      if (args.all || (args.derivedOnly ? row.level !== 'observation' : !(await visible(ctx, row, prefs))))
+    for (const row of page.page) {
+      // Pausing collection is not erasure. Already-queued cleanup still checks
+      // exclusions and source withdrawals, without deleting otherwise retained observations.
+      const retentionPrefs =
+        !prefs?.enabled && !prefs?.cleaning && row.level === 'observation'
+          ? { ...prefs, enabled: true }
+          : prefs;
+      if (
+        args.all ||
+        (args.derivedOnly ? row.level !== 'observation' : !(await visible(ctx, row, retentionPrefs)))
+      )
         await ctx.db.delete(row._id);
+    }
     if (!page.isDone)
       await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, {
         ...args,

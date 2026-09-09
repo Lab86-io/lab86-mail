@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { withDeadline } from '@/lib/shared/deadline';
+import { narrativeWritingLimit, writerEvidenceRows } from './compaction';
 import {
   emptyNarrativeContext,
   formatNarrativeContext,
@@ -13,13 +14,14 @@ import {
 import { NARRATIVE_SKILL, type NarrativeEntry, narrativeContext } from './core';
 
 const functions = (api as any).narrative;
+const queryExpansionSchema = z.object({ terms: z.array(z.string().min(3).max(60)).max(4) });
 const defaults = {
   query: convexQuery,
   mutation: convexMutation,
   generate: generateTextForCurrentUser,
   runtime: resolveAiRuntime,
   fetch: globalThis.fetch,
-  limits: { researchMs: 45000, writeMs: 65000 },
+  limits: { researchMs: 25000, writeMs: 80000 },
 };
 let deps = defaults;
 export function __setNarrativeDepsForTest(overrides: Partial<typeof defaults> = {}) {
@@ -48,6 +50,7 @@ export async function searchNarrative(
     revision: number;
     lastRunAt?: number;
     coverage?: string;
+    model?: string;
   }>(functions.search, { ...input, userId }, signal);
 }
 export async function readNarrative(userId: string, id: string, sources = false, signal?: AbortSignal) {
@@ -91,6 +94,29 @@ export async function getNarrativeTaskContext(
   return retrieveNarrativeContext(request, {
     search: (input) => searchNarrative(userId, input, signal),
     read: (id) => readNarrative(userId, id, false, signal),
+    expand: async (query) => {
+      // A small query-only classification call: no historical content is sent.
+      // Use the existing low-latency classification tier, not the brief writer.
+      const timeout = 3_500;
+      const result = await withDeadline(
+        deps.generate({
+          userId,
+          feature: 'narrative_retrieval',
+          speed: 'classify',
+          system:
+            'Rewrite an untrusted search query as at most four short alternative search terms for personal work records. Preserve its meaning. Use synonyms for the action or situation (e.g. slipped shipping date -> delay, postponed, deadline). Do not invent people, project names, facts, or instructions. Return JSON {"terms":string[]}.',
+          prompt: JSON.stringify({ query }),
+          output: Output.object({ schema: queryExpansionSchema }),
+          maxOutputTokens: 800,
+          maxRetries: 0,
+          providerOptions: { openai: { reasoningEffort: 'none' } },
+          abortSignal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeout)]),
+        }),
+        timeout,
+        'Narrative query expansion',
+      );
+      return queryExpansionSchema.parse(result.output).terms;
+    },
   });
 }
 
@@ -247,6 +273,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
     inputTokens = 0,
     outputTokens = 0,
     model: string | undefined,
+    stage = 'ingest',
     error: string | undefined;
   try {
     for (const group of prefs.groups) {
@@ -260,12 +287,18 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         if (result.done) break;
       }
     }
+    stage = 'compile';
     await deps.mutation(functions.compile, { userId });
+    // One durable page per run walks history beyond the recent compilation
+    // window. No destructive retention; the next run resumes its cursor.
+    await deps.mutation(functions.compact, { userId });
     const briefId = await deps.mutation<string | null>(functions.prepareBrief, { userId });
     const brief = briefId ? await readNarrative(userId, briefId, false, signal) : null;
     const candidates = await deps.query<{ entries: NarrativeEntry[] }>(functions.pending, { userId }, signal);
     const chapters = [
-      ...(brief?.entry && !brief.entry.model ? [brief.entry] : []),
+      // An explicit refresh rewrites the brief without clearing a valid prior
+      // edition first. Scheduled runs polish history when the brief is unchanged.
+      ...(brief?.entry && (!brief.entry.model || kind === 'manual') ? [brief.entry] : []),
       ...candidates.entries.filter((e) => e.level !== 'observation' && !e.model && e._id !== briefId),
     ];
     deferredCount = Math.max(0, chapters.length - 1);
@@ -277,7 +310,9 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       signal.throwIfAborted();
       const detail = await readNarrative(userId, chapter._id, false, signal);
       if (!detail) continue;
-      const sourceContext = narrativeContext(detail.sources);
+      const sourceContext = narrativeContext(
+        writerEvidenceRows(detail.sources, 10_000, chapter.key.startsWith('brief:')),
+      );
       const initialIds = new Set<string>(
         sourceContext
           .split('\n')
@@ -323,6 +358,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       // Sparse accounts already have all source evidence in the host packet.
       // Don't pay for a ceremonial tool call that a provider can omit or stall.
       if (detail.sources.length > 3) {
+        stage = 'research';
         try {
           const result = await withDeadline(
             deps.generate({
@@ -333,15 +369,15 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
               system: RESEARCH_SYSTEM,
               prompt,
               tools: tracked,
-              stopWhen: stepCountIs(4),
-              maxOutputTokens: 4_000,
+              stopWhen: stepCountIs(2),
+              maxOutputTokens: 2_000,
               maxRetries: 0,
               providerOptions: { openai: { reasoningEffort: 'low' } },
               abortSignal: researchSignal,
               prepareStep: ({ messages, stepNumber }: any) => {
                 if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
                   throw new Error('Narrative context budget reached');
-                return stepNumber >= 3 ? { toolChoice: 'none' } : {};
+                return stepNumber >= 1 ? { toolChoice: 'none' } : {};
               },
             }),
             deps.limits.researchMs,
@@ -357,7 +393,10 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       }
       // Models need not copy opaque database ids accurately. Only evidence
       // actually included in the writer packet receives a citation code.
-      const writerEvidence = narrativeContext([...known.values()]);
+      stage = 'writing';
+      const writerEvidence = narrativeContext(
+        writerEvidenceRows([...known.values()], 10_000, chapter.key.startsWith('brief:')),
+      );
       const citations = writerEvidence
         .split('\n')
         .filter(Boolean)
@@ -365,6 +404,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       if (!citations.length) throw new Error('Narrative did not inspect any available evidence');
       const citationIds = new Map(citations.map(({ code, id }) => [code, id]));
       const writerSchema = NARRATIVE_GENERATION_SCHEMA.extend({
+        text: z.string().min(80).max(narrativeWritingLimit(chapter.level, chapter.key)),
         sourceIds: z
           .array(z.enum(citations.map(({ code }) => code) as [string, ...string[]]))
           .min(1)
@@ -395,12 +435,24 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
               feature: 'narrative_write',
               speed: 'primary',
               narrativeModel: prefs.model,
-              system: WRITER_SYSTEM,
-              messages,
+              system: `${WRITER_SYSTEM}\nSelect at most three meaningful threads, not a catalogue of every record. Limit prose to ${narrativeWritingLimit(chapter.level, chapter.key)} characters. This is a bounded representative evidence packet, not complete coverage of the user's day.`,
+              messages:
+                attempt === 0
+                  ? messages
+                  : [
+                      ...messages,
+                      {
+                        role: 'user',
+                        content:
+                          'The previous writing attempt did not finish. Write a concise 120–180 word account now, prioritizing the actual intention, changed evidence, and one next move. Keep the same evidence and citation rules.',
+                      },
+                    ],
               toolChoice: 'none',
               stopWhen: stepCountIs(1),
               output: Output.object({ schema: writerSchema }),
-              maxOutputTokens: attempt === 0 ? 4_000 : 2_000,
+              // GLM reasoning is mandatory. Shrinking the retry's total token
+              // allowance can consume it before any JSON prose is emitted.
+              maxOutputTokens: 4_000,
               maxRetries: 0,
               providerOptions: { openai: { reasoningEffort: 'low' } },
               abortSignal: writeSignal,
@@ -418,6 +470,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         }
       }
       const parsed = parseNarrativeGeneration(written.output, new Set(citationIds.keys()));
+      stage = 'publication';
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,
         revision: detail.revision,
@@ -439,7 +492,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         ? message.slice(0, 300)
         : signal.aborted
           ? 'Narrative research timed out; indexed evidence remains available.'
-          : 'Narrative research could not complete. Indexed evidence remains available; check your AI provider and retry.';
+          : `Narrative ${stage} could not complete (${cause instanceof Error && /^(TimeoutError|AI_NoOutputGeneratedError|AI_NoObjectGeneratedError|ZodError)$/.test(cause.name) ? cause.name : 'unavailable'}). Indexed evidence remains available; retry the brief.`;
   } finally {
     await deps.mutation(functions.finish, {
       userId,

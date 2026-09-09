@@ -48,6 +48,7 @@ export const narrativeTables = {
     sourceIds: v.array(v.string()),
     sourceVersions: v.optional(v.record(v.string(), v.string())),
     topics: v.array(v.string()),
+    topicText: v.optional(v.string()),
     trust: narrativeTrust,
     occurredAt: v.number(),
     observedAt: v.number(),
@@ -60,6 +61,10 @@ export const narrativeTables = {
     corrected: v.optional(v.boolean()),
     model: v.optional(v.string()),
     coverage: v.optional(v.string()),
+    compactionVersion: v.optional(v.number()),
+    compactedAt: v.optional(v.number()),
+    evidenceFrom: v.optional(v.number()),
+    evidenceTo: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_user_key', ['userId', 'key'])
@@ -71,7 +76,8 @@ export const narrativeTables = {
     .index('by_user_current_time', ['userId', 'current', 'occurredAt'])
     .index('by_user_pinned', ['userId', 'pinned', 'occurredAt'])
     .index('by_user_level_pinned', ['userId', 'level', 'pinned', 'occurredAt'])
-    .searchIndex('by_text', { searchField: 'text', filterFields: ['userId', 'current', 'level'] }),
+    .searchIndex('by_text', { searchField: 'text', filterFields: ['userId', 'current', 'level'] })
+    .searchIndex('by_topics', { searchField: 'topicText', filterFields: ['userId'] }),
   narrativeCursors: defineTable({
     userId: v.string(),
     group: v.string(),

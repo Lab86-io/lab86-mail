@@ -52,6 +52,7 @@ function setup(
     sources?: number;
     pending?: number;
     skipResearchTools?: boolean;
+    alreadyWritten?: boolean;
     limits?: { researchMs: number; writeMs: number };
   } = {},
 ) {
@@ -61,7 +62,7 @@ function setup(
     query: (async (fn: any) =>
       getFunctionName(fn) === 'narrative:read'
         ? {
-            entry: chapter,
+            entry: { ...chapter, model: overrides.alreadyWritten ? 'previous-model' : undefined },
             sources: Array.from({ length: overrides.sources ?? 1 }, (_, index) => ({
               ...observation,
               _id: `evidence${index + 1}`,
@@ -116,6 +117,40 @@ function setup(
   return { writes, requests };
 }
 describe('narrative agent run', () => {
+  test('manual refresh rewrites the brief while scheduled runs preserve an unchanged published edition', async () => {
+    const manual = setup({ alreadyWritten: true });
+    expect((await refreshNarrative('pilot', 'manual')).publishedCount).toBe(1);
+    expect(manual.requests[0].feature).toBe('narrative_write');
+    const scheduled = setup({ alreadyWritten: true });
+    expect((await refreshNarrative('pilot', 'scheduled')).publishedCount).toBe(0);
+    expect(scheduled.requests).toEqual([]);
+  });
+  test('semantic lookup uses a bounded query-only classification call through the user gateway', async () => {
+    const requests: any[] = [];
+    __setNarrativeDepsForTest({
+      query: (async () => ({ enabled: true, revision: 1, model: 'current', entries: [] })) as any,
+      generate: (async (request: any) => {
+        requests.push(request);
+        return { output: { terms: ['delayed'] } };
+      }) as any,
+    });
+    await getNarrativeTaskContext('pilot', { purpose: 'chat', query: 'shipping date slipped' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      userId: 'pilot',
+      speed: 'classify',
+      feature: 'narrative_retrieval',
+      maxOutputTokens: 800,
+      maxRetries: 0,
+    });
+    expect(JSON.parse(requests[0].prompt)).toEqual({ query: 'shipping date slipped' });
+    expect(requests[0].abortSignal).toBeInstanceOf(AbortSignal);
+    expect(requests[0].tools).toBeUndefined();
+    const controller = new AbortController();
+    controller.abort();
+    await getNarrativeTaskContext('pilot', { purpose: 'chat', query: 'shipping' }, controller.signal);
+    expect(requests[1].abortSignal.aborted).toBe(true);
+  });
   test('all private consumers share gated task context instead of full-history injection', async () => {
     const inputs: any[] = [];
     __setNarrativeDepsForTest({
@@ -146,7 +181,7 @@ describe('narrative agent run', () => {
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
     expect(requests[1].messages.at(-1).content).toContain('{"code":"E1","id":"evidence1"}');
-    expect(requests[0].stopWhen({ steps: [{}, {}, {}, {}] })).toBe(true);
+    expect(requests[0].stopWhen({ steps: [{}, {}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',
@@ -156,7 +191,7 @@ describe('narrative agent run', () => {
     ]);
     expect(requests[0].narrativeModel).toBe('z-ai/glm-5.3-flash');
     expect(requests[0].abortSignal).toBeInstanceOf(AbortSignal);
-    expect(requests[0].maxOutputTokens).toBe(4000);
+    expect(requests[0].maxOutputTokens).toBe(2000);
     expect(requests[0].maxRetries).toBe(0);
     expect(requests[0].prepareStep({ messages: [], stepNumber: 4 })).toEqual({ toolChoice: 'none' });
     expect(requests[0].prepareStep({ messages: [], stepNumber: 0 })).toEqual({});
@@ -261,7 +296,8 @@ describe('narrative agent run', () => {
             },
     });
     expect((await refreshNarrative('pilot')).status).toBe('ready');
-    expect(requests.map((request) => request.maxOutputTokens)).toEqual([4000, 2000]);
+    expect(requests.map((request) => request.maxOutputTokens)).toEqual([4000, 4000]);
+    expect(requests[1].messages.at(-1).content).toContain('120–180');
   });
   test('failed host evidence reads never start a writer and all research tools forward cancellation', async () => {
     const state = setup({ sources: 0 });
