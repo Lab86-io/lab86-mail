@@ -63,6 +63,7 @@ globalThis.fetch = (async (url, options) => {
 }) as typeof fetch;
 function Preview() {
   const [body, setBody] = useState('Hi Alex,\n\nA quick follow-up before our launch review.');
+  const [to, setTo] = useState('alex@example.test');
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-8 text-[var(--color-text)]">
       <header>
@@ -76,6 +77,12 @@ function Preview() {
           <div className="space-y-3 p-4">
             <h2 className="font-medium">Draft to Alex</h2>
             <p className="text-xs text-[var(--color-text-muted)]">Atlas launch review</p>
+            <input
+              aria-label="Email recipient"
+              value={to}
+              onChange={(event) => setTo(event.target.value)}
+              className="w-full bg-transparent text-sm"
+            />
             <textarea
               aria-label="Email body"
               value={body}
@@ -84,12 +91,7 @@ function Preview() {
               className="w-full resize-none bg-transparent text-sm"
             />
           </div>
-          <NarrativeDraftAssistant
-            to="alex@example.test"
-            subject="Atlas launch review"
-            body={body}
-            onApply={setBody}
-          />
+          <NarrativeDraftAssistant to={to} subject="Atlas launch review" body={body} onApply={setBody} />
         </section>
         <section className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
           <h2 className="font-display text-lg">Atlas launch review</h2>

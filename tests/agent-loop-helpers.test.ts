@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  boundedAgentNarrativeContext,
   errorText,
   isAuthError,
   isRecoverableAgentProviderError,
@@ -7,6 +8,22 @@ import {
   safeAuthErrorText,
   writeDelayedAgentResult,
 } from '../lib/ai/loop';
+
+test('bounded agent narrative context preserves identity and falls back on retrieval failure', async () => {
+  const calls: unknown[][] = [];
+  expect(
+    await boundedAgentNarrativeContext('owner', 'Atlas', async (...args) => {
+      calls.push(args);
+      return 'Relevant context';
+    }),
+  ).toBe('Relevant context');
+  expect(calls).toEqual([['owner', 'Atlas']]);
+  expect(
+    await boundedAgentNarrativeContext('owner', 'Atlas', async () => {
+      throw new Error('Context unavailable');
+    }),
+  ).toBe('');
+});
 
 test('narrative retrieval uses bounded text rather than attachment or tool payloads', () => {
   expect(narrativeQueryFromContent(undefined)).toBe('');

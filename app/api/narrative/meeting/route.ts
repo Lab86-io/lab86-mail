@@ -17,6 +17,8 @@ export function createNarrativeMeetingPost(deps = defaults) {
         headers: { 'cache-control': 'private, no-store' },
       });
     } catch (error) {
+      if (request.signal.aborted)
+        return NextResponse.json({ error: 'Meeting preparation cancelled.' }, { status: 499 });
       if (error instanceof AuthRequiredError)
         return NextResponse.json({ error: 'Sign in required.' }, { status: 401 });
       if (error instanceof RateLimitError) return rateLimitJson(error);

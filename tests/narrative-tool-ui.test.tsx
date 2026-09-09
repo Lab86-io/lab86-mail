@@ -101,8 +101,14 @@ describe('narrative drafting interaction', () => {
     await act(async () => finish(Response.json({ draft: 'Too late' })));
     expect(text(view.root)).not.toContain('Use draft');
     await act(async () => button('Draft with context').props.onClick());
+    await act(async () =>
+      view.root.findByType('textarea').props.onChange({ target: { value: 'Keep my instructions' } }),
+    );
     await act(async () => view.update(<NarrativeDraftAssistant {...props} to="someone-else@example.test" />));
     expect(view.root.findAllByType('input')).toHaveLength(0);
+    expect(button('Draft with context').props['aria-expanded']).toBe(true);
+    expect(view.root.findByType('textarea').props.value).toBe('Keep my instructions');
+    await act(async () => view.update(<NarrativeDraftAssistant {...props} topic="mail:another-thread" />));
     expect(button('Draft with context').props['aria-expanded']).toBe(false);
   });
   test('disabled memory and network errors preserve manual drafting and show actionable states', async () => {
