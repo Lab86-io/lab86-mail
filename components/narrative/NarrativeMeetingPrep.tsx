@@ -1,14 +1,25 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 import { Button } from '@/components/ui/button';
-import type { MeetingPrep, MeetingSelector } from '@/lib/narrative/meeting-prep';
+import type { MeetingSelector } from '@/lib/narrative/meeting-prep';
+
+const meetingView = z.object({
+  context: z.object({
+    coverage: z.string(),
+    evidence: z.array(z.object({ id: z.string(), title: z.string() })),
+  }),
+  points: z.array(z.object({ text: z.string(), sourceIds: z.array(z.string()) })),
+  questions: z.array(z.string()),
+  mode: z.enum(['generated', 'evidence', 'empty']),
+});
 
 export function NarrativeMeetingPrep(props: MeetingSelector) {
   return <MeetingPanel key={JSON.stringify(props)} {...props} />;
 }
 function MeetingPanel(selector: MeetingSelector) {
-  const [result, setResult] = useState<MeetingPrep | null>(null);
+  const [result, setResult] = useState<z.infer<typeof meetingView> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef<AbortController | null>(null);
@@ -29,7 +40,9 @@ function MeetingPanel(selector: MeetingSelector) {
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data) throw new Error(data?.error || 'Meeting prep is unavailable.');
-      if (!controller.signal.aborted) setResult(data);
+      const parsed = meetingView.safeParse(data);
+      if (!parsed.success) throw new Error('Meeting prep is unavailable. Please try again.');
+      if (!controller.signal.aborted) setResult(parsed.data);
     } catch (failure) {
       if (!controller.signal.aborted)
         setError(failure instanceof Error ? failure.message : 'Meeting prep is unavailable.');

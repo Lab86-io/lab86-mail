@@ -161,11 +161,24 @@ export async function searchCalendar(
   tool: SearchTool,
   signal?: AbortSignal,
 ): Promise<SearchGroup> {
-  const { events } = await tool<{ events: SearchCalendarEvent[] }>(
+  const data = await tool<{ events: SearchCalendarEvent[] }>(
     'calendar_search_events',
     { query, limit: 12 },
     signal,
   );
+  const events = data?.events;
+  if (
+    !Array.isArray(events) ||
+    events.some(
+      (event) =>
+        !event ||
+        ['accountId', 'calendarId', 'eventId', 'title', 'startIso', 'endIso'].some(
+          (key) => typeof (event as any)[key] !== 'string',
+        ) ||
+        (event.location !== undefined && typeof event.location !== 'string'),
+    )
+  )
+    throw new Error('Calendar search returned an incomplete response. Please try again.');
   return {
     items: events.map((event) => ({
       id: `calendar:${event.accountId}:${event.calendarId}:${event.eventId}`,
@@ -220,6 +233,19 @@ export async function searchCloudFiles(
     { query, limit: 12 },
     signal,
   );
+  if (
+    !Array.isArray(data?.files) ||
+    data.files.some(
+      (file) =>
+        !file ||
+        ['id', 'name', 'provider'].some((key) => typeof (file as any)[key] !== 'string') ||
+        typeof file.isFolder !== 'boolean' ||
+        ['connectionId', 'mimeType', 'webUrl'].some(
+          (key) => (file as any)[key] !== undefined && typeof (file as any)[key] !== 'string',
+        ),
+    )
+  )
+    throw new Error('File search returned an incomplete response. Please try again.');
   return {
     items: data.files.map(cloudFileResult).filter((item): item is SearchResult => item !== null),
     warnings: data.errors?.length
