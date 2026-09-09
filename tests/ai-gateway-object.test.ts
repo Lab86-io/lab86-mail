@@ -32,6 +32,7 @@ describe('structured AI gateway', () => {
       feature: 'albatross_area_route',
       schema: {},
       prompt: '{}',
+      narrativeModel: 'z-ai/glm-5.3-flash',
     });
 
     expect(result.object).toEqual({ assignments: [] });
@@ -39,12 +40,14 @@ describe('structured AI gateway', () => {
       userId: 'user_1',
       speed: 'classify',
       feature: 'albatross_area_route',
+      narrativeModel: 'z-ai/glm-5.3-flash',
     });
     expect(requests[0]).toMatchObject({
       model: 'resolved-model',
       maxOutputTokens: 1200,
       providerOptions: { openai: { reasoningEffort: 'none', strictJsonSchema: true } },
     });
+    expect(requests[0].narrativeModel).toBeUndefined();
     expect(usage[0][0]).toBe(runtime);
     expect(usage[0].slice(1)).toEqual(['albatross_area_route', { inputTokens: 10, outputTokens: 2 }, true]);
   });

@@ -101,9 +101,16 @@ describe('narrative API boundary', () => {
     expect(state.writes[0].text).toBeUndefined();
   });
   test('refresh is queued and query routing ignores forged user ids', async () => {
-    const state = setup();
+    const calls: unknown[][] = [];
+    const state = setup({
+      refresh: async (...args: unknown[]) => {
+        calls.push(args);
+      },
+    });
     expect((await state.POST(req({ action: 'refresh' }))).status).toBe(202);
     expect(state.queued).toHaveLength(1);
+    await state.queued[0]();
+    expect(calls).toEqual([['owner', 'manual']]);
     expect(
       (
         await state.GET(

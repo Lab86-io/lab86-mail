@@ -2,6 +2,17 @@ import { afterEach, expect, test } from 'bun:test';
 import { callTool, health, listTools, readSearchSource } from '../lib/api-client';
 
 const originalFetch = globalThis.fetch;
+test('aborting after response headers still propagates cancellation during body parsing', async () => {
+  const controller = new AbortController();
+  globalThis.fetch = (async () => ({
+    ok: true,
+    json: async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    },
+  })) as any;
+  await expect(readSearchSource('/source', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+});
 test('search sources reject malformed, empty and failed responses with safe recovery text', async () => {
   const signal = new AbortController().signal;
   for (const [body, status] of [

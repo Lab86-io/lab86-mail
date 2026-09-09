@@ -11,8 +11,8 @@ export function createNarrativeMeetingPost(deps = defaults) {
   return async (request: NextRequest) => {
     try {
       const user = await deps.user();
-      const selector = meetingInput.parse(await request.json().catch(() => null));
       await deps.rate({ userId: user.userId, key: 'narrative-meeting', limit: 12, windowMs: 60_000 });
+      const selector = meetingInput.parse(await request.json().catch(() => null));
       return NextResponse.json(await deps.prepare(user.userId, selector, request.signal), {
         headers: { 'cache-control': 'private, no-store' },
       });

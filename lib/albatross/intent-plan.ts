@@ -913,6 +913,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         : Promise.resolve(null),
     ]);
     const nowIso = new Date().toISOString();
+    const planStartedAt = Date.now();
     const prompt = [
       `Today: ${nowIso}${input.timezone ? ` (user timezone: ${input.timezone})` : ''}${nearby.place ? ` — user is near ${nearby.place}` : ''}`,
       '',
@@ -926,15 +927,21 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       currentWorkBlock(workbench, workDetail),
       '',
       contextText,
-      await narrativePrompt(input.userId, intent.rawText, `work:${input.intentId}`).catch(() => ''),
+      await withDeadline(
+        narrativePrompt(input.userId, intent.rawText, `work:${input.intentId}`),
+        8000,
+        'Plan narrative context',
+      ).catch(() => ''),
       nearby.block,
     ]
       .filter(Boolean)
       .join('\n');
 
+    const planRemainingMs = Math.max(1, 150_000 - (Date.now() - planStartedAt));
     const { text } = await withDeadline(
       deps.generateTextForCurrentUser({
         feature: 'albatross_plan',
+        abortSignal: AbortSignal.timeout(planRemainingMs),
         speed: 'primary',
         userId: input.userId,
         userEmail: input.userEmail,
@@ -947,7 +954,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
         },
         stopWhen: stepCountIs(12),
       }),
-      150_000,
+      planRemainingMs,
       'Plan generation',
     );
     const generation = parsePlanGeneration(text);

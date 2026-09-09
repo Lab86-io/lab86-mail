@@ -42,6 +42,45 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('scheduled refresh batches rotate fairly through more than 100 users', async () => {
+    const t = harness();
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 205; index++)
+        await ctx.db.insert('narrativeSettings', {
+          userId: `rotation-${index}`,
+          enabled: index < 204,
+          sources: ['chat'],
+          timezone: 'UTC',
+          model: 'current',
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+    });
+    const selected = new Set<string>();
+    for (let pass = 0; pass < 3; pass++) {
+      const batch = await t.mutation(internal.narrative.targets, {});
+      expect(batch).toHaveLength(100);
+      batch.forEach((id: string) => {
+        selected.add(id);
+      });
+    }
+    expect(selected.size).toBe(204);
+    expect(selected.has('rotation-204')).toBe(false);
+  });
+  test('individual source opt-outs survive erase, cleanup, and re-enabling', async () => {
+    const t = harness();
+    await enable(t);
+    const id = await capture(t);
+    await t.mutation(f.edit, { ...args, id, forget: true });
+    await t.mutation(f.erase, args);
+    await t.mutation(internal.narrative.cleanup, { userId, all: true });
+    expect(await t.run((ctx) => ctx.db.query('narrativeEntries').collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('narrativeExclusions').collect())).toHaveLength(1);
+    await enable(t);
+    expect(await capture(t)).toBeNull();
+    expect((await t.query(f.search, args)).entries).toEqual([]);
+  });
   test('a stale failed refresh token cannot suppress future captures', async () => {
     const t = harness();
     await enable(t);
@@ -469,6 +508,48 @@ describe('shared narrative runtime', () => {
     await t.mutation(f.edit, { ...args, id, forget: true });
     expect((await t.query(f.search, args)).entries).toEqual([]);
     expect(await capture(t)).toBeNull();
+  });
+  test('forget revokes a long version history immediately and deletes it in bounded jobs', async () => {
+    const t = harness();
+    await enable(t);
+    const id = await capture(t);
+    const other = await capture(t, 'An unrelated source stays available', 'other');
+    const latest = await t.run(async (ctx) => {
+      const row = (await ctx.db.get(id))!;
+      const { _id, _creationTime, ...version } = row;
+      await ctx.db.patch(id, { current: false });
+      let result = id;
+      for (let index = 0; index < 240; index++)
+        result = await ctx.db.insert('narrativeEntries', {
+          ...version,
+          current: index === 239,
+          sourceVersion: `version:${index}`,
+        });
+      return result;
+    });
+    await t.mutation(f.record, { ...args, text: 'A linked interpretation', sourceIds: [latest] });
+    const thread = (await t.query(f.search, { ...args, level: 'thread' })).entries[0];
+    await t.mutation(f.edit, { ...args, id: latest, forget: true });
+    const remaining = await t.run((ctx) =>
+      ctx.db
+        .query('narrativeEntries')
+        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', 'turn:m1'))
+        .collect(),
+    );
+    expect(remaining).toHaveLength(221);
+    expect(await t.query(f.read, { ...args, id: latest })).toBeNull();
+    expect(await t.query(f.read, { ...args, id: thread._id })).toBeNull();
+    expect(await capture(t)).toBeNull();
+    const queued = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(queued.some((job) => job.name === 'narrative:cleanupForgotten')).toBe(true);
+    // Run the durable continuation directly: real timer scheduling is not
+    // advanced by this harness's no-op finishAllScheduledFunctions callback.
+    for (let page = 0; page < 12; page++)
+      await t.mutation(internal.narrative.cleanupForgotten, { userId, key: 'turn:m1' });
+    await t.mutation(internal.narrative.cleanup, { userId });
+    expect(await t.run((ctx) => ctx.db.get(latest))).toBeNull();
+    expect(await t.query(f.read, { ...args, id: other })).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('narrativeEntries').collect())).toHaveLength(1);
   });
   test('source removal immediately revokes reads, before background cleanup', async () => {
     const t = harness();

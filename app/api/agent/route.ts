@@ -13,6 +13,7 @@ import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { captureNarrativeTurn } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { withDeadline } from '@/lib/shared/deadline';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -188,11 +189,15 @@ export async function POST(req: NextRequest) {
     const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
     const memoryId = latestUser
-      ? await captureNarrativeTurn(
-          user.userId,
-          latestUser.id,
-          messageText(latestUser),
-          contextAttachments.filter((item) => item.kind === 'work').map((item) => `work:${item.id}`),
+      ? await withDeadline(
+          captureNarrativeTurn(
+            user.userId,
+            latestUser.id,
+            messageText(latestUser),
+            contextAttachments.filter((item) => item.kind === 'work').map((item) => `work:${item.id}`),
+          ),
+          3000,
+          'Narrative turn capture',
         ).catch(() => null)
       : null;
     const stream = await runAgent({

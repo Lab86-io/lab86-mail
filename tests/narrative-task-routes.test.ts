@@ -21,6 +21,14 @@ const meeting = (body: any = { accountId: 'a', calendarId: 'c', eventId: 'e' }) 
     body: JSON.stringify(body),
   });
 describe('task context endpoints', () => {
+  test('malformed authenticated meeting requests still consume the quota', async () => {
+    const deps = harness();
+    expect((await createNarrativeMeetingPost(deps)(meeting({}))).status).toBe(400);
+    expect(deps.rate).toHaveBeenCalledTimes(1);
+    deps.rate.mockRejectedValueOnce(new RateLimitError('Slow down', 1000, 1));
+    expect((await createNarrativeMeetingPost(deps)(meeting({}))).status).toBe(429);
+    expect(deps.prepare).not.toHaveBeenCalled();
+  });
   test('context is private and tenant identity is server-owned', async () => {
     const deps = harness();
     const response = await createNarrativeContextGet(deps)(

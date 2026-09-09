@@ -56,6 +56,13 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
   if (!row || row.userId !== prefs?.userId || !prefs.enabled) return false;
   if (row.level === 'observation') {
     if (!(await allowed(ctx, row.userId, row.source, prefs))) return false;
+    if (
+      await ctx.db
+        .query('narrativeExclusions')
+        .withIndex('by_user_key', (q) => q.eq('userId', row.userId).eq('key', row.key))
+        .unique()
+    )
+      return false;
     if (row.sourceTable && row.sourceId) {
       const original: any = await ctx.db.get(row.sourceId);
       if (
@@ -394,11 +401,10 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
     .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', value.key))
     .unique();
   if (excluded) return false;
-  const versions = await ctx.db
+  const current = await ctx.db
     .query('narrativeEntries')
-    .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', value.key))
-    .collect();
-  const current = versions.find((r) => r.current);
+    .withIndex('by_user_key_current', (q) => q.eq('userId', userId).eq('key', value.key).eq('current', true))
+    .unique();
   if (current?.sourceVersion === value.sourceVersion) return false;
   if (current?.corrected) {
     if (!current.sourceBaseVersion) {
@@ -410,8 +416,7 @@ async function putObservation(ctx: MutationCtx, userId: string, value: Observati
     }
     if (current.sourceBaseVersion === value.sourceVersion) return false;
   }
-  for (const version of versions.filter((r) => r.current))
-    await ctx.db.patch(version._id, { current: false, pinned: false, updatedAt: Date.now() });
+  if (current) await ctx.db.patch(current._id, { current: false, pinned: false, updatedAt: Date.now() });
   await ctx.db.insert('narrativeEntries', {
     ...value,
     userId,
@@ -608,6 +613,27 @@ export const ingest = mutation({
   },
 });
 
+async function deleteForgottenVersions(ctx: MutationCtx, userId: string, key: string) {
+  const page = await ctx.db
+    .query('narrativeEntries')
+    .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+    .take(20);
+  for (const row of page) await ctx.db.delete(row._id);
+  if (page.length === 20)
+    await ctx.scheduler.runAfter(0, internal.narrative.cleanupForgotten, { userId, key });
+}
+
+export const cleanupForgotten = internalMutation({
+  args: { userId: v.string(), key: v.string() },
+  handler: async (ctx, args) => {
+    const excluded = await ctx.db
+      .query('narrativeExclusions')
+      .withIndex('by_user_key', (q) => q.eq('userId', args.userId).eq('key', args.key))
+      .unique();
+    if (excluded) await deleteForgottenVersions(ctx, args.userId, args.key);
+  },
+});
+
 export const edit = mutation({
   args: {
     ...caller,
@@ -631,11 +657,9 @@ export const edit = mutation({
           .unique())
       )
         await ctx.db.insert('narrativeExclusions', { userId, key: row.key });
-      const versions = await ctx.db
-        .query('narrativeEntries')
-        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', row.key))
-        .collect();
-      for (const version of versions) await ctx.db.delete(version._id);
+      // The exclusion revokes every historical version (and its chapters)
+      // immediately; physical deletion makes bounded progress in durable jobs.
+      await deleteForgottenVersions(ctx, userId, row.key);
     } else {
       const text = args.text === undefined ? row.text : cleanNarrativeText(args.text);
       if (!text) throw new Error('Memory cannot be empty');
@@ -1149,7 +1173,9 @@ export const cleanup = internalMutation({
         cursor: page.continueCursor,
       });
     else if (args.all && prefs?.cleaning) {
-      for (const table of ['narrativeCursors', 'narrativeRuns', 'narrativeExclusions'] as const) {
+      // Keep only source-key opt-out tombstones, never forgotten content. An
+      // explicit forget must survive erasure and later source re-enablement.
+      for (const table of ['narrativeCursors', 'narrativeRuns'] as const) {
         const remaining = await ctx.db
           .query(table)
           .withIndex('by_user', (q) => q.eq('userId', args.userId))
@@ -1187,19 +1213,20 @@ export const erase = mutation({
     await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, { userId, all: true });
     return {
       ok: true,
-      note: 'Memory is inaccessible immediately; stored copies are being removed. Original source data is unchanged.',
+      note: 'Memory is inaccessible immediately; stored copies are being removed. Source opt-outs are retained so forgotten items do not return. Original source data is unchanged.',
     };
   },
 });
-export const targets = internalQuery({
+export const targets = internalMutation({
   args: {},
-  handler: async (ctx) =>
-    (
-      await ctx.db
-        .query('narrativeSettings')
-        .withIndex('by_enabled', (q) => q.eq('enabled', true))
-        .take(100)
-    ).map((p) => p.userId),
+  handler: async (ctx) => {
+    const selected = await ctx.db
+      .query('narrativeSettings')
+      .withIndex('by_enabled_dispatched', (q) => q.eq('enabled', true))
+      .take(100);
+    for (const prefs of selected) await ctx.db.patch(prefs._id, { lastDispatchedAt: Date.now() });
+    return selected.map((prefs) => prefs.userId);
+  },
 });
 export const tick = internalAction({
   args: {},
@@ -1207,7 +1234,7 @@ export const tick = internalAction({
     const url = process.env.LAB86_MAIL_PUBLIC_URL,
       secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
-    const users: string[] = await ctx.runQuery((internal as any).narrative.targets, {});
+    const users: string[] = await ctx.runMutation(internal.narrative.targets, {});
     await fanOutInternalPost(
       `${url.replace(/\/$/, '')}/api/cron/narrative`,
       secret,
