@@ -65,12 +65,11 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any) {
         ['rejected', 'superseded'].includes(original.status)
       )
         return false;
-      if (
-        row.current &&
-        row.sourceTable === 'aiOperations' &&
-        observationsForRow('aiOperations', original)[0]?.sourceVersion !== row.sourceVersion
-      )
-        return false;
+      if (row.current && row.sourceTable === 'aiOperations') {
+        const baseline = row.corrected ? row.sourceBaseVersion : row.sourceVersion;
+        const receipt = observationsForRow('aiOperations', original)[0];
+        if (!receipt || (baseline && receipt.sourceVersion !== baseline)) return false;
+      }
     }
     return true;
   }

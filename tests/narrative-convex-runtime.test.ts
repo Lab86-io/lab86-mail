@@ -75,6 +75,12 @@ describe('shared narrative runtime', () => {
         })
       ).changed,
     ).toBe(0);
+    await t.mutation(f.edit, {
+      ...args,
+      id: old._id,
+      text: 'User correction: the card only covers keyboard QA, not the full review.',
+    });
+    expect((await t.query(f.read, { ...args, id: old._id })).entry.text).toContain('User correction');
     const caller = { ...args, operationId: id, claimToken: 'claim' };
     await t.mutation(api.operations.claimUndo, { ...caller, leaseMs: 1000 });
     expect(await t.query(f.read, { ...args, id: old._id })).toBeNull();
