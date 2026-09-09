@@ -162,8 +162,14 @@ export async function loadNarrativeWorkspace(
         'Today workspace',
       );
       completion = { finishReason: response.finishReason, textLength: response.text.length };
+      let payload: unknown;
+      try {
+        payload = response.output;
+      } catch {
+        // Some providers expose text but cannot materialize structured output.
+      }
       composition = workspaceCompositionSchema.parse(
-        JSON.parse(response.text.replace(/^```(?:json)?\s*|\s*```$/g, '')),
+        payload ?? JSON.parse(response.text.replace(/^```(?:json)?\s*|\s*```$/g, '')),
       );
       hydrate(composition, 'generated'); // Validate all references before publishing anything.
       mode = 'generated';

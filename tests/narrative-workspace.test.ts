@@ -64,6 +64,7 @@ function harness() {
 beforeEach(clearWorkspaceCache);
 describe('Today workspace composition and trust boundary', () => {
   test('model selects bounded evidence, never executable UI or arbitrary IDs', () => {
+    expect(() => workspaceCompositionSchema.parse({ threads: [] })).toThrow();
     expect(() =>
       workspaceCompositionSchema.parse({ ...composition, html: '<script>bad</script>' }),
     ).toThrow();
@@ -126,7 +127,7 @@ describe('Today workspace composition and trust boundary', () => {
     expect(candidates.length).toBeLessThanOrEqual(18);
     expect(candidates.map((e) => e._id)).toContain('meeting');
     expect(candidates.map((e) => e._id)).toContain('pr');
-    expect(evidenceComposition(candidates).threads.length).toBeLessThanOrEqual(3);
+    expect(evidenceComposition(candidates).threads.length).toBe(1);
   });
   test('empty consent avoids generation, work lookups and stale cache', async () => {
     const deps = harness();
@@ -136,6 +137,27 @@ describe('Today workspace composition and trust boundary', () => {
     expect(response).toMatchObject({ enabled: false, threads: [] });
     expect(deps.generate).toHaveBeenCalledTimes(1);
     expect(deps.work).toHaveBeenCalledTimes(1);
+  });
+  test('structured output is preferred and a throwing getter falls back to text', async () => {
+    const deps = harness();
+    deps.generate.mockResolvedValue({ text: 'not JSON', output: composition });
+    expect((await loadNarrativeWorkspace('structured', now, true, undefined, deps)).mode).toBe('generated');
+    deps.generate.mockResolvedValue({
+      text: JSON.stringify(composition),
+      get output() {
+        throw new Error('unavailable');
+      },
+    });
+    expect((await loadNarrativeWorkspace('text', now, true, undefined, deps)).mode).toBe('generated');
+  });
+  test('empty model composition uses evidence and can be retried', async () => {
+    const deps = harness();
+    deps.generate.mockResolvedValue({ text: '{"threads":[]}' });
+    const fallback = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+    expect(fallback.mode).toBe('evidence');
+    expect(fallback.threads).toHaveLength(1);
+    deps.generate.mockResolvedValue({ text: JSON.stringify(composition) });
+    expect((await loadNarrativeWorkspace('owner', now, true, undefined, deps)).mode).toBe('generated');
   });
   test('GET is read-only; POST composes once and cache is user-scoped', async () => {
     const deps = harness();

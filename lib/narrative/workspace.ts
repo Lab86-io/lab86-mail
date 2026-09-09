@@ -19,6 +19,7 @@ export const workspaceCompositionSchema = z
           })
           .strict(),
       )
+      .min(1)
       .max(3),
   })
   .strict();

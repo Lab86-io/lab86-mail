@@ -1,9 +1,13 @@
+/** Run `bun run build`, then in another terminal:
+ * `bun scripts/preview-narrative-tools.mjs --today`
+ * Run checks: `bun scripts/check-today-workspace-browser.mjs`.
+ * Set CHROMIUM_PATH if using a browser outside Playwright's installation.
+ */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
 const browser = await chromium.launch({
-  executablePath:
-    process.env.CHROMIUM_PATH || '/home/jjalangtry/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome',
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
   headless: true,
   args: ['--no-sandbox'],
 });
@@ -12,7 +16,14 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('http://127.0.0.1:18839', { waitUntil: 'networkidle' });
+  try {
+    await page.goto('http://127.0.0.1:18839', { waitUntil: 'networkidle' });
+  } catch (cause) {
+    throw new Error(
+      'Today preview is unreachable. Run bun scripts/preview-narrative-tools.mjs --today first.',
+      { cause },
+    );
+  }
   await page.getByRole('heading', { name: 'Bring CardHunt across the line' }).waitFor();
   assert.equal(await page.locator('[data-today-thread]').count(), 2);
   await page.screenshot({ path: '/tmp/today-workspace-desktop.png', fullPage: true });

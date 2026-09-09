@@ -7,6 +7,7 @@ import {
   TodayWeather,
   TodayWorkspace,
   WorkspaceThreadCard,
+  weatherRequest,
   workspaceRequest,
   workspaceSourceDate,
 } from '../components/narrative/TodayWorkspace';
@@ -39,6 +40,32 @@ function render(node: ReactNode, key?: unknown[], data?: unknown) {
   return html;
 }
 describe('Today working surface', () => {
+  test('weather validates nested data and rejects malformed successful responses', async () => {
+    const original = globalThis.fetch;
+    try {
+      for (const data of [{}, { asOf: 1, weather: {} }, { asOf: 1, weather: { current: null } }]) {
+        globalThis.fetch = (async () => Response.json(data)) as typeof fetch;
+        await expect(weatherRequest()).rejects.toThrow('Weather unavailable');
+      }
+      globalThis.fetch = (async () => new Response('<html>proxy</html>')) as typeof fetch;
+      await expect(weatherRequest()).rejects.toThrow('Weather unavailable');
+      const data = {
+        asOf: 1,
+        weather: {
+          location: 'Rochester',
+          unit: '°F',
+          current: { temp: 72, condition: 'Clear', high: 77, low: 58 },
+          daily: [{ precipChance: 20 }],
+        },
+      };
+      globalThis.fetch = (async () => Response.json(data)) as typeof fetch;
+      expect(await weatherRequest()).toEqual(data);
+      globalThis.fetch = (async () => Response.json({ asOf: 1, weather: null })) as typeof fetch;
+      expect(await weatherRequest()).toEqual({ asOf: 1, weather: null });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
   test('source dates respect the reader’s timezone and reject invalid instants', () => {
     const evening = Date.UTC(2026, 8, 9, 1);
     expect(workspaceSourceDate(evening, 'America/Los_Angeles')).toBe('2026-09-08');

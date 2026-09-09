@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
 import { useClientStore } from '@/lib/client-state';
-import type { BriefWeatherPack } from '@/lib/mail/brief-weather';
 import type { NarrativeWorkspace, WorkspaceSource, WorkspaceThread } from '@/lib/narrative/workspace';
 import { workspaceResponseSchema } from '@/lib/narrative/workspace';
 import { safeExternalUrl } from '@/lib/shared/url';
@@ -358,7 +358,7 @@ export function WorkspaceThreadCard({
               maxLength={1000}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              className="min-h-20 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-sm"
+              className="min-h-20 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-base sm:text-sm"
             />
             <button type="submit" disabled={busy || !note.trim()} className={control}>
               {busy ? 'Saving…' : 'Save correction'}
@@ -381,14 +381,35 @@ export function WorkspaceThreadCard({
   );
 }
 
+const weatherResponseSchema = z.object({
+  asOf: z.number().finite(),
+  weather: z
+    .object({
+      location: z.string(),
+      unit: z.enum(['°F', '°C']),
+      current: z.object({
+        temp: z.number().finite(),
+        condition: z.string(),
+        high: z.number().finite(),
+        low: z.number().finite(),
+      }),
+      daily: z.array(z.object({ precipChance: z.number().finite().nullable().optional() })),
+      source: z.string().optional(),
+      attributionURL: z.string().optional(),
+    })
+    .nullable(),
+});
+export async function weatherRequest(signal?: AbortSignal) {
+  const response = await fetch('/api/brief/weather', { signal });
+  if (!response.ok) throw new Error('Weather unavailable');
+  const parsed = weatherResponseSchema.safeParse(await response.json().catch(() => null));
+  if (!parsed.success) throw new Error('Weather unavailable');
+  return parsed.data;
+}
 export function TodayWeather() {
-  const query = useQuery<{ weather: Omit<BriefWeatherPack, 'latitude' | 'longitude'> | null; asOf: number }>({
+  const query = useQuery({
     queryKey: ['brief', 'weather'],
-    queryFn: async ({ signal }) => {
-      const response = await fetch('/api/brief/weather', { signal });
-      if (!response.ok) throw new Error('Weather unavailable');
-      return response.json();
-    },
+    queryFn: ({ signal }) => weatherRequest(signal),
     staleTime: 10 * 60_000,
     retry: false,
   });
