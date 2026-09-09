@@ -39,7 +39,7 @@ async function settings(ctx: QueryCtx | MutationCtx, userId: string) {
     .withIndex('by_user', (q) => q.eq('userId', userId))
     .unique();
 }
-type EvidenceReadMeter = { bytes: number; reads: number };
+type EvidenceReadMeter = { bytes: number; reads: number; consent?: Map<string, boolean> };
 class EvidenceReadLimit extends Error {}
 async function meteredRead<T>(meter: EvidenceReadMeter | undefined, read: () => Promise<T>): Promise<T> {
   // Leave room for the caller's indexed scan and a maximum-size final document.
@@ -59,6 +59,17 @@ async function allowed(
   meter?: EvidenceReadMeter,
 ) {
   if (!prefs?.enabled || !prefs.sources.includes(source)) return false;
+  // Reuse consent only inside one user's bucket transaction. Later transactions
+  // always recheck it, including after an account is disconnected.
+  const cached = meter?.consent?.get(source);
+  if (cached !== undefined) return cached;
+  const remember = (value: boolean) => {
+    if (meter) {
+      meter.consent ??= new Map();
+      meter.consent.set(source, value);
+    }
+    return value;
+  };
   if (source.startsWith('mcp:')) {
     const connection = await meteredRead(meter, () =>
       ctx.db
@@ -66,7 +77,7 @@ async function allowed(
         .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(4)))
         .unique(),
     );
-    return Boolean(connection && connection.status !== 'disconnected');
+    return remember(Boolean(connection && connection.status !== 'disconnected'));
   }
   if (/^(mail|calendar):/.test(source)) {
     const account = await meteredRead(meter, () =>
@@ -77,7 +88,7 @@ async function allowed(
         )
         .unique(),
     );
-    return Boolean(account && account.status !== 'disconnected');
+    return remember(Boolean(account && account.status !== 'disconnected'));
   }
   return true;
 }
@@ -236,12 +247,7 @@ export const configure = mutation({
     };
     if (prev) await ctx.db.patch(prev._id, doc);
     else await ctx.db.insert('narrativeSettings', { ...doc, createdAt: Date.now() });
-    if (changed) {
-      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
-        userId: args.userId,
-      });
-    }
-    if (timezoneChanged) {
+    if (changed || timezoneChanged) {
       // The epoch hides old calendar keys immediately. Read-validated cleanup
       // removes only stale editions, even if the new sweep has already begun.
       await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId: args.userId });
@@ -1100,11 +1106,9 @@ export const pending = query({
         .take(4);
       for (const row of rows) if (await visible(ctx, row, prefs)) entries.push(row);
     }
-    entries.sort(
-      (a, b) =>
-        Number(b.level === narrativeAgeTier(b.occurredAt)) -
-          Number(a.level === narrativeAgeTier(a.occurredAt)) || a.occurredAt - b.occurredAt,
-    );
+    const ageMatched = (row: { level: string; occurredAt: number }) =>
+      row.level === 'thread' || row.level === narrativeAgeTier(row.occurredAt);
+    entries.sort((a, b) => Number(ageMatched(b)) - Number(ageMatched(a)) || a.occurredAt - b.occurredAt);
     return { entries };
   },
 });

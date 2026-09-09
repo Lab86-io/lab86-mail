@@ -36,6 +36,15 @@ __setNarrativeDepsForTest({
   }) as any,
   generate: (async (input: any) => {
     const at = Date.now();
+    if (input.feature === 'narrative_write')
+      console.log(
+        JSON.stringify({
+          phase: 'writer-packet',
+          characters: JSON.stringify(input.messages).length,
+          reasoningEffort: input.providerOptions?.openai?.reasoningEffort,
+          maxOutputTokens: input.maxOutputTokens,
+        }),
+      );
     try {
       const result = await generateTextForCurrentUser(input);
       let output: any;
