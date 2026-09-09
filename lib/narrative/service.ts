@@ -470,7 +470,12 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                     ],
               toolChoice: 'none',
               stopWhen: stepCountIs(1),
-              output: Output.object({ schema: attemptSchema }),
+              // Native GLM endpoints advertise JSON mode, while only some
+              // hosted endpoints enforce JSON Schema. Keep routing compatible;
+              // the host applies the identical schema before publication below.
+              output: /^(?:z-ai\/)?glm-5\.3-flash(?::.*)?$/i.test(model || '')
+                ? Output.json()
+                : Output.object({ schema: attemptSchema }),
               // GLM reasoning is mandatory. Shrinking the retry's total token
               // allowance can consume it before any JSON prose is emitted.
               maxOutputTokens: 4_000,
@@ -491,7 +496,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
           if (attempt === 1) throw failure;
         }
       }
-      const parsed = parseNarrativeGeneration(written.output, writtenCodes);
+      const parsed = writerSchema.parse(parseNarrativeGeneration(written.output, writtenCodes));
       stage = 'publication';
       const publication = await deps.mutation<{ published: boolean }>(functions.publish, {
         userId,

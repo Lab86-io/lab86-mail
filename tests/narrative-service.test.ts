@@ -54,6 +54,7 @@ function setup(
     skipResearchTools?: boolean;
     alreadyWritten?: boolean;
     limits?: { researchMs: number; writeMs: number };
+    model?: string;
   } = {},
 ) {
   const writes: Array<{ name: string; args: any }> = [],
@@ -82,17 +83,24 @@ function setup(
       const name = getFunctionName(fn);
       writes.push({ name, args });
       if (name === 'narrative:claim')
-        return { model: 'z-ai/glm-5.3-flash', timezone: 'UTC', groups: ['work'] };
+        return {
+          model: overrides.model ? 'current' : 'z-ai/glm-5.3-flash',
+          timezone: 'UTC',
+          groups: ['work'],
+        };
       if (name === 'narrative:ingest') return { done: true, changed: 1 };
       if (name === 'narrative:prepareBrief') return 'chapter1';
       return { published: !overrides.revoked };
     }) as any,
-    runtime: (async () => ({ modelName: 'z-ai/glm-5.3-flash', provider: 'openrouter' })) as any,
+    runtime: (async () => ({
+      modelName: overrides.model || 'z-ai/glm-5.3-flash',
+      provider: 'openrouter',
+    })) as any,
     fetch: (async () =>
       Response.json({
         data: [
           {
-            id: 'z-ai/glm-5.3-flash',
+            id: overrides.model || 'z-ai/glm-5.3-flash',
             pricing: { prompt: overrides.price || '0.000000075', completion: '0.00000025' },
           },
         ],
@@ -117,6 +125,24 @@ function setup(
   return { writes, requests };
 }
 describe('narrative agent run', () => {
+  test('GLM uses schema-free JSON mode but other writers retain schema-enforced output', async () => {
+    const glm = setup();
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    const format = await glm.requests[0].output.responseFormat;
+    expect(format.type).toBe('json');
+    expect(format.schema).toBeUndefined();
+    const other = setup({ model: 'openai/gpt-5.4-nano' });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    expect((await other.requests[0].output.responseFormat).schema).toBeDefined();
+  });
+
+  test('JSON-mode prose still obeys the host chapter limit before publication', async () => {
+    const state = setup({
+      generate: async () => ({ output: { text: 'x'.repeat(4000), sourceIds: ['E1'] } }),
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('partial');
+    expect(state.writes.some((write) => write.name === 'narrative:publish')).toBe(false);
+  });
   test('manual refresh rewrites the brief while scheduled runs preserve an unchanged published edition', async () => {
     const manual = setup({ alreadyWritten: true });
     expect((await refreshNarrative('pilot', 'manual')).publishedCount).toBe(1);
