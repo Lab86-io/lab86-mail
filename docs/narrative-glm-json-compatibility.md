@@ -19,6 +19,11 @@ First real-account candidate result: ready in 39.2 seconds; final writing took
 GLM model. Optional research timed out safely. This is evidence that output-mode
 compatibility matters here, not a claim that model latency is guaranteed.
 
+A second real-account run completed in 40.8 seconds, including 8.3 seconds of
+writing and 1,768 characters with four citations. CodeRabbit's follow-up finding
+was addressed by validating inside the retry loop: invalid shape, length or
+citation codes get the same single smaller-packet retry as invalid provider JSON.
+
 Tests inspect the requested output format for GLM and non-GLM models and reject
 overlong JSON-mode prose before publication. Existing fabricated/retry citation,
 revocation and cancellation tests remain in force. Repeated real-account and

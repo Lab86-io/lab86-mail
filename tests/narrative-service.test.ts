@@ -143,6 +143,26 @@ describe('narrative agent run', () => {
     expect((await refreshNarrative('pilot')).status).toBe('partial');
     expect(state.writes.some((write) => write.name === 'narrative:publish')).toBe(false);
   });
+
+  test('invalid JSON-mode text or citations receive one validated retry', async () => {
+    const valid = {
+      text: 'You planned to finish the review. Completion is not established by the available records. Confirm QA before deciding the next move.',
+      sourceIds: ['E1'],
+    };
+    for (const invalid of [
+      { ...valid, text: 'x'.repeat(4000) },
+      { ...valid, sourceIds: ['E999'] },
+    ]) {
+      let attempts = 0;
+      const state = setup({ generate: async () => ({ output: ++attempts === 1 ? invalid : valid }) });
+      expect((await refreshNarrative('pilot')).status).toBe('ready');
+      expect(attempts).toBe(2);
+      const published = state.writes.filter((write) => write.name === 'narrative:publish');
+      expect(published).toHaveLength(1);
+      expect(published[0].args.text).toBe(valid.text);
+      expect(published[0].args.sourceIds).toEqual(['evidence1']);
+    }
+  });
   test('manual refresh rewrites the brief while scheduled runs preserve an unchanged published edition', async () => {
     const manual = setup({ alreadyWritten: true });
     expect((await refreshNarrative('pilot', 'manual')).publishedCount).toBe(1);
