@@ -114,8 +114,12 @@ final class NarrativeBriefStore {
             sources = []
             enabled = false
             generation += 1
-            running = false
-            self.error = "Narrative context is unavailable. Reconnect and try again."
+            if refreshRevision == requestRefreshRevision {
+                running = false
+                self.error = "Narrative context is unavailable. Reconnect and try again."
+            } else if self.error == nil {
+                self.error = "The refresh was accepted, but narrative context is unavailable. Reconnect to check its progress."
+            }
         }
     }
 

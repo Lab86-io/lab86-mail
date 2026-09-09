@@ -149,6 +149,31 @@ struct NarrativeBriefTests {
         }
     }
 
+    @Test @MainActor func aFailedOlderPollRevokesPrivateContentWithoutLosingRefreshFeedback() async {
+        for accepted in [true, false] {
+            let store = NarrativeBriefStore()
+            await store.load(.brief(Self.at)) { _ in Self.brief() }
+            let gate = NarrativeReadGate()
+            let poll = Task {
+                await store.load(.brief(Self.at)) { _ in
+                    _ = await gate.wait()
+                    throw BackendError.unauthorized
+                }
+            }
+            await gate.started()
+            await store.requestRefresh { .object(["ok": .bool(accepted)]) }
+            let refreshError = store.error
+            await gate.finish(.null)
+            await poll.value
+            #expect(store.entry == nil)
+            #expect(store.sources.isEmpty)
+            #expect(!store.enabled)
+            #expect(store.running == accepted)
+            if accepted { #expect(store.error?.contains("refresh was accepted") == true) }
+            else { #expect(store.error == refreshError) }
+        }
+    }
+
     @Test @MainActor func toolbarAndMastheadUseTheSelectedHistoricalEdition() {
         let report = DailyReportModel(json: .object([
             "_id": .string("old"), "generatedAt": .number(Self.at.timeIntervalSince1970 * 1000),

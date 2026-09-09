@@ -35,7 +35,7 @@ struct NarrativeBriefView: View {
             .sheet(isPresented: $showsSources) {
                 NarrativeSourcesSheet(id: entry.id, backend: backend)
             }
-        } else if memory.enabled {
+        } else if memory.enabled || memory.error != nil {
             Text(memory.error ?? (memory.running ? "Your narrative is being prepared." : "No narrative account is ready for this edition."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
