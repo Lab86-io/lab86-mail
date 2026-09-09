@@ -7,9 +7,9 @@ struct AppConfiguration: Sendable {
 
     static let current = AppConfiguration(bundle: .main)
 
-    init(bundle: Bundle) {
+    init(bundle: Bundle, defaults: UserDefaults = .standard) {
         let api = bundle.configuredString(for: "LAB86_API_BASE_URL")
-        apiBaseURL = api.flatMap(URL.init(string:))
+        apiBaseURL = DevelopmentAPIOverride.resolve(bundled: api.flatMap(URL.init(string:)), defaults: defaults)
         clerkPublishableKey = bundle.configuredString(for: "CLERK_PUBLISHABLE_KEY")
         convexDeploymentURL = bundle.configuredString(for: "CONVEX_DEPLOYMENT_URL")
     }
@@ -33,4 +33,3 @@ private extension Bundle {
         return value
     }
 }
-

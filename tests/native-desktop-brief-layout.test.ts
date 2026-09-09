@@ -23,7 +23,9 @@ describe('desktop brief chrome composition', () => {
 
     expect(body.match(/ScrollView \{/g)).toHaveLength(1);
     expect(body).toMatch(/ScrollView \{\s+if let document = report\.document/);
-    expect(body).toMatch(/BriefDocumentView\([\s\S]+\} else \{\s+DailyBriefView\(/);
+    expect(body).toMatch(
+      /BriefDocumentView\([\s\S]+\} else \{\s+LazyVStack\([^\n]+\{\s+NarrativeBriefView\([^\n]+\)\s+DailyBriefView\(/,
+    );
     expect(body).toMatch(/\.padding\(\.bottom, 32\)\s+\}\s+\}\s+\.background/);
     expect(body.match(/\.onScrollGeometryChange\(/g)).toHaveLength(1);
     expect(body).toContain('containerWidth: min(geometry.containerSize.width, 920)');

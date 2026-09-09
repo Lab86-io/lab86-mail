@@ -37,7 +37,9 @@ jobs:
           xcodegen generate --spec apps/ios/project.yml
           xcodebuild -version
       - name: Build and verify
-        run: bash .github/scripts/native-acceptance.sh '${{ matrix.platform }}'
+        env:
+          NATIVE_PLATFORM: ${{ matrix.platform }}
+        run: bash .github/scripts/native-acceptance.sh "$NATIVE_PLATFORM"
       - name: Preserve build and test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

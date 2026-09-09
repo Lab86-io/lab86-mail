@@ -195,11 +195,9 @@ struct TodayView: View {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
-                    if narrative.entry != nil {
-                        NarrativeBriefView(memory: narrative, backend: environment.backend)
-                    } else {
+                    NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    if narrative.entry == nil {
                         DailyBriefLede(text: document.summary)
-                        NarrativeBriefView(memory: narrative, backend: environment.backend)
                     }
                     BriefDocumentView(
                         document: document,
@@ -212,13 +210,15 @@ struct TodayView: View {
                 .frame(maxWidth: 920)
                 .frame(maxWidth: .infinity)
             } else {
-                NarrativeBriefView(memory: narrative, backend: environment.backend)
-                DailyBriefView(
-                    report: report,
-                    lastRefresh: store.lastRefresh,
-                    isOffline: store.briefError != nil,
-                    onAction: handleBriefAction
-                )
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    DailyBriefView(
+                        report: report,
+                        lastRefresh: store.lastRefresh,
+                        isOffline: store.briefError != nil,
+                        onAction: handleBriefAction
+                    )
+                }
                 .frame(maxWidth: 920)
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 32)

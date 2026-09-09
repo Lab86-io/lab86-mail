@@ -55,6 +55,16 @@ struct NarrativeBriefTests {
         #expect(store.sources.isEmpty)
     }
 
+    @Test @MainActor func malformedSourcesRejectTheWholePacket() async {
+        let store = NarrativeBriefStore()
+        await store.load(.sources("brief-1")) { _ in
+            .object(["entry": Self.entry(), "sources": .array([Self.entry("source-1"), .null])])
+        }
+        #expect(store.entry == nil)
+        #expect(store.sources.isEmpty)
+        #expect(store.error != nil)
+    }
+
     @Test @MainActor func aClearedOrSupersededRequestCannotRestoreAnOldEdition() async {
         let store = NarrativeBriefStore()
         let gate = NarrativeReadGate()

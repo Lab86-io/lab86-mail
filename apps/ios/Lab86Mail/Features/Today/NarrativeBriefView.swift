@@ -18,7 +18,7 @@ struct NarrativeBriefView: View {
                 Button {
                     showsSources = true
                 } label: {
-                    Label("Read the \(entry.sourceIDs.count) supporting observations", systemImage: "text.book.closed")
+                    Label("^[Read the \(entry.sourceIDs.count) supporting observation](inflect: true)", systemImage: "text.book.closed")
                         .font(.subheadline)
                         .frame(minHeight: 44)
                 }
