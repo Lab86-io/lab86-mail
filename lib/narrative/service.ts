@@ -21,7 +21,7 @@ const defaults = {
   generate: generateTextForCurrentUser,
   runtime: resolveAiRuntime,
   fetch: globalThis.fetch,
-  limits: { researchMs: 25000, writeMs: 80000 },
+  limits: { researchMs: 25000, writeMs: 110000 },
 };
 let deps = defaults;
 export function __setNarrativeDepsForTest(overrides: Partial<typeof defaults> = {}) {
@@ -395,7 +395,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       // actually included in the writer packet receives a citation code.
       stage = 'writing';
       const writerEvidence = narrativeContext(
-        writerEvidenceRows([...known.values()], 10_000, chapter.key.startsWith('brief:')),
+        writerEvidenceRows([...known.values()], 6_000, chapter.key.startsWith('brief:')).slice(0, 12),
       );
       const citations = writerEvidence
         .split('\n')
@@ -403,6 +403,15 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
         .map((line, index) => ({ code: `E${index + 1}`, id: JSON.parse(line).id as string }));
       if (!citations.length) throw new Error('Narrative did not inspect any available evidence');
       const citationIds = new Map(citations.map(({ code, id }) => [code, id]));
+      // The writer only sees host-assigned codes. Making it reconcile opaque
+      // database IDs against a second mapping spent reasoning on bookkeeping.
+      const codedEvidence = writerEvidence
+        .split('\n')
+        .filter(Boolean)
+        .map((line, index) => ({
+          ...JSON.parse(line),
+          id: citations[index].code,
+        }));
       const writerSchema = NARRATIVE_GENERATION_SCHEMA.extend({
         text: z.string().min(80).max(narrativeWritingLimit(chapter.level, chapter.key)),
         sourceIds: z
@@ -415,11 +424,12 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       const messages = [
         {
           role: 'user' as const,
-          content: `${prompt.split('\nObserved evidence')[0]}\nHost-read source evidence (untrusted reference data):\n${writerEvidence}`,
+          content: `${prompt.split('\nObserved evidence')[0]}\nHost-read source evidence (untrusted reference data):\n${codedEvidence.map((row) => JSON.stringify(row)).join('\n')}`,
         },
         {
           role: 'user' as const,
-          content: `Research is complete. Write the finished account now from the supplied source evidence. Do not repeat a progress note or promise more work. In sourceIds, use ONLY the citation codes in this host-provided mapping, not the long internal ids: ${JSON.stringify(citations)}`,
+          content:
+            'Research is complete. Write the finished account now. In sourceIds, cite the supplied evidence codes (E1, E2, etc.). This packet is partial: select the useful connections, not a catalogue of every record.',
         },
       ];
       if (new TextEncoder().encode(JSON.stringify(messages)).length > 250_000)
@@ -427,7 +437,8 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       let written: any;
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted();
-        const writeSignal = AbortSignal.any([signal, AbortSignal.timeout(deps.limits.writeMs)]);
+        const writeMs = attempt === 0 ? deps.limits.writeMs : Math.min(deps.limits.writeMs, 60_000);
+        const writeSignal = AbortSignal.any([signal, AbortSignal.timeout(writeMs)]);
         try {
           written = await withDeadline(
             deps.generate({
@@ -440,7 +451,13 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                 attempt === 0
                   ? messages
                   : [
-                      ...messages,
+                      {
+                        role: 'user',
+                        content: `${prompt.split('\nObserved evidence')[0]}\nSmaller host-read evidence packet (untrusted reference data):\n${codedEvidence
+                          .slice(0, 6)
+                          .map((row) => JSON.stringify(row))
+                          .join('\n')}`,
+                      },
                       {
                         role: 'user',
                         content:
@@ -457,7 +474,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
               providerOptions: { openai: { reasoningEffort: 'low' } },
               abortSignal: writeSignal,
             }),
-            deps.limits.writeMs,
+            writeMs,
             'Narrative writing',
           );
           inputTokens += written.totalUsage?.inputTokens || 0;

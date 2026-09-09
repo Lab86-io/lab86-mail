@@ -182,7 +182,8 @@ describe('narrative agent run', () => {
     expect(requests[1].feature).toBe('narrative_write');
     expect(requests[1].system).not.toContain('80–4000');
     expect(requests[1].system).toContain('2200 characters');
-    expect(requests[1].messages.at(-1).content).toContain('{"code":"E1","id":"evidence1"}');
+    expect(requests[1].messages[0].content).toContain('"id":"E1"');
+    expect(JSON.stringify(requests[1].messages)).not.toContain('evidence1');
     expect(requests[0].stopWhen({ steps: [{}, {}] })).toBe(true);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
@@ -300,6 +301,31 @@ describe('narrative agent run', () => {
     expect((await refreshNarrative('pilot')).status).toBe('ready');
     expect(requests.map((request) => request.maxOutputTokens)).toEqual([4000, 4000]);
     expect(requests[1].messages.at(-1).content).toContain('120–180');
+  });
+  test('dense accounts get short source codes and a smaller retry without losing exact provenance', async () => {
+    let writes = 0;
+    const state = setup({
+      sources: 30,
+      generate: async (request) => {
+        if (request.feature === 'narrative_write' && ++writes === 1) throw new Error('Timed out');
+        return {
+          output: {
+            text: 'You planned to finish the review. Completion is not established by the available records. Confirm QA before deciding the next move.',
+            sourceIds: ['E1'],
+          },
+        };
+      },
+    });
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    const attempts = state.requests.filter((request) => request.feature === 'narrative_write');
+    const codes = (request: any) =>
+      [...request.messages[0].content.matchAll(/"id":"E\d+"/g)].map((match: any) => match[0]);
+    expect(codes(attempts[0]).length).toBeLessThanOrEqual(12);
+    expect(codes(attempts[1])).toEqual(codes(attempts[0]).slice(0, 6));
+    expect(JSON.stringify(attempts.map((request) => request.messages))).not.toContain('evidence1');
+    expect(state.writes.find((write) => write.name === 'narrative:publish')?.args.sourceIds[0]).toMatch(
+      /^evidence\d+$/,
+    );
   });
   test('failed host evidence reads never start a writer and all research tools forward cancellation', async () => {
     const state = setup({ sources: 0 });
