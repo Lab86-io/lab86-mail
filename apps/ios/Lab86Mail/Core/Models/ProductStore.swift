@@ -2015,30 +2015,19 @@ final class ProductStore {
             fields: fields,
             files: attachments.map(\.multipart)
         )
-        if let pending = result["pending"],
-           let id = pending["id"]?.stringValue,
-           let fireAt = pending["fireAt"]?.doubleValue {
-            return .pending(
-                PendingSendReceipt(
-                    id: id,
-                    fireAt: Date(timeIntervalSince1970: fireAt / 1_000),
-                    undoSeconds: Int(pending["undoSeconds"]?.doubleValue ?? Double(undoSeconds)),
-                    accountID: pending["account"]?.stringValue ?? accountID,
-                    threadID: pending["threadId"]?.stringValue
-                )
-            )
-        }
-        if let scheduled = result["scheduled"],
-           let scheduledAt = scheduled["sendAt"]?.doubleValue {
-            return .scheduled(sendAt: Date(timeIntervalSince1970: scheduledAt / 1_000))
-        }
-        let sent = result["sent"]
-        await refreshMail()
-        return .sent(
-            accountID: sent?["account"]?.stringValue ?? accountID,
-            threadID: sent?["threadId"]?.stringValue ?? threadID,
-            messageID: sent?["messageId"]?.stringValue
+        // Only an explicit `sent` object counts as sent. A 2xx envelope
+        // without one is unconfirmed: the caller keeps the draft and never
+        // retries on its own.
+        let submission = ComposeSubmission.parse(
+            result,
+            accountID: accountID,
+            threadID: threadID,
+            undoSeconds: undoSeconds
         )
+        if case .sent = submission {
+            await refreshMail()
+        }
+        return submission
     }
 
     func saveDraft(

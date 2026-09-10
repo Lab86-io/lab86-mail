@@ -17,7 +17,7 @@ try {
     await page.goto(`http://127.0.0.1:18839/?scenario=${scenario}`);
     await page
       .locator(
-        'section[aria-label="Files"], section[aria-label="Document editor"], section[aria-label="Google file preview"]',
+        'section[aria-label="Files"], section[aria-label$=" editor"], section[aria-label="Google file preview"]',
       )
       .waitFor();
     await page.evaluate(() => document.fonts.ready.then(() => true));
@@ -99,6 +99,119 @@ try {
   await page.getByText('Saved to Google Drive', { exact: true }).waitFor();
   assert.equal(await page.getByRole('textbox', { name: 'File name' }).inputValue(), 'Saved draft');
   await page.screenshot({ path: join(artifacts, 'google-editor-phone.png') });
+
+  // Owned files are distinct from provider originals, but must preserve drafts just as carefully.
+  for (const scenario of ['owned-conflict', 'owned-error']) {
+    await open(scenario);
+    const localTitle = page.getByRole('textbox', { name: 'File name' });
+    await localTitle.fill('My unsaved decision memo');
+    await page.getByRole('alert').waitFor();
+    await localTitle.fill('My newer unsaved decision memo');
+    await page.waitForTimeout(1800);
+    assert.equal((await patches()).length, 1, 'Owned save failures must stop automatic retries');
+    assert.equal(await localTitle.inputValue(), 'My newer unsaved decision memo');
+    await page.getByRole('button', { name: 'Back to Files', exact: true }).click();
+    assert.equal(
+      await localTitle.inputValue(),
+      'My newer unsaved decision memo',
+      'Failed close preserves draft',
+    );
+    await page.getByRole('button', { name: 'Versions', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Restore version' }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Close version history' }).click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download my draft' }).click();
+    const recovery = await downloadPromise;
+    assert.equal(recovery.suggestedFilename(), 'albatross-recovered-draft.json');
+    const stream = await recovery.createReadStream();
+    let recovered = '';
+    for await (const chunk of stream) recovered += chunk.toString();
+    assert.equal(JSON.parse(recovered).title, 'My newer unsaved decision memo');
+    // A failed explicit recovery read must not replace the editor with an error screen.
+    await page.evaluate(() => {
+      globalThis.__failNextFileRead = true;
+    });
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Load saved version' }).click();
+    await page.waitForFunction(() => globalThis.__failNextFileRead === false);
+    assert.equal(await localTitle.inputValue(), 'My newer unsaved decision memo');
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Load saved version' }).click();
+    await page.waitForFunction(
+      () => document.querySelector('input[aria-label="File name"]')?.value === 'Project decision memo',
+    );
+    assert.equal(await page.getByRole('alert').count(), 0);
+  }
+
+  for (const width of [390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const scenario of ['owned', 'owned-sheet', 'owned-deck']) {
+      await open(scenario);
+      await page.getByRole('textbox', { name: 'File name' }).waitFor();
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
+        false,
+        `${scenario} page overflow at ${width}`,
+      );
+      await page.screenshot({ path: join(artifacts, `${scenario}-${width}-light.png`) });
+      await page.evaluate(() => document.documentElement.classList.add('dark'));
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: join(artifacts, `${scenario}-${width}-dark.png`) });
+    }
+    await open('owned');
+    await page.getByRole('textbox', { name: 'File name' }).fill('Saved owned memo');
+    await page.getByText('Saved · revision 3', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'File name' }).inputValue(), 'Saved owned memo');
+    assert.equal(await page.evaluate(() => globalThis.__filesBodies[0].expectedRevision), 2);
+
+    await open('owned');
+    await page.getByRole('button', { name: 'Versions', exact: true }).click();
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'Restore version' }).click();
+    await page.waitForFunction(() => typeof globalThis.__releaseFileAction === 'function');
+    assert.equal(
+      await page.getByRole('textbox', { name: 'File name' }).isDisabled(),
+      true,
+      'Restore locks mutable editor until refreshed',
+    );
+    assert.equal(
+      await page
+        .locator('section[aria-label="Document editor"] fieldset')
+        .first()
+        .evaluate((element) => {
+          const editor = element.querySelector('textarea, [contenteditable="true"]');
+          editor?.focus();
+          return element.disabled && element.inert && !element.contains(document.activeElement);
+        }),
+      true,
+      'Restore makes the entire canvas inert, including rich-text contentEditable',
+    );
+    await page.evaluate(() => globalThis.__releaseFileAction());
+    await page.waitForFunction(
+      () => document.querySelector('input[aria-label="File name"]')?.value === 'Restored decision memo',
+    );
+    assert.equal(await page.getByRole('textbox', { name: 'File name' }).isDisabled(), false);
+
+    await open('owned');
+    if (width < 1024) await page.getByRole('button', { name: 'Toggle document assistant' }).click();
+    const assistant = page.getByRole('complementary', { name: 'Document assistant' });
+    const applyButtons = assistant.getByRole('button', { name: 'Apply', exact: true });
+    assert.equal(await applyButtons.nth(0).isDisabled(), true, 'Outdated proposal cannot apply');
+    assert.equal(await applyButtons.nth(1).isDisabled(), false);
+    await applyButtons.nth(1).click();
+    await page.waitForFunction(() => typeof globalThis.__releaseFileAction === 'function');
+    assert.equal(
+      await page.getByRole('textbox', { name: 'File name' }).isDisabled(),
+      true,
+      'AI apply prevents typing race',
+    );
+    await page.evaluate(() => globalThis.__releaseFileAction());
+    await page.waitForFunction(
+      () => document.querySelector('input[aria-label="File name"]')?.value === 'AI-reviewed decision memo',
+    );
+    assert.equal(await page.getByRole('textbox', { name: 'File name' }).isDisabled(), false);
+    await page.screenshot({ path: join(artifacts, `owned-ai-${width}.png`) });
+  }
   console.log(`Files UI acceptance passed. Screenshots: ${artifacts}`);
 } finally {
   await browser.close();

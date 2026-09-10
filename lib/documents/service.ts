@@ -8,7 +8,10 @@ import {
   type DocumentSourceRef,
   type DocumentSuggestion,
   parseDocumentModel,
+  parseSuggestionPayload,
+  type SuggestionPayload,
 } from './model';
+import { assertModelWithinLimit } from './sheet-workbook';
 
 const documentsApi = (api as any).documents;
 
@@ -30,16 +33,29 @@ export interface DocumentWithSuggestions extends AlbatrossDocumentRecord {
 
 export async function createDocument(input: {
   userId: string;
+  /** Server-chosen idempotency identity for original-byte imports. */
+  documentId?: string;
   kind: DocumentKind;
   title?: string;
   model?: unknown;
   sourceRefs?: DocumentSourceRef[];
   reason?: string;
+  importSource?: {
+    format: 'xlsx';
+    filename: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    storageId: string;
+    warnings: string[];
+    importedAt: number;
+  };
 }) {
-  const documentId = dependencies.randomUUID();
+  const documentId = input.documentId ?? dependencies.randomUUID();
   const model = input.model
     ? parseDocumentModel(input.model, input.kind)
     : createDefaultDocumentModel(input.kind, documentId);
+  assertModelWithinLimit(model);
   return dependencies.convexMutation<AlbatrossDocumentRecord>(documentsApi.create, {
     userId: input.userId,
     documentId,
@@ -51,6 +67,7 @@ export async function createDocument(input: {
     model,
     sourceRefs: input.sourceRefs || [],
     reason: input.reason,
+    importSource: input.importSource,
   });
 }
 
@@ -70,9 +87,82 @@ export async function getDocument(userId: string, documentId: string) {
     model: parseDocumentModel(row.model, row.kind),
     suggestions: (row.suggestions || []).map((suggestion) => ({
       ...suggestion,
-      proposedModel: parseDocumentModel(suggestion.proposedModel, row.kind),
+      proposedModel: parseSuggestionPayload(suggestion.proposedModel, row.kind),
     })),
   };
+}
+
+export async function generateImportUploadUrl() {
+  return dependencies.convexMutation<string>(documentsApi.generateImportUploadUrl, {});
+}
+
+export async function cancelDocumentImport(input: { userId: string; documentId: string; storageId: string }) {
+  return dependencies.convexMutation<{
+    status: 'attached' | 'cancelled';
+    document?: AlbatrossDocumentRecord;
+  }>(documentsApi.cancelImport, input);
+}
+
+export class DocumentImportUnconfirmedError extends Error {
+  constructor() {
+    super(
+      'The import status could not be confirmed. Check Files before importing again; keep your original file until the import is verified.',
+    );
+    this.name = 'DocumentImportUnconfirmedError';
+  }
+}
+
+/**
+ * Bind a freshly uploaded original to one server-generated document identity.
+ * If a response is lost, compensation either finds that exact committed import
+ * or cancels the identity atomically before removing its unattached bytes.
+ */
+export async function createImportedDocument(
+  input: Parameters<typeof createDocument>[0] & {
+    importSource: NonNullable<Parameters<typeof createDocument>[0]['importSource']>;
+  },
+) {
+  const documentId = dependencies.randomUUID();
+  try {
+    return await createDocument({ ...input, documentId });
+  } catch (error) {
+    let settlement: Awaited<ReturnType<typeof cancelDocumentImport>>;
+    try {
+      settlement = await cancelDocumentImport({
+        userId: input.userId,
+        documentId,
+        storageId: input.importSource.storageId,
+      });
+    } catch (cleanupError) {
+      console.error('[document-import] Could not confirm import cleanup', cleanupError);
+      throw new DocumentImportUnconfirmedError();
+    }
+    if (settlement.status === 'attached') {
+      if (settlement.document?.documentId === documentId) return settlement.document;
+      throw new DocumentImportUnconfirmedError();
+    }
+    throw error;
+  }
+}
+
+export interface DocumentImportSourceLink {
+  format: 'xlsx';
+  filename: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  warnings: string[];
+  importedAt: number;
+  revision: number;
+  currentRevision: number;
+  url: string;
+}
+
+export async function getDocumentImportSource(userId: string, documentId: string) {
+  return dependencies.convexQuery<DocumentImportSourceLink | null>(documentsApi.getImportSource, {
+    userId,
+    documentId,
+  });
 }
 
 export async function findDocumentByGoogleFile(input: {
@@ -96,6 +186,7 @@ export async function updateDocument(input: {
   sourceRefs?: DocumentSourceRef[];
   reason?: string;
   actor?: 'user' | 'ai' | 'system';
+  allowDowngrade?: boolean;
 }) {
   const kind =
     input.model === undefined
@@ -106,11 +197,12 @@ export async function updateDocument(input: {
         });
   if (input.model !== undefined && !kind) return { ok: false as const, code: 'NOT_FOUND' as const };
   const model = input.model === undefined ? undefined : parseDocumentModel(input.model, kind!);
+  if (model !== undefined) assertModelWithinLimit(model);
   return dependencies.convexMutation<
     | { ok: true; document: AlbatrossDocumentRecord }
     | {
         ok: false;
-        code: 'NOT_FOUND' | 'REVISION_CONFLICT';
+        code: 'NOT_FOUND' | 'REVISION_CONFLICT' | 'ENGINE_MODEL_REQUIRED';
         document?: AlbatrossDocumentRecord;
       }
   >(documentsApi.update, {
@@ -122,6 +214,7 @@ export async function updateDocument(input: {
     sourceRefs: input.sourceRefs,
     reason: input.reason,
     actor: input.actor,
+    allowDowngrade: input.allowDowngrade,
   });
 }
 
@@ -129,12 +222,39 @@ export async function archiveDocument(userId: string, documentId: string) {
   return dependencies.convexMutation<{ ok: boolean }>(documentsApi.archive, { userId, documentId });
 }
 
+export interface DocumentRevision {
+  revision: number;
+  title: string;
+  model: AlbatrossDocumentModel;
+  reason: string;
+  actor: 'user' | 'ai' | 'system';
+  createdAt: number;
+}
+
+export async function listDocumentRevisions(userId: string, documentId: string) {
+  return dependencies.convexQuery<DocumentRevision[]>(documentsApi.listRevisions, {
+    userId,
+    documentId,
+    limit: 100,
+  });
+}
+
+export async function restoreDocumentRevision(input: {
+  userId: string;
+  documentId: string;
+  revision: number;
+  expectedRevision: number;
+}) {
+  return dependencies.convexMutation<{ ok: boolean; code?: string }>(documentsApi.restoreRevision, input);
+}
+
 export async function createDocumentSuggestion(input: {
   userId: string;
   documentId: string;
   title: string;
   description: string;
-  proposedModel: AlbatrossDocumentModel;
+  proposedModel: SuggestionPayload;
+  baseRevision?: number;
   sourceRefs?: DocumentSourceRef[];
 }) {
   const suggestionId = dependencies.randomUUID();
@@ -165,12 +285,15 @@ export async function applyDocumentSuggestion(input: {
   documentId: string;
   suggestionId: string;
   expectedRevision: number;
+  /** Engine snapshot after the editor applied a change-set suggestion. */
+  model?: AlbatrossDocumentModel;
 }) {
+  if (input.model !== undefined) assertModelWithinLimit(input.model);
   return dependencies.convexMutation<
     | { ok: true; document: AlbatrossDocumentRecord }
     | {
         ok: false;
-        code: 'NOT_FOUND' | 'ALREADY_RESOLVED' | 'REVISION_CONFLICT';
+        code: 'NOT_FOUND' | 'ALREADY_RESOLVED' | 'REVISION_CONFLICT' | 'NEEDS_EDITOR';
         document?: AlbatrossDocumentRecord;
       }
   >(documentsApi.applySuggestion, input);

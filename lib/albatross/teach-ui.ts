@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 export type SettingsTabId =
+  | 'appearance'
   | 'mailboxes'
   | 'connections'
   | 'areas'
@@ -19,6 +20,7 @@ export type SettingsTabId =
   | 'account';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
+  { id: 'appearance', label: 'Appearance' },
   { id: 'mailboxes', label: 'Mailboxes' },
   { id: 'connections', label: 'Connections' },
   { id: 'areas', label: 'Areas' },
@@ -495,6 +497,16 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
   document_list: fixed('Listing your files', 'Listed your files', 'Listing files failed'),
   document_get: fixed('Opening the file', 'Opened the file', 'Opening the file failed'),
+  document_edit: (_args, out) => ({
+    running: 'Preparing file edits',
+    done:
+      out.status === 'applied'
+        ? 'Saved a new file revision'
+        : out.status === 'proposed'
+          ? 'Added file edits for review — not yet applied'
+          : 'No file edits were applied',
+    failed: 'Applying file edits failed',
+  }),
   document_suggest_changes: fixed(
     'Preparing file suggestions',
     'Added suggestions for review',

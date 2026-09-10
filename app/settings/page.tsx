@@ -44,6 +44,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
+import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
@@ -74,6 +75,15 @@ export default function SettingsPage() {
 }
 
 const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
+  appearance: () => (
+    <section>
+      <SectionHeading
+        title="Appearance"
+        blurb="Make Albatross yours. Changes apply immediately; your existing palette and preferences stay intact."
+      />
+      <ThemePanel inline />
+    </section>
+  ),
   mailboxes: () => <MailboxesSection />,
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
@@ -118,6 +128,7 @@ function AdvancedSection() {
 }
 
 function SettingsPageBody() {
+  useApplyThemeExtras();
   const searchParams = useSearchParams();
   // Local state owns the active tab; the URL mirrors it (replaceState, no
   // navigation) so /settings?tab=areas deep-links and refresh keeps its place.

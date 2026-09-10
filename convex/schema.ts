@@ -1779,6 +1779,46 @@ export default defineSchema({
   // Provider-neutral, AI-editable office documents. The current snapshot is
   // optimized for open/list reads; immutable revisions preserve every user,
   // AI, restore, import, and provider-sync transition.
+  officeDocuments: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    title: v.string(),
+    extension: v.union(v.literal('docx'), v.literal('xlsx'), v.literal('pptx')),
+    currentRevision: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId'])
+    .index('by_user_updated', ['userId', 'updatedAt']),
+
+  officeVersions: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    revision: v.number(),
+    storageId: v.id('_storage'),
+    sha256: v.string(),
+    size: v.number(),
+    createdAt: v.number(),
+    sessionId: v.optional(v.string()),
+    recovery: v.boolean(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document_revision', ['userId', 'documentId', 'revision'])
+    .index('by_session_hash', ['sessionId', 'sha256']),
+
+  officeSessions: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    sessionId: v.string(),
+    key: v.string(),
+    baseRevision: v.number(),
+    lastRevision: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_session', ['sessionId'])
+    .index('by_user', ['userId']),
+
   documents: defineTable({
     userId: v.string(),
     documentId: v.string(),
@@ -1800,6 +1840,21 @@ export default defineSchema({
     ),
     googleFileId: v.optional(v.string()),
     googleConnectionId: v.optional(v.string()),
+    // Original bytes of an imported workbook. The engine's reading of them is
+    // revision `revision`; the bytes themselves are never rewritten.
+    importSource: v.optional(
+      v.object({
+        format: v.literal('xlsx'),
+        filename: v.string(),
+        mimeType: v.string(),
+        size: v.number(),
+        sha256: v.string(),
+        storageId: v.id('_storage'),
+        warnings: v.array(v.string()),
+        importedAt: v.number(),
+        revision: v.number(),
+      }),
+    ),
     archivedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1807,7 +1862,20 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_document', ['userId', 'documentId'])
     .index('by_user_updated', ['userId', 'updatedAt'])
+    .index('by_import_storage', ['importSource.storageId'])
     .index('by_user_google_file', ['userId', 'googleConnectionId', 'googleFileId']),
+
+  // Failure tombstones prevent a delayed import create from attaching bytes
+  // already removed by the compensating cleanup transaction.
+  documentImportCancellations: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    storageId: v.id('_storage'),
+    cancelledAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId'])
+    .index('by_storage', ['storageId']),
 
   documentRevisions: defineTable({
     userId: v.string(),
@@ -1829,6 +1897,7 @@ export default defineSchema({
     title: v.string(),
     description: v.string(),
     proposedModel: v.any(),
+    baseRevision: v.optional(v.number()),
     sourceRefs: v.array(v.any()),
     status: v.union(v.literal('proposed'), v.literal('applied'), v.literal('dismissed')),
     resolvedAt: v.optional(v.number()),

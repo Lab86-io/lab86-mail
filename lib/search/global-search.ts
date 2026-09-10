@@ -51,6 +51,18 @@ export const SEARCH_PAGES: SearchResult[] = [
   },
   { id: 'page:mail', title: 'Mail', detail: 'Inbox and messages', target: { kind: 'page', view: 'mail' } },
   {
+    id: 'page:chat',
+    title: 'Chat',
+    detail: 'Ask Albatross · beside your current page',
+    target: { kind: 'page', view: 'chat' },
+  },
+  {
+    id: 'page:notifications',
+    title: 'Notifications',
+    detail: 'Needs your attention · updates',
+    target: { kind: 'page', view: 'notifications' },
+  },
+  {
     id: 'page:calendar',
     title: 'Calendar',
     detail: 'Events and schedule',

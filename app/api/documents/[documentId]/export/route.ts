@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { exportDocument } from '@/lib/documents/export';
-import { getDocument } from '@/lib/documents/service';
+import { getDocument, getDocumentImportSource } from '@/lib/documents/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { sanitizeFilename } from '@/lib/shared/files';
 
@@ -39,6 +39,24 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ docume
     const { documentId } = await context.params;
     const document = await getDocument(user.userId, documentId);
     if (!document) return Response.json({ ok: false, error: 'Document not found.' }, { status: 404 });
+    // An imported workbook that was never edited is served as its original
+    // bytes: that is the only full-fidelity Excel the server can vouch for.
+    if (document.importSource && document.importSource.revision === document.currentRevision) {
+      const source = await getDocumentImportSource(user.userId, documentId);
+      if (source) {
+        const upstream = await fetch(source.url, { cache: 'no-store' });
+        if (upstream.ok && upstream.body) {
+          return new Response(upstream.body, {
+            headers: {
+              'content-type': source.mimeType,
+              'content-disposition': documentContentDisposition(source.filename),
+              'cache-control': 'private, no-store',
+              'x-albatross-export-fidelity': 'original',
+            },
+          });
+        }
+      }
+    }
     const exported = await exportDocument(document);
     const baseName = sanitizeFilename(document.title || 'Untitled').replace(/\.[a-z0-9]+$/iu, '');
     const filename = `${baseName}.${exported.extension}`;
@@ -47,6 +65,7 @@ export async function GET(_req: NextRequest, context: { params: Promise<{ docume
         'content-type': exported.contentType,
         'content-disposition': documentContentDisposition(filename),
         'cache-control': 'private, no-store',
+        'x-albatross-export-fidelity': exported.fidelity,
       },
     });
   } catch (error) {

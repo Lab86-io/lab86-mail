@@ -130,8 +130,8 @@ struct AssistantChatView: View {
                             MarkdownView(text: text, config: Self.markdownConfig)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    case .card(_, let card):
-                        AssistantToolCardView(card: card)
+                    case .card(_, let card, _):
+                        AssistantToolCardView(card: card, sessionID: model.sessionID)
                     case .approval(let approval):
                         AssistantApprovalCard(approval: approval) { approved in
                             model.answerApproval(approval.id, approved: approved)
@@ -301,9 +301,8 @@ struct AssistantChatView: View {
                 .onSubmit(submitDraft)
                 .onChange(of: draft) { _, next in model.updateDraft(next) }
                 .onKeyPress(.tab) {
-                    guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return .ignored
-                    }
+                    // Tab flips the route even before any text, so a person
+                    // can choose Hold first and then write.
                     model.flipRoute()
                     return .handled
                 }
@@ -311,7 +310,7 @@ struct AssistantChatView: View {
                 RouteChip(
                     route: model.route,
                     isPinned: model.routePinned,
-                    isEnabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    isEnabled: true,
                     onFlip: model.flipRoute
                 )
 
@@ -395,6 +394,8 @@ struct AssistantChatView: View {
         model.send(draft, attachments: pendingFiles)
         draft = ""
         pendingFiles = []
+        // The pin belonged to that message; the next one starts on Ask.
+        model.clearRoute()
     }
 
     private func importFiles(_ urls: [URL]) {

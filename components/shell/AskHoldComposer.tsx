@@ -28,11 +28,12 @@ export type BarKeyAction = 'flip' | 'send' | 'hold' | 'clear' | null;
 
 /** What one key does in the bar. Shift+Tab and Shift+Enter keep their browser meaning. */
 export function barKeyAction(
-  event: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  event: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; isComposing?: boolean },
   state: { route: BarRoute; empty: boolean },
 ): BarKeyAction {
+  if (event.isComposing) return null;
   if (event.key === 'Tab') {
-    if (event.shiftKey || state.empty) return null;
+    if (event.shiftKey || event.metaKey || event.ctrlKey) return null;
     return 'flip';
   }
   if (event.key === 'Enter') {
@@ -153,6 +154,7 @@ export function AskHoldComposer({
   }, [streaming, busy, onStop, prediction.route, runHold, onSend]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
     const action = barKeyAction(event, { route: prediction.route, empty: prediction.empty });
     if (!action) return;
     if (action === 'flip') {
@@ -225,12 +227,11 @@ export function AskHoldComposer({
               <VoiceCaptureButton voice={voice} disabled={busy} />
             </div>
             <div className="flex items-center gap-2">
-              <RouteTabHint visible={!prediction.empty && !prediction.locked} />
+              <RouteTabHint visible={!prediction.locked} />
               <RouteChip
                 route={prediction.route}
                 locked={prediction.locked}
                 pending={prediction.pending}
-                disabled={prediction.empty && !prediction.locked}
                 reduceMotion={reduceMotion}
                 onFlip={prediction.flip}
               />

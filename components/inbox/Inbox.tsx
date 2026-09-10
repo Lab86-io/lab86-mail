@@ -44,7 +44,7 @@ import { MailNav } from '@/components/inbox/MailNav';
 import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
-import { ALL_ACCOUNTS } from '@/components/shell/Rail';
+import { AccountScopePopover, ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -81,6 +81,7 @@ import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
 import {
   categoricalColor,
+  decodeMailText,
   dedupeSnippet,
   emailFromHeader,
   formatDate,
@@ -127,6 +128,8 @@ interface AccountRow {
   email: string;
   authed: boolean;
   displayName?: string;
+  provider: string;
+  sync?: { status: string; corpusReady: boolean; messagesSynced?: number; error?: string };
 }
 
 interface AccountsResult {
@@ -281,6 +284,7 @@ export function Inbox() {
   // The rail's account dropdown narrows the unified inbox to the checked
   // mailboxes; an empty filter means every authed account.
   const accountFilter = useClientStore((s) => s.accountFilter);
+  const setAccountFilter = useClientStore((s) => s.setAccountFilter);
   const authedAccountIds = accountFilter.length
     ? allAuthedAccountIds.filter((id) => accountFilter.includes(id))
     : allAuthedAccountIds;
@@ -808,7 +812,7 @@ export function Inbox() {
     >
       <div
         className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
           readerOpen && 'sm:rounded-r-none sm:border-r-0',
         )}
       >
@@ -822,6 +826,19 @@ export function Inbox() {
           )}
         >
           <div className="flex items-center gap-2">
+            <AccountScopePopover
+              accounts={authedAccounts}
+              accountFilter={accountFilter}
+              setAccountFilter={setAccountFilter}
+              indexingCount={
+                authedAccounts.filter(
+                  (mailbox) =>
+                    mailbox.sync &&
+                    !mailbox.sync.corpusReady &&
+                    ['backfilling', 'syncing'].includes(mailbox.sync.status),
+                ).length
+              }
+            />
             <InputGroup className="flex-1">
               <InputGroupAddon>
                 {translating ? (
@@ -1056,14 +1073,7 @@ export function Inbox() {
                     !previous || inboxDateGroupLabel(previous.lastDate ?? previous.date ?? 0) !== groupLabel;
                   return (
                     <Fragment key={key}>
-                      {showHeader ? (
-                        <div className="flex items-baseline gap-2.5 px-3 pb-1 pt-3.5 first:pt-2">
-                          <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
-                            {groupLabel}
-                          </span>
-                          <span className="h-px flex-1 self-center bg-[var(--color-border)]/70" />
-                        </div>
-                      ) : null}
+                      {showHeader ? <InboxDateGroup label={groupLabel} /> : null}
                       <InboxThreadRow
                         item={it}
                         rowId={key}
@@ -1139,6 +1149,17 @@ function useSenderLogo(email: string): string | null {
     };
   }, [domain]);
   return logo;
+}
+
+export function InboxDateGroup({ label }: { label: string }) {
+  return (
+    <div data-mail-date-group className="flex items-baseline gap-2.5 bg-[var(--color-bg-subtle)] px-3 py-2.5">
+      <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
+        {label}
+      </span>
+      <span className="h-px flex-1 self-center bg-[var(--color-list-divider)]" aria-hidden />
+    </div>
+  );
 }
 
 export const InboxThreadRow = memo(function InboxThreadRow({
@@ -1291,11 +1312,11 @@ export const InboxThreadRow = memo(function InboxThreadRow({
       className={cn(
         // No transition on the row itself: the hover highlight is a selection
         // cue, so it must be instant for snappy up/down scanning.
-        'group relative grid grid-cols-[30px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-border)]/45 px-3 py-2 text-left outline-none last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-selected-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
+        'group relative grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-list-divider)] px-3 py-2 text-left outline-none last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-selected-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}
-      style={active ? { borderLeft: '3px solid var(--color-accent)' } : undefined}
+      style={active ? { boxShadow: 'inset 3px 0 var(--color-accent)' } : undefined}
     >
       {priorityClass ? (
         <span className={cn('absolute left-0 inset-y-1.5 w-0.5 rounded-r-full', priorityClass)} />
@@ -1314,12 +1335,15 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               // key events must not bubble or the popover can never open.
               onKeyDown={(event) => event.stopPropagation()}
               title="Which mailbox"
-              className="block rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-              style={{
-                boxShadow: `0 0 0 1.5px color-mix(in srgb, ${accountColor} 55%, var(--color-bg-elevated))`,
-              }}
+              aria-label={`Which mailbox: ${accountLabel || item.accountAlias || item.account || senderLabel}`}
+              className="grid size-8 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
             >
-              <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+              <Avatar
+                name={senderLabel || item.account}
+                src={avatarSrc}
+                size={28}
+                ringColor={`color-mix(in srgb, ${accountColor} 65%, var(--color-bg-elevated))`}
+              />
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="w-auto px-3 py-2 text-[12px]">
@@ -1333,7 +1357,12 @@ export const InboxThreadRow = memo(function InboxThreadRow({
           </PopoverContent>
         </Popover>
       ) : (
-        <Avatar name={senderLabel || item.account} src={avatarSrc} size={28} />
+        <Avatar
+          name={senderLabel || item.account}
+          src={avatarSrc}
+          size={28}
+          className="justify-self-center"
+        />
       )}
 
       {/* Two-line row: sender, then subject + preview inline. */}
@@ -1375,7 +1404,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
         </div>
         <span className="truncate pl-3 text-[12.5px] leading-tight">
           <span className={item.unread ? 'font-medium text-[var(--color-text)]' : 'text-[var(--color-text)]'}>
-            {item.subject || '(no subject)'}
+            {decodeMailText(item.subject) || '(no subject)'}
           </span>
           {preview ? <span className="text-[var(--color-text-muted)]"> — {preview}</span> : null}
         </span>

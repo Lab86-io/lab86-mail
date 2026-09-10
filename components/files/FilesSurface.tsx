@@ -41,6 +41,7 @@ import {
   GoogleDocumentEditor,
   type GoogleEditorSource,
 } from '@/components/files/DocumentEditor';
+import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { AppleLogo, GoogleLogo, MicrosoftLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
@@ -53,6 +54,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import type { AlbatrossDocumentRecord, DocumentKind } from '@/lib/documents/model';
+import { importXlsxWorkbook, loadSpreadsheetEngine } from '@/lib/documents/odoo-spreadsheet-engine';
+import { ODOO_SPREADSHEET_ENGINE } from '@/lib/documents/sheet-workbook';
 import { fileMatchesType, mergeFilePages, readFilePage } from '@/lib/files/library-client';
 import type { CloudFileItem, CloudFileProvider } from '@/lib/files/providers';
 import { cn } from '@/lib/utils';
@@ -100,6 +103,7 @@ interface ICloudItem extends CloudFileItem {
 interface DocumentFileItem extends CloudFileItem {
   documentId?: string;
   documentKind?: DocumentKind;
+  officeDocumentId?: string;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -194,6 +198,8 @@ function sortItems(items: CloudFileItem[]) {
 export function FilesSurface() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const officeInputRef = useRef<HTMLInputElement>(null);
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
   const fallbackFolderInputRef = useRef<HTMLInputElement>(null);
   const pendingFolderRef = useRef<CloudFileItem | null>(null);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -209,11 +215,26 @@ export function FilesSurface() {
   const [icloudBusy, setIcloudBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
+  const [openOfficeId, setOpenOfficeId] = useState<string | null>(null);
   const [openGoogleFile, setOpenGoogleFile] = useState<GoogleEditorSource | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ['cloud-file-status'],
     queryFn: () => fetchJson<StatusResponse>('/api/files/status'),
+    staleTime: 30_000,
+  });
+  const officeQuery = useQuery({
+    queryKey: ['office-files'],
+    queryFn: () =>
+      fetchJson<{
+        enabled: boolean;
+        files: Array<{
+          documentId: string;
+          title: string;
+          extension: 'docx' | 'xlsx' | 'pptx';
+          updatedAt: number;
+        }>;
+      }>('/api/office'),
     staleTime: 30_000,
   });
   useEffect(() => {
@@ -245,6 +266,7 @@ export function FilesSurface() {
     const readOpenFile = () => {
       const params = new URLSearchParams(window.location.search);
       setOpenDocumentId(params.get('document'));
+      setOpenOfficeId(params.get('office'));
       const connectionId = params.get('connection');
       const fileId = params.get('file');
       const mimeType = params.get('mime');
@@ -267,14 +289,28 @@ export function FilesSurface() {
   }, []);
 
   const openDocument = (documentId: string) => {
+    setOpenOfficeId(null);
     pushDocumentDeepLink(documentId);
     setOpenGoogleFile(null);
     setOpenDocumentId(documentId);
   };
 
+  const openOfficeDocument = (documentId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['document', 'provider', 'connection', 'file', 'mime']) params.delete(key);
+    params.set('view', 'files');
+    params.set('office', documentId);
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    setOpenOfficeId(documentId);
+    setOpenDocumentId(null);
+    setOpenGoogleFile(null);
+  };
+
   const openGoogleDocument = (source: GoogleEditorSource) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'files');
+    params.delete('office');
+    setOpenOfficeId(null);
     params.delete('document');
     params.set('provider', 'google_drive');
     params.set('connection', source.connectionId);
@@ -288,6 +324,8 @@ export function FilesSurface() {
   const closeDocument = () => {
     const params = new URLSearchParams(window.location.search);
     params.delete('document');
+    params.delete('office');
+    setOpenOfficeId(null);
     params.delete('provider');
     params.delete('connection');
     params.delete('file');
@@ -297,6 +335,7 @@ export function FilesSurface() {
     setOpenDocumentId(null);
     setOpenGoogleFile(null);
     void libraryQuery.refetch();
+    void officeQuery.refetch();
   };
 
   useEffect(() => {
@@ -402,7 +441,31 @@ export function FilesSurface() {
   });
   const cloudItems = useMemo(() => mergeFilePages(cloudQuery.data?.pages), [cloudQuery.data]);
   const cloudFailures = cloudQuery.data?.pages.at(-1)?.failures || [];
-  const localItems = useMemo(() => mergeFilePages(libraryQuery.data?.pages), [libraryQuery.data]);
+  const localItems = useMemo(
+    () => [
+      ...mergeFilePages(libraryQuery.data?.pages),
+      ...(officeQuery.data?.files || [])
+        .filter((file) => file.title.toLowerCase().includes(deferredSearch.toLowerCase()))
+        .map(
+          (file): DocumentFileItem => ({
+            id: `office:${file.documentId}`,
+            officeDocumentId: file.documentId,
+            name: file.title,
+            provider: 'albatross',
+            isFolder: false,
+            modifiedAt: file.updatedAt,
+            mimeType:
+              file.extension === 'docx'
+                ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                : file.extension === 'xlsx'
+                  ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                  : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            webUrl: `/api/office/${file.documentId}/content`,
+          }),
+        ),
+    ],
+    [libraryQuery.data, officeQuery.data, deferredSearch],
+  );
   const visibleItems = useMemo(() => {
     const deviceItems = icloudItems.filter((item) =>
       item.name.toLowerCase().includes(deferredSearch.toLowerCase()),
@@ -454,6 +517,64 @@ export function FilesSurface() {
       await queryClient.invalidateQueries({ queryKey: ['documents'] });
       await queryClient.invalidateQueries({ queryKey: ['file-library'] });
       setLocationId('albatross');
+      openDocument(document.documentId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const importOfficeMutation = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.set('file', file);
+      return fetchJson<{ document: { documentId: string } }>('/api/office', { method: 'POST', body: form });
+    },
+    onSuccess: async ({ document }) => {
+      await officeQuery.refetch();
+      openOfficeDocument(document.documentId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Excel comes in through the spreadsheet engine in the browser (its reader
+  // needs a DOM parser); the server stores the untouched bytes alongside the
+  // engine snapshot so the original is always downloadable.
+  const importXlsxMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const loaded = await loadSpreadsheetEngine();
+      const imported = await importXlsxWorkbook(loaded, file);
+      const form = new FormData();
+      form.set('file', file);
+      form.set('title', file.name.replace(/\.xlsx$/iu, ''));
+      form.set('warnings', JSON.stringify(imported.warnings));
+      form.set(
+        'model',
+        JSON.stringify({
+          kind: 'sheet',
+          version: 2,
+          engine: ODOO_SPREADSHEET_ENGINE,
+          engineVersion: loaded.engine.__info__.version,
+          workbook: imported.workbook,
+        }),
+      );
+      const result = await fetchJson<{ ok: true; document: AlbatrossDocumentRecord }>(
+        '/api/documents/import',
+        {
+          method: 'POST',
+          body: form,
+        },
+      );
+      return { document: result.document, warnings: imported.warnings };
+    },
+    onSuccess: async ({ document, warnings }) => {
+      await queryClient.invalidateQueries({ queryKey: ['file-library'] });
+      setLocationId('albatross');
+      if (warnings.length) {
+        toast.warning(`Imported with ${warnings.length} ${warnings.length === 1 ? 'note' : 'notes'}`, {
+          description: 'Open the import notes in the editor before relying on affected cells.',
+        });
+      } else {
+        toast.success('Workbook imported');
+      }
       openDocument(document.documentId);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -572,6 +693,11 @@ export function FilesSurface() {
       return;
     }
     const documentId = (item as DocumentFileItem).documentId;
+    const officeDocumentId = (item as DocumentFileItem).officeDocumentId;
+    if (officeDocumentId) {
+      openOfficeDocument(officeDocumentId);
+      return;
+    }
     if (documentId) {
       openDocument(documentId);
       return;
@@ -632,11 +758,23 @@ export function FilesSurface() {
       void cloudQuery.refetch();
   };
 
+  // Editors are keyed by file identity: a deep link or history navigation
+  // that swaps the open file must never reuse an instance whose drafts and
+  // in-flight saves belong to the previous file. The editors retain and flush
+  // their outgoing edits on unmount (see useOutgoingEdits).
+  if (openOfficeId)
+    return <OfficeEditor key={openOfficeId} documentId={openOfficeId} onClose={closeDocument} />;
   if (openDocumentId) {
-    return <DocumentEditor documentId={openDocumentId} onClose={closeDocument} />;
+    return <DocumentEditor key={openDocumentId} documentId={openDocumentId} onClose={closeDocument} />;
   }
   if (openGoogleFile) {
-    return <GoogleDocumentEditor source={openGoogleFile} onClose={closeDocument} />;
+    return (
+      <GoogleDocumentEditor
+        key={`${openGoogleFile.connectionId}:${openGoogleFile.fileId}:${openGoogleFile.mimeType}`}
+        source={openGoogleFile}
+        onClose={closeDocument}
+      />
+    );
   }
 
   return (
@@ -653,6 +791,30 @@ export function FilesSurface() {
       }}
       onDrop={onDrop}
     >
+      <input
+        ref={officeInputRef}
+        type="file"
+        accept=".docx,.xlsx,.pptx"
+        className="hidden"
+        aria-label="Import Office working copy"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) importOfficeMutation.mutate(file);
+        }}
+      />
+      <input
+        ref={xlsxInputRef}
+        type="file"
+        accept=".xlsx"
+        className="hidden"
+        aria-label="Import Excel workbook"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) importXlsxMutation.mutate(file);
+        }}
+      />
       <input
         ref={fileInputRef}
         type="file"
@@ -712,11 +874,25 @@ export function FilesSurface() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {officeQuery.data?.enabled ? (
+              <DropdownMenuItem
+                disabled={importOfficeMutation.isPending}
+                onSelect={() => officeInputRef.current?.click()}
+              >
+                <Upload className="size-3.5" /> Import Office working copy
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('doc')}>
               <FileText className="size-3.5" /> Document
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('sheet')}>
               <FileSpreadsheet className="size-3.5" /> Spreadsheet
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={importXlsxMutation.isPending}
+              onSelect={() => xlsxInputRef.current?.click()}
+            >
+              <Upload className="size-3.5" /> Import Excel workbook
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('deck')}>
               <FilePresentation className="size-3.5" /> Presentation

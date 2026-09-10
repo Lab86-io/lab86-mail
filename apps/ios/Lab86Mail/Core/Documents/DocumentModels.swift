@@ -51,8 +51,15 @@ enum AlbatrossDocumentKind: String, CaseIterable, Identifiable, Hashable, Sendab
 struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
     var id: String
     var type: String
-    var text: String
+    var text: String {
+        didSet {
+            // A plain-text replacement cannot retain offsets/style text from
+            // an earlier rich block. Unchanged blocks retain their exact runs.
+            if text != oldValue { runs = nil }
+        }
+    }
     var level: Int?
+    var runs: [AlbatrossDocRun]?
 
     init?(json: JSONValue) {
         guard let id = json["id"]?.stringValue,
@@ -61,6 +68,12 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
         self.type = type
         text = json["text"]?.stringValue ?? ""
         level = exactInt(json["level"]?.doubleValue)
+        if let values = json["runs"]?.arrayValue {
+            let parsed = values.compactMap(AlbatrossDocRun.init)
+            if parsed.count == values.count, parsed.map(\.text).joined() == text {
+                runs = parsed
+            }
+        }
     }
 
     init(id: String = UUID().uuidString, type: String = "paragraph", text: String = "", level: Int? = nil) {
@@ -71,12 +84,45 @@ struct AlbatrossDocBlock: Identifiable, Hashable, Sendable {
     }
 
     var json: JSONValue {
-        .object([
+        var fields: [String: JSONValue] = [
             "id": .string(id),
             "type": .string(type),
             "text": .string(text),
-            "level": level.map { .number(Double($0)) } ?? .null,
-        ])
+        ]
+        if let level { fields["level"] = .number(Double(level)) }
+        if let runs, !runs.isEmpty, runs.map(\.text).joined() == text {
+            fields["runs"] = .array(runs.map(\.json))
+        }
+        return .object(fields)
+    }
+}
+
+struct AlbatrossDocRun: Hashable, Sendable {
+    let text: String
+    let bold: Bool?
+    let italic: Bool?
+    let underline: Bool?
+    let strike: Bool?
+    let code: Bool?
+
+    init?(json: JSONValue) {
+        guard let text = json["text"]?.stringValue else { return nil }
+        self.text = text
+        bold = json["bold"]?.boolValue
+        italic = json["italic"]?.boolValue
+        underline = json["underline"]?.boolValue
+        strike = json["strike"]?.boolValue
+        code = json["code"]?.boolValue
+    }
+
+    var json: JSONValue {
+        var fields: [String: JSONValue] = ["text": .string(text)]
+        if let bold { fields["bold"] = .bool(bold) }
+        if let italic { fields["italic"] = .bool(italic) }
+        if let underline { fields["underline"] = .bool(underline) }
+        if let strike { fields["strike"] = .bool(strike) }
+        if let code { fields["code"] = .bool(code) }
+        return .object(fields)
     }
 }
 
@@ -136,11 +182,11 @@ struct AlbatrossSheetCell: Hashable, Sendable {
     var display: String { formula.map { "=\($0)" } ?? value?.display ?? "" }
 
     var json: JSONValue {
-        .object([
-            "value": value?.json ?? .null,
-            "formula": formula.map(JSONValue.string) ?? .null,
-            "format": format.map(JSONValue.string) ?? .null,
-        ])
+        var fields: [String: JSONValue] = [:]
+        if let value { fields["value"] = value.json }
+        if let formula { fields["formula"] = .string(formula) }
+        if let format { fields["format"] = .string(format) }
+        return .object(fields)
     }
 }
 
@@ -246,7 +292,7 @@ struct AlbatrossDeckElement: Identifiable, Hashable, Sendable {
     }
 
     var json: JSONValue {
-        .object([
+        var fields: [String: JSONValue] = [
             "id": .string(id),
             "type": .string(type),
             "x": .number(x),
@@ -254,11 +300,12 @@ struct AlbatrossDeckElement: Identifiable, Hashable, Sendable {
             "width": .number(width),
             "height": .number(height),
             "text": .string(text),
-            "role": role.map(JSONValue.string) ?? .null,
-            "fill": fill.map(JSONValue.string) ?? .null,
-            "color": color.map(JSONValue.string) ?? .null,
-            "fontSize": fontSize.map(JSONValue.number) ?? .null,
-        ])
+        ]
+        if let role { fields["role"] = .string(role) }
+        if let fill { fields["fill"] = .string(fill) }
+        if let color { fields["color"] = .string(color) }
+        if let fontSize { fields["fontSize"] = .number(fontSize) }
+        return .object(fields)
     }
 }
 
@@ -293,19 +340,22 @@ struct AlbatrossDeckSlide: Identifiable, Hashable, Sendable {
     }
 
     var json: JSONValue {
-        .object([
+        var fields: [String: JSONValue] = [
             "id": .string(id),
             "title": .string(title),
             "notes": .string(notes),
-            "background": background.map(JSONValue.string) ?? .null,
             "elements": .array(elements.map(\.json)),
-        ])
+        ]
+        if let background { fields["background"] = .string(background) }
+        return .object(fields)
     }
 }
 
 enum AlbatrossDocumentModel: Hashable, Sendable {
     case doc(blocks: [AlbatrossDocBlock])
     case sheet(activeSheetID: String, sheets: [AlbatrossSheetTab])
+    /// A tagged engine model is never projected into the legacy grid on save.
+    case workbook(AlbatrossWorkbookSnapshot)
     case deck(activeSlideID: String, slides: [AlbatrossDeckSlide])
 
     init?(json: JSONValue) {
@@ -313,6 +363,11 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
         case "doc":
             self = .doc(blocks: (json["blocks"]?.arrayValue ?? []).compactMap(AlbatrossDocBlock.init))
         case "sheet":
+            if json["version"]?.doubleValue == 2 {
+                guard let snapshot = AlbatrossWorkbookSnapshot(json: json) else { return nil }
+                self = .workbook(snapshot)
+                return
+            }
             let sheets = (json["sheets"]?.arrayValue ?? []).compactMap(AlbatrossSheetTab.init)
             guard let first = sheets.first else { return nil }
             self = .sheet(
@@ -334,7 +389,7 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
     var kind: AlbatrossDocumentKind {
         switch self {
         case .doc: .doc
-        case .sheet: .sheet
+        case .sheet, .workbook: .sheet
         case .deck: .deck
         }
     }
@@ -354,6 +409,8 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
                 "activeSheetId": .string(activeSheetID),
                 "sheets": .array(sheets.map(\.json)),
             ])
+        case .workbook(let snapshot):
+            snapshot.json
         case .deck(let activeSlideID, let slides):
             .object([
                 "kind": .string("deck"),
@@ -362,6 +419,11 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
                 "slides": .array(slides.map(\.json)),
             ])
         }
+    }
+
+    var requiresWebEditor: Bool {
+        if case .workbook = self { return true }
+        return false
     }
 }
 
@@ -618,6 +680,9 @@ final class DocumentStore {
     }
 
     func saveGoogleDocument(_ document: GoogleProviderDocument) async throws -> GoogleProviderDocument {
+        guard !document.model.requiresWebEditor else {
+            throw BackendError.server(status: 400, message: "Open the full web editor to edit this workbook. Its engine data is preserved unchanged.")
+        }
         var body: [String: JSONValue] = [
             "connectionId": .string(document.connectionID),
             "fileId": .string(document.fileID),
@@ -643,6 +708,9 @@ final class DocumentStore {
         _ document: GoogleProviderDocument,
         instruction: String
     ) async throws -> AlbatrossDocumentSuggestion {
+        guard !document.model.requiresWebEditor else {
+            throw BackendError.server(status: 400, message: "Open the full web editor to review AI edits to this workbook.")
+        }
         let result = try await backend.post(
             path: "/api/files/google/editor",
             body: .object([
@@ -698,6 +766,9 @@ final class DocumentStore {
     }
 
     func suggest(documentID: String, instruction: String) async throws -> AlbatrossDocumentSuggestion {
+        if documents.first(where: { $0.id == documentID })?.model.requiresWebEditor == true {
+            throw BackendError.server(status: 400, message: "Open the full web editor to review AI edits to this workbook.")
+        }
         let result = try await backend.post(
             path: "/api/documents/\(documentID.pathEncoded)/ai",
             body: .object([
@@ -753,14 +824,15 @@ final class DocumentStore {
         guard let connectionID = item.connectionID, let mimeType = item.mimeType else {
             throw BackendError.server(status: 400, message: "Google file details are incomplete.")
         }
+        var body: [String: JSONValue] = [
+            "connectionId": .string(connectionID),
+            "fileId": .string(item.id),
+            "mimeType": .string(mimeType),
+        ]
+        if let webURL = item.webURL { body["webUrl"] = .string(webURL.absoluteString) }
         let result = try await backend.post(
             path: "/api/files/google/import",
-            body: .object([
-                "connectionId": .string(connectionID),
-                "fileId": .string(item.id),
-                "mimeType": .string(mimeType),
-                "webUrl": item.webURL.map { .string($0.absoluteString) } ?? .null,
-            ])
+            body: .object(body)
         )
         guard let json = result["document"], let document = AlbatrossDocument(json: json) else {
             throw BackendError.invalidResponse
@@ -774,15 +846,16 @@ final class DocumentStore {
             throw BackendError.server(status: 400, message: "This file is not linked to Google.")
         }
         let mimeType = google.mimeType.isEmpty ? Self.googleMimeType(document.kind) : google.mimeType
+        var body: [String: JSONValue] = [
+            "connectionId": .string(google.connectionID),
+            "fileId": .string(google.fileID),
+            "mimeType": .string(mimeType),
+            "mode": .string("refresh"),
+        ]
+        if let webURL = google.webURL { body["webUrl"] = .string(webURL.absoluteString) }
         let result = try await backend.post(
             path: "/api/files/google/import",
-            body: .object([
-                "connectionId": .string(google.connectionID),
-                "fileId": .string(google.fileID),
-                "mimeType": .string(mimeType),
-                "webUrl": google.webURL.map { .string($0.absoluteString) } ?? .null,
-                "mode": .string("refresh"),
-            ])
+            body: .object(body)
         )
         guard let json = result["document"], let refreshed = AlbatrossDocument(json: json) else {
             throw BackendError.invalidResponse

@@ -4,6 +4,35 @@ import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const kindValidator = v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck'));
+const importSourceValidator = v.object({
+  format: v.literal('xlsx'),
+  filename: v.string(),
+  mimeType: v.string(),
+  size: v.number(),
+  sha256: v.string(),
+  storageId: v.id('_storage'),
+  warnings: v.array(v.string()),
+  importedAt: v.number(),
+});
+
+function modelVersion(model: unknown) {
+  return typeof model === 'object' && model !== null ? (model as { version?: unknown }).version : undefined;
+}
+
+function isEngineWorkbook(model: unknown) {
+  return (
+    typeof model === 'object' &&
+    model !== null &&
+    (model as { kind?: unknown }).kind === 'sheet' &&
+    modelVersion(model) === 2
+  );
+}
+
+function isChangeSet(model: unknown) {
+  return (
+    typeof model === 'object' && model !== null && (model as { kind?: unknown }).kind === 'sheet-changes'
+  );
+}
 
 async function ownedDocument(ctx: QueryCtx | MutationCtx, userId: string, documentId: string) {
   return ctx.db
@@ -22,11 +51,19 @@ export const create = mutation({
     model: v.any(),
     sourceRefs: v.optional(v.array(v.any())),
     reason: v.optional(v.string()),
+    importSource: v.optional(importSourceValidator),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const existing = await ownedDocument(ctx, args.userId, args.documentId);
     if (existing) return existing;
+    if (args.importSource) {
+      const cancelled = await ctx.db
+        .query('documentImportCancellations')
+        .withIndex('by_storage', (q) => q.eq('storageId', args.importSource!.storageId))
+        .first();
+      if (cancelled) throw new Error('This workbook import was cancelled. Import the original file again.');
+    }
     const ts = now();
     const row = {
       userId: args.userId,
@@ -36,6 +73,7 @@ export const create = mutation({
       model: args.model,
       currentRevision: 1,
       sourceRefs: args.sourceRefs || [],
+      ...(args.importSource ? { importSource: { ...args.importSource, revision: 1 } } : {}),
       createdAt: ts,
       updatedAt: ts,
     };
@@ -159,6 +197,74 @@ export const listRevisions = query({
   },
 });
 
+export const generateImportUploadUrl = mutation({
+  args: { internalSecret: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Compensate an import failure without deleting an ambiguously committed file.
+ * A cancellation commits atomically with deletion. A create that arrives later
+ * sees the tombstone and cannot attach missing bytes; an earlier create wins
+ * and its original is retained. Never exposed directly to the browser.
+ */
+export const cancelImport = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    documentId: v.string(),
+    storageId: v.id('_storage'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const attached = await ctx.db
+      .query('documents')
+      .withIndex('by_import_storage', (q) => q.eq('importSource.storageId', args.storageId))
+      .first();
+    if (attached) {
+      return {
+        status: 'attached' as const,
+        ...(attached.userId === args.userId && attached.documentId === args.documentId
+          ? { document: attached }
+          : {}),
+      };
+    }
+    const cancelled = await ctx.db
+      .query('documentImportCancellations')
+      .withIndex('by_storage', (q) => q.eq('storageId', args.storageId))
+      .first();
+    if (cancelled) return { status: 'cancelled' as const };
+    await ctx.db.insert('documentImportCancellations', {
+      userId: args.userId,
+      documentId: args.documentId,
+      storageId: args.storageId,
+      cancelledAt: now(),
+    });
+    await ctx.storage.delete(args.storageId);
+    return { status: 'cancelled' as const };
+  },
+});
+
+export const getImportSource = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    documentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await ownedDocument(ctx, args.userId, args.documentId);
+    if (!document || document.archivedAt || !document.importSource) return null;
+    const url = await ctx.storage.getUrl(document.importSource.storageId);
+    if (!url) return null;
+    const { storageId: _storageId, ...source } = document.importSource;
+    return { ...source, url, currentRevision: document.currentRevision };
+  },
+});
+
 export const update = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -170,6 +276,7 @@ export const update = mutation({
     sourceRefs: v.optional(v.array(v.any())),
     reason: v.optional(v.string()),
     actor: v.optional(v.union(v.literal('user'), v.literal('ai'), v.literal('system'))),
+    allowDowngrade: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -177,6 +284,17 @@ export const update = mutation({
     if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
     if (document.currentRevision !== args.expectedRevision) {
       return { ok: false, code: 'REVISION_CONFLICT', document };
+    }
+    // A grid-only client (older native build, v1 tooling) must not overwrite an
+    // engine workbook with its lossy projection; it would silently drop
+    // formatting, charts, and validation.
+    if (
+      args.model !== undefined &&
+      !args.allowDowngrade &&
+      isEngineWorkbook(document.model) &&
+      !isEngineWorkbook(args.model)
+    ) {
+      return { ok: false, code: 'ENGINE_MODEL_REQUIRED', document };
     }
     const title = args.title ?? document.title;
     const model = args.model ?? document.model;
@@ -218,6 +336,48 @@ export const archive = mutation({
     const document = await ownedDocument(ctx, args.userId, args.documentId);
     if (!document) return { ok: false };
     await ctx.db.patch(document._id, { archivedAt: now(), updatedAt: now() });
+    return { ok: true };
+  },
+});
+
+export const restoreRevision = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    documentId: v.string(),
+    revision: v.number(),
+    expectedRevision: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await ownedDocument(ctx, args.userId, args.documentId);
+    if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
+    if (document.currentRevision !== args.expectedRevision) return { ok: false, code: 'REVISION_CONFLICT' };
+    const previous = await ctx.db
+      .query('documentRevisions')
+      .withIndex('by_user_document_revision', (q) =>
+        q.eq('userId', args.userId).eq('documentId', args.documentId).eq('revision', args.revision),
+      )
+      .unique();
+    if (!previous) return { ok: false, code: 'NOT_FOUND' };
+    const revision = document.currentRevision + 1;
+    const updatedAt = now();
+    await ctx.db.patch(document._id, {
+      title: previous.title,
+      model: previous.model,
+      currentRevision: revision,
+      updatedAt,
+    });
+    await ctx.db.insert('documentRevisions', {
+      userId: args.userId,
+      documentId: args.documentId,
+      revision,
+      title: previous.title,
+      model: previous.model,
+      reason: `Restored revision ${args.revision}`,
+      actor: 'user',
+      createdAt: updatedAt,
+    });
     return { ok: true };
   },
 });
@@ -284,6 +444,7 @@ export const createSuggestion = mutation({
     title: v.string(),
     description: v.string(),
     proposedModel: v.any(),
+    baseRevision: v.optional(v.number()),
     sourceRefs: v.optional(v.array(v.any())),
   },
   handler: async (ctx, args) => {
@@ -312,6 +473,7 @@ export const createSuggestion = mutation({
       title: args.title,
       description: args.description,
       proposedModel: args.proposedModel,
+      baseRevision: args.baseRevision ?? document.currentRevision,
       sourceRefs: args.sourceRefs || [],
       status: 'proposed',
       createdAt: ts,
@@ -352,6 +514,11 @@ export const applySuggestion = mutation({
     documentId: v.string(),
     suggestionId: v.string(),
     expectedRevision: v.number(),
+    /**
+     * For change-set suggestions the editor applies the engine commands and
+     * sends the resulting full snapshot; the server cannot evaluate a workbook.
+     */
+    model: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -374,11 +541,21 @@ export const applySuggestion = mutation({
     if (document.currentRevision !== args.expectedRevision) {
       return { ok: false, code: 'REVISION_CONFLICT', document };
     }
+    if (suggestion.baseRevision !== document.currentRevision) {
+      return { ok: false, code: 'REVISION_CONFLICT', document };
+    }
+    let model = suggestion.proposedModel;
+    if (isChangeSet(suggestion.proposedModel)) {
+      if (!isEngineWorkbook(args.model)) return { ok: false, code: 'NEEDS_EDITOR', document };
+      model = args.model;
+    } else if (args.model !== undefined) {
+      return { ok: false, code: 'NEEDS_EDITOR', document };
+    }
     const revision = document.currentRevision + 1;
     const ts = now();
     await ctx.db.patch(document._id, {
       title: suggestion.title,
-      model: suggestion.proposedModel,
+      model,
       currentRevision: revision,
       updatedAt: ts,
     });
@@ -387,7 +564,7 @@ export const applySuggestion = mutation({
       documentId: args.documentId,
       revision,
       title: suggestion.title,
-      model: suggestion.proposedModel,
+      model,
       reason: suggestion.description,
       actor: 'ai',
       createdAt: ts,
@@ -398,7 +575,7 @@ export const applySuggestion = mutation({
       document: {
         ...document,
         title: suggestion.title,
-        model: suggestion.proposedModel,
+        model,
         currentRevision: revision,
         updatedAt: ts,
       },

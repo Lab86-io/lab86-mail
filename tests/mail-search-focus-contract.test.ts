@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   focusMailResult,
   focusMailSearchInput,
+  isAssistantKeyboardTarget,
   isEditableSearchTarget,
   isGlobalMailSearchShortcut,
   MAIL_SEARCH_TARGET_SELECTOR,
@@ -27,6 +28,21 @@ const shortcut = (
 });
 
 describe('the global mail-search keyboard contract', () => {
+  test('chat controls cannot leak mail shortcuts, but global search remains available', () => {
+    const chatButton = {
+      tagName: 'BUTTON',
+      closest: (selector: string) => (selector === '[data-assistant-chat]' ? {} : null),
+    } as unknown as EventTarget;
+    expect(isAssistantKeyboardTarget(chatButton)).toBe(true);
+    expect(isAssistantKeyboardTarget(null)).toBe(false);
+    expect(
+      isAssistantKeyboardTarget({ tagName: 'BUTTON', closest: () => null } as unknown as EventTarget),
+    ).toBe(false);
+    expect(isGlobalMailSearchShortcut(shortcut('f', { metaKey: true }), chatButton)).toBe(true);
+    const binding = read('components/shell/ShortcutsBinding.tsx');
+    expect(binding.indexOf('isAssistantKeyboardTarget(e.target)')).toBeLessThan(binding.indexOf("case 'e':"));
+    expect(binding).toContain('[data-assistant-workspace][data-open="true"][data-layout="full"]');
+  });
   test('accepts slash and the platform Find shortcuts', () => {
     expect(isGlobalMailSearchShortcut(shortcut('/'), null)).toBe(true);
     expect(isGlobalMailSearchShortcut(shortcut('f', { metaKey: true }), null)).toBe(true);

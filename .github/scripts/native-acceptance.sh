@@ -14,6 +14,8 @@ common=(
   -derivedDataPath "${RUNNER_TEMP:?}/native-${platform}"
   -skipPackagePluginValidation -skipMacroValidation
   CODE_SIGNING_ALLOWED=NO
+  # Match the verified unsigned Xcode 27 beta builds: avoid preview-stub linking.
+  ENABLE_DEBUG_DYLIB=NO
   LAB86_INFO_API_BASE_URL=https://mail.lab86.io
   LAB86_INFO_CONVEX_DEPLOYMENT_URL=https://proficient-viper-594.convex.cloud
   "LAB86_INFO_CLERK_PUBLISHABLE_KEY=$native_clerk_key"

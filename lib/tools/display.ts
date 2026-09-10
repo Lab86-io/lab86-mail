@@ -1171,7 +1171,7 @@ export const showSocialPost = defineTool({
 export const showMessageDraft = defineTool({
   name: 'show_message_draft',
   description:
-    'Render an email draft as a designed review card in the chat (to/cc/subject/body). The card offers "Open in composer" — the user reviews and sends themselves. Prefer this over pasting a draft as plain text.',
+    'Render an email draft as a designed review card in the chat (from/to/cc/bcc/subject/body). Native clients provide inline editing and an explicit Send button; web clients offer an explicit review action. Showing this card does not send mail or open another screen. Use this by default when asked to draft a new email.',
   category: 'meta',
   mutating: false,
   input: z.object({

@@ -1,0 +1,507 @@
+/* Assistant workspace + launcher.
+
+   Owned by components/shell/AssistantWorkspace.tsx and ShellActions.tsx.
+   Every rule keys off data attributes the workspace writes, so the page and
+   the chat keep one stable DOM parent each: presentation changes are class
+   and attribute changes, never a remount.
+
+   Reference for the corner presentation: the iOS 17 Messages "+" menu. The
+   menu is not a card laid on the conversation; it is a lens. The page stays
+   legible everywhere except directly under the menu, where it is blurred
+   and lightly washed, and the menu grows from the control that opened it.
+   Here that is a near-transparent panel (a light tint over a strong blur)
+   with a delicate edge, sitting in a local halo that blurs and washes only
+   the corner region; the rest of the page is untouched. There is no page
+   scrim, no glow, no sparkle. Readers who ask for reduced transparency,
+   more contrast, or forced colors get an opaque panel instead. Mobbin was
+   unavailable for this pass; MDN was used for corner-shape, inert,
+   prefers-reduced-transparency, and prefers-contrast. */
+
+.assistant-workspace {
+  /* Unitless percent of the width left after the seam; see clampPageShare. */
+  --assistant-page-share: 50;
+  --assistant-seam: 6px;
+  --assistant-corner-inset: 24px;
+  --assistant-corner-width: 420px;
+  --assistant-corner-height: 660px;
+  /* The glass: how much of the panel's own surface colour sits over the
+     blur, the halo's wash at its strongest point, and the edge highlight.
+     Light pages blur to near-white, so a light tint keeps text on its
+     contrast floor; dark pages need a little more body. */
+  --assistant-glass-fill: 46%;
+  --assistant-glass-blur: 28px;
+  --assistant-halo-wash: 34%;
+  --assistant-halo-blur: 10px;
+  --assistant-glass-edge: color-mix(in oklab, #fff 62%, transparent);
+  --assistant-glass-border: color-mix(in oklab, var(--color-border) 78%, transparent);
+  --assistant-glass-shadow: 0 22px 56px rgb(15 23 42 / 0.1), 0 2px 8px rgb(15 23 42 / 0.05);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dark .assistant-workspace {
+  --assistant-glass-fill: 54%;
+  --assistant-halo-wash: 40%;
+  --assistant-glass-edge: color-mix(in oklab, #fff 9%, transparent);
+  --assistant-glass-border: color-mix(in oklab, var(--color-border-strong) 70%, transparent);
+  --assistant-glass-shadow: 0 22px 56px rgb(0 0 0 / 0.38), 0 2px 8px rgb(0 0 0 / 0.24);
+}
+
+@media (max-width: 639px) {
+  .assistant-workspace {
+    --assistant-corner-inset: 12px;
+  }
+}
+
+/* The page pane: a stacking context of its own so page overlays (reader
+   sheet, menus) never climb above the chat. */
+.assistant-workspace__page {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* The chat surface. Geometry comes from data-layout on the workspace. */
+.assistant-workspace__chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  outline: none;
+  color: var(--color-text);
+}
+
+.assistant-workspace__frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.assistant-workspace__seam,
+.assistant-workspace__halo {
+  display: none;
+}
+
+/* ---- corner: a non-modal panel in the bottom-right, page still live ---- */
+
+.assistant-workspace[data-layout="corner"] .assistant-workspace__chat {
+  position: absolute;
+  right: var(--assistant-corner-inset);
+  bottom: var(--assistant-corner-inset);
+  z-index: 40;
+  width: min(var(--assistant-corner-width), calc(100% - var(--assistant-corner-inset) * 2));
+  height: min(var(--assistant-corner-height), calc(100% - var(--assistant-corner-inset) * 2));
+  overflow: hidden;
+  border: 1px solid var(--assistant-glass-border);
+  border-radius: var(--radius-panel);
+  corner-shape: var(--corner-shape-ui);
+  background: color-mix(in oklab, var(--color-bg-elevated) var(--assistant-glass-fill), transparent);
+  -webkit-backdrop-filter: blur(var(--assistant-glass-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--assistant-glass-blur)) saturate(1.2);
+  /* A one-pixel inner highlight is the whole frame; the shadow is soft and
+     wide so the panel reads as a lens over the page, not a card on it. */
+  box-shadow:
+    inset 0 0 0 1px var(--assistant-glass-edge),
+    var(--assistant-glass-shadow);
+  transform-origin: 100% 100%;
+  transition:
+    opacity var(--duration-moderate) var(--ease-enter),
+    transform var(--duration-moderate) var(--ease-enter),
+    visibility 0s linear 0s;
+}
+
+/* The halo: blur and a light wash only around the panel, masked so it fades
+   to nothing well before the page's left half. It carries most of the
+   softening so the panel itself can stay near-transparent. Never intercepts
+   the pointer. */
+.assistant-workspace[data-layout="corner"][data-open="true"] .assistant-workspace__halo {
+  display: block;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  width: min(100%, calc(var(--assistant-corner-width) + 260px));
+  height: min(100%, calc(var(--assistant-corner-height) + 260px));
+  pointer-events: none;
+  background: radial-gradient(
+    120% 120% at 100% 100%,
+    color-mix(in oklab, var(--color-bg) var(--assistant-halo-wash), transparent) 0%,
+    color-mix(in oklab, var(--color-bg) calc(var(--assistant-halo-wash) / 2), transparent) 44%,
+    transparent 72%
+  );
+  -webkit-mask-image: radial-gradient(112% 112% at 100% 100%, #000 36%, transparent 70%);
+  mask-image: radial-gradient(112% 112% at 100% 100%, #000 36%, transparent 70%);
+  -webkit-backdrop-filter: blur(var(--assistant-halo-blur));
+  backdrop-filter: blur(var(--assistant-halo-blur));
+  animation: assistant-halo-in var(--duration-moderate) var(--ease-enter) both;
+}
+
+@keyframes assistant-halo-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- closed: mounted, sized like the corner panel, out of every tree ---- */
+
+.assistant-workspace[data-open="false"] .assistant-workspace__chat {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(8px) scale(0.97);
+  transition:
+    opacity var(--duration-normal) var(--ease-exit),
+    transform var(--duration-normal) var(--ease-exit),
+    visibility 0s linear var(--duration-normal);
+}
+
+/* ---- split: page left, chat right, one seam between ---- */
+
+.assistant-workspace[data-layout="split"] {
+  /* The share is a percent of the width left after the seam, the same
+     number clampPageShare works in; taking it of the full width would put
+     the panes 6px over the frame at the ends of the range. */
+  grid-template-columns:
+    minmax(280px, calc((100% - var(--assistant-seam)) * var(--assistant-page-share) / 100))
+    var(--assistant-seam)
+    minmax(360px, 1fr);
+}
+
+.assistant-workspace[data-layout="split"] .assistant-workspace__seam {
+  display: block;
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  width: var(--assistant-seam);
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.assistant-workspace__seam::before {
+  content: "";
+  position: absolute;
+  inset: 8px 0;
+  border-block: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.assistant-workspace__seam::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-border);
+  transition:
+    background-color var(--duration-fast),
+    width var(--duration-fast);
+}
+
+.assistant-workspace__seam:hover::after,
+.assistant-workspace__seam:focus-visible::after,
+.assistant-workspace[data-resizing="true"] .assistant-workspace__seam::after {
+  width: 2px;
+  background: var(--color-accent);
+}
+
+.assistant-workspace__seam:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.assistant-workspace[data-layout="split"] .assistant-workspace__chat {
+  position: relative;
+  grid-column: 3;
+  grid-row: 1;
+  height: 100%;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+}
+
+.assistant-workspace[data-resizing="true"] {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.assistant-workspace[data-resizing="true"] .assistant-workspace__page,
+.assistant-workspace[data-resizing="true"] .assistant-workspace__chat {
+  pointer-events: none;
+}
+
+/* ---- full: the chat over the page cell; the page keeps its size and scroll
+   underneath, hidden from sight, pointer, and the accessibility tree ---- */
+
+.assistant-workspace[data-layout="full"] .assistant-workspace__page {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.assistant-workspace[data-layout="full"] .assistant-workspace__chat {
+  position: relative;
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 2;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+.assistant-workspace[data-layout="full"][data-mobile="false"] .assistant-workspace__frame {
+  max-inline-size: 920px;
+  margin-inline: auto;
+  background: var(--color-bg-elevated);
+  border-inline: 1px solid var(--color-border);
+}
+
+/* ---- opaque fallbacks ---- */
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .assistant-workspace[data-layout="corner"] .assistant-workspace__chat {
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border);
+    box-shadow: var(--shadow-pop);
+  }
+  .assistant-workspace[data-layout="corner"][data-open="true"] .assistant-workspace__halo {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .assistant-workspace[data-layout="corner"] .assistant-workspace__chat {
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border);
+    box-shadow: var(--shadow-pop);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .assistant-workspace[data-layout="corner"][data-open="true"] .assistant-workspace__halo {
+    display: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .assistant-workspace[data-layout="corner"] .assistant-workspace__chat,
+  .assistant-workspace[data-layout="split"] .assistant-workspace__chat,
+  .assistant-workspace[data-layout="full"][data-mobile="false"] .assistant-workspace__frame {
+    border-color: var(--color-border-strong);
+  }
+  .assistant-workspace__seam::after {
+    background: var(--color-border-strong);
+  }
+}
+
+@media (forced-colors: active) {
+  .assistant-workspace[data-layout="corner"] .assistant-workspace__chat,
+  .assistant-workspace[data-layout="split"] .assistant-workspace__chat,
+  .assistant-workspace[data-layout="full"][data-mobile="false"] .assistant-workspace__frame {
+    border-color: CanvasText;
+  }
+  .assistant-workspace__seam::after {
+    background: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-workspace[data-layout="corner"] .assistant-workspace__chat,
+  .assistant-workspace[data-open="false"] .assistant-workspace__chat {
+    transition: none;
+    transform: none;
+  }
+  .assistant-workspace[data-layout="corner"][data-open="true"] .assistant-workspace__halo {
+    animation: none;
+  }
+}
+
+/* ======================================================================
+   The launcher: one floating door for Ask and Hold. The tight bottom-right
+   corner points at where the panel will open; hovering or focusing relaxes
+   it, so the press reads as opening something, not just lighting up.
+   ====================================================================== */
+
+.assistant-launcher {
+  position: fixed;
+  right: 16px;
+  z-index: 50;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 44px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 10px 6px 8px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-launcher) var(--radius-launcher) var(--radius-xs) var(--radius-launcher);
+  corner-shape: var(--corner-shape-ui);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-soft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-radius var(--duration-moderate) var(--ease-enter),
+    border-color var(--duration-fast) var(--ease-default),
+    box-shadow var(--duration-fast) var(--ease-default),
+    transform var(--duration-fast) var(--ease-default);
+}
+
+.assistant-launcher[data-placement="corner"] {
+  bottom: 24px;
+}
+
+.assistant-launcher[data-placement="stacked"] {
+  bottom: 72px;
+}
+
+@media (min-width: 640px) {
+  .assistant-launcher {
+    right: 24px;
+  }
+}
+
+.assistant-launcher:hover,
+.assistant-launcher:focus-visible {
+  border-radius: var(--radius-launcher);
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-pop);
+}
+
+.assistant-launcher:active {
+  transform: translateY(1px);
+}
+
+.assistant-launcher:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.assistant-launcher__mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-control);
+  corner-shape: var(--corner-shape-ui);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.assistant-launcher__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* A quiet sentence-case label at normal tracking, never a tracked
+   upper-case micro-label. */
+.assistant-launcher__eyebrow {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 12px;
+  letter-spacing: normal;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* Every phrase occupies the same grid cell, so the cell is as wide as the
+   longest phrase from the first paint and the button never changes width.
+   The change is sequenced, not crossfaded: the old line settles out first,
+   then the new one rises in, so no frame shows two lines on top of each
+   other. */
+.assistant-launcher__phrases {
+  display: grid;
+}
+
+.assistant-launcher__phrase {
+  grid-area: 1 / 1;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 17px;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  color: var(--color-text);
+  transition:
+    opacity 360ms var(--ease-enter) 260ms,
+    transform 360ms var(--ease-enter) 260ms,
+    visibility 0s linear 260ms;
+}
+
+.assistant-launcher__phrase[data-active="false"] {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(5px);
+  transition:
+    opacity 240ms var(--ease-exit),
+    transform 240ms var(--ease-exit),
+    visibility 0s linear 240ms;
+}
+
+.assistant-launcher__key {
+  margin-left: 2px;
+}
+
+@media (max-width: 379px) {
+  .assistant-launcher__key {
+    display: none;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .assistant-launcher {
+    border-color: var(--color-border-strong);
+  }
+}
+
+@media (forced-colors: active) {
+  .assistant-launcher {
+    border-color: ButtonText;
+  }
+  .assistant-launcher__mark {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: ButtonText;
+    border: 1px solid ButtonText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-launcher,
+  .assistant-launcher__phrase,
+  .assistant-launcher__phrase[data-active="false"] {
+    transition: none;
+    transform: none;
+  }
+}

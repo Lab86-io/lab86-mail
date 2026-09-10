@@ -14,7 +14,7 @@ export function MobileNavigation({ onSearch }: { onSearch: () => void }) {
       <SidebarTrigger title="Show sidebar" className="size-11 shrink-0 text-[var(--color-text-muted)]" />
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         onClick={onSearch}
         className="h-11 min-w-0 flex-1 justify-start gap-2 px-3 text-sm"
       >

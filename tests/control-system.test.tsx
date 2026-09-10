@@ -8,7 +8,7 @@ import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 
 describe('shared control surfaces', () => {
-  test('neutral and primary buttons use contact depth; quiet controls stay flat', () => {
+  test('neutral and primary buttons use the shared depth token; quiet controls stay flat', () => {
     for (const variant of ['default', 'outline'] as const) {
       expect(buttonVariants({ variant })).toContain('shadow-[var(--shadow-control)]');
       expect(buttonVariants({ variant })).toContain('rounded-[var(--radius-control)]');
@@ -50,23 +50,28 @@ describe('shared control surfaces', () => {
       expect(button).not.toContain('rounded-[var(--radius-control)]');
     }
     const card = renderToStaticMarkup(<Card>Content</Card>);
+    expect(card).toContain('shadow-none');
     expect(card).toContain('corner-smooth');
     expect(card).toContain('rounded-[var(--radius-panel)]');
     const squareCard = renderToStaticMarkup(<Card className="rounded-none">Content</Card>);
     expect(squareCard).not.toContain('rounded-[var(--radius-panel)]');
   });
 
-  test('launcher exposes platform shortcut and placement without decorative animation', () => {
+  test('launcher keeps one stable name and shortcut in both placements, with no decorative glow', () => {
     for (const placement of ['corner', 'stacked'] as const) {
       const html = renderToStaticMarkup(
         <AssistantLauncher placement={placement} shortcut="Ctrl K" onOpen={() => {}} />,
       );
-      expect(html).toContain('aria-label="Ask Assistant"');
+      expect(html).toContain('aria-label="Ask Albatross or get this off my mind"');
       expect(html).toContain('aria-keyshortcuts="Meta+K Control+K"');
       expect(html).toContain(`data-placement="${placement}"`);
       expect(html).toContain('Ctrl K');
-      expect(html).toContain('rounded-[var(--radius-launcher)]');
+      expect(html).toContain('class="assistant-launcher"');
+      // Copy is decorative; the accessible name above is the only label.
+      expect(html).toContain('class="assistant-launcher__copy" aria-hidden="true"');
+      expect(html).not.toContain('aria-live');
       expect(html).not.toContain('rounded-xl');
+      expect(html).not.toContain('sparkle');
       expect(html).not.toContain('border-beam');
       expect(html).not.toContain('ask-assistant-glow');
     }

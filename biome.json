@@ -9,6 +9,7 @@
       "!**/data",
       "!next-env.d.ts",
       "!convex/_generated",
+      "!public/vendor",
       "!apps",
       "!src_*.tsx",
       "!components/tool-ui"

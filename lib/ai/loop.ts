@@ -169,6 +169,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'document_create',
   'document_list',
   'document_get',
+  'document_edit',
   'document_suggest_changes',
   'document_apply_instruction',
   'document_publish_google',
@@ -245,7 +246,7 @@ async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promis
   }
 }
 
-function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
+export function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;

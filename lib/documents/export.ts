@@ -1,15 +1,44 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import ExcelJS from 'exceljs';
 import pptxgen from 'pptxgenjs';
-import type { AlbatrossDocumentRecord, DocBlock } from './model';
+import { type AlbatrossDocumentRecord, type DocBlock, sheetGridModel } from './model';
 
 export interface DocumentExport {
   bytes: Uint8Array;
   contentType: string;
   extension: 'docx' | 'xlsx' | 'pptx';
+  /**
+   * `projection` means the bytes were rebuilt from values and formulas only.
+   * Engine-backed sheets get their full-fidelity .xlsx from the editor itself.
+   */
+  fidelity: 'full' | 'projection';
 }
 
-function paragraphForBlock(block: DocBlock) {
+/** Export the canonical text even if an older client submitted stale styling. */
+function textRunsForBlock(block: DocBlock) {
+  const runs: NonNullable<DocBlock['runs']> =
+    block.runs && block.runs.map((run) => run.text).join('') === block.text
+      ? block.runs
+      : [{ text: block.text }];
+  return runs.flatMap((run) =>
+    run.text.split('\n').map(
+      (text, index) =>
+        new TextRun({
+          text,
+          break: index ? 1 : undefined,
+          bold: run.bold,
+          italics: run.italic || block.type === 'quote',
+          underline: run.underline ? { type: 'single' } : undefined,
+          strike: run.strike,
+          font: run.code ? 'Consolas' : undefined,
+          color: block.type === 'quote' ? '52606D' : undefined,
+        }),
+    ),
+  );
+}
+
+function paragraphForBlock(block: DocBlock, numberingReference = 'ordered') {
+  const children = textRunsForBlock(block);
   if (block.type === 'heading') {
     const heading =
       block.level === 1
@@ -17,44 +46,52 @@ function paragraphForBlock(block: DocBlock) {
         : block.level === 3
           ? HeadingLevel.HEADING_3
           : HeadingLevel.HEADING_2;
-    return new Paragraph({ text: block.text, heading });
+    return new Paragraph({ children, heading });
   }
   if (block.type === 'bullet') {
-    return new Paragraph({ children: [new TextRun(block.text)], bullet: { level: 0 } });
+    return new Paragraph({ children, bullet: { level: 0 } });
   }
   if (block.type === 'numbered') {
     return new Paragraph({
-      children: [new TextRun(block.text)],
-      numbering: { reference: 'ordered', level: 0 },
+      children,
+      numbering: { reference: numberingReference, level: 0 },
     });
   }
   if (block.type === 'quote') {
     return new Paragraph({
-      children: [new TextRun({ text: block.text, italics: true, color: '52606D' })],
+      children,
       indent: { left: 500 },
     });
   }
-  return new Paragraph({ children: [new TextRun(block.text)] });
+  return new Paragraph({ children });
 }
 
 async function exportDoc(document: AlbatrossDocumentRecord): Promise<DocumentExport> {
   if (document.model.kind !== 'doc') throw new Error('Document model mismatch.');
+  let listGroup = 0;
+  const references = document.model.blocks.map((block, index, blocks) => {
+    if (block.type === 'numbered' && blocks[index - 1]?.type !== 'numbered') listGroup += 1;
+    return `ordered-${listGroup}`;
+  });
   const file = new Document({
     title: document.title,
     numbering: {
-      config: [
-        {
-          reference: 'ordered',
-          levels: [{ level: 0, format: 'decimal', text: '%1.', alignment: 'left' }],
-        },
-      ],
+      config: Array.from({ length: listGroup }, (_, index) => ({
+        reference: `ordered-${index + 1}`,
+        levels: [{ level: 0, format: 'decimal' as const, text: '%1.', alignment: 'left' as const }],
+      })),
     },
-    sections: [{ children: document.model.blocks.map(paragraphForBlock) }],
+    sections: [
+      {
+        children: document.model.blocks.map((block, index) => paragraphForBlock(block, references[index])),
+      },
+    ],
   });
   return {
     bytes: await Packer.toBuffer(file),
     contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     extension: 'docx',
+    fidelity: 'full',
   };
 }
 
@@ -96,12 +133,13 @@ export function uniqueWorksheetName(name: string, used: Set<string>) {
 }
 
 async function exportSheet(document: AlbatrossDocumentRecord): Promise<DocumentExport> {
-  if (document.model.kind !== 'sheet') throw new Error('Spreadsheet model mismatch.');
+  const grid = sheetGridModel(document.model);
+  if (!grid) throw new Error('Spreadsheet model mismatch.');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Albatross';
   workbook.created = new Date(document.createdAt);
   const worksheetNames = new Set<string>();
-  for (const tab of document.model.sheets) {
+  for (const tab of grid.sheets) {
     const worksheet = workbook.addWorksheet(uniqueWorksheetName(tab.name, worksheetNames));
     for (const [address, cell] of Object.entries(tab.cells)) {
       const position = columnIndex(address);
@@ -127,6 +165,7 @@ async function exportSheet(document: AlbatrossDocumentRecord): Promise<DocumentE
     bytes: new Uint8Array(buffer),
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     extension: 'xlsx',
+    fidelity: document.model.kind === 'sheet' && document.model.version === 2 ? 'projection' : 'full',
   };
 }
 
@@ -179,6 +218,7 @@ async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentEx
     bytes: new Uint8Array(buffer as Buffer),
     contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     extension: 'pptx',
+    fidelity: 'full',
   };
 }
 

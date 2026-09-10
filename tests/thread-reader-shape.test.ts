@@ -68,8 +68,8 @@ describe('the reader stands in one of two places', () => {
     expect(thread).toContain('shadow-[var(--shadow-pop)]');
   });
   test('only Mail splits; every other surface gets the sheet', () => {
-    expect(shell).toContain("readerSplit = readerVisible && visiblePrimaryView === 'mail'");
-    expect(shell).toContain('readerSheet = readerVisible && !readerSplit');
+    expect(shell).toContain("readerSplit = !isMobile && readerVisible && visiblePrimaryView === 'mail'");
+    expect(shell).toContain('readerSheet = !isMobile && readerVisible && !readerSplit');
     expect(shell).toContain('<ThreadView variant="sheet" />');
     // The split panel and separator must follow readerSplit, not readerVisible,
     // or a sheet surface would still tear its layout in half.

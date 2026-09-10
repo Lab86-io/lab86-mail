@@ -1,15 +1,24 @@
 import Foundation
 import Observation
 
+/// The tool call behind a rendered card, kept so the transcript can carry the
+/// card to history and back and so an artifact keeps one identity.
+struct AssistantToolCardSource: Equatable, Sendable {
+    let toolName: String
+    let toolCallID: String
+    let input: JSONValue?
+    let output: JSONValue
+}
+
 enum AssistantChatPart: Identifiable, Equatable, Sendable {
     case text(id: String, String)
-    case card(id: String, AssistantToolCard)
+    case card(id: String, AssistantToolCard, source: AssistantToolCardSource?)
     case approval(AssistantInlineApproval)
 
     var id: String {
         switch self {
         case .text(let id, _): id
-        case .card(let id, _): id
+        case .card(let id, _, _): id
         case .approval(let approval): approval.id
         }
     }
@@ -137,6 +146,10 @@ final class AssistantChatModel {
     private let baseURL: URL?
     private let session: URLSession
     private let tokenProvider: @Sendable () async throws -> String
+    // Inline email drafts live in their own owner so they outlive this
+    // conversation object, the chat tab, and a relaunch.
+    private let draftStore: AssistantDraftStore?
+    private let ownerIDProvider: @MainActor () -> String?
     private var streamTask: Task<Void, Never>?
     // toolCallId → toolName; the output chunk carries only the call id.
     private var toolNamesByCallID: [String: String] = [:]
@@ -154,13 +167,17 @@ final class AssistantChatModel {
         session: URLSession = .shared,
         tokenProvider: @escaping @Sendable () async throws -> String = {
             try await ClerkSessionAccess.activeToken()
-        }
+        },
+        draftStore: AssistantDraftStore? = nil,
+        ownerIDProvider: @escaping @MainActor () -> String? = { nil }
     ) {
         self.backend = backend
         self.baseURL = baseURL
         self.scope = scope
         self.session = session
         self.tokenProvider = tokenProvider
+        self.draftStore = draftStore
+        self.ownerIDProvider = ownerIDProvider
         self.sessionID = sessionID
             ?? "ios-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
@@ -187,10 +204,7 @@ final class AssistantChatModel {
         currentApprovalContinuationID = nil
         canContinue = false
         messages.append(AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text))
-        let reply = AssistantChatMessage(id: Self.newMessageID(), role: .assistant, text: "")
-        messages.append(reply)
-        isStreaming = true
-        let replyID = reply.id
+        let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
         }
@@ -231,13 +245,19 @@ final class AssistantChatModel {
         lastFailedApprovalID = nil
         currentApprovalContinuationID = approvalID
         canContinue = false
-        let reply = AssistantChatMessage(id: Self.newMessageID(), role: .assistant, text: "")
-        messages.append(reply)
-        isStreaming = true
-        let replyID = reply.id
+        let replyID = appendAssistantReply()
         streamTask = Task { [weak self] in
             await self?.streamReply(into: replyID)
         }
+    }
+
+    /// Opens the assistant turn that stream events fill in.
+    @discardableResult
+    func appendAssistantReply() -> String {
+        let reply = AssistantChatMessage(id: Self.newMessageID(), role: .assistant, text: "")
+        messages.append(reply)
+        isStreaming = true
+        return reply.id
     }
 
     func stop() {
@@ -304,7 +324,9 @@ final class AssistantChatModel {
         await persistTranscript()
     }
 
-    private func apply(event: JSONValue, to replyID: String) {
+    /// One UI-message stream event. The network reader is the only production
+    /// caller; tests feed the same events to exercise the same transitions.
+    func apply(event: JSONValue, to replyID: String) {
         guard let type = event["type"]?.stringValue,
               let index = messages.firstIndex(where: { $0.id == replyID }) else { return }
         switch type {
@@ -366,10 +388,18 @@ final class AssistantChatModel {
         case "tool-output-available":
             guard let callID = event["toolCallId"]?.stringValue,
                   let name = toolNamesByCallID[callID] else { return }
-            if let card = AssistantToolCard.parse(toolName: name, output: event["output"] ?? .null) {
+            let output = event["output"] ?? .null
+            if let card = AssistantToolCard.parse(toolName: name, output: output, toolCallID: callID) {
                 partCounter += 1
-                messages[index].parts.append(.card(id: "\(replyID)-c\(partCounter)", card))
+                let source = AssistantToolCardSource(
+                    toolName: name,
+                    toolCallID: callID,
+                    input: approvalInputsByCallID[callID],
+                    output: output
+                )
+                messages[index].parts.append(.card(id: "\(replyID)-c\(partCounter)", card, source: source))
                 messages[index].toolActivity = nil
+                ingestDraft(card)
             }
         case "error":
             errorMessage = event["errorText"]?.stringValue ?? "Albatross couldn’t finish that."
@@ -422,7 +452,9 @@ final class AssistantChatModel {
         return .object(body)
     }
 
-    private func transcriptJSON() -> JSONValue {
+    /// The transcript as sent to the agent and saved to history. Internal so
+    /// tests can prove a saved card restores with the same identity.
+    func transcriptJSON() -> JSONValue {
         .array(messages.compactMap { message in
             let parts = message.parts.compactMap { part -> JSONValue? in
                 switch part {
@@ -433,8 +465,12 @@ final class AssistantChatModel {
                     return .object(["type": .string("text"), "text": .string(text)])
                 case .approval(let approval):
                     return Self.approvalPartJSON(approval)
-                case .card:
-                    return nil
+                case .card(_, _, let source):
+                    // Cards travel with the transcript so reopening the chat
+                    // brings them back, in the same tool-part shape the web
+                    // product writes.
+                    guard let source else { return nil }
+                    return Self.cardPartJSON(source)
                 }
             }
             guard !parts.isEmpty else { return nil }
@@ -473,6 +509,29 @@ final class AssistantChatModel {
             part["state"] = .string("input-available")
         }
         return .object(part)
+    }
+
+    static func cardPartJSON(_ source: AssistantToolCardSource) -> JSONValue {
+        .object([
+            "type": .string("dynamic-tool"),
+            "toolName": .string(source.toolName),
+            "toolCallId": .string(source.toolCallID),
+            "state": .string("output-available"),
+            "input": source.input ?? .object([:]),
+            "output": source.output,
+        ])
+    }
+
+    /// Hands a drafted email to its owner. Idempotent: a replay of the same
+    /// content changes nothing, and different content waits as a suggestion.
+    private func ingestDraft(_ card: AssistantToolCard) {
+        guard case .draft(let draft) = card, let toolCallID = draft.toolCallID,
+              let draftStore, let ownerID = ownerIDProvider() else { return }
+        draftStore.receive(
+            draft.seed,
+            key: AssistantDraftKey(sessionID: sessionID, toolCallID: toolCallID),
+            ownerID: ownerID
+        )
     }
 
     private static func containsApproval(callID: String, in parts: [AssistantChatPart]) -> Bool {
@@ -539,8 +598,9 @@ final class AssistantChatModel {
         routeTask?.cancel()
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if clean.isEmpty {
-            route = .ask
-            routePinned = false
+            // A route the person chose by hand stays through an empty field,
+            // so flipping before typing (or after clearing) means something.
+            if !routePinned { route = .ask }
             return
         }
         if !routePinned {
@@ -713,6 +773,11 @@ final class AssistantChatModel {
             messages = restored
             errorMessage = nil
             lastFailedUserText = nil
+            for message in restored {
+                for part in message.parts {
+                    if case .card(_, let card, _) = part { ingestDraft(card) }
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -750,14 +815,39 @@ final class AssistantChatModel {
         }
     }
 
-    private static func message(from json: JSONValue) -> AssistantChatMessage? {
+    static func message(from json: JSONValue) -> AssistantChatMessage? {
         guard let id = json["id"]?.stringValue,
               let roleValue = json["role"]?.stringValue,
               let role = AssistantChatMessage.Role(rawValue: roleValue) else { return nil }
-        let text = (json["parts"]?.arrayValue ?? []).compactMap { part in
-            part["type"]?.stringValue == "text" ? part["text"]?.stringValue : nil
-        }.joined(separator: "\n\n")
-        return AssistantChatMessage(id: id, role: role, text: text)
+        var parts: [AssistantChatPart] = []
+        for (offset, part) in (json["parts"]?.arrayValue ?? []).enumerated() {
+            switch part["type"]?.stringValue {
+            case "text":
+                guard let text = part["text"]?.stringValue, !text.isEmpty else { continue }
+                if case .text(let textID, let existing)? = parts.last, !existing.isEmpty {
+                    parts[parts.count - 1] = .text(id: textID, existing + "\n\n" + text)
+                } else {
+                    parts.append(.text(id: "\(id)-t\(offset)", text))
+                }
+            case "dynamic-tool", "tool":
+                guard part["state"]?.stringValue == "output-available",
+                      let toolName = part["toolName"]?.stringValue,
+                      let callID = part["toolCallId"]?.stringValue,
+                      let output = part["output"],
+                      let card = AssistantToolCard.parse(toolName: toolName, output: output, toolCallID: callID)
+                else { continue }
+                let source = AssistantToolCardSource(
+                    toolName: toolName,
+                    toolCallID: callID,
+                    input: part["input"],
+                    output: output
+                )
+                parts.append(.card(id: "\(id)-c\(offset)", card, source: source))
+            default:
+                continue
+            }
+        }
+        return AssistantChatMessage(id: id, role: role, parts: parts)
     }
 
     private static func newMessageID() -> String {

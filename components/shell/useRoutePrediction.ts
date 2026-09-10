@@ -6,7 +6,7 @@ import type { BarRoute, RouteVerdict } from '@/lib/albatross/route-rules';
 
 // The route state of the bar. The heuristic sets the chip at once. The
 // endpoint confirms `delayMs` after the last keystroke. Tab flips the chip
-// and locks it for this text. A blank field unlocks and reads Ask.
+// and locks it for this text. A choice made before typing is kept as typing starts.
 
 export interface RoutePredictionOptions {
   text: string;
@@ -22,9 +22,9 @@ export interface RoutePrediction {
   pending: boolean;
   /** True after Tab or a preset. A locked chip ignores predictions. */
   locked: boolean;
-  /** True when the field is blank. The chip reads Ask and Tab does nothing. */
+  /** True when the field is blank; a route can still be chosen before typing. */
   empty: boolean;
-  /** Flip the route by hand and lock it. No effect on a blank field. */
+  /** Flip the route by hand and lock it, including before typing. */
   flip: () => void;
   /** Set the route and lock it, for the sidebar door. */
   preset: (route: BarRoute) => void;
@@ -101,8 +101,8 @@ export function useRoutePrediction({
   }, [text, empty, delayMs, predict, instant, cancel]);
 
   const flip = useCallback(() => {
-    if (textRef.current.trim() === '') return;
     cancel();
+    lockedRef.current = true;
     setRoute((current) => flipRoute(current));
     setConfidence(1);
     setPending(false);
@@ -112,6 +112,7 @@ export function useRoutePrediction({
   const preset = useCallback(
     (next: BarRoute) => {
       cancel();
+      lockedRef.current = true;
       setRoute(next);
       setConfidence(1);
       setPending(false);
@@ -122,6 +123,7 @@ export function useRoutePrediction({
 
   const reset = useCallback(() => {
     cancel();
+    lockedRef.current = false;
     setRoute('ask');
     setConfidence(0);
     setPending(false);

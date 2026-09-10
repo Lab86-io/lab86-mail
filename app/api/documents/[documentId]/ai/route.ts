@@ -52,6 +52,10 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
       const input = inputSchema.parse(await req.json().catch(() => ({})));
       const document = await deps.getDocument(user.userId, documentId);
       if (!document) return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
+      // Capture the revision the proposal is grounded in BEFORE generation.
+      // Generation takes seconds; typing during that window must make the
+      // proposal stale, never let it overwrite the newer text.
+      const baseRevision = document.currentRevision;
       const proposal = await deps.generateDocumentProposal({
         userId: user.userId,
         userEmail: user.email,
@@ -61,11 +65,11 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
         current: document,
         sourceContext: input.sourceContext,
       });
-      if (input.mode === 'apply') {
+      if (input.mode === 'apply' && proposal.model.kind !== 'sheet-changes') {
         const result = await deps.updateDocument({
           userId: user.userId,
           documentId,
-          expectedRevision: document.currentRevision,
+          expectedRevision: baseRevision,
           title: proposal.title,
           model: proposal.model,
           reason: proposal.summary,
@@ -90,17 +94,24 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
         title: proposal.title,
         description: proposal.summary,
         proposedModel: proposal.model,
+        baseRevision,
         sourceRefs: document.sourceRefs,
       });
       return NextResponse.json({
         ok: true,
         applied: false,
+        ...(input.mode === 'apply'
+          ? {
+              note: 'Engine spreadsheets take reviewable cell changes; open the file to apply this suggestion.',
+            }
+          : {}),
         suggestion: {
           suggestionId: suggestion.suggestionId,
           documentId,
           title: proposal.title,
           description: proposal.summary,
           proposedModel: proposal.model,
+          baseRevision,
           sourceRefs: document.sourceRefs,
           status: 'proposed',
           createdAt: suggestion.createdAt || Date.now(),

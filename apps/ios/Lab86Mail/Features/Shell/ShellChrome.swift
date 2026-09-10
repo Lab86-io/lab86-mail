@@ -149,6 +149,18 @@ struct PendingSendToast: View {
                 Button("Undo Send") {
                     Task {
                         guard let prefill = await environment.pendingSends.undo(record) else { return }
+                        // A draft born in a conversation returns to that
+                        // artifact, not to the global composer.
+                        if let storageID = record.snapshot.assistantDraftKey,
+                           let key = AssistantDraftKey(storageID: storageID) {
+                            await environment.assistantDrafts.syncPendingDelivery(
+                                key,
+                                ownerID: environment.sessionStore.ownerID,
+                                pendingSends: environment.pendingSends
+                            )
+                            await environment.revealAssistantChat(sessionID: key.sessionID)
+                            return
+                        }
                         environment.navigation.pendingCompose = prefill
                         environment.navigation.sheet = .compose
                     }

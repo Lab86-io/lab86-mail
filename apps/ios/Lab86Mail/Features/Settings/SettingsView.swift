@@ -145,6 +145,7 @@ struct SettingsView: View {
                     environment.sessionStore.clear()
                     await environment.store.clearForSignOut()
                     await environment.pendingSends.clear(ownerID: ownerID)
+                    await environment.assistantDrafts.clear(ownerID: ownerID)
                     environment.accountStore.clear()
                     try? await environment.notificationResponseOutbox.purge()
                     if let ownerID {
@@ -230,6 +231,7 @@ private struct AccountDeletionView: View {
             environment.sessionStore.clear()
             await environment.store.clearForSignOut()
             await environment.pendingSends.clear(ownerID: ownerID)
+            await environment.assistantDrafts.clear(ownerID: ownerID)
             environment.accountStore.clear()
             try? await environment.notificationResponseOutbox.purge()
             if let ownerID {

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
 import { generateDocumentProposal } from '@/lib/documents/ai';
+import { documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
-import { DOCUMENT_KINDS, documentModelText } from '@/lib/documents/model';
+import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
 import {
   archiveDocument,
   createDocument,
@@ -206,6 +207,10 @@ export const documentSuggestChanges = defineTool({
     const userId = requireUserId(ctx.userId);
     const document = await dependencies.getDocument(userId, args.documentId);
     if (!document) throw new Error('Document not found.');
+    // The revision the proposal is grounded in is fixed BEFORE generation so a
+    // user typing during the model call makes this suggestion stale instead of
+    // letting it overwrite their newer work when applied.
+    const baseRevision = document.currentRevision;
     const proposal = await dependencies.generateDocumentProposal({
       userId,
       userEmail: ctx.userEmail || undefined,
@@ -221,8 +226,10 @@ export const documentSuggestChanges = defineTool({
       title: proposal.title,
       description: proposal.summary,
       proposedModel: proposal.model,
+      baseRevision,
       sourceRefs: document.sourceRefs,
     });
+    if (!suggestion.ok) throw new Error('The suggestion could not be saved. No edits were applied.');
     return {
       ok: true,
       suggestionId: suggestion.suggestionId,
@@ -256,6 +263,7 @@ export const documentApplyInstruction = defineTool({
     const userId = requireUserId(ctx.userId);
     const document = await dependencies.getDocument(userId, args.documentId);
     if (!document) throw new Error('Document not found.');
+    const baseRevision = document.currentRevision;
     const proposal = await dependencies.generateDocumentProposal({
       userId,
       userEmail: ctx.userEmail || undefined,
@@ -265,10 +273,32 @@ export const documentApplyInstruction = defineTool({
       current: document,
       sourceContext: args.sourceContext,
     });
+    if (proposal.model.kind === 'sheet-changes' || isSheetWorkbookModel(document.model)) {
+      // The server cannot evaluate an engine workbook, so there is no direct
+      // apply. Leave a reviewable suggestion and say so instead of pretending.
+      const suggestion = await dependencies.createDocumentSuggestion({
+        userId,
+        documentId: document.documentId,
+        title: proposal.title,
+        description: proposal.summary,
+        proposedModel: proposal.model,
+        baseRevision,
+        sourceRefs: document.sourceRefs,
+      });
+      if (!suggestion.ok) throw new Error('The suggestion could not be saved. No edits were applied.');
+      return {
+        ok: false,
+        documentId: document.documentId,
+        title: document.title,
+        revision: document.currentRevision,
+        summary: `Not applied: engine spreadsheets take reviewable cell changes. Suggestion ${suggestion.suggestionId} is waiting in the editor: ${proposal.summary}`,
+        openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+      };
+    }
     const result = await dependencies.updateDocument({
       userId,
       documentId: document.documentId,
-      expectedRevision: document.currentRevision,
+      expectedRevision: baseRevision,
       title: proposal.title,
       model: proposal.model,
       reason: proposal.summary,
@@ -289,7 +319,7 @@ export const documentApplyInstruction = defineTool({
 export const documentPublishGoogle = defineTool({
   name: 'document_publish_google',
   description:
-    'Publish an Albatross document as a native Google Doc, Sheet, or Slides file, or sync a later Albatross revision to its existing Google file.',
+    'Publish an Albatross document as a native Google Doc, Sheet, or Slides file, or sync a later revision. Engine-backed Odoo workbooks cannot be published or synced this way because that would discard formatting and workbook features; use the spreadsheet editor’s Excel download instead.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -317,18 +347,121 @@ export const documentPublishGoogle = defineTool({
 
 export const documentExport = defineTool({
   name: 'document_export',
-  description: 'Return the authenticated download URL for an Albatross file in DOCX, XLSX, or PPTX format.',
+  description:
+    'Return the authenticated download URL for a file in DOCX, XLSX, or PPTX. Odoo workbook server downloads are values/formulas projections, not full-fidelity exports; use the editor download for the engine export.',
   category: 'documents',
   mutating: false,
   input: z.object({ documentId: z.string().min(1) }),
   output: z.object({
     ok: z.boolean(),
     downloadPath: z.string(),
+    fidelity: z.enum(['full', 'projection']),
+    warning: z.string().optional(),
+    openPath: z.string(),
   }),
   async handler(args, ctx) {
     const document = await dependencies.getDocument(requireUserId(ctx.userId), args.documentId);
     if (!document) throw new Error('Document not found.');
-    return { ok: true, downloadPath: `/api/documents/${encodeURIComponent(document.documentId)}/export` };
+    const engine = isSheetWorkbookModel(document.model);
+    return {
+      ok: true,
+      downloadPath: `/api/documents/${encodeURIComponent(document.documentId)}/export`,
+      fidelity: engine ? ('projection' as const) : ('full' as const),
+      warning: engine
+        ? 'This server download carries values and formulas only. Open the spreadsheet and use Download Excel to export through Odoo with its supported workbook features.'
+        : undefined,
+      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    };
+  },
+});
+
+export const documentEdit = defineTool({
+  name: 'document_edit',
+  description:
+    'Precisely edit document blocks, presentation slides/elements, or spreadsheet cells using IDs and revision from document_get. No second AI generation is needed. Default mode review creates a proposal; use apply only when the user explicitly asks you to change the file. Edits are atomic and cannot overwrite a newer revision. Odoo cell edits always become reviewable engine commands in the spreadsheet editor, never a false claim of an applied change. Files stay private; this does not publish, share, or send them.',
+  category: 'documents',
+  mutating: true,
+  input: z.object({
+    documentId: z.string().min(1).max(200),
+    expectedRevision: z.number().int().min(1),
+    mode: z.enum(['review', 'apply']).default('review'),
+    summary: z.string().min(1).max(500),
+    operations: documentEditsSchema,
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    status: z.enum(['applied', 'proposed', 'conflict']),
+    documentId: z.string(),
+    title: z.string(),
+    kind: z.enum(DOCUMENT_KINDS),
+    revision: z.number(),
+    suggestionId: z.string().optional(),
+    summary: z.string(),
+    openPath: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    const document = await dependencies.getDocument(userId, args.documentId);
+    if (!document) throw new Error('Document not found.');
+    const result = {
+      documentId: document.documentId,
+      title: document.title,
+      kind: document.kind,
+      revision: document.currentRevision,
+      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    };
+    if (document.currentRevision !== args.expectedRevision)
+      return {
+        ...result,
+        ok: false,
+        status: 'conflict' as const,
+        summary: 'Nothing changed. Read the latest file and review your edits against its new revision.',
+      };
+    const proposedModel = prepareDocumentEdits(document.model, args.operations);
+    if (args.mode !== 'apply' || proposedModel.kind === 'sheet-changes') {
+      const suggestion = await dependencies.createDocumentSuggestion({
+        userId,
+        documentId: document.documentId,
+        title: document.title,
+        description: args.summary,
+        proposedModel,
+        baseRevision: args.expectedRevision,
+        sourceRefs: document.sourceRefs,
+      });
+      if (!suggestion.ok) throw new Error('The suggestion could not be saved. No edits were applied.');
+      return {
+        ...result,
+        ok: true,
+        status: 'proposed' as const,
+        suggestionId: suggestion.suggestionId,
+        summary:
+          proposedModel.kind === 'sheet-changes'
+            ? `Not yet applied. Review and apply these cell changes in the spreadsheet editor: ${args.summary}`
+            : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}`,
+      };
+    }
+    const saved = await dependencies.updateDocument({
+      userId,
+      documentId: document.documentId,
+      expectedRevision: args.expectedRevision,
+      model: proposedModel,
+      reason: args.summary,
+      actor: 'ai',
+    });
+    if (!saved.ok)
+      return {
+        ...result,
+        ok: false,
+        status: 'conflict' as const,
+        summary: 'Nothing changed. The file changed before these edits could be saved; read it again.',
+      };
+    return {
+      ...result,
+      revision: saved.document.currentRevision,
+      ok: true,
+      status: 'applied' as const,
+      summary: args.summary,
+    };
   },
 });
 

@@ -10,6 +10,8 @@ import { createDefaultDocumentModel } from '../../lib/documents/model';
 const mode = new URLSearchParams(location.search).get('scenario');
 const calls: string[] = [];
 (globalThis as any).__filesRequests = calls;
+const submittedBodies: unknown[] = [];
+(globalThis as any).__filesBodies = submittedBodies;
 const connection = {
   connectionId: 'drive',
   provider: 'google_drive',
@@ -59,6 +61,60 @@ const editorFile = {
     reason: 'Preview only: the original includes a table that cannot yet be preserved.',
   },
 };
+const ownedKind = mode === 'owned-sheet' ? 'sheet' : mode === 'owned-deck' ? 'deck' : 'doc';
+let ownedDocument = {
+  documentId: 'doc',
+  kind: ownedKind,
+  title: 'Project decision memo',
+  model:
+    ownedKind === 'doc'
+      ? {
+          kind: 'doc',
+          version: 1,
+          blocks: [
+            { id: 'heading', type: 'heading', level: 1, text: 'Decision and next steps' },
+            {
+              id: 'paragraph',
+              type: 'paragraph',
+              text: 'A useful working document keeps the decision, its evidence, and the next step together.',
+            },
+            { id: 'second-heading', type: 'heading', level: 2, text: 'What changed this week' },
+            {
+              id: 'second-paragraph',
+              type: 'paragraph',
+              text: 'A calmer workspace makes room for the work.',
+            },
+          ],
+        }
+      : createDefaultDocumentModel(ownedKind, 'fixture'),
+  currentRevision: 2,
+  sourceRefs: [],
+  suggestions: [
+    {
+      suggestionId: 'stale-suggestion',
+      documentId: 'doc',
+      title: 'An earlier idea',
+      description: 'This proposal must not overwrite a newer revision.',
+      proposedModel: createDefaultDocumentModel(ownedKind, 'proposal'),
+      baseRevision: 1,
+      status: 'proposed',
+      createdAt: 1,
+    },
+    {
+      suggestionId: 'current-suggestion',
+      documentId: 'doc',
+      title: 'A clearer memo',
+      description: 'Clarify the decision and preserve the supporting context.',
+      proposedModel: createDefaultDocumentModel(ownedKind, 'proposal'),
+      baseRevision: 2,
+      status: 'proposed',
+      createdAt: 2,
+    },
+  ],
+  createdAt: Date.UTC(2026, 8, 8),
+  updatedAt: Date.UTC(2026, 8, 9),
+};
+if (mode?.startsWith('owned')) history.replaceState(null, '', `?scenario=${mode}&view=files&document=doc`);
 if (mode === 'readonly' || mode === 'conflict' || mode === 'saved')
   history.replaceState(
     null,
@@ -68,6 +124,78 @@ if (mode === 'readonly' || mode === 'conflict' || mode === 'saved')
 globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input), location.origin);
   calls.push(`${init?.method || 'GET'} ${url.pathname}${url.search}`);
+  if (url.pathname === '/api/office') return Response.json({ ok: true, enabled: false, files: [] });
+  if (url.pathname === '/api/documents/doc') {
+    if (init?.method === 'PATCH') {
+      const submitted = JSON.parse(String(init?.body));
+      submittedBodies.push(submitted);
+      if (mode === 'owned-conflict' || mode === 'owned-error')
+        return Response.json(
+          {
+            ok: false,
+            error: mode === 'owned-conflict' ? 'Another editor saved changes.' : 'Save unavailable.',
+          },
+          { status: mode === 'owned-conflict' ? 409 : 503 },
+        );
+      ownedDocument = {
+        ...ownedDocument,
+        title: submitted.title,
+        model: submitted.model,
+        currentRevision: ownedDocument.currentRevision + 1,
+      };
+    } else if ((globalThis as any).__failNextFileRead) {
+      (globalThis as any).__failNextFileRead = false;
+      return Response.json(
+        { ok: false, error: 'The saved copy is temporarily unavailable.' },
+        { status: 503 },
+      );
+    }
+    return Response.json({ ok: true, document: ownedDocument });
+  }
+  if (url.pathname === '/api/documents/doc/revisions') {
+    if (init?.method === 'POST') {
+      submittedBodies.push(JSON.parse(String(init?.body)));
+      await new Promise<void>((resolve) => {
+        (globalThis as any).__releaseFileAction = resolve;
+      });
+      ownedDocument = { ...ownedDocument, title: 'Restored decision memo', currentRevision: 3 };
+      return Response.json({ ok: true });
+    }
+    return Response.json({
+      ok: true,
+      revisions: [
+        {
+          revision: ownedDocument.currentRevision,
+          title: ownedDocument.title,
+          reason: 'Current saved copy',
+          actor: 'user',
+          createdAt: ownedDocument.updatedAt,
+        },
+        {
+          revision: 1,
+          title: 'Original decision memo',
+          reason: 'Created document',
+          actor: 'user',
+          createdAt: ownedDocument.createdAt,
+        },
+      ],
+    });
+  }
+  if (url.pathname === '/api/documents/doc/suggestions/current-suggestion') {
+    submittedBodies.push(JSON.parse(String(init?.body)));
+    await new Promise<void>((resolve) => {
+      (globalThis as any).__releaseFileAction = resolve;
+    });
+    ownedDocument = {
+      ...ownedDocument,
+      title: 'AI-reviewed decision memo',
+      currentRevision: 3,
+      suggestions: ownedDocument.suggestions.filter(
+        (suggestion) => suggestion.suggestionId !== 'current-suggestion',
+      ),
+    };
+    return Response.json({ ok: true });
+  }
   if (url.pathname === '/api/files/status')
     return Response.json({
       ok: true,

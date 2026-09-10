@@ -3,8 +3,8 @@
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DefaultChatTransport } from 'ai';
-import { Paperclip, Plus, X } from 'lucide-react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
@@ -17,7 +17,6 @@ import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
-import { DotGridGlow } from '@/components/ui/dot-grid-glow';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -137,19 +136,15 @@ export function AIBarTrigger() {
   return <AssistantLauncher placement={placement} shortcut={shortcut} onOpen={() => setAiBarOpen(true)} />;
 }
 
-// ---------- The assistant panel: a floating, dreamy chat surface ----------
-// Same plumbing as the old docked sidebar (useChat → /api/agent, /api/chats
-// persistence, ask_user forms, UI tool intercepts) presented as a floating
-// translucent panel in the New Intent capture family: SiriOrb presence,
-// DotGridGlow behind, soft springs. Research — Mobbin: Linear "Ask Linear"
-// floating panel (mobbin.com/screens/51c2bd60-f22d-4879-8c28-c5800ac1f4b6),
-// Ferndesk floating agent card (mobbin.com/screens/0e209d9a-bd32-4bfc-9818-
-// acd69949f45e), Notion AI's quiet inline "Searching the web" activity line
-// (mobbin.com/screens/2c72548e-6813-4575-8861-29ebf927a221).
+// One conversation owner across corner, split, and chat-only presentations.
+// AssistantWorkspace owns the outer frame; transport, tool cards, attachments
+// and composer state stay mounted here when that presentation changes.
 export function AssistantChat() {
   const reduceMotion = useReducedMotion() ?? false;
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
+  const presentation = useClientStore((s) => s.assistantPresentation);
+  const setPresentation = useClientStore((s) => s.setAssistantPresentation);
   const account = useClientStore((s) => s.account);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
@@ -377,20 +372,6 @@ export function AssistantChat() {
     void kickAdvance(cards.map((card) => card.id));
   }, []);
 
-  // Esc dismisses the floating panel — even from the composer (the field is
-  // auto-focused, so a typing exception would leave Esc dead). Radix layers
-  // (menus, dropdowns) preventDefault their own Escape, so they close first.
-  // Draft text survives: the panel stays mounted, only hidden.
-  useEffect(() => {
-    if (!aiBarOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
-      setAiBarOpen(false);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [aiBarOpen, setAiBarOpen]);
-
   // --- UI tool intercept ---
   const handled = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -574,324 +555,315 @@ export function AssistantChat() {
   const staggerFloor = prevMessageCountRef.current;
 
   return (
-    <AnimatePresence>
-      {aiBarOpen ? (
-        <>
-          {/* The dreamy layer: the app's own dot grid, accent-tinted, revealed
-              around the cursor while the assistant is open. Quiet by design —
-              pointer-events-none, no shader washes. */}
-          <motion.div
-            key="assistant-glow"
-            aria-hidden
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.4 }}
-            className="pointer-events-none fixed inset-0 z-40"
-          >
-            <DotGridGlow />
-          </motion.div>
-
-          <motion.section
-            key="assistant-panel"
-            role="dialog"
-            aria-label="Assistant"
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 26, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.98 }}
-            transition={
-              reduceMotion ? { duration: 0.1 } : { type: 'spring', stiffness: 380, damping: 32, mass: 0.9 }
-            }
-            className="fixed inset-x-3 bottom-3 z-50 flex h-[min(620px,calc(100dvh-24px))] flex-col overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/85 shadow-[0_32px_90px_-28px_rgb(0_0_0/0.45),var(--shadow-soft)] backdrop-blur-2xl sm:inset-x-auto sm:bottom-6 sm:right-6 sm:h-[min(660px,calc(100dvh-48px))] sm:w-[420px]"
-          >
-            <header className="flex items-center justify-between gap-2 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2 text-[13px]">
-                {/* Assistant presence: a still gradient pearl that only turns
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-list-divider)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2 text-[13px]">
+          {/* Assistant presence: a still gradient pearl that only turns
                 while the model is actually streaming. */}
-                <span
-                  aria-hidden
-                  className={cn(
-                    'flex shrink-0 items-center justify-center',
-                    !streaming && '[&_.siri-orb::before]:[animation-play-state:paused]',
-                  )}
-                >
-                  <SiriOrb size="20px" animationDuration={7} colors={ORB_COLORS} />
-                </span>
-                <button
-                  type="button"
-                  title={
-                    chatScopeKind === 'global'
-                      ? 'Global Albatross conversation'
-                      : 'Return to global conversation'
-                  }
-                  onClick={() => {
-                    if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
-                  }}
-                  disabled={busy || chatScopeKind === 'global'}
-                  className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
-                >
-                  {chatScopeKind === 'global'
-                    ? 'Albatross'
-                    : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
-                </button>
-              </div>
-              <div className="flex items-center gap-0.5">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={startNewChat}
-                  disabled={busy}
-                  title="New chat"
-                  className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                >
-                  <RowIcon icon={PlusIcon} size={14} />
-                  <span className="sr-only">New chat</span>
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={busy}
-                      title="Chat history"
-                      className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                    >
-                      <RowIcon icon={HistoryIcon} size={14} />
-                      <span className="sr-only">Chat history</span>
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
-                    <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
-                    {chatSessions.length === 0 ? (
-                      <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
-                    ) : (
-                      chatSessions.map((session) => (
-                        <DropdownMenuItem
-                          key={session._id}
-                          onSelect={() => void loadSession(session._id)}
-                          disabled={busy}
-                          className="flex flex-col items-start gap-0.5"
-                        >
-                          <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
-                            {session.title || 'Untitled chat'}
-                          </span>
-                          <span className="text-[10.5px] text-[var(--color-text-faint)]">
-                            {formatDate(session.updatedAt)} · {session.messageCount} message
-                            {session.messageCount === 1 ? '' : 's'}
-                          </span>
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
-                      <Plus className="size-3.5" />
-                      Start a new chat
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => setAiBarOpen(false)}
-                  title="Close (⌘K)"
-                  className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  <span className="sr-only">Close</span>
-                </Button>
-              </div>
-            </header>
-
-            {messages.length === 0 ? (
-              <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
-                <div className="space-y-1.5">
-                  <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
-                  <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-                    Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
-                    research links — and act across your inbox in real time.
-                  </p>
-                </div>
-                <div className="flex w-full max-w-[320px] flex-col gap-2">
-                  {(chatScopeKind === 'work'
-                    ? WORK_SUGGESTIONS
-                    : selectedThreadId
-                      ? THREAD_SUGGESTIONS
-                      : BASE_SUGGESTIONS
-                  ).map((s) => (
-                    <PromptSuggestion
-                      key={s}
-                      variant="outline"
-                      onClick={() => void send(s)}
-                      className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-accent)] shadow-[var(--shadow-soft)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
-                    >
-                      {s}
-                    </PromptSuggestion>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <ChatContainerRoot className="relative flex-1">
-                <ChatContainerContent className="gap-4 px-3.5 py-4">
-                  <ChatPartContext.Provider
-                    value={{
-                      answer: answerHitl,
-                      openDraft: (draft) =>
-                        openComposeNew({
-                          to: draft.to,
-                          cc: draft.cc,
-                          bcc: draft.bcc,
-                          subject: draft.subject,
-                          body: draft.body,
-                        }),
-                      openThread: (target) =>
-                        routeEmailPreviewThread(target, {
-                          setThreadAccount,
-                          setSelectedThread,
-                        }),
-                    }}
+          <span
+            aria-hidden
+            className={cn(
+              'flex shrink-0 items-center justify-center',
+              !streaming && '[&_.siri-orb::before]:[animation-play-state:paused]',
+            )}
+          >
+            <SiriOrb size="20px" animationDuration={7} colors={ORB_COLORS} />
+          </span>
+          <button
+            type="button"
+            title={
+              chatScopeKind === 'global' ? 'Global Albatross conversation' : 'Return to global conversation'
+            }
+            onClick={() => {
+              if (chatScopeKind !== 'global') setChatScope({ kind: 'global' });
+            }}
+            disabled={busy || chatScopeKind === 'global'}
+            className="truncate font-medium text-[var(--color-text)] enabled:hover:underline disabled:cursor-default disabled:opacity-70"
+          >
+            {chatScopeKind === 'global'
+              ? 'Albatross'
+              : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
+          </button>
+        </div>
+        <div className="flex items-center gap-0.5">
+          {presentation !== 'corner' ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
+              title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+              aria-label={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+              className="hidden md:inline-flex"
+            >
+              {presentation === 'full' ? (
+                <PanelLeftOpen className="size-4" />
+              ) : (
+                <PanelLeftClose className="size-4" />
+              )}
+            </Button>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setPresentation(presentation === 'corner' ? 'split' : 'corner')}
+            title={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
+            aria-label={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
+            className="hidden md:inline-flex"
+          >
+            {presentation === 'corner' ? <Maximize2 className="size-4" /> : <Minimize2 className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={startNewChat}
+            disabled={busy}
+            title="New chat"
+            className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+          >
+            <RowIcon icon={PlusIcon} size={14} />
+            <span className="sr-only">New chat</span>
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={busy}
+                title="Chat history"
+                className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+              >
+                <RowIcon icon={HistoryIcon} size={14} />
+                <span className="sr-only">Chat history</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-y-auto">
+              <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+              {chatSessions.length === 0 ? (
+                <DropdownMenuItem disabled>No saved chats yet</DropdownMenuItem>
+              ) : (
+                chatSessions.map((session) => (
+                  <DropdownMenuItem
+                    key={session._id}
+                    onSelect={() => void loadSession(session._id)}
+                    disabled={busy}
+                    className="flex flex-col items-start gap-0.5"
                   >
-                    {messages.map((m, i) => (
-                      <MessageFloat
-                        key={m.id}
-                        reduceMotion={reduceMotion}
-                        delay={i < staggerFloor ? 0 : Math.min((i - staggerFloor) * 0.05, 0.3)}
-                      >
-                        <MessageView
-                          message={m}
-                          streaming={streaming && i === messages.length - 1}
-                          hold={
-                            m.role === 'assistant' && sessionIdRef.current
-                              ? {
-                                  conversationId: sessionIdRef.current,
-                                  userText: precedingUserText(messages, i),
-                                  onKept: afterHeld,
-                                }
-                              : undefined
+                    <span className="w-full truncate text-[12.5px] text-[var(--color-text)]">
+                      {session.title || 'Untitled chat'}
+                    </span>
+                    <span className="text-[10.5px] text-[var(--color-text-faint)]">
+                      {formatDate(session.updatedAt)} · {session.messageCount} message
+                      {session.messageCount === 1 ? '' : 's'}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
+                <Plus className="size-3.5" />
+                Start a new chat
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setAiBarOpen(false)}
+            title="Close (⌘K)"
+            className="size-11 text-[var(--color-text-muted)] hover:text-[var(--color-text)] md:size-8"
+          >
+            <X className="h-3.5 w-3.5" />
+            <span className="sr-only">Close</span>
+          </Button>
+        </div>
+      </header>
+
+      {messages.length === 0 ? (
+        <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
+          <div className="space-y-1.5">
+            <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
+            <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+              Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
+              research links — and act across your inbox in real time.
+            </p>
+          </div>
+          <div className="flex w-full max-w-[320px] flex-col gap-2">
+            {(chatScopeKind === 'work'
+              ? WORK_SUGGESTIONS
+              : selectedThreadId
+                ? THREAD_SUGGESTIONS
+                : BASE_SUGGESTIONS
+            ).map((s) => (
+              <PromptSuggestion
+                key={s}
+                variant="outline"
+                onClick={() => void send(s)}
+                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-text)] shadow-none transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+              >
+                {s}
+              </PromptSuggestion>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <ChatContainerRoot className="relative flex-1">
+          <ChatContainerContent className="gap-4 px-3.5 py-4">
+            <ChatPartContext.Provider
+              value={{
+                answer: answerHitl,
+                openDraft: (draft) =>
+                  openComposeNew({
+                    to: draft.to,
+                    cc: draft.cc,
+                    bcc: draft.bcc,
+                    subject: draft.subject,
+                    body: draft.body,
+                  }),
+                openThread: (target) =>
+                  routeEmailPreviewThread(target, {
+                    setThreadAccount,
+                    setSelectedThread,
+                  }),
+              }}
+            >
+              {messages.map((m, i) => (
+                <MessageFloat
+                  key={m.id}
+                  reduceMotion={reduceMotion}
+                  delay={i < staggerFloor ? 0 : Math.min((i - staggerFloor) * 0.05, 0.3)}
+                >
+                  <MessageView
+                    message={m}
+                    streaming={streaming && i === messages.length - 1}
+                    hold={
+                      m.role === 'assistant' && sessionIdRef.current
+                        ? {
+                            conversationId: sessionIdRef.current,
+                            userText: precedingUserText(messages, i),
+                            onKept: afterHeld,
                           }
-                        />
-                      </MessageFloat>
-                    ))}
-                  </ChatPartContext.Provider>
-                  {showLoader ? (
-                    <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
-                      <Loader variant="typing" />
-                    </div>
-                  ) : null}
-                  {error ? (
-                    <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-                      <div>{error.message}</div>
-                      {/* Long conversations can hit a limit mid-turn; let the user
+                        : undefined
+                    }
+                  />
+                </MessageFloat>
+              ))}
+            </ChatPartContext.Provider>
+            {showLoader ? (
+              <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
+                <Loader variant="typing" />
+              </div>
+            ) : null}
+            {error ? (
+              <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
+                <div>{error.message}</div>
+                {/* Long conversations can hit a limit mid-turn; let the user
                     pick up where it stopped (the server windows the transcript,
                     so the retry fits). */}
+                <button
+                  type="button"
+                  onClick={() => regenerate()}
+                  className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+                >
+                  Continue
+                </button>
+              </div>
+            ) : null}
+          </ChatContainerContent>
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+            <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
+          </div>
+        </ChatContainerRoot>
+      )}
+
+      {/* Composer: a rounded floating field pinned to the panel bottom —
+            no hard border-t seam, it hovers over the translucent surface. */}
+      <div ref={inputWrapRef}>
+        <AskHoldComposer
+          value={input}
+          onValueChange={setInput}
+          busy={busy}
+          streaming={streaming}
+          canSend={Boolean(input.trim()) || pendingFiles.length > 0}
+          onSend={submit}
+          onStop={stop}
+          onHold={holdFromBar}
+          onHeld={afterHeld}
+          door={door}
+          reduceMotion={reduceMotion}
+          before={
+            <>
+              {chatScopeKind !== 'global' ? (
+                <div className="flex px-1 pt-1">
+                  <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
+                    <span className="truncate">
+                      {chatScopeKind === 'work' ? 'Work' : 'Area'}: {chatScopeLabel || 'Current context'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setChatScope({ kind: 'global' })}
+                      disabled={busy}
+                      aria-label={`Detach ${chatScopeKind}`}
+                      title={`Detach ${chatScopeKind}`}
+                      className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <X className="size-2.5" />
+                    </button>
+                  </span>
+                </div>
+              ) : null}
+              {pendingFiles.length ? (
+                <div className="flex flex-wrap gap-1 px-1 pb-1">
+                  {pendingFiles.map((file, index) => (
+                    <span
+                      key={`${file.name}-${file.size}-${file.lastModified}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                    >
+                      {file.name}
                       <button
                         type="button"
-                        onClick={() => regenerate()}
-                        className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
+                        onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                        aria-label={`Remove ${file.name}`}
+                        title={`Remove ${file.name}`}
+                        className="hover:text-[var(--color-danger)]"
                       >
-                        Continue
+                        <X className="size-2.5" />
                       </button>
-                    </div>
-                  ) : null}
-                </ChatContainerContent>
-                <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-                  <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
+                    </span>
+                  ))}
                 </div>
-              </ChatContainerRoot>
-            )}
-
-            {/* Composer: a rounded floating field pinned to the panel bottom —
-            no hard border-t seam, it hovers over the translucent surface. */}
-            <div ref={inputWrapRef}>
-              <AskHoldComposer
-                value={input}
-                onValueChange={setInput}
-                busy={busy}
-                streaming={streaming}
-                canSend={Boolean(input.trim()) || pendingFiles.length > 0}
-                onSend={submit}
-                onStop={stop}
-                onHold={holdFromBar}
-                onHeld={afterHeld}
-                door={door}
-                reduceMotion={reduceMotion}
-                before={
-                  <>
-                    {chatScopeKind !== 'global' ? (
-                      <div className="flex px-1 pt-1">
-                        <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
-                          <span className="truncate">
-                            {chatScopeKind === 'work' ? 'Work' : 'Area'}:{' '}
-                            {chatScopeLabel || 'Current context'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setChatScope({ kind: 'global' })}
-                            disabled={busy}
-                            aria-label={`Detach ${chatScopeKind}`}
-                            title={`Detach ${chatScopeKind}`}
-                            className="shrink-0 enabled:hover:text-[var(--color-danger)] disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <X className="size-2.5" />
-                          </button>
-                        </span>
-                      </div>
-                    ) : null}
-                    {pendingFiles.length ? (
-                      <div className="flex flex-wrap gap-1 px-1 pb-1">
-                        {pendingFiles.map((file, index) => (
-                          <span
-                            key={`${file.name}-${file.size}-${file.lastModified}`}
-                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
-                          >
-                            {file.name}
-                            <button
-                              type="button"
-                              onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
-                              aria-label={`Remove ${file.name}`}
-                              title={`Remove ${file.name}`}
-                              className="hover:text-[var(--color-danger)]"
-                            >
-                              <X className="size-2.5" />
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                }
-                leading={
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={busy}
-                      title="Attach a file for the assistant"
-                      className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
-                    >
-                      <Paperclip className="size-3.5" />
-                      <span className="sr-only">Attach file</span>
-                    </Button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept="image/*,application/pdf,text/plain,text/csv"
-                      className="hidden"
-                      onChange={(event) => {
-                        const picked = Array.from(event.target.files || []);
-                        if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
-                        event.target.value = '';
-                      }}
-                    />
-                  </>
-                }
+              ) : null}
+            </>
+          }
+          leading={
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                title="Attach a file for the assistant"
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+              >
+                <Paperclip className="size-3.5" />
+                <span className="sr-only">Attach file</span>
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf,text/plain,text/csv"
+                className="hidden"
+                onChange={(event) => {
+                  const picked = Array.from(event.target.files || []);
+                  if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
+                  event.target.value = '';
+                }}
               />
-            </div>
-          </motion.section>
-        </>
-      ) : null}
-    </AnimatePresence>
+            </>
+          }
+        />
+      </div>
+    </div>
   );
 }
 

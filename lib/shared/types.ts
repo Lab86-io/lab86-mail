@@ -158,6 +158,8 @@ export const PRIMARY_VIEWS = [
   'files',
   'areas',
   'activity',
+  'notifications',
+  'chat',
   'tasks',
 ] as const;
 

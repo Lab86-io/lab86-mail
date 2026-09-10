@@ -39,6 +39,7 @@ test('native acceptance builds both native targets without signing or distributi
   assert.match(script, /generic\/platform=iOS/);
   assert.match(script, /generic\/platform=macOS' build-for-testing/);
   assert.match(script, /CODE_SIGNING_ALLOWED=NO/);
+  assert.match(script, /ENABLE_DEBUG_DYLIB=NO/);
   assert.doesNotMatch(contents + script, /ASC_PRIVATE_KEY|upload-ios-export|start-xcode-cloud/);
 });
 

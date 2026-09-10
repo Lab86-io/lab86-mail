@@ -210,6 +210,9 @@ function SearchContent({
   });
   const files = library.data?.items || [];
   const go = (path: string) => {
+    // Chat opens around the existing page. Rewriting the URL here would strip
+    // an open file's document ID and dispatch a destructive Files navigation.
+    if (pathname === '/' && path === '/?view=chat') return;
     if (pathname !== '/' || !path.startsWith('/?')) router.push(path);
     else {
       // Clear stale document/area/work links even when switching in-place.

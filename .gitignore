@@ -9,6 +9,9 @@ node_modules/
 out/
 build/
 dist/
+# Pinned, licensed browser runtime assets are release inputs, not local builds.
+!public/vendor/**/dist/
+!public/vendor/**/dist/**
 *.tsbuildinfo
 
 # misc

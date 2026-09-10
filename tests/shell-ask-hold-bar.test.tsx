@@ -345,10 +345,10 @@ describe('the route prediction', () => {
     await act(async () => {
       handle.current?.flip();
     });
-    expect(probeState(renderer)).toMatchObject({ route: 'ask', locked: false });
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, pending: false });
 
     await type('book the dentist');
-    expect(probeState(renderer)).toMatchObject({ route: 'hold', pending: true });
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, pending: false });
     await act(async () => {
       handle.current?.flip();
     });
@@ -479,10 +479,12 @@ describe('the bar keys', () => {
     expect(barKeyAction(key('Enter', { shiftKey: true }), { route: 'hold', empty: false })).toBeNull();
   });
 
-  test('Tab flips, Shift+Tab and a blank field keep the browser meaning', () => {
+  test('Tab flips even before typing; Shift+Tab and modified Tab keep browser meaning', () => {
     expect(barKeyAction(key('Tab'), { route: 'ask', empty: false })).toBe('flip');
     expect(barKeyAction(key('Tab', { shiftKey: true }), { route: 'ask', empty: false })).toBeNull();
-    expect(barKeyAction(key('Tab'), { route: 'ask', empty: true })).toBeNull();
+    expect(barKeyAction(key('Tab'), { route: 'ask', empty: true })).toBe('flip');
+    expect(barKeyAction({ ...key('Tab'), isComposing: true }, { route: 'ask', empty: true })).toBeNull();
+    expect(barKeyAction(key('Tab', { ctrlKey: true }), { route: 'ask', empty: true })).toBeNull();
   });
 
   test('Escape clears a field with text and does nothing on a blank one', () => {
@@ -846,6 +848,7 @@ async function mountComposer(
           shiftKey: false,
           metaKey: false,
           ctrlKey: false,
+          nativeEvent: { isComposing: false },
           preventDefault() {},
           ...mods,
         });
@@ -921,6 +924,24 @@ describe('the composer', () => {
     ).toBeDefined();
     await bar.press('Enter');
     expect(bar.held).toEqual(['book the dentist']);
+  });
+
+  test('an empty composer can choose Hold before typing without sending an empty message', async () => {
+    const bar = await mountComposer();
+    await bar.press('Tab');
+    expect(bar.chip().props['data-route']).toBe('hold');
+    expect(bar.chip().props['data-locked']).toBe(true);
+    const hold = bar.renderer.root.find(
+      (node) => node.type === 'button' && node.props['aria-label'] === 'Hold',
+    );
+    expect(hold.props.disabled).toBe(true);
+    await bar.press('Enter');
+    expect(bar.sent).toEqual([]);
+    expect(bar.held).toEqual([]);
+    await bar.set('what is the next step?');
+    expect(bar.chip().props['data-route']).toBe('hold');
+    await bar.press('Enter');
+    expect(bar.held).toEqual(['what is the next step?']);
   });
 
   test('the sidebar door presets Hold and seeds the field', async () => {

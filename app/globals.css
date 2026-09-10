@@ -16,7 +16,7 @@
   --color-foreground: var(--color-text);
   --color-card: var(--color-bg-elevated);
   --color-card-foreground: var(--color-text);
-  --color-popover: var(--color-bg-elevated);
+  --color-popover: var(--color-surface-float);
   --color-popover-foreground: var(--color-text);
   --color-primary: var(--color-accent);
   --color-primary-foreground: var(--color-accent-foreground);
@@ -138,13 +138,18 @@
 
   /* shadow */
   --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 24px rgb(15 23 42 / 0.06);
-  --shadow-control: 0 1px 2px rgb(15 23 42 / calc(0.06 * var(--depth-spread)));
+  --shadow-control: none;
   --radius-control: 9px;
   --radius-launcher: 14px;
   --radius-panel: 24px;
   --radius-overlay: 18px;
   --corner-shape-ui: round;
   --color-field: var(--color-bg-elevated);
+  /* Working surfaces are opaque. Elevation is reserved for floating UI;
+     list rules have their own role instead of locally weakening borders. */
+  --color-canvas: var(--color-bg);
+  --color-content: var(--color-bg-elevated);
+  --color-list-divider: color-mix(in oklab, var(--color-border) 82%, var(--color-text-faint));
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
   /* radii */
@@ -211,7 +216,7 @@
        the original neutral palette exactly. */
     --bg-hue: 156;
     --surface-tint: 0;
-    /* Film grain overlay opacity (0..~0.3), drawn by body::after. */
+    /* Optional canvas grain, always behind working content. */
     --grain-opacity: 0;
 
     /* Surfaces derive from the same hue so a background tint follows the
@@ -430,7 +435,7 @@
     --shadow-soft:
       0 1px 2px rgb(0 0 0 / calc(0.4 * var(--depth-spread))),
       0 4px 12px rgb(0 0 0 / calc(0.3 * var(--depth-spread)));
-    --shadow-control: 0 1px 2px rgb(0 0 0 / calc(0.22 * var(--depth-spread)));
+    --shadow-control: none;
     --shadow-pop:
       0 14px 36px rgb(0 0 0 / calc(0.45 * var(--depth-spread))),
       0 2px 6px rgb(0 0 0 / calc(0.3 * var(--depth-spread)));
@@ -456,13 +461,12 @@
      left-hand rail — the wash reads as flowing out of the rail and into the
      content: delineated by the rail's border, but a single shared wash. */
 
-  /* Film grain: a fixed fractal-noise wash over the whole app, opacity driven
-     by the theme panel. Zero-cost at opacity 0 (still composited, no paints). */
-  body::after {
+  /* Grain belongs to the canvas, never to text, avatars, fields or buttons. */
+  .app-paper::after {
     content: "";
-    position: fixed;
+    position: absolute;
     inset: 0;
-    z-index: 2147483646;
+    z-index: -1;
     pointer-events: none;
     opacity: min(1, calc(var(--grain-opacity, 0) * 2.6));
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
@@ -474,7 +478,7 @@
   /* Overlay collapses toward invisible on a near-black base; soft-light keeps
      the film grain legible on the dark canvas (this is why the grain slider
      "did nothing" in dark mode before). */
-  .dark body::after {
+  .dark .app-paper::after {
     mix-blend-mode: soft-light;
     opacity: min(1, calc(var(--grain-opacity, 0) * 3.4));
   }
@@ -848,7 +852,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 0;
+    z-index: -1;
     background:
       radial-gradient(
         120% 90% at 15% 0%,
@@ -867,37 +871,13 @@
 
   .app-paper,
   .report-paper {
+    isolation: isolate;
     background-color: var(--color-bg);
-    background-image: radial-gradient(
-      circle at 1px 1px,
-      color-mix(in srgb, var(--color-accent) 3%, transparent) 1px,
-      transparent 0
-    );
-    background-size: 24px 24px;
+    background-image: none;
   }
   .dark .app-paper,
   .dark .report-paper {
-    /* The dark counterpart to light mode's accent dot-paper. Three layers over
-       var(--color-bg): a gentle top-down atmospheric lift so the canvas reads as
-       a lit surface rather than a flat void, an accent-tinted lattice for brand
-       life (mirrors light mode's accent dots), and a faint neutral lattice that
-       gives the field a quiet grain even before the grain slider is touched. */
-    background-image:
-      radial-gradient(125% 80% at 50% -15%, oklch(0.34 0.025 var(--bg-hue) / 0.5), transparent 60%),
-      radial-gradient(
-        circle at 1px 1px,
-        color-mix(in srgb, var(--color-accent) 10%, transparent) 1px,
-        transparent 0
-      ),
-      radial-gradient(
-        circle at 1px 1px,
-        color-mix(in srgb, var(--color-text) 4%, transparent) 1px,
-        transparent 0
-      );
-    background-size:
-      100% 100%,
-      24px 24px,
-      24px 24px;
+    background-image: none;
   }
 
   /* Cursor glow companion to .app-paper: the same dot lattice drawn in the

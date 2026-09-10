@@ -1,10 +1,12 @@
 /** Run `bun run build` first, then `bun scripts/preview-narrative-tools.mjs`.
  * Bundles the real components against synthetic responses on loopback only.
  */
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/postcss';
 import { build, file, serve } from 'bun';
+import postcss from 'postcss';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const built = await build({
@@ -24,7 +26,12 @@ const built = await build({
   define: { 'process.env.NODE_ENV': '"development"', 'process.env': '{}' },
 });
 if (!built.success) throw new Error(built.logs.map(String).join('\n'));
-const script = await built.outputs[0].text();
+const script = await built.outputs.find((output) => output.path.endsWith('.js')).text();
+const componentCss = (
+  await Promise.all(
+    built.outputs.filter((output) => output.path.endsWith('.css')).map((output) => output.text()),
+  )
+).join('\n');
 // Turbopack emits CSS in chunks; Webpack builds may use static/css.
 const candidates = (
   await Promise.all(
@@ -53,7 +60,15 @@ const styles = (await Promise.all(candidates.map((entry) => file(entry.path).tex
 const fontVariables = [...styles.matchAll(/--font-(?:geist-sans|geist-mono|fraunces|averia):[^;}]+/g)]
   .map((match) => match[0])
   .join(';');
-const previewStyles = `${styles}\n:root{${fontVariables}}`;
+// Reuse built font assets, but compile current app/component styles. A saved
+// .next stylesheet can predate the editor under review and invalidate visual
+// acceptance by silently dropping its new classes.
+const cssPath = resolve(root, 'app/globals.css');
+const currentCss = await postcss([tailwindcss({ base: root })]).process(await readFile(cssPath, 'utf8'), {
+  from: cssPath,
+});
+const fontFaces = [...styles.matchAll(/@font-face\s*\{[^}]+\}/g)].map((match) => match[0]).join('\n');
+const previewStyles = `${fontFaces}\n${currentCss.css}\n${componentCss}\n:root{${fontVariables}}`;
 const server = serve({
   hostname: '127.0.0.1',
   port: process.argv.includes('--controls') ? 18840 : 18839,

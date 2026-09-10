@@ -1,14 +1,22 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
 import { assertGoogleFileEditable, GoogleDocumentFidelityError } from './google-fidelity';
+import { googleModelWriteLimitation } from './google-write-policy';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
   type DeckElement,
   type DocumentKind,
   parseDocumentModel,
+  type SheetGridModel,
   type SheetTab,
+  sheetGridModel,
 } from './model';
 import { linkGoogleDocument } from './service';
+
+function assertGoogleModelFidelity(model: unknown) {
+  const reason = googleModelWriteLimitation(model);
+  if (reason) throw new GoogleDocumentFidelityError(reason);
+}
 
 const GOOGLE_MIME: Record<DocumentKind, string> = {
   doc: 'application/vnd.google-apps.document',
@@ -254,11 +262,7 @@ function valuesForTab(tab: SheetTab) {
   return { values, maxRow, maxColumn };
 }
 
-async function syncGoogleSheet(
-  accessToken: string,
-  fileId: string,
-  model: Extract<AlbatrossDocumentModel, { kind: 'sheet' }>,
-) {
+async function syncGoogleSheet(accessToken: string, fileId: string, model: SheetGridModel) {
   const current = await googleJson(
     accessToken,
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}?fields=sheets.properties`,
@@ -423,6 +427,9 @@ export async function publishDocumentToGoogle(input: {
   document: AlbatrossDocumentRecord;
   connectionId?: string;
 }) {
+  // Reject before resolving credentials or creating a provider file. A values /
+  // formulas projection must never be presented as a synced full workbook.
+  assertGoogleModelFidelity(input.document.model);
   let connectionId = input.connectionId || input.document.google?.connectionId;
   if (!connectionId) {
     const connections = await dependencies.listCloudFileConnections(input.userId);
@@ -463,7 +470,7 @@ export async function publishDocumentToGoogle(input: {
     );
   }
   if (input.document.model.kind === 'sheet') {
-    await syncGoogleSheet(access.accessToken, fileId, input.document.model);
+    await syncGoogleSheet(access.accessToken, fileId, sheetGridModel(input.document.model)!);
   }
   if (input.document.model.kind === 'deck') {
     await syncGoogleDeck(access.accessToken, fileId, input.document.model);
@@ -500,6 +507,7 @@ export async function updateGoogleNativeFile(input: {
   model: unknown;
   expectedProviderVersion?: string;
 }) {
+  assertGoogleModelFidelity(input.model);
   if (!input.expectedProviderVersion) throw new GoogleDocumentConflictError();
   if (input.kind !== 'doc') throw new GoogleDocumentFidelityError();
   const access = await dependencies.getCloudFileAccess({
@@ -519,7 +527,7 @@ export async function updateGoogleNativeFile(input: {
   const model = parseDocumentModel(input.model, input.kind);
   if (model.kind === 'doc')
     await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion);
-  if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, model);
+  if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, sheetGridModel(model)!);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
   const title = input.title.trim().slice(0, 500) || 'Untitled';
   await googleJson(

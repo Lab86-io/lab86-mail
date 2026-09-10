@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { pickAccountForGrant } from '../lib/mail/grant-account';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
@@ -276,6 +277,9 @@ const USER_BULK_TABLES = [
   'mobileSyncTombstones',
   'nativePushDeliveries',
   'documentRevisions',
+  'officeDocuments',
+  'officeVersions',
+  'officeSessions',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -300,6 +304,10 @@ export const purgeUserDataBatch = internalMutation({
             .take(PURGE_BATCH - deleted),
         );
       for (const row of rows) {
+        if (table === 'officeVersions' && 'storageId' in row) {
+          // Version metadata must not be deleted before its private binary.
+          await ctx.storage.delete(row.storageId as Id<'_storage'>);
+        }
         await ctx.db.delete(row._id);
         deleted += 1;
       }
@@ -470,12 +478,21 @@ export const deleteUserCascade = mutation({
       'cloudFileOAuthCompletions',
       'documents',
       'documentSuggestions',
+      'documentImportCancellations',
     ] as const;
 
     for (const table of userTables) {
       const rows = await rowsByUser(ctx, table, args.userId);
       counts[table] = rows.length;
-      for (const row of rows) await ctx.db.delete(row._id);
+      for (const row of rows) {
+        if (table === 'documents' && 'importSource' in row && row.importSource) {
+          // The preserved workbook belongs to this document's owner. Remove
+          // its private bytes before deleting the only storage reference.
+          const source = row.importSource as { storageId: Id<'_storage'> };
+          await ctx.storage.delete(source.storageId);
+        }
+        await ctx.db.delete(row._id);
+      }
     }
     const agentUploads = await ctx.db
       .query('agentUploads')

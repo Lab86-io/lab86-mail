@@ -7,18 +7,19 @@ import { join } from 'node:path';
 // different formats for machine confidence, and words like "classifier" in a
 // primary empty state. These tests are the enforcement.
 
-function walk(dir: string): string[] {
+function walk(dir: string, extension = '.tsx'): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry.startsWith('.')) continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...walk(full));
-    else if (full.endsWith('.tsx')) out.push(full);
+    if (statSync(full).isDirectory()) out.push(...walk(full, extension));
+    else if (full.endsWith(extension)) out.push(full);
   }
   return out;
 }
 
 const FILES = [...walk('components'), ...walk('app')];
+const STYLESHEETS = [...walk('components', '.css'), ...walk('app', '.css')];
 const read = (path: string) => readFileSync(path, 'utf8');
 
 describe('no upper-case micro-labels', () => {
@@ -28,6 +29,21 @@ describe('no upper-case micro-labels', () => {
       // Avatar initials are legitimately upper case; the micro-label system is
       // `uppercase` paired with letterspacing on a small label.
       return /uppercase tracking-/.test(source);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  test('nor do the stylesheets, where the same label would be text-transform plus tracking', () => {
+    const offenders = STYLESHEETS.filter((path) => {
+      const source = read(path);
+      // Each rule block is checked on its own: an upper-case transform and a
+      // positive letter-spacing together are the micro-label, whatever the
+      // class name says.
+      return source
+        .split('}')
+        .some(
+          (block) => /text-transform:\s*uppercase/.test(block) && /letter-spacing:\s*0?\.\d+em/.test(block),
+        );
     });
     expect(offenders).toEqual([]);
   });
@@ -74,24 +90,22 @@ describe('the product names itself', () => {
     expect(rail).not.toContain('Lab86</span> Mail');
   });
 
-  test('the primary action is capture, not compose', () => {
+  test('capture lives in the floating assistant, not a second rail button', () => {
     const rail = read('components/shell/Rail.tsx');
-    // The label lives in CAPTURE_BUTTON_LABEL (IntentCapture); the rail must
-    // pass the constant into the shared action, not restate the words.
-    expect(rail).toContain("import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture'");
-    expect(rail).toContain('captureLabel={CAPTURE_BUTTON_LABEL}');
+    expect(rail).not.toContain('captureLabel={');
     const actions = read('components/shell/ShellActions.tsx');
-    expect(actions).toContain('tooltip={captureLabel}');
-    expect(actions).toContain('<span>{captureLabel}</span>');
+    expect(actions).toContain("import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture'");
+    expect(actions).toMatch(/ASSISTANT_LAUNCHER_PHRASES[^=]*=\s*\[\s*CAPTURE_BUTTON_LABEL/);
+    expect(actions).toContain('aria-label={ASSISTANT_LAUNCHER_NAME}');
     const capture = read('components/albatross/IntentCapture.tsx');
     expect(capture).toContain("CAPTURE_BUTTON_LABEL = 'Get this off my mind'");
     // Compose moved into the Mail surface; the rail must not offer it.
     expect(rail).not.toContain('openComposeNew');
   });
 
-  test('one capture door: the rail button opens the bar with the chip on Hold', () => {
-    // The full-screen takeover and its floating pill are gone. The rail button
-    // raises `captureOpen`; the assistant bar answers it with a Hold preset.
+  test('contextual capture opens the same assistant with the chip on Hold', () => {
+    // Existing capture entry points raise captureOpen; the same assistant
+    // answers with a Hold preset, without creating a second floating control.
     const capture = read('components/albatross/IntentCapture.tsx');
     expect(capture).not.toContain('capturePillHidden');
     expect(capture).not.toContain('IntentCaptureLauncher');

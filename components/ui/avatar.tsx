@@ -9,11 +9,13 @@ export function Avatar({
   src,
   size = 28,
   className,
+  ringColor,
 }: {
   name: string | null | undefined;
   src?: string | null;
   size?: number;
   className?: string;
+  ringColor?: string;
   // Kept for call-site compatibility; geometric variants are no longer drawn —
   // identity reads faster from initials than from a marble (data drives form).
   variant?: 'marble' | 'beam' | 'pixel' | 'sunset' | 'ring' | 'bauhaus';
@@ -30,10 +32,10 @@ export function Avatar({
   return (
     <div
       className={cn(
-        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)] shadow-[var(--shadow-control)]',
+        'shrink-0 overflow-hidden rounded-full border border-[var(--color-avatar-ring)] bg-[var(--color-control)]',
         className,
       )}
-      style={{ width: size, height: size }}
+      style={{ width: size, height: size, borderColor: ringColor }}
     >
       {showImage ? (
         <img
@@ -50,7 +52,7 @@ export function Avatar({
         <span
           role="img"
           aria-label={seed}
-          className="grid h-full w-full select-none place-items-center font-display font-semibold uppercase leading-none shadow-[inset_0_0_0_1px_rgb(255_255_255/0.18)]"
+          className="grid h-full w-full select-none place-items-center font-display font-semibold uppercase leading-none"
           style={
             {
               '--avatar-seed': fromColor(name),

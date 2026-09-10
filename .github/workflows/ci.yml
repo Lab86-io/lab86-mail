@@ -59,6 +59,8 @@ jobs:
           path: lib/
           new-file-minimum-coverage: 70
           changed-file-no-decrease: true
+          # Match Bun's declaration-only exclusion: these contain no executable lines.
+          ignore-patterns: '**/*.d.ts'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install LCOV HTML report tools

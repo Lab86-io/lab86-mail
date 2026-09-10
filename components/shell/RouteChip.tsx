@@ -16,7 +16,7 @@ export interface RouteChipProps {
   locked?: boolean;
   /** True while the endpoint has not confirmed. The chip dims to 70%. */
   pending?: boolean;
-  /** True on a blank field. The chip reads Ask at 55% and does nothing. */
+  /** Explicitly disables changing the route; an empty field remains selectable. */
   disabled?: boolean;
   reduceMotion?: boolean;
   onFlip?: () => void;

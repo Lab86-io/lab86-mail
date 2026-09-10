@@ -2,7 +2,7 @@
 
 import { MonitorCog, Moon, Palette, SunMedium } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useClientStore } from '@/lib/client-state';
 import {
@@ -240,7 +240,7 @@ function PaletteWheel({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-t border-[var(--color-border)]/60 pt-2.5 first:border-t-0 first:pt-0">
-      <div className="mb-1.5 text-[10px] font-medium text-[var(--color-text-faint)]">{title}</div>
+      <div className="mb-2 text-xs font-medium text-[var(--color-text)]">{title}</div>
       {children}
     </div>
   );
@@ -267,9 +267,9 @@ function Slider({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 flex items-center justify-between text-[10.5px] text-[var(--color-text-muted)]">
+      <span className="mb-1.5 flex items-center justify-between text-xs text-[var(--color-text-muted)]">
         <span>{label}</span>
-        {readout ? <span className="tabular-nums text-[var(--color-text-faint)]">{readout}</span> : null}
+        {readout ? <span className="tabular-nums text-[var(--color-text-muted)]">{readout}</span> : null}
       </span>
       <input
         type="range"
@@ -326,7 +326,23 @@ function AccentSliders({
   );
 }
 
-export function ThemePanel({ className }: { className?: string }) {
+function AppearanceContainer({ inline, children }: { inline: boolean; children: ReactNode }) {
+  return inline ? (
+    <div className="max-w-lg space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+      {children}
+    </div>
+  ) : (
+    <PopoverContent
+      side="top"
+      align="end"
+      className="max-h-[min(80vh,760px)] w-64 space-y-2.5 overflow-y-auto p-3"
+    >
+      {children}
+    </PopoverContent>
+  );
+}
+
+export function ThemePanel({ className, inline = false }: { className?: string; inline?: boolean }) {
   useApplyThemeExtras();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -391,29 +407,27 @@ export function ThemePanel({ className }: { className?: string }) {
     setSurfaceTint(stop.surfaceTint);
   };
 
-  if (!mounted) return <div className={cn('h-7 w-7', className)} />;
+  if (!mounted) return <div className={cn(inline ? 'min-h-64' : 'h-7 w-7', className)} />;
   const mode = theme === 'light' || theme === 'dark' ? theme : 'system';
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Theme"
-          title="Theme"
-          className={cn(
-            'grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
-            className,
-          )}
-        >
-          <Palette className="h-3.5 w-3.5" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        side="top"
-        align="end"
-        className="max-h-[min(80vh,760px)] w-64 space-y-2.5 overflow-y-auto p-3"
-      >
+      {!inline ? (
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label="Theme"
+            title="Theme"
+            className={cn(
+              'grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
+              className,
+            )}
+          >
+            <Palette className="h-3.5 w-3.5" />
+          </button>
+        </PopoverTrigger>
+      ) : null}
+      <AppearanceContainer inline={inline}>
         {/* Appearance — Arc's auto/light/dark row. */}
         <div className="flex items-center justify-center gap-1">
           {(
@@ -427,6 +441,7 @@ export function ThemePanel({ className }: { className?: string }) {
               key={id}
               type="button"
               title={label}
+              aria-pressed={mode === id}
               onClick={() => setTheme(id)}
               className={cn(
                 'grid h-8 w-10 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
@@ -549,6 +564,7 @@ export function ThemePanel({ className }: { className?: string }) {
                 <button
                   key={font.id}
                   type="button"
+                  aria-pressed={selected}
                   onClick={() => setAppFont(font.id === 'serif' ? null : font.id)}
                   className={cn(
                     'flex flex-col items-center gap-0.5 rounded-md border border-[var(--color-border)] px-1 py-1.5 transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-bg-subtle)]',
@@ -565,13 +581,13 @@ export function ThemePanel({ className }: { className?: string }) {
                   }}
                 >
                   <span className="text-[15px] leading-none">Ag</span>
-                  <span className="font-sans text-[9.5px] text-[var(--color-text-muted)]">{font.label}</span>
+                  <span className="font-sans text-[11px] text-[var(--color-text-muted)]">{font.label}</span>
                 </button>
               );
             })}
           </div>
         </Section>
-      </PopoverContent>
+      </AppearanceContainer>
     </Popover>
   );
 }

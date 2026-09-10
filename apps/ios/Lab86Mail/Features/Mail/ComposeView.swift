@@ -544,6 +544,11 @@ struct ComposeView: View {
                 if let attachmentKey {
                     try? await MailIntentAttachmentStore.shared.remove(draftID: attachmentKey)
                 }
+            case .unconfirmed:
+                // Keep the message and its draft; the person checks Sent
+                // before deciding to send again.
+                errorMessage = "Albatross couldn’t confirm this was sent. Check Sent before sending again."
+                return
             }
             dismiss()
         } catch { errorMessage = error.localizedDescription }

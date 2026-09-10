@@ -99,6 +99,7 @@ import { DISPLAY_TOOLS } from './display';
 import {
   documentApplyInstruction,
   documentCreate,
+  documentEdit,
   documentExport,
   documentGet,
   documentList,
@@ -280,6 +281,7 @@ const allTools: AnyTool[] = [
   listTrackedThreadsTool,
   getTrackedThreadTool,
   documentCreate,
+  documentEdit,
   documentList,
   documentGet,
   documentSuggestChanges,

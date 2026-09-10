@@ -44,6 +44,126 @@ async function createDocument(
 }
 
 describe('document Convex transactions', () => {
+  test('restores a version as a new revision and rejects stale or foreign restore requests', async () => {
+    const t = newHarness();
+    await createDocument(t, 'restore-me');
+    await t.mutation(api.documents.update, {
+      internalSecret: SECRET,
+      userId: USER,
+      documentId: 'restore-me',
+      expectedRevision: 1,
+      title: 'New title',
+    });
+    const restore = (api as any).documents.restoreRevision;
+    expect(
+      await t.mutation(restore, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'restore-me',
+        revision: 1,
+        expectedRevision: 1,
+      }),
+    ).toMatchObject({ ok: false, code: 'REVISION_CONFLICT' });
+    expect(
+      await t.mutation(restore, {
+        internalSecret: SECRET,
+        userId: 'other',
+        documentId: 'restore-me',
+        revision: 1,
+        expectedRevision: 2,
+      }),
+    ).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(
+      await t.mutation(restore, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'restore-me',
+        revision: 1,
+        expectedRevision: 2,
+      }),
+    ).toEqual({ ok: true });
+    const document = await t.query(api.documents.get, {
+      internalSecret: SECRET,
+      userId: USER,
+      documentId: 'restore-me',
+    });
+    expect(document).toMatchObject({ title: 'restore-me', currentRevision: 3 });
+    expect(
+      await t.query(api.documents.listRevisions, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'restore-me',
+      }),
+    ).toHaveLength(3);
+  });
+
+  test('does not apply AI proposals after their source revision has changed', async () => {
+    const t = newHarness();
+    await createDocument(t, 'ai-race');
+    await t.mutation(api.documents.createSuggestion, {
+      internalSecret: SECRET,
+      userId: USER,
+      documentId: 'ai-race',
+      suggestionId: 'stale',
+      title: 'AI title',
+      description: 'AI revision',
+      proposedModel: createDefaultDocumentModel('doc', 'proposed'),
+      baseRevision: 1,
+    });
+    await t.mutation(api.documents.update, {
+      internalSecret: SECRET,
+      userId: USER,
+      documentId: 'ai-race',
+      expectedRevision: 1,
+      title: 'Human edits',
+    });
+    expect(
+      await t.mutation(api.documents.applySuggestion, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'ai-race',
+        suggestionId: 'stale',
+        expectedRevision: 2,
+      }),
+    ).toMatchObject({ ok: false, code: 'REVISION_CONFLICT' });
+    expect(
+      await t.query(api.documents.get, { internalSecret: SECRET, userId: USER, documentId: 'ai-race' }),
+    ).toMatchObject({ title: 'Human edits', currentRevision: 2 });
+  });
+
+  test('requires a fresh proposal for legacy suggestions with no known source revision', async () => {
+    const t = newHarness();
+    await createDocument(t, 'legacy');
+    await t.run((ctx) =>
+      ctx.db.insert('documentSuggestions', {
+        userId: USER,
+        documentId: 'legacy',
+        suggestionId: 'legacy-proposal',
+        title: 'Old proposal',
+        description: 'An unversioned proposal',
+        proposedModel: createDefaultDocumentModel('doc', 'old'),
+        sourceRefs: [],
+        status: 'proposed',
+        createdAt: 1,
+      }),
+    );
+    expect(
+      await t.mutation(api.documents.applySuggestion, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'legacy',
+        suggestionId: 'legacy-proposal',
+        expectedRevision: 1,
+      }),
+    ).toMatchObject({ ok: false, code: 'REVISION_CONFLICT' });
+    expect(
+      await t.query(api.documents.get, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'legacy',
+      }),
+    ).toMatchObject({ title: 'legacy', currentRevision: 1 });
+  });
   test('filters archived and other-kind rows before applying the list limit', async () => {
     const t = newHarness();
     await createDocument(t, 'visible-doc');
@@ -109,6 +229,7 @@ describe('document Convex transactions', () => {
     });
     const [storedSuggestion] = await t.run((ctx) => ctx.db.query('documentSuggestions').collect());
     expect(storedSuggestion.status).toBe('applied');
+    expect(storedSuggestion.baseRevision).toBe(1);
     expect(await t.run((ctx) => ctx.db.query('documentRevisions').collect())).toHaveLength(2);
 
     await expect(

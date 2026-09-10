@@ -842,11 +842,15 @@ export const markNotification = mutation({
     const userId = await authenticatedUserId(ctx);
     const row = await ctx.db.get(args.notificationId);
     if (!row || row.userId !== userId) throw new Error('Notification not found.');
+    // A delayed read from an open tab must not resurrect a dismissed/resolved
+    // notification. Repeated reads also preserve the first read timestamp.
+    if (args.status === 'read' && !['queued', 'delivered'].includes(row.status)) return;
+    if (row.status === args.status) return;
     const ts = now();
     await ctx.db.patch(args.notificationId, {
       status: args.status,
       updatedAt: ts,
-      ...(args.status === 'read' ? { readAt: ts } : {}),
+      ...(args.status === 'read' ? { readAt: row.readAt ?? ts } : {}),
       ...(args.status === 'acted' ? { actedAt: ts, readAt: row.readAt ?? ts } : {}),
     });
   },

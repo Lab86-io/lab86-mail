@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
+import { documentError } from '@/lib/documents/http';
 import {
   createDefaultDocumentModel,
   DOCUMENT_KINDS,
@@ -9,7 +10,7 @@ import {
   parseDocumentModel,
 } from '@/lib/documents/model';
 import { createDocument, listDocuments } from '@/lib/documents/service';
-import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { enforceUserRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,28 +32,6 @@ const createSchema = z.object({
   sourceContext: z.string().max(40_000).optional(),
   sourceRefs: z.array(sourceRefSchema).max(100).default([]),
 });
-
-function documentError(error: unknown) {
-  if (error instanceof RateLimitError) return rateLimitJson(error);
-  if (error instanceof AuthRequiredError) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
-  }
-  if (error instanceof z.ZodError) {
-    return NextResponse.json(
-      { ok: false, error: error.issues[0]?.message || 'Invalid document.' },
-      { status: 400 },
-    );
-  }
-  if (error instanceof DocumentGenerationError) {
-    console.error('[documents] Invalid model output:', error);
-    return NextResponse.json(
-      { ok: false, error: 'Albatross returned an invalid document. Try again.' },
-      { status: 502 },
-    );
-  }
-  console.error('[documents]', error);
-  return NextResponse.json({ ok: false, error: 'Document operation failed.' }, { status: 500 });
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -101,6 +80,9 @@ export async function POST(req: NextRequest) {
         instruction: input.instructions,
         sourceContext: input.sourceContext,
       });
+      // Creation never has an engine workbook to ground in, so this is a full model.
+      if (proposal.model.kind === 'sheet-changes')
+        throw new DocumentGenerationError('Unexpected change set.');
       model = proposal.model;
       if (!input.title?.trim()) title = proposal.title;
     }
