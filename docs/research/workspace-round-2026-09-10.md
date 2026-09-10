@@ -138,3 +138,23 @@ The corrected full run passes 3,547 parent-process tests plus all 22 isolated DO
 tests (including the additional isolation wrapper), zero failures. Typecheck and
 full lint pass again; the production code is identical to the successful local
 production build. Existing DOM assertions were not removed or weakened.
+
+### Staging release and optimized-bundle correction
+
+`e516b5e546b70d56da498a9d6f5902f905c009e5` deployed successfully in
+[development run 34532651663](https://github.com/Lab86-io/lab86-mail/actions/runs/34532651663).
+Railway deployment `cff73856-19fc-461b-9d17-29a35a5dd465` is healthy and the live
+health endpoint reports that exact ID and 215 tools. Hosted CI also passed.
+Signed-in browser checks confirmed the new workspace, Files API, Odoo manifest,
+disabled Office-server configuration, keyboard Search/category/page navigation,
+and retained page/chat owners through corner/split/full layouts. No mail was sent.
+
+The live browser also found an optimized-build-only empty Ask/Hold failure. The
+production chunk had inlined `instantRoute` into the hook's parameter default,
+creating a new callback identity every render and restarting its effect. The
+correction keeps optional override identities as dependencies and resolves default
+callbacks inside the effect. Empty routing resets only when typed text is cleared,
+not when a callback changes. A new stateful regression covers callback refresh,
+pretyping choice, typing, clearing and choosing again. This is a real production
+fix; the original local component bundle did not reproduce the optimizer behavior.
+Its corrected production build and staging rollout are verified separately.

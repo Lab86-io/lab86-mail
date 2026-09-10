@@ -231,13 +231,15 @@ type PredictFn = (text: string, options: { signal: AbortSignal }) => Promise<Rou
 function Probe({
   text,
   predict,
+  instant,
   handle,
 }: {
   text: string;
   predict: PredictFn;
+  instant?: typeof instantRoute;
   handle: { current: RoutePrediction | null };
 }) {
-  const prediction = useRoutePrediction({ text, predict });
+  const prediction = useRoutePrediction({ text, predict, instant });
   handle.current = prediction;
   return (
     <span
@@ -262,6 +264,40 @@ function probeState(renderer: ReactTestRenderer) {
 describe('the route prediction', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
+
+  test('an empty manual choice survives new predictor identities and resets only when typing is cleared', async () => {
+    const handle = { current: null as RoutePrediction | null };
+    let renderer!: ReactTestRenderer;
+    const requests: string[] = [];
+    const renderProbe = (text: string) => (
+      <Probe
+        text={text}
+        handle={handle}
+        instant={(value, current) => instantRoute(value, current)}
+        predict={async (value) => {
+          requests.push(value);
+          return verdict('ask');
+        }}
+      />
+    );
+    await act(async () => {
+      renderer = create(renderProbe(''));
+    });
+    await act(async () => handle.current!.flip());
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: true });
+    await act(async () => renderer.update(renderProbe('')));
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: true });
+    await act(async () => renderer.update(renderProbe('Keep this thought')));
+    await act(async () => jest.advanceTimersByTime(1_000));
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: false });
+    expect(requests).toEqual([]);
+    await act(async () => renderer.update(renderProbe('')));
+    expect(probeState(renderer)).toMatchObject({ route: 'ask', locked: false, empty: true });
+    await act(async () => handle.current!.flip());
+    await act(async () => renderer.update(renderProbe('')));
+    expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: true });
+    await act(async () => renderer.unmount());
+  });
 
   async function mountProbe(text: string, predict: PredictFn) {
     const handle = { current: null as RoutePrediction | null };
