@@ -121,3 +121,20 @@ The final `bun run build` exits successfully. Against the last successful main
 coverage baseline, changed-library and new-file gates have zero failures; library
 line coverage rises from 89.17% to 89.84%. This is the local staging-release gate,
 not a claim that the deployment or PR review has completed.
+
+### Hosted release correction
+
+Commit `2db57dc` was pushed to staging. Both hosted pipelines caught a test-order
+dependency before deployment: the workspace DOM suite's simulated input event
+failed when another suite had initialized React DOM without a browser. Real browser
+retention checks remained green. The DOM suite now runs in a fresh Bun subprocess,
+with all its existing assertions intact and explicit rejection of legacy React
+`attachEvent`/`detachEvent` errors. This fixes environment isolation, not product
+behavior, and prevents server-first imports from silently defeating its typing test.
+The corrected release reruns the full suite and hosted gates; the failed attempt is
+not reported as a completed staging deployment.
+
+The corrected full run passes 3,547 parent-process tests plus all 22 isolated DOM
+tests (including the additional isolation wrapper), zero failures. Typecheck and
+full lint pass again; the production code is identical to the successful local
+production build. Existing DOM assertions were not removed or weakened.
