@@ -75,7 +75,7 @@ export function AssistantLauncher({
       aria-keyshortcuts="Meta+K Control+K"
       data-placement={placement}
       className={cn(
-        'fixed right-4 z-50 h-11 gap-2.5 rounded-xl px-3.5 text-[12.5px] shadow-[var(--shadow-soft)] sm:right-6',
+        'fixed right-4 z-50 h-11 gap-2.5 rounded-[var(--radius-launcher)] px-3.5 text-[12.5px] shadow-[var(--shadow-soft)] sm:right-6',
         placement === 'stacked' ? 'bottom-[4.5rem]' : 'bottom-6',
       )}
     >

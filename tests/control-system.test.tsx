@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AssistantLauncher } from '../components/shell/ShellActions';
 import { MessageDraft } from '../components/tool-ui/message-draft/message-draft';
 import { Button, buttonVariants } from '../components/ui/button';
+import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 
@@ -11,6 +12,7 @@ describe('shared control surfaces', () => {
     for (const variant of ['default', 'outline'] as const) {
       expect(buttonVariants({ variant })).toContain('shadow-[var(--shadow-control)]');
       expect(buttonVariants({ variant })).toContain('rounded-[var(--radius-control)]');
+      expect(buttonVariants({ variant })).toContain('corner-smooth');
     }
     for (const variant of ['ghost', 'secondary'] as const) {
       expect(buttonVariants({ variant })).toContain('shadow-none');
@@ -41,6 +43,19 @@ describe('shared control surfaces', () => {
     expect(button).toContain('disabled=""');
   });
 
+  test('corner roles do not erase explicit circle, square, or panel radius overrides', () => {
+    for (const radius of ['rounded-full', 'rounded-none']) {
+      const button = renderToStaticMarkup(<Button className={radius}>Override</Button>);
+      expect(button).toContain(radius);
+      expect(button).not.toContain('rounded-[var(--radius-control)]');
+    }
+    const card = renderToStaticMarkup(<Card>Content</Card>);
+    expect(card).toContain('corner-smooth');
+    expect(card).toContain('rounded-[var(--radius-panel)]');
+    const squareCard = renderToStaticMarkup(<Card className="rounded-none">Content</Card>);
+    expect(squareCard).not.toContain('rounded-[var(--radius-panel)]');
+  });
+
   test('launcher exposes platform shortcut and placement without decorative animation', () => {
     for (const placement of ['corner', 'stacked'] as const) {
       const html = renderToStaticMarkup(
@@ -50,6 +65,8 @@ describe('shared control surfaces', () => {
       expect(html).toContain('aria-keyshortcuts="Meta+K Control+K"');
       expect(html).toContain(`data-placement="${placement}"`);
       expect(html).toContain('Ctrl K');
+      expect(html).toContain('rounded-[var(--radius-launcher)]');
+      expect(html).not.toContain('rounded-xl');
       expect(html).not.toContain('border-beam');
       expect(html).not.toContain('ask-assistant-glow');
     }

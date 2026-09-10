@@ -5,6 +5,14 @@ import { createRoot } from 'react-dom/client';
 import { AssistantLauncher, RailPrimaryActions } from '../../components/shell/ShellActions';
 import { MessageDraft } from '../../components/tool-ui/message-draft/message-draft';
 import { Button } from '../../components/ui/button';
+import { Card } from '../../components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -109,9 +117,18 @@ function Preview() {
           <header className="flex min-h-16 items-center gap-3 border-b border-[var(--color-border)] px-5">
             <SidebarTrigger className="md:hidden" />
             <h1 className="text-[15px] font-semibold">{view}</h1>
-            <Button variant="ghost" size="icon" aria-label="Settings" className="ml-auto">
-              <Settings />
-            </Button>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Settings" className="ml-auto">
+                  <Settings />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogTitle>Workspace appearance</DialogTitle>
+                <DialogDescription>A synthetic preview of the shared dialog and fields.</DialogDescription>
+                <Input aria-label="Workspace name" defaultValue="Personal workspace" />
+              </DialogContent>
+            </Dialog>
           </header>
           <div className="mx-auto max-w-3xl space-y-7 px-5 py-8 pb-28">
             <div>
@@ -120,9 +137,10 @@ function Preview() {
                 Documents, ideas, and the next thing to do.
               </p>
             </div>
-            <section
+            {new URLSearchParams(location.search).has('corners') && <CornerComparison />}
+            <Card
               aria-label="Control examples"
-              className="space-y-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5"
+              className="gap-0 space-y-5 border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <Button onClick={() => setAction('Create clicked')}>New document</Button>
@@ -176,7 +194,7 @@ function Preview() {
               </div>
               <Input disabled aria-label="Read only example" value="Synced from your drive" readOnly />
               <Input aria-invalid="true" aria-label="Invalid example" placeholder="A document needs a name" />
-            </section>
+            </Card>
             <MessageDraft
               id="draft-fixture"
               channel="email"
@@ -193,6 +211,34 @@ function Preview() {
         </main>
       </SidebarProvider>
     </TooltipProvider>
+  );
+}
+
+/** Enlarged comparison only in the synthetic preview; never app chrome. */
+function CornerComparison() {
+  return (
+    <section aria-label="Corner comparison" className="grid grid-cols-2 gap-4">
+      {[
+        ['Ordinary round', { '--corner-shape-ui': 'round', '--radius-control': '18px' }],
+        ['Albatross soft-square', { '--radius-control': '26px' }],
+      ].map(([label, style]) => (
+        <div key={String(label)} style={style as CSSProperties} className="space-y-3">
+          <div
+            aria-hidden
+            className="corner-smooth h-24 rounded-[var(--radius-control)] border border-[var(--color-control-border)] bg-[var(--color-accent-soft)]"
+          />
+          <p className="text-xs text-[var(--color-text-muted)]">{String(label)}</p>
+        </div>
+      ))}
+      <div className="col-span-2 flex gap-2">
+        <Button variant="outline" size="icon" className="rounded-full" aria-label="Circular control">
+          <Settings />
+        </Button>
+        <Button variant="outline" className="rounded-none">
+          Square override
+        </Button>
+      </div>
+    </section>
   );
 }
 createRoot(document.getElementById('root')!).render(<Preview />);

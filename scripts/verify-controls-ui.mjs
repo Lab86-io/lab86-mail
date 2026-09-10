@@ -35,6 +35,7 @@ try {
             return {
               fill: css.backgroundColor,
               radius: css.borderRadius,
+              shape: css.getPropertyValue('corner-shape'),
               border: css.borderColor,
               shadow: css.boxShadow,
             };
@@ -44,6 +45,25 @@ try {
       assert.deepEqual(surfaces[0], surfaces[1], 'Input and textarea should share a surface');
       assert.deepEqual(surfaces[0], surfaces[2], 'Select should share the field surface');
       assert.equal(surfaces[0].shadow, 'none');
+      assert.equal(surfaces[0].shape, 'superellipse(1.6)');
+      assert.equal(surfaces[0].radius, '13px');
+      for (const control of [
+        page.getByRole('button', { name: 'New document', exact: true }),
+        page.getByRole('button', { name: 'Ask Assistant', exact: true }),
+        page.locator('[data-slot="card"]').first(),
+      ]) {
+        const geometry = await control.evaluate((el) => {
+          const css = getComputedStyle(el);
+          return { shape: css.getPropertyValue('corner-shape'), clip: css.clipPath, mask: css.maskImage };
+        });
+        assert.deepEqual(geometry, { shape: 'superellipse(1.6)', clip: 'none', mask: 'none' });
+      }
+      assert.equal(
+        await page
+          .getByRole('button', { name: 'Ask Assistant', exact: true })
+          .evaluate((el) => getComputedStyle(el).borderRadius),
+        '20px',
+      );
       await page.getByRole('textbox', { name: 'Name', exact: true }).focus();
       assert.equal(
         await page
@@ -59,6 +79,12 @@ try {
       await page.screenshot({ path: join(artifacts, `controls-${width}-${theme}.png`) });
     }
     await page.getByRole('combobox', { name: 'Location' }).click();
+    assert.equal(
+      await page
+        .locator('[data-slot="select-content"]')
+        .evaluate((el) => getComputedStyle(el).getPropertyValue('corner-shape')),
+      'superellipse(1.6)',
+    );
     await page.getByRole('option', { name: 'Google Drive' }).click();
     assert.match(await page.getByRole('combobox', { name: 'Location' }).innerText(), /Google Drive/);
     await page.getByRole('tab', { name: 'List', exact: true }).focus();
@@ -89,6 +115,18 @@ try {
       const avatar = await page.locator('.cl-userButtonAvatarBox').boundingBox();
       const image = await page.locator('.cl-userButtonAvatarImage').boundingBox();
       assert.deepEqual(avatar, image, 'Avatar mask and image bounds must match');
+      assert.deepEqual(
+        await page.locator('.cl-userButtonAvatarBox, .cl-userButtonAvatarImage').evaluateAll((els) =>
+          els.map((el) => ({
+            radius: getComputedStyle(el).borderRadius,
+            shape: getComputedStyle(el).getPropertyValue('corner-shape'),
+          })),
+        ),
+        [
+          { radius: '50%', shape: 'round' },
+          { radius: '50%', shape: 'round' },
+        ],
+      );
       await page.getByTitle('Toggle navigation rail').click();
       await page.waitForTimeout(500);
       const selected = page.locator('[data-active="true"]');
@@ -111,6 +149,84 @@ try {
       }
       await page.screenshot({ path: join(artifacts, `controls-${width}-collapsed.png`) });
     }
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor();
+    assert.deepEqual(
+      await dialog.evaluate((el) => ({
+        radius: getComputedStyle(el).borderRadius,
+        shape: getComputedStyle(el).getPropertyValue('corner-shape'),
+      })),
+      { radius: '26px', shape: 'superellipse(1.6)' },
+    );
+    await page.getByRole('textbox', { name: 'Workspace name' }).fill('Still editable');
+    await page.waitForTimeout(250); // Let the Radix enter animation finish before visual evidence.
+    await page.screenshot({ path: join(artifacts, `controls-${width}-dialog.png`) });
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(
+      await page
+        .getByRole('button', { name: 'Settings', exact: true })
+        .evaluate((el) => el === document.activeElement),
+      true,
+    );
+  }
+  await page.goto('http://127.0.0.1:18840/?corners=compare');
+  await page.getByRole('region', { name: 'Corner comparison' }).waitFor();
+  await page.evaluate(() => document.fonts.ready.then(() => true));
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Circular control' })
+      .evaluate((el) => getComputedStyle(el).getPropertyValue('corner-shape')),
+    'round',
+  );
+  assert.equal(
+    await page
+      .getByRole('button', { name: 'Square override' })
+      .evaluate((el) => getComputedStyle(el).borderRadius),
+    '0px',
+  );
+  await page.screenshot({ path: join(artifacts, 'corner-comparison.png') });
+
+  // Exercise the actual CSS fallback by removing the enhancement @supports
+  // block. This is fallback simulation in Chromium, not a Safari acceptance run.
+  const removed = await page.evaluate(() => {
+    let removed = 0;
+    function stripEnhancement(sheet) {
+      for (let i = sheet.cssRules.length - 1; i >= 0; i--) {
+        const rule = sheet.cssRules[i];
+        if (rule instanceof CSSSupportsRule && rule.conditionText.includes('corner-shape')) {
+          sheet.deleteRule(i);
+          removed++;
+        } else if ('cssRules' in rule) stripEnhancement(rule);
+      }
+    }
+    for (const sheet of document.styleSheets) stripEnhancement(sheet);
+    return removed;
+  });
+  assert(removed > 0, 'Fallback test must remove the real enhancement block');
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const field = page.getByRole('textbox', { name: 'Name', exact: true });
+    await field.fill('Fallback stays usable');
+    assert.deepEqual(
+      await field.evaluate((el) => ({
+        radius: getComputedStyle(el).borderRadius,
+        shape: getComputedStyle(el).getPropertyValue('corner-shape'),
+        focus: getComputedStyle(el).outlineWidth,
+      })),
+      { radius: '9px', shape: 'round', focus: '2px' },
+    );
+    await page.getByRole('button', { name: 'Ask Assistant', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.getByRole('status').textContent(), 'Assistant opened');
+    assert.equal(
+      await page
+        .getByRole('button', { name: 'Ask Assistant', exact: true })
+        .evaluate((el) => getComputedStyle(el).borderRadius),
+      '14px',
+    );
+    await page.screenshot({ path: join(artifacts, `controls-${width}-fallback.png`) });
   }
   assert.deepEqual(errors, []);
   console.log(`Control UI acceptance passed. Screenshots: ${artifacts}`);

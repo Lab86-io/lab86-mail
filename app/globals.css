@@ -140,6 +140,10 @@
   --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 24px rgb(15 23 42 / 0.06);
   --shadow-control: 0 1px 2px rgb(15 23 42 / calc(0.06 * var(--depth-spread)));
   --radius-control: 9px;
+  --radius-launcher: 14px;
+  --radius-panel: 24px;
+  --radius-overlay: 18px;
+  --corner-shape-ui: round;
   --color-field: var(--color-bg-elevated);
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
@@ -159,6 +163,21 @@
   --ease-default: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   --ease-enter: cubic-bezier(0.165, 0.84, 0.44, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Soft-square corners are progressive enhancement, not a clipping mask. Keep
+   ordinary round radii in browsers without corner-shape. The longer supported
+   radii compensate for the squarer curve without changing control dimensions. */
+@supports (corner-shape: superellipse(1.6)) {
+  @layer base {
+    :root {
+      --corner-shape-ui: superellipse(1.6);
+      --radius-control: 13px;
+      --radius-launcher: 20px;
+      --radius-panel: 34px;
+      --radius-overlay: 26px;
+    }
+  }
 }
 
 @layer base {
@@ -953,6 +972,15 @@
 /* Shared control surfaces. Utilities can deliberately override these for
    embedded editors; ordinary fields should not each invent a fill/shadow. */
 @layer components {
+  :where(.corner-smooth, .control-field, .rail-selection, .rail-profile .cl-userButtonTrigger) {
+    corner-shape: var(--corner-shape-ui);
+  }
+  /* Explicit circular/pill controls stay circular. Utilities and inline styles
+     can also override corner-shape for bespoke/editor surfaces. Avatars never
+     opt in: corner-shape is intentionally not inherited. */
+  :where(.corner-smooth, .control-field).rounded-full {
+    corner-shape: round;
+  }
   .control-field {
     border: 1px solid var(--color-control-border);
     border-radius: var(--radius-control);

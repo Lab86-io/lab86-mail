@@ -64,7 +64,7 @@ export function CommandPalette() {
         <DialogContent
           data-global-search-dialog
           showCloseButton={false}
-          className="top-[max(1rem,12vh)] max-h-[calc(100dvh-2rem)] translate-y-0 gap-0 overflow-hidden rounded-2xl border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0 shadow-[0_24px_90px_-20px_rgba(0,0,0,0.45)] sm:max-w-[680px]"
+          className="top-[max(1rem,12vh)] max-h-[calc(100dvh-2rem)] translate-y-0 gap-0 overflow-hidden rounded-[var(--radius-overlay)] border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0 shadow-[0_24px_90px_-20px_rgba(0,0,0,0.45)] sm:max-w-[680px]"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             returnFocus.current =
