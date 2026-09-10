@@ -61,6 +61,7 @@ interface GoogleEditorFile extends GoogleEditorSource {
   model: AlbatrossDocumentModel;
   webUrl?: string;
   providerVersion?: string;
+  editability?: { editable: boolean; reason?: string };
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -125,7 +126,8 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const [title, setTitle] = useState('');
   const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [aiOpen, setAiOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(false);
+  useEffect(() => setAiOpen(window.matchMedia('(min-width: 1024px)').matches), []);
 
   const documentQuery = useQuery({
     queryKey: ['document', documentId],
@@ -370,7 +372,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
           size="sm"
           onClick={() => setAiOpen((current) => !current)}
           aria-pressed={aiOpen}
+          aria-label="Toggle document assistant"
         >
+          <PanelRight className="size-4" />
           <span className="hidden sm:inline">Albatross</span>
         </Button>
       </header>
@@ -414,10 +418,13 @@ export function GoogleDocumentEditor({
   const titleRef = useRef('');
   const modelRef = useRef<AlbatrossDocumentModel | null>(null);
   const versionRef = useRef<string | undefined>(undefined);
+  const saveBlockedRef = useRef(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [aiOpen, setAiOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(false);
+  useEffect(() => setAiOpen(window.matchMedia('(min-width: 1024px)').matches), []);
 
   const queryKey = ['google-document', source.connectionId, source.fileId] as const;
   const fileQuery = useQuery({
@@ -462,20 +469,25 @@ export function GoogleDocumentEditor({
         submitted,
       );
       setDirty(!latestMatchesSaved);
-      queryClient.setQueryData(queryKey, { ok: true, file: saved });
+      queryClient.setQueryData(queryKey, { ok: true, file: { ...saved, editability: file?.editability } });
       void queryClient.invalidateQueries({ queryKey: ['cloud-files'] });
     },
     onError: async (error: Error & { status?: number }) => {
+      saveBlockedRef.current = true;
+      saveQueuedRef.current = false;
+      setSaveError(
+        error.status === 409
+          ? 'The original changed in Google. Your local draft is preserved; automatic saving has stopped.'
+          : error.message,
+      );
       if (error.status === 409) {
         toast.error('This file changed in Google Drive. Your unsaved edit was not overwritten.');
-        const refreshed = await fileQuery.refetch();
-        versionRef.current = refreshed.data?.file.providerVersion;
       } else {
         toast.error(error.message);
       }
     },
     onSettled: () => {
-      if (saveQueuedRef.current && modelRef.current) {
+      if (!saveBlockedRef.current && saveQueuedRef.current && modelRef.current) {
         saveQueuedRef.current = false;
         saveMutation.mutate({ title: titleRef.current, model: modelRef.current });
       }
@@ -483,6 +495,7 @@ export function GoogleDocumentEditor({
   });
 
   const saveNow = useCallback(async () => {
+    if (saveBlockedRef.current) return false;
     if (!dirty || !model) return true;
     if (saveMutation.isPending) {
       saveQueuedRef.current = true;
@@ -498,10 +511,10 @@ export function GoogleDocumentEditor({
   }, [dirty, model, saveMutation, title]);
 
   useEffect(() => {
-    if (!dirty || !model) return;
+    if (!dirty || !model || saveError) return;
     const timer = window.setTimeout(() => void saveNow(), 900);
     return () => window.clearTimeout(timer);
-  }, [dirty, model, saveNow]);
+  }, [dirty, model, saveNow, saveError]);
 
   const editModel = useCallback((next: AlbatrossDocumentModel) => {
     modelRef.current = next;
@@ -509,7 +522,7 @@ export function GoogleDocumentEditor({
     setDirty(true);
   }, []);
 
-  if (fileQuery.error || (!fileQuery.isLoading && !file)) {
+  if (!file && !fileQuery.isLoading) {
     return (
       <div className="grid h-full place-items-center p-8 text-center">
         <div>
@@ -535,8 +548,84 @@ export function GoogleDocumentEditor({
     );
   }
 
+  if (file.editability?.editable !== true && !dirty) {
+    return (
+      <section aria-label="Google file preview" className="flex h-full min-h-0 min-w-0 flex-col">
+        <header className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] p-3">
+          <Button variant="ghost" onClick={onClose}>
+            Back to Files
+          </Button>
+          <h1 className="min-w-0 flex-1 break-words font-medium">{file.title}</h1>
+          <Button asChild variant="outline">
+            <a
+              href={file.webUrl || `https://drive.google.com/open?id=${encodeURIComponent(source.fileId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open original in Google
+            </a>
+          </Button>
+        </header>
+        <div className="overflow-y-auto p-4 sm:p-6">
+          <p
+            role="status"
+            className="mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 text-sm"
+          >
+            {file.editability?.reason ||
+              'Preview only. Open the original in Google to preserve its full content and formatting.'}{' '}
+            No changes have been saved.
+          </p>
+          {model.kind === 'doc' ? (
+            <div className="mx-auto max-w-2xl whitespace-pre-wrap break-words text-sm leading-relaxed">
+              <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+                Text excerpt · tables, images and formatting may not appear here
+              </p>
+              {model.blocks.map((block) => (
+                <p key={block.id} className="mb-3">
+                  {block.text || '\u00a0'}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Use Google for the complete spreadsheet or presentation. Your original remains unchanged.
+            </p>
+          )}
+        </div>
+      </section>
+    );
+  }
   return (
-    <section aria-label={`${kindName(file.kind)} editor`} className="flex h-full min-h-0 flex-col">
+    <section aria-label={`${kindName(file.kind)} editor`} className="flex h-full min-h-0 min-w-0 flex-col">
+      {saveError ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-3 text-sm"
+        >
+          <p className="min-w-0 flex-1">
+            {saveError} Copy any local edits you want to keep before reloading.
+          </p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (!window.confirm('Discard this local draft and reload the original from Google?')) return;
+              const refreshed = await fileQuery.refetch();
+              if (!refreshed.isSuccess || !refreshed.data?.file) return;
+              const next = refreshed.data.file;
+              titleRef.current = next.title;
+              modelRef.current = next.model;
+              versionRef.current = next.providerVersion;
+              setTitle(next.title);
+              setModel(next.model);
+              setDirty(false);
+              setSaveError(null);
+              saveBlockedRef.current = false;
+            }}
+          >
+            Reload original
+          </Button>
+        </div>
+      ) : null}
       <header className="flex min-h-14 items-center gap-2 border-b border-[var(--color-border)] px-3">
         <Button
           variant="ghost"
@@ -588,6 +677,8 @@ export function GoogleDocumentEditor({
           onClick={() => setAiOpen((current) => !current)}
           aria-pressed={aiOpen}
         >
+          <span className="sr-only">Toggle document assistant</span>
+          <PanelRight className="size-4" />
           <span className="hidden sm:inline">Albatross</span>
         </Button>
       </header>
@@ -1027,7 +1118,7 @@ function DeckEditor({
             value={active.notes || ''}
             onChange={(event) => updateSlide({ notes: event.target.value })}
             placeholder="Speaker notes"
-            className="ml-auto h-7 min-w-0 max-w-md flex-1 rounded border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-xs outline-none"
+            className="control-field ml-auto h-8 min-w-0 max-w-md flex-1 px-2 text-xs"
           />
           {model.slides.length > 1 ? (
             <Button

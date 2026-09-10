@@ -1,4 +1,5 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
+import { assertGoogleFileEditable, GoogleDocumentFidelityError } from './google-fidelity';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
@@ -92,11 +93,21 @@ async function syncGoogleDoc(
   accessToken: string,
   fileId: string,
   model: Extract<AlbatrossDocumentModel, { kind: 'doc' }>,
+  createdNow = false,
+  expectedProviderVersion?: string,
 ) {
   const current = await googleJson(
     accessToken,
-    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}?fields=revisionId,body.content.endIndex`,
+    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(fileId)}`,
   );
+  if (!createdNow) assertGoogleFileEditable('doc', current);
+  if (!createdNow && !current.revisionId) throw new GoogleDocumentConflictError();
+  if (!createdNow) {
+    // Bind the loaded body to the version the user edited, before its revision-guarded write.
+    const metadata = await googleDriveMetadata(accessToken, fileId);
+    if (!expectedProviderVersion || metadata.providerVersion !== expectedProviderVersion)
+      throw new GoogleDocumentConflictError();
+  }
   const endIndex = Math.max(
     1,
     ...(Array.isArray(current?.body?.content)
@@ -111,29 +122,34 @@ async function syncGoogleDoc(
     block,
     text: `${block.text}\n`,
   }));
-  const text = segments.map((segment) => segment.text).join('');
-  if (text) {
-    requests.push({ insertText: { location: { index: 1 }, text } });
+  // Docs retains one mandatory final newline. Inserting another creates a new
+  // blank paragraph on every round-trip.
+  const text = segments
+    .map((segment) => segment.text)
+    .join('')
+    .replace(/\n$/u, '');
+  if (segments.length) {
+    if (text) requests.push({ insertText: { location: { index: 1 }, text } });
     let startIndex = 1;
     for (const segment of segments) {
       const segmentEndIndex = startIndex + segment.text.length;
       const range = { startIndex, endIndex: segmentEndIndex };
-      if (segment.block.type === 'heading') {
-        requests.push({
-          updateParagraphStyle: {
-            range,
-            paragraphStyle: {
-              namedStyleType:
-                segment.block.level === 1
+      requests.push({
+        updateParagraphStyle: {
+          range,
+          paragraphStyle: {
+            namedStyleType:
+              segment.block.type !== 'heading'
+                ? 'NORMAL_TEXT'
+                : segment.block.level === 1
                   ? 'HEADING_1'
                   : segment.block.level === 3
                     ? 'HEADING_3'
                     : 'HEADING_2',
-            },
-            fields: 'namedStyleType',
           },
-        });
-      }
+          fields: 'namedStyleType',
+        },
+      });
       if (segment.block.type === 'bullet' || segment.block.type === 'numbered') {
         requests.push({
           createParagraphBullets: {
@@ -420,9 +436,14 @@ export async function publishDocumentToGoogle(input: {
   let fileId = input.document.google?.fileId;
   let webUrl = input.document.google?.webUrl;
   const isExistingGoogleFile = Boolean(fileId) && input.document.google?.connectionId === connectionId;
+  if (isExistingGoogleFile && input.document.kind !== 'doc') assertGoogleFileEditable(input.document.kind);
   if (fileId && isExistingGoogleFile) {
     const current = await googleDriveMetadata(access.accessToken, fileId);
-    if (googleProviderVersionChanged(input.document.google?.providerVersion, current.providerVersion)) {
+    if (
+      !input.document.google?.providerVersion ||
+      !current.providerVersion ||
+      googleProviderVersionChanged(input.document.google?.providerVersion, current.providerVersion)
+    ) {
       throw new GoogleDocumentConflictError();
     }
     webUrl = current.webUrl || webUrl;
@@ -433,7 +454,13 @@ export async function publishDocumentToGoogle(input: {
     webUrl = created.webUrl;
   }
   if (input.document.model.kind === 'doc') {
-    await syncGoogleDoc(access.accessToken, fileId, input.document.model);
+    await syncGoogleDoc(
+      access.accessToken,
+      fileId,
+      input.document.model,
+      !isExistingGoogleFile,
+      input.document.google?.providerVersion,
+    );
   }
   if (input.document.model.kind === 'sheet') {
     await syncGoogleSheet(access.accessToken, fileId, input.document.model);
@@ -473,6 +500,8 @@ export async function updateGoogleNativeFile(input: {
   model: unknown;
   expectedProviderVersion?: string;
 }) {
+  if (!input.expectedProviderVersion) throw new GoogleDocumentConflictError();
+  if (input.kind !== 'doc') throw new GoogleDocumentFidelityError();
   const access = await dependencies.getCloudFileAccess({
     userId: input.userId,
     connectionId: input.connectionId,
@@ -481,11 +510,15 @@ export async function updateGoogleNativeFile(input: {
     throw new Error('The selected Google Drive connection was not found.');
   }
   const current = await googleDriveMetadata(access.accessToken, input.fileId);
-  if (googleProviderVersionChanged(input.expectedProviderVersion, current.providerVersion)) {
+  if (
+    !current.providerVersion ||
+    googleProviderVersionChanged(input.expectedProviderVersion, current.providerVersion)
+  ) {
     throw new GoogleDocumentConflictError();
   }
   const model = parseDocumentModel(input.model, input.kind);
-  if (model.kind === 'doc') await syncGoogleDoc(access.accessToken, input.fileId, model);
+  if (model.kind === 'doc')
+    await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion);
   if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, model);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
   const title = input.title.trim().slice(0, 500) || 'Untitled';

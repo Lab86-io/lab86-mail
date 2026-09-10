@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getCloudFileAccess } from '@/lib/files/connections';
+import { googleFileEditability } from './google-fidelity';
 import {
   type AlbatrossDocumentModel,
   type DeckElement,
@@ -93,8 +94,7 @@ function importGoogleDoc(payload: any): AlbatrossDocumentModel {
         text,
         ...(heading ? { level: Number(heading[1]) as 1 | 2 | 3 } : {}),
       };
-    })
-    .filter((block: any, index: number, all: any[]) => block.text || index === all.length - 1);
+    });
   return {
     kind: 'doc',
     version: 1,
@@ -282,6 +282,7 @@ export async function importGoogleNativeFile(input: {
       kind,
       title: String(driveMetadata.title || payload.title || 'Untitled document'),
       model: importGoogleDoc(payload),
+      editability: googleFileEditability(kind, payload),
       webUrl: driveMetadata.webUrl,
       providerVersion: driveMetadata.providerVersion,
     };
@@ -295,6 +296,7 @@ export async function importGoogleNativeFile(input: {
       kind,
       title: String(driveMetadata.title || metadata?.properties?.title || 'Untitled spreadsheet'),
       model: await importGoogleSheet(access.accessToken, input.fileId),
+      editability: googleFileEditability(kind),
       webUrl: driveMetadata.webUrl,
       providerVersion: driveMetadata.providerVersion,
     };
@@ -307,6 +309,7 @@ export async function importGoogleNativeFile(input: {
     kind,
     title: String(driveMetadata.title || payload.title || 'Untitled presentation'),
     model: importGoogleDeck(payload),
+    editability: googleFileEditability(kind, payload),
     webUrl: driveMetadata.webUrl,
     providerVersion: driveMetadata.providerVersion,
   };

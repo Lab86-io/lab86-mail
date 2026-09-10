@@ -786,10 +786,14 @@ describe('Google document publishing', () => {
       if (endpoint === 'https://slides.googleapis.com/v1/presentations' && init?.method === 'POST') {
         return Response.json({ presentationId: 'created-deck' });
       }
-      if (endpoint.includes('docs.googleapis.com') && endpoint.includes('fields=')) {
+      if (endpoint.includes('docs.googleapis.com') && !init?.method) {
         return Response.json({
           revisionId: 'docs-revision-7',
-          body: { content: [{ endIndex: 8 }] },
+          body: {
+            content: [
+              { startIndex: 1, endIndex: 8, paragraph: { elements: [{ textRun: { content: 'Source\n' } }] } },
+            ],
+          },
         });
       }
       if (endpoint.includes('sheets.googleapis.com') && endpoint.includes('fields=sheets')) {

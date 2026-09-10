@@ -48,7 +48,6 @@ import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -70,7 +69,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { RefreshCWIcon } from '@/components/ui/refresh-cw';
 import { RowIcon } from '@/components/ui/row-icon';
 import { SearchIcon } from '@/components/ui/search';
-import { ShineBorder } from '@/components/ui/shine-border';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
@@ -824,15 +822,7 @@ export function Inbox() {
           )}
         >
           <div className="flex items-center gap-2">
-            <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:border-[var(--color-accent)] focus-within:ring-[3px] focus-within:ring-[var(--color-accent)]/20">
-              {translating ? (
-                <BorderBeam
-                  size={80}
-                  duration={3}
-                  colorFrom="var(--color-border-beam-from)"
-                  colorTo="var(--color-border-beam-to)"
-                />
-              ) : null}
+            <InputGroup className="flex-1">
               <InputGroupAddon>
                 {translating ? (
                   <OrbitRing className="size-4 text-[var(--color-accent)]" />
@@ -1777,13 +1767,6 @@ function LabelConfirmDialog({
     <Dialog open={!!item} onOpenChange={(open) => (!open ? onClose() : undefined)}>
       <DialogContent className="overflow-hidden border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-pop)]">
         <DialogTitle className="sr-only">Apply smart Gmail labels</DialogTitle>
-        <ShineBorder
-          shineColor={[
-            'var(--color-accent-shine-1)',
-            'var(--color-accent-shine-2)',
-            'var(--color-accent-shine-3)',
-          ]}
-        />
         <Confirmation approval={{ id: item._id }} state={'approval-requested' as any}>
           <ConfirmationTitle>Apply smart Gmail labels?</ConfirmationTitle>
           <ConfirmationRequest>

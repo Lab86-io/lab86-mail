@@ -441,6 +441,9 @@ describe('cloud file browsing service', () => {
       const parsed = new URL(String(url));
       expect(parsed.hostname).toBe('www.googleapis.com');
       expect(parsed.searchParams.get('q')).toContain("name contains 'O\\'Reilly'");
+      expect(parsed.searchParams.get('q')).toContain("fullText contains 'O\\'Reilly'");
+      expect(parsed.searchParams.get('pageSize')).toBe('12');
+      expect(parsed.searchParams.get('pageToken')).toBe('page-token');
       return Response.json({
         nextPageToken: 'next',
         files: [{ id: 'file-1', name: 'Plan', mimeType: 'application/pdf' }],
@@ -469,6 +472,7 @@ describe('cloud file browsing service', () => {
       folderId: 'ignored-for-search',
       query: `  O'Reilly  `,
       cursor: 'page-token',
+      pageSize: 12,
     });
     expect(page.items[0]).toMatchObject({ id: 'file-1', provider: 'google_drive' });
     expect(page.nextCursor).toBe('next');

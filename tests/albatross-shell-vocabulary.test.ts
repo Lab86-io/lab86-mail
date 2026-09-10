@@ -77,10 +77,12 @@ describe('the product names itself', () => {
   test('the primary action is capture, not compose', () => {
     const rail = read('components/shell/Rail.tsx');
     // The label lives in CAPTURE_BUTTON_LABEL (IntentCapture); the rail must
-    // use the constant in both JSX slots, not restate the words.
+    // pass the constant into the shared action, not restate the words.
     expect(rail).toContain("import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture'");
-    expect(rail).toContain('tooltip={CAPTURE_BUTTON_LABEL}');
-    expect(rail).toContain('<span>{CAPTURE_BUTTON_LABEL}</span>');
+    expect(rail).toContain('captureLabel={CAPTURE_BUTTON_LABEL}');
+    const actions = read('components/shell/ShellActions.tsx');
+    expect(actions).toContain('tooltip={captureLabel}');
+    expect(actions).toContain('<span>{captureLabel}</span>');
     const capture = read('components/albatross/IntentCapture.tsx');
     expect(capture).toContain("CAPTURE_BUTTON_LABEL = 'Get this off my mind'");
     // Compose moved into the Mail surface; the rail must not offer it.

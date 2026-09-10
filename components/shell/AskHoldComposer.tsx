@@ -186,7 +186,7 @@ export function AskHoldComposer({
         maxHeight={176}
         data-landing={landing ? 'true' : undefined}
         className={cn(
-          'rounded-2xl bg-[var(--color-control)]/95 shadow-[var(--shadow-pop)] transition-[border-color] duration-[var(--duration-normal)]',
+          'rounded-xl bg-[var(--color-field)] shadow-none transition-[border-color] duration-[var(--duration-normal)]',
           landing ? 'border-[var(--color-accent-2)]/35' : 'border-[var(--color-control-border)]',
         )}
       >

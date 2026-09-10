@@ -15,7 +15,6 @@ import { AskHoldComposer, type DoorRequest } from '@/components/shell/AskHoldCom
 import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
-import { BorderBeam } from '@/components/ui/border-beam';
 import { Button } from '@/components/ui/button';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
@@ -46,8 +45,10 @@ import {
   toolPartName,
 } from '@/lib/albatross/teach-ui';
 import { assistantLauncherPlacement, isAssistantShortcut, useClientStore } from '@/lib/client-state';
+import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { formatDate } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
+import { AssistantLauncher } from './ShellActions';
 
 interface ChatSessionSummary {
   _id: string;
@@ -96,14 +97,16 @@ const ORB_COLORS = {
 };
 
 // ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
-// Text-only (no icon), anchored bottom-right, with an animated Magic UI glow
-// around the border so it reads as the live assistant entry point. The same
-// door the Mac app has as its corner chat bubble; ⌘K is the keyboard twin.
+// A quiet, raised control; shortcut handling stays mounted while the panel is open.
 export function AIBarTrigger() {
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
   const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
+  const [shortcut, setShortcut] = useState('⌘K');
+  useEffect(() => {
+    setShortcut(mailSearchShortcutLabel(navigator.platform).replace('F', 'K'));
+  }, []);
 
   // ⌘K toggles the assistant panel from anywhere in the shell, including
   // while the button itself is hidden behind the open panel.
@@ -131,31 +134,7 @@ export function AIBarTrigger() {
   });
   if (placement === 'hidden') return null;
 
-  return (
-    <motion.button
-      type="button"
-      initial={{ opacity: 0, y: 8, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      whileHover={{ scale: 1.04 }}
-      whileTap={{ scale: 0.97 }}
-      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-      onClick={() => setAiBarOpen(true)}
-      title="Ask Assistant (⌘K)"
-      data-placement={placement}
-      className={cn(
-        'ask-assistant-glow group fixed right-6 z-50 flex h-10 items-center gap-2 overflow-hidden rounded-full bg-[var(--color-bg-elevated)] px-4 text-[12.5px] font-medium text-[var(--color-text)] shadow-[var(--shadow-soft)]',
-        placement === 'stacked' ? 'bottom-[4.5rem]' : 'bottom-6',
-      )}
-    >
-      {/* Magic UI traveling light inside the hairline ring (CSS class). */}
-      <BorderBeam size={56} duration={9} borderWidth={1} />
-      <span>Ask Assistant</span>
-      <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1 py-px font-mono text-[9.5px] text-[var(--color-text-faint)]">
-        ⌘K
-      </kbd>
-      <span className="sr-only">Open the assistant</span>
-    </motion.button>
-  );
+  return <AssistantLauncher placement={placement} shortcut={shortcut} onOpen={() => setAiBarOpen(true)} />;
 }
 
 // ---------- The assistant panel: a floating, dreamy chat surface ----------

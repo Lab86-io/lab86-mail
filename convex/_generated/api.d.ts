@@ -30,6 +30,7 @@ import type * as cloudFiles from "../cloudFiles.js";
 import type * as crons from "../crons.js";
 import type * as dailyReports from "../dailyReports.js";
 import type * as documents from "../documents.js";
+import type * as fileLibrary from "../fileLibrary.js";
 import type * as lib from "../lib.js";
 import type * as liveMail from "../liveMail.js";
 import type * as mailCorpus from "../mailCorpus.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   dailyReports: typeof dailyReports;
   documents: typeof documents;
+  fileLibrary: typeof fileLibrary;
   lib: typeof lib;
   liveMail: typeof liveMail;
   mailCorpus: typeof mailCorpus;

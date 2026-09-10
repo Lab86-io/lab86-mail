@@ -37,7 +37,7 @@ function boundedQuery(value: string | undefined) {
     .slice(0, 200);
 }
 
-function oneDriveEndpoint(input: { folderId?: string; query?: string; cursor?: string }) {
+function oneDriveEndpoint(input: { folderId?: string; query?: string; cursor?: string; pageSize?: number }) {
   if (input.cursor) {
     let cursor: URL;
     try {
@@ -45,20 +45,26 @@ function oneDriveEndpoint(input: { folderId?: string; query?: string; cursor?: s
     } catch {
       throw new Error('Invalid OneDrive page cursor.');
     }
-    if (cursor.origin !== 'https://graph.microsoft.com') {
+    if (
+      cursor.origin !== 'https://graph.microsoft.com' ||
+      !/^\/v1\.0\/(me\/drive|drives\/[^/]+)\//.test(cursor.pathname) ||
+      cursor.username ||
+      cursor.password
+    ) {
       throw new Error('Invalid OneDrive page cursor.');
     }
     return cursor.toString();
   }
   const query = boundedQuery(input.query);
+  const pageSize = Math.min(100, Math.max(1, Math.floor(input.pageSize || 100)));
   if (query) {
     const escaped = query.replaceAll("'", "''");
-    return `https://graph.microsoft.com/v1.0/me/drive/root/search(q='${encodeURIComponent(escaped)}')?$top=100&$expand=thumbnails`;
+    return `https://graph.microsoft.com/v1.0/me/drive/root/search(q='${encodeURIComponent(escaped)}')?$top=${pageSize}&$expand=thumbnails`;
   }
   if (input.folderId) {
-    return `https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(input.folderId)}/children?$top=100&$expand=thumbnails`;
+    return `https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(input.folderId)}/children?$top=${pageSize}&$expand=thumbnails`;
   }
-  return 'https://graph.microsoft.com/v1.0/me/drive/root/children?$top=100&$expand=thumbnails';
+  return `https://graph.microsoft.com/v1.0/me/drive/root/children?$top=${pageSize}&$expand=thumbnails`;
 }
 
 function googleDriveEndpoint(input: {
@@ -66,13 +72,16 @@ function googleDriveEndpoint(input: {
   query?: string;
   cursor?: string;
   driveId?: string;
+  pageSize?: number;
 }) {
   const url = new URL('https://www.googleapis.com/drive/v3/files');
   const folderId = input.folderId || 'root';
   const query = boundedQuery(input.query);
   const clauses = ['trashed = false'];
   if (query) {
-    clauses.push(`name contains '${escapeGoogleDriveQuery(query)}'`);
+    clauses.push(
+      `(name contains '${escapeGoogleDriveQuery(query)}' or fullText contains '${escapeGoogleDriveQuery(query)}')`,
+    );
   } else {
     clauses.push(`'${escapeGoogleDriveQuery(folderId)}' in parents`);
   }
@@ -81,7 +90,7 @@ function googleDriveEndpoint(input: {
     'fields',
     'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink,thumbnailLink,owners(displayName))',
   );
-  url.searchParams.set('pageSize', '100');
+  url.searchParams.set('pageSize', String(Math.min(100, Math.max(1, Math.floor(input.pageSize || 100)))));
   url.searchParams.set('orderBy', 'folder,name_natural');
   url.searchParams.set('supportsAllDrives', 'true');
   url.searchParams.set('includeItemsFromAllDrives', 'true');
@@ -231,6 +240,7 @@ export async function browseCloudFiles(input: {
   folderId?: string;
   query?: string;
   cursor?: string;
+  pageSize?: number;
 }): Promise<CloudFilePage> {
   // Browse-only fields (query, folder and cursor) are not valid arguments to
   // the credential lookup's strict Convex validator.

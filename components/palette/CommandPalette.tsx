@@ -13,7 +13,6 @@ import { useClientStore } from '@/lib/client-state';
 import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
 import {
-  localFileResults,
   matchesSearch,
   SEARCH_SCOPES,
   type SearchGroup,
@@ -22,6 +21,7 @@ import {
   type SearchTool,
   searchCalendar,
   searchCloudFiles,
+  searchFileLibrary,
   searchMail,
   searchPages,
 } from '@/lib/search/global-search';
@@ -180,25 +180,10 @@ function SearchContent({
     staleTime: 30_000,
     retry: false,
   });
-  const documents = useQuery({
-    queryKey: ['documents', { limit: 200 }],
-    queryFn: ({ signal }) =>
-      readSearchSource<{ documents: Array<{ documentId: string; title: string; kind: string }> }>(
-        '/api/documents?limit=200',
-        signal,
-      ),
-    enabled: scope === 'all' || scope === 'files',
-    staleTime: 60_000,
-    retry: false,
-  });
-  const uploads = useQuery({
-    queryKey: ['albatross-files'],
-    queryFn: ({ signal }) =>
-      readSearchSource<{ files: Array<{ id: string; name: string; url?: string }> }>(
-        '/api/agent/uploads',
-        signal,
-      ),
-    enabled: scope === 'all' || scope === 'files',
+  const library = useQuery({
+    queryKey: ['file-library', 'search', query],
+    queryFn: ({ signal }) => searchFileLibrary(query, signal),
+    enabled: searchEnabled && (scope === 'all' || scope === 'files'),
     staleTime: 60_000,
     retry: false,
   });
@@ -223,7 +208,7 @@ function SearchContent({
     staleTime: 0,
     retry: false,
   });
-  const files = localFileResults(trimmed, documents.data?.documents || [], uploads.data?.files || []);
+  const files = library.data?.items || [];
   const go = (path: string) => {
     if (pathname !== '/' || !path.startsWith('/?')) router.push(path);
     else {
@@ -314,8 +299,7 @@ function SearchContent({
                 if (natural) void translation.refetch();
               }
               if (label === 'Files') {
-                void documents.refetch();
-                void uploads.refetch();
+                void library.refetch();
               }
             }}
           >
@@ -452,11 +436,11 @@ function SearchContent({
             {scope === 'all' || scope === 'files'
               ? section(
                   'Files',
-                  { ...cloud, isFetching: cloud.isFetching || documents.isFetching || uploads.isFetching },
+                  { ...cloud, isFetching: cloud.isFetching || library.isFetching },
                   files,
                   [
-                    documents.error ? 'Albatross documents are unavailable.' : '',
-                    uploads.error ? 'Uploaded files are unavailable.' : '',
+                    library.error ? 'Albatross library is unavailable.' : '',
+                    ...(library.data?.warnings || []),
                   ].filter(Boolean),
                 )
               : null}

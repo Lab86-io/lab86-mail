@@ -336,7 +336,7 @@ export function ToolUiDisplayPart({
           <MessageDraft
             {...payload}
             undoGracePeriod={0}
-            onSend={
+            onEdit={
               onOpenDraft
                 ? () =>
                     onOpenDraft({

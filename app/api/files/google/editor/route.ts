@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { GoogleDocumentConflictError, updateGoogleNativeFile } from '@/lib/documents/google';
+import { GoogleDocumentFidelityError } from '@/lib/documents/google-fidelity';
 import {
   GOOGLE_NATIVE_MIME,
   GOOGLE_NATIVE_MIME_TYPES,
@@ -35,6 +36,8 @@ const aiSchema = identitySchema.extend({
 });
 
 function errorResponse(error: unknown) {
+  if (error instanceof GoogleDocumentFidelityError)
+    return NextResponse.json({ ok: false, code: 'READ_ONLY_PREVIEW', error: error.message }, { status: 422 });
   if (error instanceof RateLimitError) return rateLimitJson(error);
   if (error instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
@@ -89,6 +92,7 @@ export async function GET(req: NextRequest) {
         kind: imported.kind,
         title: imported.title,
         model: imported.model,
+        editability: imported.editability,
         webUrl: imported.webUrl,
         providerVersion: imported.providerVersion,
       },

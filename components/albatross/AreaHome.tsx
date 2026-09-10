@@ -1064,7 +1064,7 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
           <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:border-[var(--color-accent)] focus-within:ring-[3px] focus-within:ring-[var(--color-accent)]/20">
+              <InputGroup className="flex-1">
                 <InputGroupAddon>
                   <Search className="size-4 text-[var(--color-text-faint)]" aria-hidden />
                 </InputGroupAddon>

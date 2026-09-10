@@ -7,7 +7,7 @@ import {
   useMutation as useConvexMutation,
   useQuery_experimental as useConvexQuery,
 } from 'convex/react';
-import { History, Search, Settings } from 'lucide-react';
+import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
@@ -25,7 +25,6 @@ import {
 import { PlusIcon } from '@/components/ui/plus';
 import { RowIcon, rowIcon } from '@/components/ui/row-icon';
 import { SettingsIcon } from '@/components/ui/settings';
-import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
   SidebarContent,
@@ -53,6 +52,7 @@ import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
+import { RailPrimaryActions } from './ShellActions';
 import { ThemePanel } from './ThemePanel';
 
 // Top-level surfaces of the product, in the order a person meets them: the
@@ -294,52 +294,15 @@ export function Rail({
           />
         </div>
 
-        {/* The primary action of the whole product. It used to be Compose. */}
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={CAPTURE_BUTTON_LABEL}
-              onClick={() => {
-                setCaptureOpen(true);
-                closeMobileSidebar();
-              }}
-              className="relative bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] hover:text-[var(--color-accent-foreground)] focus-visible:ring-[var(--color-accent)]"
-            >
-              <ShineBorder
-                borderWidth={1}
-                duration={10}
-                shineColor={[
-                  'var(--color-accent-shine-1)',
-                  'var(--color-accent-shine-2)',
-                  'var(--color-accent-shine-3)',
-                ]}
-              />
-              <PlusIcon size={16} />
-              <span>{CAPTURE_BUTTON_LABEL}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={`Search everything (${searchShortcut} or /)`}
-              aria-label={`Search everything (${searchShortcut} or slash)`}
-              aria-keyshortcuts="Meta+F Control+F /"
-              title={`Search everything (${searchShortcut} or /)`}
-              onClick={() => setPaletteOpen(true)}
-              className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] font-medium shadow-[var(--shadow-soft)] hover:border-[var(--color-accent)]/45 focus-visible:ring-[var(--color-accent)]"
-            >
-              <Search className="size-4 shrink-0" aria-hidden />
-              <span>Search</span>
-              <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
-                  {searchShortcut}
-                </kbd>
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
-                  /
-                </kbd>
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <RailPrimaryActions
+          captureLabel={CAPTURE_BUTTON_LABEL}
+          searchShortcut={searchShortcut}
+          onCapture={() => {
+            setCaptureOpen(true);
+            closeMobileSidebar();
+          }}
+          onSearch={() => setPaletteOpen(true)}
+        />
       </SidebarHeader>
 
       <SidebarContent>
@@ -357,19 +320,8 @@ export function Rail({
                       setPrimaryView(view);
                       closeMobileSidebar();
                     }}
-                    className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                    className="rail-selection"
                   >
-                    {visiblePrimaryView === view ? (
-                      <ShineBorder
-                        borderWidth={1}
-                        duration={10}
-                        shineColor={[
-                          'var(--color-accent-shine-1)',
-                          'var(--color-accent-shine-2)',
-                          'var(--color-accent-shine-3)',
-                        ]}
-                      />
-                    ) : null}
                     <Icon />
                     <span>{label}</span>
                     {/* Words, never a count. A number here would be a tally of
@@ -399,19 +351,8 @@ export function Rail({
                       isActive={active}
                       tooltip={area.name}
                       onClick={() => openArea(area._id)}
-                      className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                      className="rail-selection"
                     >
-                      {active ? (
-                        <ShineBorder
-                          borderWidth={1}
-                          duration={10}
-                          shineColor={[
-                            'var(--color-accent-shine-1)',
-                            'var(--color-accent-shine-2)',
-                            'var(--color-accent-shine-3)',
-                          ]}
-                        />
-                      ) : null}
                       <AreaRailIcon area={area} />
                       <span className="truncate">{area.name}</span>
                     </SidebarMenuButton>
@@ -526,17 +467,17 @@ export function Rail({
       <SidebarFooter>
         {/* One quiet control strip: profile (settings lives in its popout),
             account scope, and theme. Collapses to a vertical stack. */}
-        <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
-          <div className="grid h-7 w-7 place-items-center group-data-[collapsible=icon]:size-8">
+        <div className="flex items-center gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0">
+          <div className="rail-profile grid size-8 shrink-0 place-items-center">
             {clerkEnabled ? (
-              <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
+              <UserButton>
                 <UserButton.MenuItems>
                   <UserButton.Link label="Settings" href="/settings" labelIcon={<SettingsIcon size={14} />} />
                 </UserButton.MenuItems>
               </UserButton>
             ) : (
               <div
-                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]"
+                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)]"
                 title="Local preview"
               >
                 <UserIcon size={13} />

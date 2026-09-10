@@ -132,6 +132,8 @@ export interface DockTileProps extends React.ComponentProps<'button'> {
    * aria-label is provided.
    */
   label?: string;
+  /** Rail navigation uses a flat highlight; other docks may retain their effect. */
+  glow?: boolean;
 }
 
 /**
@@ -141,6 +143,7 @@ export interface DockTileProps extends React.ComponentProps<'button'> {
  */
 export function DockTile({
   label,
+  glow = true,
   className,
   style,
   children,
@@ -232,7 +235,7 @@ export function DockTile({
           // Surface highlight (lib/dock-hover.ts): accent ring + lift shadow
           // on the hovered/focused tile only. Inline so it wins over any
           // caller shadow classes without a specificity fight.
-          ...(highlighted ? { boxShadow: dockHoverRing() } : null),
+          ...(glow && highlighted ? { boxShadow: dockHoverRing() } : null),
         }}
         // `isolate` keeps the -z glow layer inside this button's stacking
         // context — without it the glow would paint underneath the rail's
@@ -268,7 +271,7 @@ export function DockTile({
           onBlur?.(event);
         }}
       >
-        <DockTileGlow visible={highlighted} reduced={reduced} />
+        {glow ? <DockTileGlow visible={highlighted} reduced={reduced} /> : null}
         {children}
       </motion.button>
       <DockTileLabel visible={labelVisible} left={labelLeft} top={labelTop} reduced={reduced}>

@@ -11,9 +11,13 @@ const built = await build({
   entrypoints: [
     resolve(
       root,
-      process.argv.includes('--today')
-        ? 'scripts/fixtures/today-workspace-preview.tsx'
-        : 'scripts/fixtures/narrative-tools-preview.tsx',
+      process.argv.includes('--controls')
+        ? 'scripts/fixtures/controls-preview.tsx'
+        : process.argv.includes('--files')
+          ? 'scripts/fixtures/files-preview.tsx'
+          : process.argv.includes('--today')
+            ? 'scripts/fixtures/today-workspace-preview.tsx'
+            : 'scripts/fixtures/narrative-tools-preview.tsx',
     ),
   ],
   target: 'browser',
@@ -43,14 +47,24 @@ const candidates = (
 ).flat();
 const css = candidates.sort((a, b) => b.size - a.size)[0];
 if (!css) throw new Error('Build the app before previewing its actual styles.');
+// Fonts are emitted in a separate chunk. Include them and the layout's font
+// variables so screenshots exercise production typography, not fallback fonts.
+const styles = (await Promise.all(candidates.map((entry) => file(entry.path).text()))).join('\n');
+const fontVariables = [...styles.matchAll(/--font-(?:geist-sans|geist-mono|fraunces|averia):[^;}]+/g)]
+  .map((match) => match[0])
+  .join(';');
+const previewStyles = `${styles}\n:root{${fontVariables}}`;
 const server = serve({
   hostname: '127.0.0.1',
-  port: 18839,
+  port: process.argv.includes('--controls') ? 18840 : 18839,
   fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === '/preview.js')
       return new Response(script, { headers: { 'content-type': 'text/javascript' } });
-    if (path === '/preview.css') return new Response(file(css.path));
+    if (path === '/preview.css')
+      return new Response(previewStyles, { headers: { 'content-type': 'text/css' } });
+    if (/^\/media\/[a-zA-Z0-9._~-]+\.(woff2?|ttf|otf)$/.test(path))
+      return new Response(file(resolve(root, '.next/static', path.slice(1))));
     if (path === '/')
       return new Response(
         '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Narrative tools · synthetic preview</title><link rel="stylesheet" href="/preview.css"></head><body><div id="root"></div><script type="module" src="/preview.js"></script></body></html>',

@@ -24,7 +24,7 @@ import { CommandPalette } from '@/components/palette/CommandPalette';
 import { Today } from '@/components/report/Today';
 import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
-import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useClientStore } from '@/lib/client-state';
@@ -39,6 +39,7 @@ import {
 } from '@/lib/shared/types';
 import { cn } from '@/lib/utils';
 import { AIBarTrigger, AssistantChat } from './AIBar';
+import { MobileNavigation } from './MobileNavigation';
 import { Rail } from './Rail';
 import { ShortcutsBinding } from './ShortcutsBinding';
 import { ShortcutsSheet } from './ShortcutsSheet';
@@ -243,13 +244,10 @@ export function AppShell({
         >
           <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
           <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
-            <SidebarTrigger
-              title="Show sidebar"
-              className="absolute left-3 top-3 z-30 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            />
+            <MobileNavigation onSearch={() => useClientStore.getState().setPaletteOpen(true)} />
 
             {/* Mobile view: inbox stays mounted underneath so back returns instantly. */}
-            <div className="relative h-full w-full overflow-hidden">
+            <div className="relative min-h-0 w-full flex-1 overflow-hidden">
               <motion.div
                 animate={{ x: readerVisible ? '-22%' : '0%', opacity: readerVisible ? 0.72 : 1 }}
                 transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}

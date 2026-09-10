@@ -37,8 +37,11 @@ export const cloudFileSearch = defineTool({
     query: z.string().max(200).default(''),
     connectionId: z.string().max(500).optional(),
     limit: z.number().int().min(1).max(200).default(50),
+    cursor: z.string().max(16000).optional().describe('Continue a single connection; use with connectionId.'),
   }),
   output: z.object({
+    nextCursor: z.string().optional(),
+    hasMore: z.boolean().optional(),
     files: z.array(
       z.object({
         id: z.string(),
@@ -62,6 +65,7 @@ export const cloudFileSearch = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    if (args.cursor && !args.connectionId) throw new Error('connectionId is required with a cursor.');
     const connections = await dependencies.listCloudFileConnections(userId);
     const targets = args.connectionId
       ? connections.filter((connection) => connection.connectionId === args.connectionId)
@@ -73,6 +77,8 @@ export const cloudFileSearch = defineTool({
           userId,
           connectionId: connection.connectionId,
           query: args.query || undefined,
+          cursor: args.cursor,
+          pageSize: Math.min(args.limit, 100),
         }),
       ),
     );
@@ -105,7 +111,15 @@ export const cloudFileSearch = defineTool({
     if (errors.length && errors.length === targets.length) {
       throw new Error(errors.map((failure) => failure.error).join(' '));
     }
-    return { files, ...(errors.length ? { errors } : {}) };
+    const nextCursor =
+      targets.length === 1 && settled[0]?.status === 'fulfilled' ? settled[0].value.nextCursor : undefined;
+    const hasMore =
+      settled.some((result) => result.status === 'fulfilled' && !!result.value.nextCursor) ||
+      settled.reduce(
+        (count, result) => count + (result.status === 'fulfilled' ? result.value.items.length : 0),
+        0,
+      ) > args.limit;
+    return { files, hasMore, ...(nextCursor ? { nextCursor } : {}), ...(errors.length ? { errors } : {}) };
   },
 });
 

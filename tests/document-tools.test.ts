@@ -278,6 +278,27 @@ describe('document tools', () => {
 });
 
 describe('cloud file tools', () => {
+  test('exposes single-connection continuation without skipping a truncated provider page', async () => {
+    const browse = mock(async () => ({ items: [], nextCursor: 'next-page' }));
+    __setCloudFileToolDepsForTest({
+      listCloudFileConnections: (async () => [{ connectionId: 'drive', provider: 'google_drive' }]) as any,
+      browseCloudFiles: browse as any,
+    });
+    const result = await runTool(cloudFileSearch.handler, {
+      query: 'plan',
+      connectionId: 'drive',
+      cursor: 'previous',
+      limit: 12,
+    });
+    expect(result.nextCursor).toBe('next-page');
+    expect(result.hasMore).toBe(true);
+    expect(browse.mock.calls[0]).toEqual([
+      expect.objectContaining({ connectionId: 'drive', cursor: 'previous', pageSize: 12 }),
+    ]);
+    await expect(
+      runTool(cloudFileSearch.handler, { query: 'plan', cursor: 'previous', limit: 12 }),
+    ).rejects.toThrow('connectionId is required');
+  });
   test('searches every selected provider, tolerates one failure, and enforces connection identity', async () => {
     const browse = mock(async (input: any) => {
       if (input.connectionId === 'onedrive-1') throw new Error('provider unavailable');
