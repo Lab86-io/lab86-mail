@@ -2,9 +2,21 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { OfficeError, signOfficeToken, verifyOfficeToken } from './office-security';
 import { getOfficeFile, getOfficeSession, type OfficeFile, requireOffice } from './office-service';
 
+const defaultDependencies = {
+  convexMutation,
+  getOfficeFile,
+  getOfficeSession,
+  requireOffice,
+  fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+};
+let dependencies = defaultDependencies;
+export function __setCollaboraDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 export async function startCollaboraSession(userId: string, document: OfficeFile) {
-  const config = requireOffice();
-  const response = await fetch(`${config.server}/hosting/discovery`, {
+  const config = dependencies.requireOffice();
+  const response = await dependencies.fetch(`${config.server}/hosting/discovery`, {
     signal: AbortSignal.timeout(15_000),
     redirect: 'error',
   });
@@ -26,7 +38,7 @@ export async function startCollaboraSession(userId: string, document: OfficeFile
   if (target.origin !== config.server)
     throw new OfficeError('The document server returned an unexpected editor address.', 503);
   const sessionId = crypto.randomUUID();
-  const session = await convexMutation<{ ok: boolean; expiresAt?: number }>(
+  const session = await dependencies.convexMutation<{ ok: boolean; expiresAt?: number }>(
     (api as any).officeDocuments.startSession,
     {
       userId,
@@ -64,7 +76,7 @@ export async function startCollaboraSession(userId: string, document: OfficeFile
 }
 
 export async function wopiContext(request: Request, documentId: string) {
-  const config = requireOffice(true);
+  const config = dependencies.requireOffice(true);
   const token =
     new URL(request.url).searchParams.get('access_token') ||
     request.headers.get('authorization')?.replace(/^Bearer /i, '') ||
@@ -79,9 +91,9 @@ export async function wopiContext(request: Request, documentId: string) {
     typeof capability.sessionId !== 'string'
   )
     throw new OfficeError('Invalid document access token.', 401);
-  const session = await getOfficeSession(capability.userId, documentId, capability.sessionId);
+  const session = await dependencies.getOfficeSession(capability.userId, documentId, capability.sessionId);
   if (!session) throw new OfficeError('The editor session expired. Reopen the working copy.', 401);
-  const file = await getOfficeFile(capability.userId, documentId);
+  const file = await dependencies.getOfficeFile(capability.userId, documentId);
   if (!file?.version?.url) throw new OfficeError('Working copy not found.', 404);
   return { config, file, session, userId: capability.userId, sessionId: capability.sessionId };
 }

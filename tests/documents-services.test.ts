@@ -60,6 +60,42 @@ afterEach(() => {
 });
 
 describe('document AI proposal service', () => {
+  test('an incomplete generated deck is refused, including when filling a blank deck', async () => {
+    const brief = {
+      title: 'Release',
+      summary: 'Ready',
+      palette: 'ink',
+      slides: [{ layout: 'cover', title: 'A release', kicker: '', body: '', items: [], notes: '' }],
+    };
+    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: (async () => ({ object: brief })) as any });
+    await expect(
+      generateDocumentProposal({ userId: 'user-1', kind: 'deck', instruction: 'Create six slides' }),
+    ).rejects.toThrow('incomplete design');
+    const current = documentRecord('deck');
+    const result = await generateDocumentProposal({
+      userId: 'user-1',
+      kind: 'deck',
+      instruction: 'Fill in a one-slide recap',
+      current,
+    });
+    expect(result.model.kind).toBe('deck');
+    if (result.model.kind === 'deck') expect(result.model.slides[0].background).toBe('#182C40');
+    if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing content';
+    __setDocumentAiDepsForTest({
+      generateObjectForCurrentUser: (async () => ({
+        object: { title: 'Release', summary: 'Done', model: current.model },
+      })) as any,
+    });
+    await expect(
+      generateDocumentProposal({
+        userId: 'user-1',
+        kind: 'deck',
+        instruction: 'Expand to 6 slides',
+        current,
+      }),
+    ).rejects.toThrow('instead of the requested 6');
+  });
+
   test('a generated summary cannot claim an unchanged model was edited', async () => {
     const current = documentRecord('deck');
     if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing slide content';

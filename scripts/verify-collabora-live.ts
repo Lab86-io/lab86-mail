@@ -5,6 +5,7 @@ import { chromium } from 'playwright-core';
 import { getOfficeFile } from '../lib/documents/office-service';
 
 const fixture = JSON.parse(readFileSync('/tmp/chat-doc-collabora-sessions.json', 'utf8'));
+const appOrigin = new URL(new URL(fixture.files[0].session.editorUrl).searchParams.get('WOPISrc')!).origin;
 execFileSync(
   process.execPath,
   [
@@ -22,13 +23,13 @@ try {
     (item: any) => !process.env.OFFICE_VERIFY_KIND || item.kind === process.env.OFFICE_VERIFY_KIND,
   )) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
-    await page.route('https://mail-staging.lab86.io/__office-verification', (route) =>
+    await page.route(`${appOrigin}/__office-verification`, (route) =>
       route.fulfill({
         contentType: 'text/html',
         body: `<html><head><style>*{box-sizing:border-box}body{margin:0;font-family:Arial}.hidden{display:none}iframe{height:100%;width:100%;border:0}</style></head><body><div id="root"></div><script>window.__session=${JSON.stringify(file.session)}</script><script>${js.replaceAll('</script', '<\\/script')}</script></body></html>`,
       }),
     );
-    await page.route(`https://mail-staging.lab86.io/api/office/${file.documentId}`, async (route) =>
+    await page.route(`${appOrigin}/api/office/${file.documentId}`, async (route) =>
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({ document: await getOfficeFile(fixture.userId, file.documentId) }),
@@ -53,7 +54,7 @@ try {
     });
 
     page.on('pageerror', (e) => failures.push(e.message));
-    await page.goto('https://mail-staging.lab86.io/__office-verification');
+    await page.goto(`${appOrigin}/__office-verification`);
     try {
       await page.waitForFunction(
         () => ['Ready', 'Modified'].includes(document.getElementById('state')?.textContent || ''),

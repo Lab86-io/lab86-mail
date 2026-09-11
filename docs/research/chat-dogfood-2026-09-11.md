@@ -22,7 +22,7 @@ Chat attachments are uploaded once and represented by owned storage references. 
 
 ## Verification evidence
 
-- Full suite: 3,827 tests passed, including save receipts, no-op protection, conversion races, explicit slide counts, and legacy attachment compatibility.
+- Full suite: 3,833 tests passed, including save receipts, no-op protection, conversion races, explicit slide counts, and legacy attachment compatibility.
 - Typecheck and production build passed.
 - Actual workspace browser suite passed: attachments, corner/split/full layouts, streaming continuity through navigation/resizing, file review cards, editable canvas and no save on opening.
 - Live Google Docs, Sheets and Slides: export → edit → conditional same-ID update → reopen verified, and old version rejected. Only newly created synthetic files were used and moved to Trash.
