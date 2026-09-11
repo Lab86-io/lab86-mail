@@ -28,7 +28,7 @@ OFFICE_APP_ORIGIN=https://mail-staging.lab86.io
 OFFICE_JWT_SECRET=<unique random secret of at least 32 characters>
 ```
 
-Use `https://mail.lab86.io` as the production app origin. Do not reuse signing secrets across environments. `OFFICE_LICENSE_ACCEPTED` applies only to the existing ONLYOFFICE adapter; it is not needed for Collabora. Never put secrets in source control or browser configuration. Deploy the Convex schema/functions before the web app.
+Use `https://mail.lab86.io` as the production app origin. Do not reuse signing secrets across environments. `OFFICE_LICENSE_ACCEPTED` applies only to the existing ONLYOFFICE adapter; it is not needed for Collabora. Never put secrets in source control or browser configuration. Deploy the Convex schema/functions before the web app. Railway production uses `https://proficient-viper-594.convex.cloud`; development uses `https://precise-skunk-847.convex.cloud`. Confirm the target against that environment’s `NEXT_PUBLIC_CONVEX_URL` before deploying. The Convex CLI’s default production selection currently resolves to a different deployment, so use deployment-specific credentials and verify the printed URL.
 
 Only the exact WOPI file and contents routes bypass interactive authentication. Each validates an expiring, owner/document/session-bound capability. Other Office routes require the signed-in user. Locks serialize document-server writes; conflicting saves are retained as recovery versions. Google credentials and encrypted source-version sessions never enter editor configuration.
 

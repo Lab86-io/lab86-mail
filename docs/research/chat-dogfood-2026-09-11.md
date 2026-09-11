@@ -32,3 +32,5 @@ Chat attachments are uploaded once and represented by owned storage references. 
 See [deployment notes](../deployment/documents.md) for the pinned service, environment configuration, live harness and recovery behavior. Healthcheck success alone is not editor acceptance.
 
 Live embedded DOCX, XLSX and PPTX editing all passed against the deployed document server: browser edits → explicit Save → persisted receipt → stored archive verification. The CODE first-run dialog is dismissed in the browser harness; product code does not hide or misrepresent the free edition.
+
+Production verification passed for all three formats at `https://mail.lab86.io`: each browser edit created revision 2 with the expected stored content. Both production and development synthetic Office owners were cleaned up. The production test caught and resolved a Convex target mismatch before acceptance; the deployment guide records the actual Railway backend.
