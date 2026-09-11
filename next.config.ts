@@ -31,7 +31,13 @@ const config: NextConfig = {
       bodySizeLimit: '4mb',
     },
   },
-  serverExternalPackages: ['mailparser'],
+  serverExternalPackages: ['mailparser', 'jsdom', '@napi-rs/canvas'],
+  outputFileTracingIncludes: {
+    '/*': [
+      './node_modules/@odoo/owl/dist/owl.iife.js',
+      './node_modules/@odoo/o-spreadsheet/dist/o_spreadsheet.iife.js',
+    ],
+  },
   // Long-running SSE responses
   poweredByHeader: false,
 };

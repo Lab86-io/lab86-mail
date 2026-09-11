@@ -105,6 +105,7 @@ import {
   documentList,
   documentPublishGoogle,
   documentSuggestChanges,
+  spreadsheetCapabilitiesTool,
 } from './documents';
 import { cloudFileSearch, googleFileImport } from './files';
 import { googleDocumentEdit, googleDocumentGet } from './google-documents';
@@ -286,6 +287,7 @@ const allTools: AnyTool[] = [
   documentList,
   documentGet,
   documentSuggestChanges,
+  spreadsheetCapabilitiesTool,
   documentApplyInstruction,
   documentPublishGoogle,
   documentExport,

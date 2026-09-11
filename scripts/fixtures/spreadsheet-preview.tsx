@@ -128,6 +128,8 @@ globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input), location.origin);
   const method = init?.method || 'GET';
   calls.push(`${method} ${url.pathname}${url.search}`);
+  if (url.pathname === '/execute-sheet' || url.pathname === '/suite-workbook.json')
+    return realFetch(input, init);
   if (url.pathname.startsWith('/vendor/')) return realFetch(input, init);
   const documentMatch =
     url.pathname === '/api/documents/import' ? null : /^\/api\/documents\/([^/]+)$/u.exec(url.pathname);
@@ -170,15 +172,19 @@ globalThis.fetch = (async (input, init) => {
     bodies.push({ url: url.pathname, body: submitted });
     const current = state.documents.get(suggestionMatch[1]);
     if (submitted.decision === 'apply') {
-      if (!submitted.model || submitted.model.version !== 2)
-        return Response.json({ ok: false, error: 'Needs editor.', code: 'NEEDS_EDITOR' }, { status: 409 });
+      const suggestion = current.suggestions.find((item: any) => item.suggestionId === suggestionMatch[2]);
+      const applied = await realFetch('/execute-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: current.model, plan: suggestion.proposedModel }),
+      }).then((response) => response.json());
       await new Promise<void>((resolve) => {
         state.releaseSuggestion = resolve;
       });
       const next = {
         ...current,
         title: 'Add a contingency line',
-        model: submitted.model,
+        model: applied,
         currentRevision: current.currentRevision + 1,
         suggestions: [],
       };
@@ -240,6 +246,10 @@ globalThis.fetch = (async (input, init) => {
   return Response.json({ ok: false, error: 'Synthetic fixture: unexpected request' }, { status: 404 });
 }) as typeof fetch;
 
+if (scenario === 'suite') {
+  const model = await realFetch('/suite-workbook.json').then((response) => response.json());
+  state.documents.set('sheet-a', ownedDocument('sheet-a', 'Monthly commits', model));
+}
 createRoot(document.getElementById('root')!).render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <TooltipProvider>

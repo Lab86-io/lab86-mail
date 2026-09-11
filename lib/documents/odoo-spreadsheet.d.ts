@@ -101,6 +101,11 @@ declare module '@odoo/o-spreadsheet/dist/o_spreadsheet.esm.js' {
 
   /** Owl component class; typed loosely because Owl generics are not needed here. */
   export const Spreadsheet: any;
+  export const registries: {
+    topbarMenuRegistry: {
+      addChild(id: string, parents: string[], item: Record<string, unknown>): unknown;
+    };
+  };
 
   export function load(data?: unknown, verboseImport?: boolean): OdooWorkbookData;
 

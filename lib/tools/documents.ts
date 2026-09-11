@@ -12,6 +12,8 @@ import {
   listDocuments,
   updateDocument,
 } from '@/lib/documents/service';
+import { spreadsheetCapabilities, spreadsheetCommandNames } from '@/lib/documents/spreadsheet-commands';
+import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
 import { defineTool } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
@@ -28,6 +30,7 @@ const sourceRefSchema = z.object({
 });
 
 const defaultDependencies = {
+  applySpreadsheetChanges,
   archiveDocument,
   createDocument,
   createDocumentSuggestion,
@@ -185,6 +188,19 @@ export const documentGet = defineTool({
   },
 });
 
+export const spreadsheetCapabilitiesTool = defineTool({
+  name: 'spreadsheet_capabilities',
+  description:
+    'Discover the full Odoo spreadsheet editing suite: charts/graphs, styled tables, pivots, formatting, borders, conditional formats, validation, images, merges, filters, sorting, autofill, sheets, rows and columns. Call without commands for the catalog, then request command names for exact JSON schemas before using document_edit spreadsheet_command operations.',
+  category: 'documents',
+  mutating: false,
+  input: z.object({ commands: z.array(z.enum(spreadsheetCommandNames)).max(20).default([]) }),
+  output: z.any(),
+  async handler(args) {
+    return spreadsheetCapabilities(args.commands);
+  },
+});
+
 export const documentSuggestChanges = defineTool({
   name: 'document_suggest_changes',
   description:
@@ -273,34 +289,16 @@ export const documentApplyInstruction = defineTool({
       current: document,
       sourceContext: args.sourceContext,
     });
-    if (proposal.model.kind === 'sheet-changes' || isSheetWorkbookModel(document.model)) {
-      // The server cannot evaluate an engine workbook, so there is no direct
-      // apply. Leave a reviewable suggestion and say so instead of pretending.
-      const suggestion = await dependencies.createDocumentSuggestion({
-        userId,
-        documentId: document.documentId,
-        title: proposal.title,
-        description: proposal.summary,
-        proposedModel: proposal.model,
-        baseRevision,
-        sourceRefs: document.sourceRefs,
-      });
-      if (!suggestion.ok) throw new Error('The suggestion could not be saved. No edits were applied.');
-      return {
-        ok: false,
-        documentId: document.documentId,
-        title: document.title,
-        revision: document.currentRevision,
-        summary: `Not applied: engine spreadsheets take reviewable cell changes. Suggestion ${suggestion.suggestionId} is waiting in the editor: ${proposal.summary}`,
-        openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
-      };
-    }
+    const model =
+      proposal.model.kind === 'sheet-changes'
+        ? await dependencies.applySpreadsheetChanges(document.model, proposal.model)
+        : proposal.model;
     const result = await dependencies.updateDocument({
       userId,
       documentId: document.documentId,
       expectedRevision: baseRevision,
       title: proposal.title,
-      model: proposal.model,
+      model,
       reason: proposal.summary,
       actor: 'ai',
     });
@@ -378,7 +376,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements, or spreadsheet cells using IDs and revision from document_get. No second AI generation is needed. Default mode review creates a proposal; use apply only when the user explicitly asks you to change the file. Edits are atomic and cannot overwrite a newer revision. Odoo cell edits always become reviewable engine commands in the spreadsheet editor, never a false claim of an applied change. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -418,7 +416,7 @@ export const documentEdit = defineTool({
         summary: 'Nothing changed. Read the latest file and review your edits against its new revision.',
       };
     const proposedModel = prepareDocumentEdits(document.model, args.operations);
-    if (args.mode !== 'apply' || proposedModel.kind === 'sheet-changes') {
+    if (args.mode !== 'apply') {
       const suggestion = await dependencies.createDocumentSuggestion({
         userId,
         documentId: document.documentId,
@@ -436,7 +434,7 @@ export const documentEdit = defineTool({
         suggestionId: suggestion.suggestionId,
         summary:
           proposedModel.kind === 'sheet-changes'
-            ? `Not yet applied. Review and apply these cell changes in the spreadsheet editor: ${args.summary}`
+            ? `Not yet applied. Review these workbook changes in the spreadsheet editor: ${args.summary}`
             : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}`,
       };
     }
@@ -444,7 +442,10 @@ export const documentEdit = defineTool({
       userId,
       documentId: document.documentId,
       expectedRevision: args.expectedRevision,
-      model: proposedModel,
+      model:
+        proposedModel.kind === 'sheet-changes'
+          ? await dependencies.applySpreadsheetChanges(document.model, proposedModel)
+          : proposedModel,
       reason: args.summary,
       actor: 'ai',
     });

@@ -25,6 +25,7 @@ import {
   type SheetChangeSet,
   type SheetWorkbookModel,
 } from './sheet-workbook';
+import { spreadsheetImageStore } from './spreadsheet-image-store';
 import {
   assertSupportedContentTypes,
   inflateEntryText,
@@ -57,6 +58,40 @@ export const SPREADSHEET_TEMPLATES_URL = `${ODOO_SPREADSHEET_ASSET_BASE}/dist/o_
 const CONTENT_MESSAGE_TYPES = new Set(['REMOTE_REVISION', 'REVISION_UNDONE', 'REVISION_REDONE']);
 
 let loading: Promise<LoadedEngine> | null = null;
+
+export const SPREADSHEET_CHART_SCRIPTS = [
+  'chart.umd.js',
+  'chart-geo.umd.js',
+  'luxon.min.js',
+  'chart-luxon.umd.js',
+  'chart-treemap.js',
+];
+let chartLoading: Promise<void> | null = null;
+function loadChartLibraries(): Promise<void> {
+  chartLoading ??= (async () => {
+    // UMD add-ons register against Chart, and the date adapter requires Luxon.
+    for (const filename of SPREADSHEET_CHART_SCRIPTS) {
+      if (document.querySelector(`script[data-sheet-chart="${filename}"]`)) continue;
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `/vendor/spreadsheet-charts/${filename}`;
+        script.onload = () => {
+          script.dataset.sheetChart = filename;
+          resolve();
+        };
+        script.onerror = () => {
+          script.remove();
+          reject(new Error(`Could not load chart library ${filename}.`));
+        };
+        document.head.appendChild(script);
+      });
+    }
+  })().catch((error) => {
+    chartLoading = null;
+    throw error;
+  });
+  return chartLoading;
+}
 
 function ensureStylesheet(href: string) {
   const existing = document.querySelector<HTMLLinkElement>(`link[data-albatross-sheet="${href}"]`);
@@ -110,12 +145,20 @@ export function loadSpreadsheetEngine(): Promise<LoadedEngine> {
           return response.text();
         }),
         Promise.all(SPREADSHEET_STYLESHEETS.map(ensureStylesheet)),
+        loadChartLibraries(),
       ]);
       if (engine.__info__.version !== ODOO_SPREADSHEET_VERSION) {
         throw new Error(
           `Spreadsheet engine mismatch: bundle ${engine.__info__.version}, assets ${ODOO_SPREADSHEET_VERSION}.`,
         );
       }
+      engine.registries.topbarMenuRegistry.addChild('albatross_source', ['file'], {
+        name: 'About spreadsheet',
+        sequence: 900,
+        isReadonlyAllowed: true,
+        execute: () =>
+          window.open(`${ODOO_SPREADSHEET_ASSET_BASE}/NOTICE.md`, '_blank', 'noopener,noreferrer'),
+      });
       return { engine, owl, templates };
     })().catch((error) => {
       loading = null;
@@ -242,6 +285,7 @@ export function createSpreadsheetSession(options: SpreadsheetSessionOptions): Sp
     mode: options.readOnly ? 'readonly' : 'normal',
     transportService: new ReportingTransport(),
     client: { id: 'albatross-local', name: 'You' },
+    external: { fileStore: spreadsheetImageStore },
   });
   const wanted = options.model.version === 2 ? options.model.activeSheetId : options.model.activeSheetId;
   if (wanted && model.getters.getSheetIds().includes(wanted)) {
@@ -257,6 +301,8 @@ export function createSpreadsheetSession(options: SpreadsheetSessionOptions): Sp
       container.replaceChildren();
       const mountedApp = new owl.App(engine.Spreadsheet, {
         name: 'Albatross spreadsheet',
+        // Keep the complete spreadsheet menus available beside the chat panel.
+        env: { isSmall: false },
         props: {
           model,
           notifyUser: options.notifyUser,

@@ -1,11 +1,30 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { SPREADSHEET_CHART_SCRIPTS } from '../lib/documents/odoo-spreadsheet-engine';
 import {
   ODOO_OWL_VERSION,
   ODOO_SPREADSHEET_ASSET_BASE,
   ODOO_SPREADSHEET_VERSION,
 } from '../lib/documents/sheet-workbook';
+
+test('all chart renderers and the date adapter are pinned and distributed with licenses', async () => {
+  const base = 'public/vendor/spreadsheet-charts';
+  const manifest = JSON.parse(await readFile(`${base}/manifest.json`, 'utf8'));
+  expect(manifest.versions).toEqual({
+    'chart.js': '4.4.5',
+    'chartjs-chart-geo': '4.3.6',
+    luxon: '3.5.0',
+    'chartjs-adapter-luxon': '1.3.1',
+  });
+  for (const name of SPREADSHEET_CHART_SCRIPTS) expect(manifest.files[name]).toBeTruthy();
+  for (const [path, hash] of Object.entries(manifest.files))
+    expect(
+      createHash('sha256')
+        .update(await readFile(`${base}/${path}`))
+        .digest('hex'),
+    ).toBe(hash);
+});
 
 test('vendored runtime and corresponding source match the pinned manifest and installed package', async () => {
   const base = `public${ODOO_SPREADSHEET_ASSET_BASE}`;

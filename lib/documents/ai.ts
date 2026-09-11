@@ -3,6 +3,7 @@ import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
+  createDefaultDocumentModel,
   type DocumentKind,
   deckModelSchema,
   docModelSchema,
@@ -18,6 +19,13 @@ import {
   presentationSlideCountMatches,
 } from './presentation-design';
 import { MAX_SHEET_CHANGES, sheetChangeSchema, workbookText } from './sheet-workbook';
+import {
+  spreadsheetCapabilities,
+  spreadsheetCommandNames,
+  spreadsheetCommandSchema,
+  validateSpreadsheetCommand,
+} from './spreadsheet-commands';
+import { applySpreadsheetChanges } from './spreadsheet-server';
 
 const defaultDependencies = {
   generateObjectForCurrentUser,
@@ -50,12 +58,15 @@ function outputSchema(kind: DocumentKind) {
   });
 }
 
-const sheetChangesOutputSchema = z.object({
-  title: z.string().min(1).max(500),
-  summary: z.string().min(1).max(1_000),
-  changes: z.array(sheetChangeSchema).min(1).max(MAX_SHEET_CHANGES),
-  newSheets: z.array(z.string().min(1).max(200)).max(20).optional(),
-});
+const sheetChangesOutputSchema = z
+  .object({
+    title: z.string().min(1).max(500),
+    summary: z.string().min(1).max(1_000),
+    changes: z.array(sheetChangeSchema).max(MAX_SHEET_CHANGES),
+    newSheets: z.array(z.string().min(1).max(200)).max(20).optional(),
+    commands: z.array(spreadsheetCommandSchema).max(MAX_SHEET_CHANGES).optional(),
+  })
+  .refine((value) => value.changes.length + (value.commands?.length || 0) > 0);
 
 export interface DocumentProposal {
   title: string;
@@ -74,10 +85,9 @@ function modelGuidance(kind: DocumentKind) {
 }
 
 /**
- * Engine-backed workbooks are never regenerated wholesale: the server cannot
- * evaluate them, and a full rewrite would drop formatting, charts, and
- * validation. The model proposes cell-level changes that the editor applies
- * as undoable engine commands after the user reviews them.
+ * Workbooks are edited through Odoo commands instead of regenerated wholesale.
+ * The same versioned engine evaluates cell, style, chart, table, and other
+ * commands before a full snapshot is saved as a new revision.
  */
 async function generateSheetChangeSet(input: {
   userId: string;
@@ -87,7 +97,7 @@ async function generateSheetChangeSet(input: {
   current: AlbatrossDocumentRecord;
   sourceContext?: string;
 }): Promise<DocumentProposal> {
-  if (!isSheetWorkbookModel(input.current.model)) throw new Error('Expected an engine workbook.');
+  if (input.current.model.kind !== 'sheet') throw new Error('Expected a workbook.');
   const sources = input.sourceContext?.trim()
     ? `\nGrounding material:\n${input.sourceContext.trim().slice(0, 40_000)}`
     : '';
@@ -101,21 +111,28 @@ async function generateSheetChangeSet(input: {
     speed: 'primary',
     maxOutputTokens: 14_000,
     schema: sheetChangesOutputSchema,
-    system: `You are Albatross's spreadsheet assistant. The workbook below lists each sheet name followed by its non-empty cells as "A1: content". Propose only cell-level changes: give the exact sheet name, an A1 cell reference, and the new content. Formulas start with "=". Put names of sheets that do not exist yet in newSheets. Never invent data that is not in the workbook or grounding material. Return a concise title for the revision and a one-sentence summary.`,
-    prompt: `Current spreadsheet "${input.current.title}":\n${workbookText(input.current.model).slice(0, 120_000)}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+    system: `You are Albatross's spreadsheet assistant. Use the full Odoo workbook suite: real charts/graphs, styled tables, pivots, formatting, borders, conditional formats, validation, merges, sorting, and sheet structure. Return cell changes and/or commands using the exact JSON schemas below. For cell changes give the sheet ID or exact name, A1 reference, and content; Formulas start with "=". Put names of new sheets in newSheets, or CREATE_SHEET with an explicit ID before commands targeting it. Cell changes run before commands; use UPDATE_CELL commands when operation ordering matters. Use real CREATE_CHART figures for charts, never text bars. REPT is NOT a supported Odoo function. Never invent data that is not in the workbook or grounding material. Preserve all unrelated workbook features. Return a concise title and summary.\nCommand contracts:\n${JSON.stringify(spreadsheetCapabilities(spreadsheetCommandNames))}`,
+    prompt: `Current spreadsheet "${input.current.title}":\n${(isSheetWorkbookModel(input.current.model) ? workbookText(input.current.model) : JSON.stringify(input.current.model)).slice(0, 120_000)}\nWorkbook structure and existing features:\n${JSON.stringify(isSheetWorkbookModel(input.current.model) ? { ...input.current.model.workbook, sheets: input.current.model.workbook.sheets.map(({ cells: _cells, ...sheet }) => sheet) } : input.current.model).slice(0, 60_000)}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
   });
   let parsed: z.infer<typeof sheetChangesOutputSchema>;
   try {
     parsed = sheetChangesOutputSchema.parse(object);
+    parsed.commands?.forEach(validateSpreadsheetCommand);
   } catch (error) {
-    throw new DocumentGenerationError('The spreadsheet model returned invalid cell changes.', {
+    throw new DocumentGenerationError('The spreadsheet model returned invalid workbook changes.', {
       cause: error,
     });
   }
   return {
     title: parsed.title,
     summary: parsed.summary,
-    model: { kind: 'sheet-changes', version: 1, changes: parsed.changes, newSheets: parsed.newSheets },
+    model: {
+      kind: 'sheet-changes',
+      version: 1,
+      changes: parsed.changes,
+      newSheets: parsed.newSheets,
+      ...(parsed.commands ? { commands: parsed.commands } : {}),
+    },
   };
 }
 
@@ -156,8 +173,24 @@ export async function generateDocumentProposal(input: {
       });
     }
   }
-  if (input.current && isSheetWorkbookModel(input.current.model)) {
-    return generateSheetChangeSet({ ...input, current: input.current });
+  if (input.kind === 'sheet') {
+    const current = input.current || {
+      documentId: 'new-workbook',
+      title: 'Untitled spreadsheet',
+      kind: 'sheet' as const,
+      currentRevision: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      sourceRefs: [],
+      model: createDefaultDocumentModel('sheet', 'new-workbook'),
+    };
+    const proposal = await generateSheetChangeSet({ ...input, current });
+    return input.current
+      ? proposal
+      : {
+          ...proposal,
+          model: await applySpreadsheetChanges(current.model, proposal.model as SheetChangeSet),
+        };
   }
   const schema = outputSchema(input.kind);
   const current = input.current

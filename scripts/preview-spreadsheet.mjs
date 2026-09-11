@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/postcss';
 import { build, file, serve } from 'bun';
 import postcss from 'postcss';
+import { createDefaultDocumentModel } from '../lib/documents/model.ts';
+import { applySpreadsheetChanges } from '../lib/documents/spreadsheet-server.ts';
 import { GROTESK_FONT_FAMILY } from '../lib/theme/font-families.ts';
+import { changes, suiteCommands } from './fixtures/spreadsheet-suite-plan.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const built = await build({
@@ -40,11 +43,23 @@ const styles = await postcss([tailwindcss({ base: root })]).process(await readFi
   from: cssFile,
 });
 const previewStyles = `${fontFaces}\n${styles.css}\n:root{${fontVariables};--font-hanken:${GROTESK_FONT_FAMILY}}`;
+const suiteWorkbook = await applySpreadsheetChanges(createDefaultDocumentModel('sheet', 'suite'), {
+  kind: 'sheet-changes',
+  version: 1,
+  changes,
+  commands: suiteCommands,
+});
 const server = serve({
   hostname: '127.0.0.1',
   port: 18846,
   fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path === '/suite-workbook.json') return Response.json(suiteWorkbook);
+    if (path === '/execute-sheet' && request.method === 'POST')
+      return request
+        .json()
+        .then(({ model, plan }) => applySpreadsheetChanges(model, plan))
+        .then((result) => Response.json(result));
     if (path === '/favicon.ico') return new Response(null, { status: 204 });
     if (path === '/preview.js')
       return new Response(script, { headers: { 'content-type': 'text/javascript' } });

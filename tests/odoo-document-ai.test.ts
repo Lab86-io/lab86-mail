@@ -82,10 +82,15 @@ describe('engine-backed spreadsheet AI proposals', () => {
       speed: 'primary',
       maxOutputTokens: 14_000,
     });
-    expect(request.prompt).toBe(
-      'Current spreadsheet "Launch forecast":\nForecast\nA1: Revenue\nB1: Projected\nA2: 40\nB2: =A2*2\nGrounding material:\nMeeting: use only the current forecast values.\n\nUser instruction:\nAdd a summary of the supplied forecast.',
+    expect(request.prompt).toContain(
+      'Current spreadsheet "Launch forecast":\nForecast\nA1: Revenue\nB1: Projected\nA2: 40\nB2: =A2*2',
     );
-    expect(request.system).toContain('Propose only cell-level changes');
+    expect(request.prompt).toContain(
+      'Grounding material:\nMeeting: use only the current forecast values.\n\nUser instruction:\nAdd a summary of the supplied forecast.',
+    );
+    expect(request.system).toContain('full Odoo workbook suite');
+    expect(request.system).toContain('CREATE_CHART');
+    expect(request.prompt).toContain('figures');
     expect(request.system).toContain('Formulas start with "="');
     expect(request.system).toContain('Never invent data');
     expect(request.system).toContain('newSheets');
@@ -111,9 +116,12 @@ describe('engine-backed spreadsheet AI proposals', () => {
       instruction: `  ${'i'.repeat(20_010)}  `,
       sourceContext: `  ${'s'.repeat(40_010)}  `,
     });
-    expect(gateway.mock.calls[0][0].prompt).toBe(
-      `Current spreadsheet "Launch forecast":\n${workbookText(current.model).slice(0, 120_000)}\nGrounding material:\n${'s'.repeat(40_000)}\n\nUser instruction:\n${'i'.repeat(20_000)}`,
-    );
+    const prompt = gateway.mock.calls[0][0].prompt;
+    expect(prompt).toContain(workbookText(current.model).slice(0, 120_000));
+    expect(prompt).toContain(`Grounding material:\n${'s'.repeat(40_000)}`);
+    expect(prompt).not.toContain('s'.repeat(40_001));
+    expect(prompt).toEndWith('i'.repeat(20_000));
+    expect(prompt).not.toContain('i'.repeat(20_001));
   });
 
   test.each([
@@ -169,7 +177,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
       } catch (error) {
         expect(error).toBeInstanceOf(DocumentGenerationError);
         expect((error as Error).name).toBe('DocumentGenerationError');
-        expect((error as Error).message).toBe('The spreadsheet model returned invalid cell changes.');
+        expect((error as Error).message).toBe('The spreadsheet model returned invalid workbook changes.');
         expect((error as Error).cause).toBeInstanceOf(ZodError);
       }
     }
@@ -192,16 +200,32 @@ describe('engine-backed spreadsheet AI proposals', () => {
     ).rejects.toBe(timeout);
   });
 
-  test('retains full-model generation for legacy sheets until the editor upgrades them', async () => {
+  test('legacy sheets also receive full workbook commands', async () => {
     const current = { ...currentWorkbook(), model: createDefaultDocumentModel('sheet', 'legacy') };
-    const output = { title: 'Legacy calculation', summary: 'Add totals', model: current.model };
+    const output = {
+      title: 'Style the header',
+      summary: 'Bold header',
+      changes: [],
+      commands: [
+        {
+          type: 'SET_FORMATTING',
+          payload: {
+            sheetId: 'legacy-sheet-1',
+            target: [{ top: 0, bottom: 0, left: 0, right: 1 }],
+            style: { bold: true },
+          },
+        },
+      ],
+    };
     const gateway = mock(async (_input: any) => ({ object: output }));
     __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
-    expect(
-      await generateDocumentProposal({ userId: 'owner', kind: 'sheet', current, instruction: 'Sum costs' }),
-    ).toEqual(output);
-    expect(gateway.mock.calls[0][0].system).toContain('Return the full model');
-    expect(gateway.mock.calls[0][0].feature).toBe('document_suggestion');
-    expect(gateway.mock.calls[0][0].prompt).toContain('"version":1');
+    const result = await generateDocumentProposal({
+      userId: 'owner',
+      kind: 'sheet',
+      current,
+      instruction: 'Bold header',
+    });
+    expect(result.model).toMatchObject({ kind: 'sheet-changes', commands: output.commands });
+    expect(gateway.mock.calls[0][0].system).toContain('CREATE_CHART');
   });
 });

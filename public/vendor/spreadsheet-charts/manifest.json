@@ -1,0 +1,19 @@
+{
+  "versions": {
+    "chart.js": "4.4.5",
+    "chartjs-chart-geo": "4.3.6",
+    "luxon": "3.5.0",
+    "chartjs-adapter-luxon": "1.3.1"
+  },
+  "files": {
+    "chart.umd.js": "3cee8648e86dd1c7d077481e06af78a9bac4e0873e2508ce63868e3d5cb406f7",
+    "chart-LICENSE.md": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce",
+    "chart-geo.umd.js": "899373977d0af3563a2a271a3504772f88dbe5bd9c3234a204082c0b691aaed0",
+    "chart-geo-LICENSE": "187ae1ff295e4dcaacf8a290e5d1052e38559c01c0ea1d790c9a3dcdaa960a2a",
+    "luxon.min.js": "fd365dbd60506d97604fde4080c17a9c32f28e17b741d38ca70e152e791c82ae",
+    "luxon-LICENSE.md": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006",
+    "chart-luxon.umd.js": "aa4f88f51685e7b22e9bd54b727d196168ee85b8ce5ce082c0197ec676976b5b",
+    "chart-luxon-LICENSE.md": "b4b8355c2cd2b18354980a0c6422181d7bd6e895d94ae88b3570e97c60eea03d",
+    "chart-treemap.js": "ba767739aee7b9f89713dff575136af9cf1783abc925ff569151ec5cc54bb0b6"
+  }
+}

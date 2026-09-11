@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { createDocumentSuggestion, getDocument, updateDocument } from '@/lib/documents/service';
+import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -65,13 +66,16 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
         current: document,
         sourceContext: input.sourceContext,
       });
-      if (input.mode === 'apply' && proposal.model.kind !== 'sheet-changes') {
+      if (input.mode === 'apply') {
         const result = await deps.updateDocument({
           userId: user.userId,
           documentId,
           expectedRevision: baseRevision,
           title: proposal.title,
-          model: proposal.model,
+          model:
+            proposal.model.kind === 'sheet-changes'
+              ? await applySpreadsheetChanges(document.model, proposal.model)
+              : proposal.model,
           reason: proposal.summary,
           actor: 'ai',
         });
@@ -100,11 +104,6 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
       return NextResponse.json({
         ok: true,
         applied: false,
-        ...(input.mode === 'apply'
-          ? {
-              note: 'Engine spreadsheets take reviewable cell changes; open the file to apply this suggestion.',
-            }
-          : {}),
         suggestion: {
           suggestionId: suggestion.suggestionId,
           documentId,

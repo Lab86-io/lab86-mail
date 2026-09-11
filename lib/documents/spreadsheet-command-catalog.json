@@ -1,0 +1,9262 @@
+{
+  "version": "19.0.50",
+  "commit": "e4992587245f832c0dbf361b1f23f14b74613d4e",
+  "commands": {
+    "UPDATE_CELL": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T0"
+      }
+    },
+    "UPDATE_CELL_POSITION": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T2"
+      }
+    },
+    "CLEAR_CELL": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T3"
+      }
+    },
+    "CLEAR_CELLS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T4"
+      }
+    },
+    "DELETE_CONTENT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T6"
+      }
+    },
+    "ADD_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T7"
+      }
+    },
+    "REMOVE_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T8"
+      }
+    },
+    "RESIZE_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T9"
+      }
+    },
+    "HIDE_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T10"
+      }
+    },
+    "UNHIDE_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T11"
+      }
+    },
+    "SET_GRID_LINES_VISIBILITY": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T12"
+      }
+    },
+    "FREEZE_COLUMNS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T13"
+      }
+    },
+    "FREEZE_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T14"
+      }
+    },
+    "UNFREEZE_COLUMNS_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T15"
+      }
+    },
+    "UNFREEZE_COLUMNS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T16"
+      }
+    },
+    "UNFREEZE_ROWS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T17"
+      }
+    },
+    "ADD_MERGE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T18"
+      }
+    },
+    "REMOVE_MERGE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T19"
+      }
+    },
+    "CREATE_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T20"
+      }
+    },
+    "DELETE_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T21"
+      }
+    },
+    "DUPLICATE_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T22"
+      }
+    },
+    "MOVE_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T23"
+      }
+    },
+    "RENAME_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T24"
+      }
+    },
+    "COLOR_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T25"
+      }
+    },
+    "HIDE_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T26"
+      }
+    },
+    "SHOW_SHEET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T27"
+      }
+    },
+    "MOVE_RANGES": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T28"
+      }
+    },
+    "ADD_CONDITIONAL_FORMAT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T29"
+      }
+    },
+    "REMOVE_CONDITIONAL_FORMAT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T41"
+      }
+    },
+    "CHANGE_CONDITIONAL_FORMAT_PRIORITY": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T42"
+      }
+    },
+    "CREATE_FIGURE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T43"
+      }
+    },
+    "DELETE_FIGURE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T46"
+      }
+    },
+    "UPDATE_FIGURE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T47"
+      }
+    },
+    "CREATE_CAROUSEL": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T48"
+      }
+    },
+    "UPDATE_CAROUSEL": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T53"
+      }
+    },
+    "SET_FORMATTING": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T54"
+      }
+    },
+    "CLEAR_FORMATTING": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T55"
+      }
+    },
+    "SET_ZONE_BORDERS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T56"
+      }
+    },
+    "SET_BORDER": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T58"
+      }
+    },
+    "SET_BORDERS_ON_TARGET": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T61"
+      }
+    },
+    "CREATE_CHART": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T62"
+      }
+    },
+    "UPDATE_CHART": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T89"
+      }
+    },
+    "DELETE_CHART": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T90"
+      }
+    },
+    "CREATE_IMAGE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T91"
+      }
+    },
+    "CREATE_TABLE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T93"
+      }
+    },
+    "REMOVE_TABLE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T95"
+      }
+    },
+    "UPDATE_TABLE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T96"
+      }
+    },
+    "CREATE_TABLE_STYLE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T98"
+      }
+    },
+    "REMOVE_TABLE_STYLE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T99"
+      }
+    },
+    "GROUP_HEADERS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T100"
+      }
+    },
+    "UNGROUP_HEADERS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T101"
+      }
+    },
+    "UNFOLD_HEADER_GROUP": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T102"
+      }
+    },
+    "FOLD_HEADER_GROUP": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T103"
+      }
+    },
+    "FOLD_ALL_HEADER_GROUPS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T104"
+      }
+    },
+    "UNFOLD_ALL_HEADER_GROUPS": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T105"
+      }
+    },
+    "UNFOLD_HEADER_GROUPS_IN_ZONE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T106"
+      }
+    },
+    "FOLD_HEADER_GROUPS_IN_ZONE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T107"
+      }
+    },
+    "ADD_DATA_VALIDATION_RULE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T108"
+      }
+    },
+    "REMOVE_DATA_VALIDATION_RULE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T136"
+      }
+    },
+    "UPDATE_LOCALE": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T137"
+      }
+    },
+    "ADD_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T139"
+      }
+    },
+    "UPDATE_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T153"
+      }
+    },
+    "INSERT_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T154"
+      }
+    },
+    "RENAME_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T159"
+      }
+    },
+    "REMOVE_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T160"
+      }
+    },
+    "DUPLICATE_PIVOT": {
+      "kind": "core",
+      "schema": {
+        "$ref": "#/$defs/T161"
+      }
+    },
+    "COPY": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T162"
+      }
+    },
+    "CUT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T163"
+      }
+    },
+    "PASTE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T164"
+      }
+    },
+    "COPY_PASTE_CELLS_ABOVE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T165"
+      }
+    },
+    "COPY_PASTE_CELLS_ON_LEFT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T166"
+      }
+    },
+    "REPEAT_PASTE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T167"
+      }
+    },
+    "AUTOFILL_CELL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T168"
+      }
+    },
+    "AUTORESIZE_COLUMNS": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T169"
+      }
+    },
+    "AUTORESIZE_ROWS": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T170"
+      }
+    },
+    "MOVE_COLUMNS_ROWS": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T171"
+      }
+    },
+    "ACTIVATE_SHEET": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T172"
+      }
+    },
+    "AUTOFILL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T173"
+      }
+    },
+    "AUTOFILL_SELECT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T174"
+      }
+    },
+    "AUTOFILL_TABLE_COLUMN": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T175"
+      }
+    },
+    "SET_FORMULA_VISIBILITY": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T176"
+      }
+    },
+    "AUTOFILL_AUTO": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T177"
+      }
+    },
+    "REPLACE_SEARCH": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T178"
+      }
+    },
+    "SORT_CELLS": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T185"
+      }
+    },
+    "SET_DECIMAL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T187"
+      }
+    },
+    "SET_FORMATTING_WITH_PIVOT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T188"
+      }
+    },
+    "SUM_SELECTION": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T189"
+      }
+    },
+    "DELETE_CELL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T190"
+      }
+    },
+    "INSERT_CELL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T191"
+      }
+    },
+    "SHIFT_VIEWPORT_DOWN": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T192"
+      }
+    },
+    "SHIFT_VIEWPORT_UP": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T193"
+      }
+    },
+    "SCROLL_TO_CELL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T194"
+      }
+    },
+    "ACTIVATE_NEXT_SHEET": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T195"
+      }
+    },
+    "ACTIVATE_PREVIOUS_SHEET": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T196"
+      }
+    },
+    "UPDATE_FILTER": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T197"
+      }
+    },
+    "SPLIT_TEXT_INTO_COLUMNS": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T200"
+      }
+    },
+    "REMOVE_DUPLICATES": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T201"
+      }
+    },
+    "TRIM_WHITESPACE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T202"
+      }
+    },
+    "RESIZE_TABLE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T203"
+      }
+    },
+    "REFRESH_PIVOT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T204"
+      }
+    },
+    "INSERT_NEW_PIVOT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T205"
+      }
+    },
+    "DUPLICATE_PIVOT_IN_NEW_SHEET": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T206"
+      }
+    },
+    "INSERT_PIVOT_WITH_TABLE": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T207"
+      }
+    },
+    "SPLIT_PIVOT_FORMULA": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T208"
+      }
+    },
+    "PAINT_FORMAT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T209"
+      }
+    },
+    "DELETE_UNFILTERED_CONTENT": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T210"
+      }
+    },
+    "TOGGLE_CHECKBOX": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T211"
+      }
+    },
+    "ADD_NEW_CHART_TO_CAROUSEL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T212"
+      }
+    },
+    "ADD_FIGURE_CHART_TO_CAROUSEL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T213"
+      }
+    },
+    "UPDATE_CAROUSEL_ACTIVE_ITEM": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T214"
+      }
+    },
+    "POPOUT_CHART_FROM_CAROUSEL": {
+      "kind": "local",
+      "schema": {
+        "$ref": "#/$defs/T215"
+      }
+    }
+  },
+  "functions": [
+    "ABS",
+    "ACCRINTM",
+    "ACOS",
+    "ACOSH",
+    "ACOT",
+    "ACOTH",
+    "ADD",
+    "ADDRESS",
+    "AMORLINC",
+    "AND",
+    "ARRAY.CONSTRAIN",
+    "ASIN",
+    "ASINH",
+    "ATAN",
+    "ATAN2",
+    "ATANH",
+    "AVEDEV",
+    "AVERAGE",
+    "AVERAGE.WEIGHTED",
+    "AVERAGEA",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "CEILING",
+    "CEILING.MATH",
+    "CEILING.PRECISE",
+    "CELL",
+    "CHAR",
+    "CHOOSECOLS",
+    "CHOOSEROWS",
+    "CLEAN",
+    "COLUMN",
+    "COLUMNS",
+    "CONCAT",
+    "CONCATENATE",
+    "CONVERT",
+    "COS",
+    "COSH",
+    "COT",
+    "COTH",
+    "COUNT",
+    "COUNTA",
+    "COUNTBLANK",
+    "COUNTIF",
+    "COUNTIFS",
+    "COUNTUNIQUE",
+    "COUNTUNIQUEIFS",
+    "COUPDAYBS",
+    "COUPDAYS",
+    "COUPDAYSNC",
+    "COUPNCD",
+    "COUPNUM",
+    "COUPPCD",
+    "COVAR",
+    "COVARIANCE.P",
+    "COVARIANCE.S",
+    "CSC",
+    "CSCH",
+    "CUMIPMT",
+    "CUMPRINC",
+    "DATE",
+    "DATEDIF",
+    "DATEVALUE",
+    "DAVERAGE",
+    "DAY",
+    "DAYS",
+    "DAYS360",
+    "DB",
+    "DCOUNT",
+    "DCOUNTA",
+    "DDB",
+    "DECIMAL",
+    "DEGREES",
+    "DELTA",
+    "DGET",
+    "DISC",
+    "DIVIDE",
+    "DMAX",
+    "DMIN",
+    "DOLLARDE",
+    "DOLLARFR",
+    "DPRODUCT",
+    "DSTDEV",
+    "DSTDEVP",
+    "DSUM",
+    "DURATION",
+    "DVAR",
+    "DVARP",
+    "EDATE",
+    "EFFECT",
+    "EOMONTH",
+    "EQ",
+    "EXACT",
+    "EXP",
+    "EXPAND",
+    "FILTER",
+    "FIND",
+    "FLATTEN",
+    "FLOOR",
+    "FLOOR.MATH",
+    "FLOOR.PRECISE",
+    "FORMAT.LARGE.NUMBER",
+    "FREQUENCY",
+    "FV",
+    "FVSCHEDULE",
+    "GT",
+    "GTE",
+    "HLOOKUP",
+    "HOUR",
+    "HSTACK",
+    "HYPERLINK",
+    "IF",
+    "IFERROR",
+    "IFNA",
+    "IFS",
+    "INT",
+    "INTRATE",
+    "IPMT",
+    "IRR",
+    "ISBLANK",
+    "ISERR",
+    "ISERROR",
+    "ISEVEN",
+    "ISFORMULA",
+    "ISLOGICAL",
+    "ISNA",
+    "ISNONTEXT",
+    "ISNUMBER",
+    "ISO.CEILING",
+    "ISODD",
+    "ISOWEEKNUM",
+    "ISPMT",
+    "ISTEXT",
+    "JOIN",
+    "LARGE",
+    "LEFT",
+    "LEN",
+    "LN",
+    "LOG",
+    "LOOKUP",
+    "LOWER",
+    "LT",
+    "LTE",
+    "MATCH",
+    "MAX",
+    "MAXA",
+    "MAXIFS",
+    "MDETERM",
+    "MDURATION",
+    "MEDIAN",
+    "MID",
+    "MIN",
+    "MINA",
+    "MINIFS",
+    "MINUS",
+    "MINUTE",
+    "MINVERSE",
+    "MIRR",
+    "MMULT",
+    "MOD",
+    "MONTH",
+    "MONTH.END",
+    "MONTH.START",
+    "MULTIPLY",
+    "MUNIT",
+    "NA",
+    "NE",
+    "NETWORKDAYS",
+    "NETWORKDAYS.INTL",
+    "NOMINAL",
+    "NOT",
+    "NOW",
+    "NPER",
+    "NPV",
+    "ODD",
+    "OFFSET",
+    "OR",
+    "PDURATION",
+    "PERCENTILE",
+    "PERCENTILE.EXC",
+    "PERCENTILE.INC",
+    "PI",
+    "PIVOT",
+    "PIVOT.HEADER",
+    "PIVOT.VALUE",
+    "PMT",
+    "POW",
+    "POWER",
+    "PPMT",
+    "PRICE",
+    "PRICEDISC",
+    "PRICEMAT",
+    "PRODUCT",
+    "PROPER",
+    "PV",
+    "QUARTER",
+    "QUARTER.END",
+    "QUARTER.START",
+    "QUARTILE",
+    "QUARTILE.EXC",
+    "QUARTILE.INC",
+    "RAND",
+    "RANDARRAY",
+    "RANDBETWEEN",
+    "RATE",
+    "RECEIVED",
+    "REGEXEXTRACT",
+    "REPLACE",
+    "RIGHT",
+    "ROUND",
+    "ROUNDDOWN",
+    "ROUNDUP",
+    "ROW",
+    "ROWS",
+    "RRI",
+    "SEARCH",
+    "SEC",
+    "SECH",
+    "SECOND",
+    "SEQUENCE",
+    "SIN",
+    "SINH",
+    "SLN",
+    "SMALL",
+    "SPLIT",
+    "SQRT",
+    "STDEV",
+    "STDEV.P",
+    "STDEV.S",
+    "STDEVA",
+    "STDEVP",
+    "STDEVPA",
+    "SUBSTITUTE",
+    "SUBTOTAL",
+    "SUM",
+    "SUMIF",
+    "SUMIFS",
+    "SUMPRODUCT",
+    "SUMX2MY2",
+    "SUMX2PY2",
+    "SUMXMY2",
+    "SWITCH",
+    "SYD",
+    "TAN",
+    "TANH",
+    "TBILLEQ",
+    "TBILLPRICE",
+    "TBILLYIELD",
+    "TEXT",
+    "TEXTAFTER",
+    "TEXTBEFORE",
+    "TEXTJOIN",
+    "TEXTSPLIT",
+    "TIME",
+    "TIMEVALUE",
+    "TOCOL",
+    "TODAY",
+    "TOROW",
+    "TRANSPOSE",
+    "TRIM",
+    "TRUNC",
+    "UMINUS",
+    "UNARY.PERCENT",
+    "UNIQUE",
+    "UPLUS",
+    "UPPER",
+    "VALUE",
+    "VAR",
+    "VAR.P",
+    "VAR.S",
+    "VARA",
+    "VARP",
+    "VARPA",
+    "VDB",
+    "VLOOKUP",
+    "VSTACK",
+    "WEEKDAY",
+    "WEEKNUM",
+    "WORKDAY",
+    "WORKDAY.INTL",
+    "WRAPCOLS",
+    "WRAPROWS",
+    "XIRR",
+    "XLOOKUP",
+    "XNPV",
+    "XOR",
+    "YEAR",
+    "YEAR.END",
+    "YEAR.START",
+    "YEARFRAC",
+    "YIELD",
+    "YIELDDISC",
+    "YIELDMAT"
+  ],
+  "$defs": {
+    "T1": {
+      "type": "object",
+      "properties": {
+        "bold": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "italic": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "strikethrough": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "underline": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "align": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "center"
+            }
+          ]
+        },
+        "wrapping": {
+          "anyOf": [
+            {
+              "const": "overflow"
+            },
+            {
+              "const": "wrap"
+            },
+            {
+              "const": "clip"
+            }
+          ]
+        },
+        "verticalAlign": {
+          "anyOf": [
+            {
+              "const": "top"
+            },
+            {
+              "const": "middle"
+            },
+            {
+              "const": "bottom"
+            }
+          ]
+        },
+        "fillColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "textColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "fontSize": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T0": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_CELL"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/T1"
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T2": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_CELL_POSITION"
+        },
+        "cellId": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T3": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CLEAR_CELL"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T5": {
+      "type": "object",
+      "properties": {
+        "left": {
+          "type": "number"
+        },
+        "right": {
+          "type": "number"
+        },
+        "top": {
+          "type": "number"
+        },
+        "bottom": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ],
+      "additionalProperties": false
+    },
+    "T4": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CLEAR_CELLS"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T6": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_CONTENT"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T7": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_COLUMNS_ROWS"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "base": {
+          "type": "number"
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "const": "before"
+            },
+            {
+              "const": "after"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "sheetName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "base",
+        "quantity",
+        "position",
+        "sheetId",
+        "sheetName"
+      ],
+      "additionalProperties": false
+    },
+    "T8": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_COLUMNS_ROWS"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "elements",
+        "sheetId",
+        "dimension",
+        "sheetName"
+      ],
+      "additionalProperties": false
+    },
+    "T9": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "RESIZE_COLUMNS_ROWS"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "elements",
+        "size",
+        "sheetId",
+        "dimension"
+      ],
+      "additionalProperties": false
+    },
+    "T10": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "HIDE_COLUMNS_ROWS"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "elements",
+        "sheetId",
+        "dimension"
+      ],
+      "additionalProperties": false
+    },
+    "T11": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNHIDE_COLUMNS_ROWS"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "elements",
+        "sheetId",
+        "dimension"
+      ],
+      "additionalProperties": false
+    },
+    "T12": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_GRID_LINES_VISIBILITY"
+        },
+        "areGridLinesVisible": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "areGridLinesVisible",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T13": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FREEZE_COLUMNS"
+        },
+        "quantity": {
+          "type": "number",
+          "description": "number of columns frozen"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "quantity",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T14": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FREEZE_ROWS"
+        },
+        "quantity": {
+          "type": "number",
+          "description": "number of frozen rows"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "quantity",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T15": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFREEZE_COLUMNS_ROWS"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T16": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFREEZE_COLUMNS"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T17": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFREEZE_ROWS"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T18": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_MERGE"
+        },
+        "force": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T19": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_MERGE"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T20": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_SHEET"
+        },
+        "position": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cols": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "rows": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "position",
+        "name",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T21": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_SHEET"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "sheetName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "sheetName"
+      ],
+      "additionalProperties": false
+    },
+    "T22": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DUPLICATE_SHEET"
+        },
+        "sheetIdTo": {
+          "type": "string"
+        },
+        "sheetNameTo": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetIdTo",
+        "sheetNameTo",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T23": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "MOVE_SHEET"
+        },
+        "delta": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "delta",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T24": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "RENAME_SHEET"
+        },
+        "newName": {
+          "type": "string"
+        },
+        "oldName": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "newName",
+        "oldName",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T25": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "COLOR_SHEET"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T26": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "HIDE_SHEET"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T27": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SHOW_SHEET"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T28": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "MOVE_RANGES"
+        },
+        "targetSheetId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        },
+        "sheetName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "targetSheetId",
+        "sheetId",
+        "col",
+        "row",
+        "target",
+        "sheetName"
+      ],
+      "additionalProperties": false
+    },
+    "T31": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CellIsRule"
+        },
+        "operator": {
+          "anyOf": [
+            {
+              "const": "beginsWithText"
+            },
+            {
+              "const": "isBetween"
+            },
+            {
+              "const": "containsText"
+            },
+            {
+              "const": "isEmpty"
+            },
+            {
+              "const": "isNotEmpty"
+            },
+            {
+              "const": "endsWithText"
+            },
+            {
+              "const": "isEqual"
+            },
+            {
+              "const": "isGreaterThan"
+            },
+            {
+              "const": "isGreaterOrEqualTo"
+            },
+            {
+              "const": "isLessThan"
+            },
+            {
+              "const": "isLessOrEqualTo"
+            },
+            {
+              "const": "isNotBetween"
+            },
+            {
+              "const": "notContainsText"
+            },
+            {
+              "const": "isNotEqual"
+            },
+            {
+              "const": "customFormula"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "style": {
+          "$ref": "#/$defs/T1"
+        }
+      },
+      "required": [
+        "type",
+        "operator",
+        "values",
+        "style"
+      ],
+      "additionalProperties": false
+    },
+    "T33": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "number"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "number"
+            },
+            {
+              "const": "value"
+            },
+            {
+              "const": "percentage"
+            },
+            {
+              "const": "percentile"
+            },
+            {
+              "const": "formula"
+            }
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "color",
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T34": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "number"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "number"
+            },
+            {
+              "const": "percentage"
+            },
+            {
+              "const": "percentile"
+            },
+            {
+              "const": "formula"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "color",
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "T32": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ColorScaleRule"
+        },
+        "minimum": {
+          "$ref": "#/$defs/T33"
+        },
+        "maximum": {
+          "$ref": "#/$defs/T33"
+        },
+        "midpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T34"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "minimum",
+        "maximum"
+      ],
+      "additionalProperties": false
+    },
+    "T36": {
+      "type": "object",
+      "properties": {
+        "upper": {
+          "type": "string"
+        },
+        "middle": {
+          "type": "string"
+        },
+        "lower": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "upper",
+        "middle",
+        "lower"
+      ],
+      "additionalProperties": false
+    },
+    "T37": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "const": "number"
+            },
+            {
+              "const": "percentage"
+            },
+            {
+              "const": "percentile"
+            },
+            {
+              "const": "formula"
+            }
+          ]
+        },
+        "operator": {
+          "anyOf": [
+            {
+              "const": "gt"
+            },
+            {
+              "const": "ge"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "operator",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "T35": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "IconSetRule"
+        },
+        "icons": {
+          "$ref": "#/$defs/T36"
+        },
+        "upperInflectionPoint": {
+          "$ref": "#/$defs/T37"
+        },
+        "lowerInflectionPoint": {
+          "$ref": "#/$defs/T37"
+        }
+      },
+      "required": [
+        "type",
+        "icons",
+        "upperInflectionPoint",
+        "lowerInflectionPoint"
+      ],
+      "additionalProperties": false
+    },
+    "T38": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DataBarRule"
+        },
+        "color": {
+          "type": "number"
+        },
+        "rangeValues": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "color"
+      ],
+      "additionalProperties": false
+    },
+    "T30": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T31"
+            },
+            {
+              "$ref": "#/$defs/T32"
+            },
+            {
+              "$ref": "#/$defs/T35"
+            },
+            {
+              "$ref": "#/$defs/T38"
+            }
+          ]
+        },
+        "stopIfTrue": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "rule"
+      ],
+      "additionalProperties": false
+    },
+    "T40": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "type": "number"
+        },
+        "bottom": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "left": {
+          "type": "number"
+        },
+        "right": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "hasHeader": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ],
+          "description": "The hasHeader flag is used to determine if the zone has a header (eg. A2:A or C3:3).\n\nThe main issue is that the zone A1:A and A:A have different behavior. The \"correct\" way to handle this would be to\nallow the top/left to be undefined, but this make typing and using unbounded zones VERY annoying. So we use this\nboolean instead."
+        }
+      },
+      "required": [
+        "top",
+        "left"
+      ],
+      "additionalProperties": false
+    },
+    "T39": {
+      "type": "object",
+      "properties": {
+        "_zone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T5"
+            },
+            {
+              "$ref": "#/$defs/T40"
+            }
+          ]
+        },
+        "_sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_zone",
+        "_sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T29": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_CONDITIONAL_FORMAT"
+        },
+        "cf": {
+          "$ref": "#/$defs/T30"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T39"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "cf",
+        "sheetId",
+        "ranges"
+      ],
+      "additionalProperties": false
+    },
+    "T41": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_CONDITIONAL_FORMAT"
+        },
+        "id": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T42": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CHANGE_CONDITIONAL_FORMAT_PRIORITY"
+        },
+        "cfId": {
+          "type": "string"
+        },
+        "delta": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "cfId",
+        "delta",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T44": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "T45": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
+    },
+    "T43": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_FIGURE"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "offset": {
+          "$ref": "#/$defs/T44"
+        },
+        "size": {
+          "$ref": "#/$defs/T45"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "tag",
+        "figureId",
+        "offset",
+        "size",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T46": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_FIGURE"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T47": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_FIGURE"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T44"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T50": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "chart"
+        },
+        "chartId": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "chartId"
+      ],
+      "additionalProperties": false
+    },
+    "T51": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "carouselDataView"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T52": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "bold": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "italic": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "align": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "center"
+            }
+          ]
+        },
+        "verticalAlign": {
+          "anyOf": [
+            {
+              "const": "top"
+            },
+            {
+              "const": "middle"
+            },
+            {
+              "const": "bottom"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "fontSize": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "fillColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T49": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/T50"
+              },
+              {
+                "$ref": "#/$defs/T51"
+              }
+            ]
+          }
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "T48": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_CAROUSEL"
+        },
+        "definition": {
+          "$ref": "#/$defs/T49"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "offset": {
+          "$ref": "#/$defs/T44"
+        },
+        "size": {
+          "$ref": "#/$defs/T45"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "definition",
+        "figureId",
+        "offset",
+        "size",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T53": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_CAROUSEL"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "definition": {
+          "$ref": "#/$defs/T49"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "definition",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T54": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_FORMATTING"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T1"
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T55": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CLEAR_FORMATTING"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T57": {
+      "type": "object",
+      "properties": {
+        "position": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "all"
+            },
+            {
+              "const": "hv"
+            },
+            {
+              "const": "h"
+            },
+            {
+              "const": "v"
+            },
+            {
+              "const": "external"
+            },
+            {
+              "const": "clear"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "style": {
+          "anyOf": [
+            {
+              "const": "thin"
+            },
+            {
+              "const": "medium"
+            },
+            {
+              "const": "thick"
+            },
+            {
+              "const": "dashed"
+            },
+            {
+              "const": "dotted"
+            }
+          ]
+        }
+      },
+      "required": [
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "T56": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_ZONE_BORDERS"
+        },
+        "border": {
+          "$ref": "#/$defs/T57"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "border",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T60": {
+      "type": "object",
+      "properties": {
+        "style": {
+          "anyOf": [
+            {
+              "const": "thin"
+            },
+            {
+              "const": "medium"
+            },
+            {
+              "const": "thick"
+            },
+            {
+              "const": "dashed"
+            },
+            {
+              "const": "dotted"
+            }
+          ]
+        },
+        "color": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "style",
+        "color"
+      ],
+      "additionalProperties": false
+    },
+    "T59": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T60"
+            }
+          ]
+        },
+        "left": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T60"
+            }
+          ]
+        },
+        "bottom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T60"
+            }
+          ]
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T60"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T58": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_BORDER"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T59"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T61": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_BORDERS_ON_TARGET"
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T59"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T65": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "const": "polynomial"
+            },
+            {
+              "const": "exponential"
+            },
+            {
+              "const": "logarithmic"
+            },
+            {
+              "const": "trailingMovingAverage"
+            }
+          ]
+        },
+        "order": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T64": {
+      "type": "object",
+      "properties": {
+        "dataRange": {
+          "type": "string"
+        },
+        "trend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T65"
+            }
+          ]
+        },
+        "backgroundColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "yAxisId": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "dataRange"
+      ],
+      "additionalProperties": false
+    },
+    "T67": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T66": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T67"
+            }
+          ]
+        },
+        "y": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T67"
+            }
+          ]
+        },
+        "y1": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T67"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T63": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "line"
+        },
+        "labelsAsText": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "cumulative": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "fillArea": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "hideDataMarkers": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "zoomable": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "labelsAsText",
+        "stacked",
+        "cumulative",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T68": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "pie"
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "isDoughnut": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "pieHolePercentage": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T69": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "bar"
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "horizontal": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "zoomable": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "stacked",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T70": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "scorecard"
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "keyValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "keyDescr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "baselineMode": {
+          "anyOf": [
+            {
+              "const": "percentage"
+            },
+            {
+              "const": "text"
+            },
+            {
+              "const": "difference"
+            },
+            {
+              "const": "progress"
+            }
+          ]
+        },
+        "baselineDescr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "baselineColorUp": {
+          "type": "string"
+        },
+        "baselineColorDown": {
+          "type": "string"
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "baselineMode",
+        "baselineColorUp",
+        "baselineColorDown"
+      ],
+      "additionalProperties": false
+    },
+    "T73": {
+      "type": "object",
+      "properties": {
+        "lowerColor": {
+          "type": "string"
+        },
+        "middleColor": {
+          "type": "string"
+        },
+        "upperColor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lowerColor",
+        "middleColor",
+        "upperColor"
+      ],
+      "additionalProperties": false
+    },
+    "T74": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "const": "number"
+            },
+            {
+              "const": "percentage"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        },
+        "operator": {
+          "anyOf": [
+            {
+              "const": "<"
+            },
+            {
+              "const": "<="
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "value",
+        "operator"
+      ],
+      "additionalProperties": false
+    },
+    "T72": {
+      "type": "object",
+      "properties": {
+        "colors": {
+          "$ref": "#/$defs/T73"
+        },
+        "rangeMin": {
+          "type": "string"
+        },
+        "rangeMax": {
+          "type": "string"
+        },
+        "lowerInflectionPoint": {
+          "$ref": "#/$defs/T74"
+        },
+        "upperInflectionPoint": {
+          "$ref": "#/$defs/T74"
+        }
+      },
+      "required": [
+        "colors",
+        "rangeMin",
+        "rangeMax",
+        "lowerInflectionPoint",
+        "upperInflectionPoint"
+      ],
+      "additionalProperties": false
+    },
+    "T71": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "gauge"
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "dataRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "sectionRule": {
+          "$ref": "#/$defs/T72"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "sectionRule"
+      ],
+      "additionalProperties": false
+    },
+    "T75": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "scatter"
+        },
+        "labelsAsText": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "fillArea": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "hideDataMarkers": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "labelsAsText",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T77": {
+      "type": "object",
+      "properties": {
+        "dataRange": {
+          "type": "string"
+        },
+        "trend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T65"
+            }
+          ]
+        },
+        "backgroundColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "yAxisId": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "line"
+            },
+            {
+              "const": "bar"
+            }
+          ]
+        }
+      },
+      "required": [
+        "dataRange"
+      ],
+      "additionalProperties": false
+    },
+    "T76": {
+      "type": "object",
+      "properties": {
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T77"
+          }
+        },
+        "type": {
+          "const": "combo"
+        },
+        "hideDataMarkers": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "zoomable": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "dataSets",
+        "type",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T78": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "waterfall"
+        },
+        "verticalAxisPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showSubTotals": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showConnectorLines": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "firstValueAsSubtotal": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "positiveValuesColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "negativeValuesColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "subTotalValuesColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "zoomable": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "verticalAxisPosition",
+        "showSubTotals",
+        "showConnectorLines",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T79": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "pyramid"
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "horizontal": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "stacked",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T80": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "radar"
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "fillArea": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "hideDataMarkers": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "stacked",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T82": {
+      "type": "object",
+      "properties": {
+        "minColor": {
+          "type": "string"
+        },
+        "midColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "maxColor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "minColor",
+        "maxColor"
+      ],
+      "additionalProperties": false
+    },
+    "T81": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "geo"
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "colorScale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T82"
+            },
+            {
+              "const": "blues"
+            },
+            {
+              "const": "cividis"
+            },
+            {
+              "const": "greens"
+            },
+            {
+              "const": "greys"
+            },
+            {
+              "const": "oranges"
+            },
+            {
+              "const": "purples"
+            },
+            {
+              "const": "rainbow"
+            },
+            {
+              "const": "reds"
+            },
+            {
+              "const": "viridis"
+            }
+          ]
+        },
+        "missingValueColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T83": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "funnel"
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "horizontal": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "axesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "aggregated": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "funnelColors": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "cumulative": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T85": {
+      "type": "object",
+      "properties": {
+        "bold": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "italic": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "align": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "center"
+            }
+          ]
+        },
+        "verticalAlign": {
+          "anyOf": [
+            {
+              "const": "top"
+            },
+            {
+              "const": "middle"
+            },
+            {
+              "const": "bottom"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "fontSize": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "fillColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T84": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "sunburst"
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showLabels": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "valuesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T85"
+            }
+          ]
+        },
+        "groupColors": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "pieHolePercentage": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T87": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "categoryColor"
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "useValueBasedGradient": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "colors",
+        "useValueBasedGradient"
+      ],
+      "additionalProperties": false
+    },
+    "T88": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "colorScale"
+        },
+        "minColor": {
+          "type": "string"
+        },
+        "midColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "maxColor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "minColor",
+        "maxColor"
+      ],
+      "additionalProperties": false
+    },
+    "T86": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "treemap"
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "left"
+            },
+            {
+              "const": "right"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "none"
+            }
+          ]
+        },
+        "showHeaders": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "headerDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        },
+        "showValues": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "showLabels": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "valuesDesign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T52"
+            }
+          ]
+        },
+        "coloringOptions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T87"
+            },
+            {
+              "$ref": "#/$defs/T88"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "dataSets",
+        "dataSetsHaveTitle",
+        "title",
+        "legendPosition"
+      ],
+      "additionalProperties": false
+    },
+    "T62": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_CHART"
+        },
+        "chartId": {
+          "type": "string"
+        },
+        "definition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T63"
+            },
+            {
+              "$ref": "#/$defs/T68"
+            },
+            {
+              "$ref": "#/$defs/T69"
+            },
+            {
+              "$ref": "#/$defs/T70"
+            },
+            {
+              "$ref": "#/$defs/T71"
+            },
+            {
+              "$ref": "#/$defs/T75"
+            },
+            {
+              "$ref": "#/$defs/T76"
+            },
+            {
+              "$ref": "#/$defs/T78"
+            },
+            {
+              "$ref": "#/$defs/T79"
+            },
+            {
+              "$ref": "#/$defs/T80"
+            },
+            {
+              "$ref": "#/$defs/T81"
+            },
+            {
+              "$ref": "#/$defs/T83"
+            },
+            {
+              "$ref": "#/$defs/T84"
+            },
+            {
+              "$ref": "#/$defs/T86"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T44"
+            }
+          ]
+        },
+        "size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T45"
+            }
+          ]
+        },
+        "col": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "row": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "chartId",
+        "definition",
+        "sheetId",
+        "figureId"
+      ],
+      "additionalProperties": false
+    },
+    "T89": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_CHART"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "chartId": {
+          "type": "string"
+        },
+        "definition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T63"
+            },
+            {
+              "$ref": "#/$defs/T68"
+            },
+            {
+              "$ref": "#/$defs/T69"
+            },
+            {
+              "$ref": "#/$defs/T70"
+            },
+            {
+              "$ref": "#/$defs/T71"
+            },
+            {
+              "$ref": "#/$defs/T75"
+            },
+            {
+              "$ref": "#/$defs/T76"
+            },
+            {
+              "$ref": "#/$defs/T78"
+            },
+            {
+              "$ref": "#/$defs/T79"
+            },
+            {
+              "$ref": "#/$defs/T80"
+            },
+            {
+              "$ref": "#/$defs/T81"
+            },
+            {
+              "$ref": "#/$defs/T83"
+            },
+            {
+              "$ref": "#/$defs/T84"
+            },
+            {
+              "$ref": "#/$defs/T86"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "chartId",
+        "definition",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T90": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_CHART"
+        },
+        "chartId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "chartId",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T92": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/$defs/T45"
+        },
+        "mimetype": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "T91": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_IMAGE"
+        },
+        "definition": {
+          "$ref": "#/$defs/T92"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "offset": {
+          "$ref": "#/$defs/T44"
+        },
+        "size": {
+          "$ref": "#/$defs/T45"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "definition",
+        "figureId",
+        "offset",
+        "size",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T94": {
+      "type": "object",
+      "properties": {
+        "hasFilters": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "totalRow": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "firstColumn": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "lastColumn": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "numberOfHeaders": {
+          "type": "number"
+        },
+        "bandedRows": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "bandedColumns": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "automaticAutofill": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "styleId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hasFilters",
+        "totalRow",
+        "firstColumn",
+        "lastColumn",
+        "numberOfHeaders",
+        "bandedRows",
+        "bandedColumns",
+        "styleId"
+      ],
+      "additionalProperties": false
+    },
+    "T93": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_TABLE"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/$defs/T94"
+        },
+        "tableType": {
+          "anyOf": [
+            {
+              "const": "static"
+            },
+            {
+              "const": "forceStatic"
+            },
+            {
+              "const": "dynamic"
+            }
+          ]
+        },
+        "ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T39"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "config",
+        "tableType",
+        "ranges"
+      ],
+      "additionalProperties": false
+    },
+    "T95": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_TABLE"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T97": {
+      "type": "object",
+      "properties": {
+        "hasFilters": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "totalRow": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "firstColumn": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "lastColumn": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "numberOfHeaders": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "bandedRows": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "bandedColumns": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "automaticAutofill": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "styleId": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T96": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_TABLE"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "newTableRange": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T39"
+            }
+          ]
+        },
+        "tableType": {
+          "anyOf": [
+            {
+              "const": "static"
+            },
+            {
+              "const": "forceStatic"
+            },
+            {
+              "const": "dynamic"
+            }
+          ]
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T97"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "zone",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T98": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CREATE_TABLE_STYLE"
+        },
+        "tableStyleId": {
+          "type": "string"
+        },
+        "tableStyleName": {
+          "type": "string"
+        },
+        "templateName": {
+          "anyOf": [
+            {
+              "const": "none"
+            },
+            {
+              "const": "lightColoredText"
+            },
+            {
+              "const": "lightAllBorders"
+            },
+            {
+              "const": "mediumAllBorders"
+            },
+            {
+              "const": "lightWithHeader"
+            },
+            {
+              "const": "mediumBandedBorders"
+            },
+            {
+              "const": "mediumMinimalBorders"
+            },
+            {
+              "const": "darkNoBorders"
+            },
+            {
+              "const": "mediumWhiteBorders"
+            },
+            {
+              "const": "dark"
+            }
+          ]
+        },
+        "primaryColor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "tableStyleId",
+        "tableStyleName",
+        "templateName",
+        "primaryColor"
+      ],
+      "additionalProperties": false
+    },
+    "T99": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_TABLE_STYLE"
+        },
+        "tableStyleId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "tableStyleId"
+      ],
+      "additionalProperties": false
+    },
+    "T100": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "GROUP_HEADERS"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "start",
+        "end",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T101": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNGROUP_HEADERS"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "start",
+        "end",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T102": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFOLD_HEADER_GROUP"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "start",
+        "end",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T103": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FOLD_HEADER_GROUP"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "start": {
+          "type": "number"
+        },
+        "end": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "start",
+        "end",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T104": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FOLD_ALL_HEADER_GROUPS"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T105": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFOLD_ALL_HEADER_GROUPS"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T106": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UNFOLD_HEADER_GROUPS_IN_ZONE"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "sheetId",
+        "zone"
+      ],
+      "additionalProperties": false
+    },
+    "T107": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FOLD_HEADER_GROUPS_IN_ZONE"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        }
+      },
+      "required": [
+        "type",
+        "dimension",
+        "sheetId",
+        "zone"
+      ],
+      "additionalProperties": false
+    },
+    "T110": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "containsText"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T111": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "notContainsText"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T112": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isEqualText"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T113": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isEmail"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T114": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isLink"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T115": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isBetween"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T116": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIs"
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "dateValue",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T117": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsBefore"
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "dateValue",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T118": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsOnOrBefore"
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "dateValue",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T119": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsAfter"
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "dateValue",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T120": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsOnOrAfter"
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "dateValue",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T121": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsBetween"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T122": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsNotBetween"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T123": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "dateIsValid"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T124": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isEqual"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T125": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isNotEqual"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T126": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isGreaterThan"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T127": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isGreaterOrEqualTo"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T128": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isLessThan"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T129": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isLessOrEqualTo"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T130": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isNotBetween"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T131": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isBoolean"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T133": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "T132": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isValueInList"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "colors": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T133"
+            }
+          ]
+        },
+        "displayStyle": {
+          "anyOf": [
+            {
+              "const": "arrow"
+            },
+            {
+              "const": "plainText"
+            },
+            {
+              "const": "chip"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "values",
+        "displayStyle"
+      ],
+      "additionalProperties": false
+    },
+    "T134": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "isValueInRange"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "colors": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T133"
+            }
+          ]
+        },
+        "displayStyle": {
+          "anyOf": [
+            {
+              "const": "arrow"
+            },
+            {
+              "const": "plainText"
+            },
+            {
+              "const": "chip"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "values",
+        "displayStyle"
+      ],
+      "additionalProperties": false
+    },
+    "T135": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "customFormula"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T109": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "criterion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T110"
+            },
+            {
+              "$ref": "#/$defs/T111"
+            },
+            {
+              "$ref": "#/$defs/T112"
+            },
+            {
+              "$ref": "#/$defs/T113"
+            },
+            {
+              "$ref": "#/$defs/T114"
+            },
+            {
+              "$ref": "#/$defs/T115"
+            },
+            {
+              "$ref": "#/$defs/T116"
+            },
+            {
+              "$ref": "#/$defs/T117"
+            },
+            {
+              "$ref": "#/$defs/T118"
+            },
+            {
+              "$ref": "#/$defs/T119"
+            },
+            {
+              "$ref": "#/$defs/T120"
+            },
+            {
+              "$ref": "#/$defs/T121"
+            },
+            {
+              "$ref": "#/$defs/T122"
+            },
+            {
+              "$ref": "#/$defs/T123"
+            },
+            {
+              "$ref": "#/$defs/T124"
+            },
+            {
+              "$ref": "#/$defs/T125"
+            },
+            {
+              "$ref": "#/$defs/T126"
+            },
+            {
+              "$ref": "#/$defs/T127"
+            },
+            {
+              "$ref": "#/$defs/T128"
+            },
+            {
+              "$ref": "#/$defs/T129"
+            },
+            {
+              "$ref": "#/$defs/T130"
+            },
+            {
+              "$ref": "#/$defs/T131"
+            },
+            {
+              "$ref": "#/$defs/T132"
+            },
+            {
+              "$ref": "#/$defs/T134"
+            },
+            {
+              "$ref": "#/$defs/T135"
+            }
+          ]
+        },
+        "isBlocking": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "criterion"
+      ],
+      "additionalProperties": false
+    },
+    "T108": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_DATA_VALIDATION_RULE"
+        },
+        "rule": {
+          "$ref": "#/$defs/T109"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T39"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "rule",
+        "sheetId",
+        "ranges"
+      ],
+      "additionalProperties": false
+    },
+    "T136": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_DATA_VALIDATION_RULE"
+        },
+        "id": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T138": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "thousandsSeparator": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "decimalSeparator": {
+          "type": "string"
+        },
+        "weekStart": {
+          "type": "number"
+        },
+        "dateFormat": {
+          "type": "string"
+        },
+        "timeFormat": {
+          "type": "string"
+        },
+        "formulaArgSeparator": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "code",
+        "decimalSeparator",
+        "weekStart",
+        "dateFormat",
+        "timeFormat",
+        "formulaArgSeparator"
+      ],
+      "additionalProperties": false
+    },
+    "T137": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_LOCALE"
+        },
+        "locale": {
+          "$ref": "#/$defs/T138"
+        }
+      },
+      "required": [
+        "type",
+        "locale"
+      ],
+      "additionalProperties": false
+    },
+    "T141": {
+      "type": "object",
+      "properties": {
+        "sheetId": {
+          "type": "string"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        }
+      },
+      "required": [
+        "sheetId",
+        "zone"
+      ],
+      "additionalProperties": false
+    },
+    "T143": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "const": false
+              },
+              {
+                "const": true
+              }
+            ]
+          }
+        },
+        "isOtherGroup": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T142": {
+      "type": "object",
+      "properties": {
+        "fieldName": {
+          "type": "string"
+        },
+        "order": {
+          "anyOf": [
+            {
+              "const": "asc"
+            },
+            {
+              "const": "desc"
+            }
+          ]
+        },
+        "granularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "isCustomField": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "parentField": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "customGroups": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/T143"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "fieldName"
+      ],
+      "additionalProperties": false
+    },
+    "T145": {
+      "type": "object",
+      "properties": {
+        "sheetId": {
+          "type": "string"
+        },
+        "formula": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheetId",
+        "formula"
+      ],
+      "additionalProperties": false
+    },
+    "T146": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "const": "no_calculations"
+            },
+            {
+              "const": "%_of_grand_total"
+            },
+            {
+              "const": "%_of_col_total"
+            },
+            {
+              "const": "%_of_row_total"
+            },
+            {
+              "const": "%_of_parent_row_total"
+            },
+            {
+              "const": "%_of_parent_col_total"
+            },
+            {
+              "const": "index"
+            },
+            {
+              "const": "%_of_parent_total"
+            },
+            {
+              "const": "running_total"
+            },
+            {
+              "const": "%_running_total"
+            },
+            {
+              "const": "rank_asc"
+            },
+            {
+              "const": "rank_desc"
+            },
+            {
+              "const": "%_of"
+            },
+            {
+              "const": "difference_from"
+            },
+            {
+              "const": "%_difference_from"
+            }
+          ]
+        },
+        "fieldNameWithGranularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T144": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifier of the measure, `technicalName:aggregator{:autoIncrementedNumber}`.\nIt's used to identify the measure in the pivot formula."
+        },
+        "userDefinedName": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "fieldName": {
+          "type": "string"
+        },
+        "aggregator": {
+          "type": "string"
+        },
+        "isHidden": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "computedBy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T145"
+            }
+          ]
+        },
+        "display": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T146"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "fieldName",
+        "aggregator"
+      ],
+      "additionalProperties": false
+    },
+    "T148": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "field",
+        "type",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "T147": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "anyOf": [
+            {
+              "const": "asc"
+            },
+            {
+              "const": "desc"
+            }
+          ]
+        },
+        "domain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T148"
+          }
+        },
+        "measure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "order",
+        "domain",
+        "measure"
+      ],
+      "additionalProperties": false
+    },
+    "T149": {
+      "type": "object",
+      "properties": {
+        "COL": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/T148"
+            }
+          }
+        },
+        "ROW": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/T148"
+            }
+          }
+        }
+      },
+      "required": [
+        "COL",
+        "ROW"
+      ],
+      "additionalProperties": false
+    },
+    "T151": {
+      "type": "object",
+      "properties": {
+        "parentField": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T143"
+          }
+        }
+      },
+      "required": [
+        "parentField",
+        "name",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
+    "T150": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": {
+        "$ref": "#/$defs/T151"
+      }
+    },
+    "T140": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SPREADSHEET"
+        },
+        "dataSet": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T141"
+            }
+          ]
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T142"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T142"
+          }
+        },
+        "measures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T144"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "deferUpdates": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "sortedColumn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T147"
+            }
+          ]
+        },
+        "collapsedDomains": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T149"
+            }
+          ]
+        },
+        "customFields": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T150"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "columns",
+        "rows",
+        "measures",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "T152": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "FAKE"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T142"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T142"
+          }
+        },
+        "measures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T144"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "deferUpdates": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "sortedColumn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T147"
+            }
+          ]
+        },
+        "collapsedDomains": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T149"
+            }
+          ]
+        },
+        "customFields": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T150"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "columns",
+        "rows",
+        "measures",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "T139": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "pivot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T140"
+            },
+            {
+              "$ref": "#/$defs/T152"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "pivot"
+      ],
+      "additionalProperties": false
+    },
+    "T153": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "pivot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T140"
+            },
+            {
+              "$ref": "#/$defs/T152"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "pivot"
+      ],
+      "additionalProperties": false
+    },
+    "T156": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "const": false
+              },
+              {
+                "const": true
+              }
+            ]
+          }
+        },
+        "width": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "fields",
+        "values",
+        "width",
+        "offset"
+      ],
+      "additionalProperties": false
+    },
+    "T157": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "const": false
+              },
+              {
+                "const": true
+              }
+            ]
+          }
+        },
+        "indent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "fields",
+        "values",
+        "indent"
+      ],
+      "additionalProperties": false
+    },
+    "T158": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "T155": {
+      "type": "object",
+      "properties": {
+        "cols": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/T156"
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T157"
+          }
+        },
+        "measures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fieldsType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T158"
+            }
+          ]
+        }
+      },
+      "required": [
+        "cols",
+        "rows",
+        "measures"
+      ],
+      "additionalProperties": false
+    },
+    "T154": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "INSERT_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "table": {
+          "$ref": "#/$defs/T155"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "table",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T159": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "RENAME_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "T160": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId"
+      ],
+      "additionalProperties": false
+    },
+    "T161": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DUPLICATE_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "newPivotId": {
+          "type": "string"
+        },
+        "duplicatedPivotName": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "newPivotId"
+      ],
+      "additionalProperties": false
+    },
+    "T162": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "COPY"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T163": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "CUT"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T164": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "PASTE"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        },
+        "pasteOption": {
+          "anyOf": [
+            {
+              "const": "onlyFormat"
+            },
+            {
+              "const": "asValue"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T165": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "COPY_PASTE_CELLS_ABOVE"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T166": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "COPY_PASTE_CELLS_ON_LEFT"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T167": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REPEAT_PASTE"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        },
+        "pasteOption": {
+          "anyOf": [
+            {
+              "const": "onlyFormat"
+            },
+            {
+              "const": "asValue"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T168": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTOFILL_CELL"
+        },
+        "originCol": {
+          "type": "number"
+        },
+        "originRow": {
+          "type": "number"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "style": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/T1"
+            }
+          ]
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T59"
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "originCol",
+        "originRow",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T169": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTORESIZE_COLUMNS"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "cols": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "cols"
+      ],
+      "additionalProperties": false
+    },
+    "T170": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTORESIZE_ROWS"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "T171": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "MOVE_COLUMNS_ROWS"
+        },
+        "base": {
+          "type": "number"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "position": {
+          "anyOf": [
+            {
+              "const": "before"
+            },
+            {
+              "const": "after"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "sheetName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "base",
+        "elements",
+        "position",
+        "sheetId",
+        "dimension",
+        "sheetName"
+      ],
+      "additionalProperties": false
+    },
+    "T172": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ACTIVATE_SHEET"
+        },
+        "sheetIdFrom": {
+          "type": "string"
+        },
+        "sheetIdTo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "sheetIdFrom",
+        "sheetIdTo"
+      ],
+      "additionalProperties": false
+    },
+    "T173": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTOFILL"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T174": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTOFILL_SELECT"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T175": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTOFILL_TABLE_COLUMN"
+        },
+        "autofillRowStart": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ],
+          "description": "The row to start the autofill in. If undefined, it will autofill from the top of the table column"
+        },
+        "autofillRowEnd": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ],
+          "description": "The row to end the autofill in. If undefined, it will autofill to the bottom of the table column"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T176": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_FORMULA_VISIBILITY"
+        },
+        "show": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "show"
+      ],
+      "additionalProperties": false
+    },
+    "T177": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "AUTOFILL_AUTO"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T181": {
+      "type": "object",
+      "properties": {
+        "left": {
+          "type": "number"
+        },
+        "right": {
+          "type": "number"
+        },
+        "top": {
+          "type": "number"
+        },
+        "bottom": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "left",
+        "right",
+        "top",
+        "bottom"
+      ],
+      "additionalProperties": false
+    },
+    "T182": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "type": "number"
+        },
+        "bottom": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "left": {
+          "type": "number"
+        },
+        "right": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "hasHeader": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ],
+          "description": "The hasHeader flag is used to determine if the zone has a header (eg. A2:A or C3:3).\n\nThe main issue is that the zone A1:A and A:A have different behavior. The \"correct\" way to handle this would be to\nallow the top/left to be undefined, but this make typing and using unbounded zones VERY annoying. So we use this\nboolean instead."
+        }
+      },
+      "required": [
+        "top",
+        "left"
+      ],
+      "additionalProperties": false
+    },
+    "T183": {
+      "type": "object",
+      "properties": {
+        "colFixed": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "rowFixed": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "colFixed",
+        "rowFixed"
+      ],
+      "additionalProperties": false
+    },
+    "T180": {
+      "type": "object",
+      "properties": {
+        "zone": {
+          "$ref": "#/$defs/T181"
+        },
+        "unboundedZone": {
+          "$ref": "#/$defs/T182"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T183"
+          }
+        },
+        "invalidXc": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "prefixSheet": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ],
+          "description": "true if the user provided the range with the sheet name"
+        },
+        "invalidSheetName": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ],
+          "description": "the name of any sheet that is invalid"
+        },
+        "sheetId": {
+          "type": "string",
+          "description": "the sheet on which the range is defined"
+        }
+      },
+      "required": [
+        "zone",
+        "unboundedZone",
+        "parts",
+        "prefixSheet",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T179": {
+      "type": "object",
+      "properties": {
+        "matchCase": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "exactMatch": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "searchFormulas": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "searchScope": {
+          "anyOf": [
+            {
+              "const": "allSheets"
+            },
+            {
+              "const": "activeSheet"
+            },
+            {
+              "const": "specificRange"
+            }
+          ]
+        },
+        "specificRange": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T180"
+            }
+          ]
+        }
+      },
+      "required": [
+        "matchCase",
+        "exactMatch",
+        "searchFormulas",
+        "searchScope"
+      ],
+      "additionalProperties": false
+    },
+    "T184": {
+      "type": "object",
+      "properties": {
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "col",
+        "row",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T178": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REPLACE_SEARCH"
+        },
+        "searchString": {
+          "type": "string"
+        },
+        "replaceWith": {
+          "type": "string"
+        },
+        "searchOptions": {
+          "$ref": "#/$defs/T179"
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T184"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "searchString",
+        "replaceWith",
+        "searchOptions",
+        "matches"
+      ],
+      "additionalProperties": false
+    },
+    "T186": {
+      "type": "object",
+      "properties": {
+        "sortHeaders": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ],
+          "description": "If true sort the headers of the range along with the rest"
+        },
+        "emptyCellAsZero": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ],
+          "description": "If true treat empty cells as \"0\" instead of undefined"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "T185": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SORT_CELLS"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "const": "asc"
+            },
+            {
+              "const": "desc"
+            }
+          ]
+        },
+        "sortOptions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T186"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "col",
+        "row",
+        "zone",
+        "sortDirection"
+      ],
+      "additionalProperties": false
+    },
+    "T187": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_DECIMAL"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "const": 1
+            },
+            {
+              "const": -1
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "step",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T188": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SET_FORMATTING_WITH_PIVOT"
+        },
+        "format": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "format",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T189": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SUM_SELECTION"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T190": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_CELL"
+        },
+        "shiftDimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        }
+      },
+      "required": [
+        "type",
+        "shiftDimension",
+        "zone"
+      ],
+      "additionalProperties": false
+    },
+    "T191": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "INSERT_CELL"
+        },
+        "shiftDimension": {
+          "anyOf": [
+            {
+              "const": "COL"
+            },
+            {
+              "const": "ROW"
+            }
+          ]
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        }
+      },
+      "required": [
+        "type",
+        "shiftDimension",
+        "zone"
+      ],
+      "additionalProperties": false
+    },
+    "T192": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SHIFT_VIEWPORT_DOWN"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T193": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SHIFT_VIEWPORT_UP"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T194": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SCROLL_TO_CELL"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T195": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ACTIVATE_NEXT_SHEET"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T196": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ACTIVATE_PREVIOUS_SHEET"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T198": {
+      "type": "object",
+      "properties": {
+        "filterType": {
+          "const": "values"
+        },
+        "hiddenValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "filterType",
+        "hiddenValues"
+      ],
+      "additionalProperties": false
+    },
+    "T199": {
+      "type": "object",
+      "properties": {
+        "filterType": {
+          "const": "criterion"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "beginsWithText"
+            },
+            {
+              "const": "isBetween"
+            },
+            {
+              "const": "containsText"
+            },
+            {
+              "const": "isEmpty"
+            },
+            {
+              "const": "isNotEmpty"
+            },
+            {
+              "const": "endsWithText"
+            },
+            {
+              "const": "isEqual"
+            },
+            {
+              "const": "isGreaterThan"
+            },
+            {
+              "const": "isGreaterOrEqualTo"
+            },
+            {
+              "const": "isLessThan"
+            },
+            {
+              "const": "isLessOrEqualTo"
+            },
+            {
+              "const": "isNotBetween"
+            },
+            {
+              "const": "notContainsText"
+            },
+            {
+              "const": "isNotEqual"
+            },
+            {
+              "const": "customFormula"
+            },
+            {
+              "const": "none"
+            },
+            {
+              "const": "isEqualText"
+            },
+            {
+              "const": "isEmail"
+            },
+            {
+              "const": "isLink"
+            },
+            {
+              "const": "dateIs"
+            },
+            {
+              "const": "dateIsBefore"
+            },
+            {
+              "const": "dateIsOnOrBefore"
+            },
+            {
+              "const": "dateIsAfter"
+            },
+            {
+              "const": "dateIsOnOrAfter"
+            },
+            {
+              "const": "dateIsBetween"
+            },
+            {
+              "const": "dateIsNotBetween"
+            },
+            {
+              "const": "dateIsValid"
+            },
+            {
+              "const": "isBoolean"
+            },
+            {
+              "const": "isValueInList"
+            },
+            {
+              "const": "isValueInRange"
+            }
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dateValue": {
+          "anyOf": [
+            {
+              "const": "today"
+            },
+            {
+              "const": "tomorrow"
+            },
+            {
+              "const": "yesterday"
+            },
+            {
+              "const": "lastWeek"
+            },
+            {
+              "const": "lastMonth"
+            },
+            {
+              "const": "lastYear"
+            },
+            {
+              "const": "exactDate"
+            }
+          ]
+        }
+      },
+      "required": [
+        "filterType",
+        "type",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "T197": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_FILTER"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T198"
+            },
+            {
+              "$ref": "#/$defs/T199"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "value",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T200": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SPLIT_TEXT_INTO_COLUMNS"
+        },
+        "separator": {
+          "type": "string"
+        },
+        "addNewColumns": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "force": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "separator",
+        "addNewColumns"
+      ],
+      "additionalProperties": false
+    },
+    "T201": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REMOVE_DUPLICATES"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "hasHeader": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "columns",
+        "hasHeader"
+      ],
+      "additionalProperties": false
+    },
+    "T202": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "TRIM_WHITESPACE"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "T203": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "RESIZE_TABLE"
+        },
+        "zone": {
+          "$ref": "#/$defs/T5"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "newTableRange": {
+          "$ref": "#/$defs/T39"
+        },
+        "tableType": {
+          "anyOf": [
+            {
+              "const": "static"
+            },
+            {
+              "const": "forceStatic"
+            },
+            {
+              "const": "dynamic"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "zone",
+        "sheetId",
+        "newTableRange"
+      ],
+      "additionalProperties": false
+    },
+    "T204": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "REFRESH_PIVOT"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "T205": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "INSERT_NEW_PIVOT"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "newSheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "newSheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T206": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DUPLICATE_PIVOT_IN_NEW_SHEET"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "newPivotId": {
+          "type": "string"
+        },
+        "newSheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "newPivotId",
+        "newSheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T207": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "INSERT_PIVOT_WITH_TABLE"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "table": {
+          "$ref": "#/$defs/T155"
+        },
+        "pivotMode": {
+          "anyOf": [
+            {
+              "const": "static"
+            },
+            {
+              "const": "dynamic"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "table",
+        "pivotMode",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T208": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "SPLIT_PIVOT_FORMULA"
+        },
+        "pivotId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "col": {
+          "type": "number"
+        },
+        "row": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "pivotId",
+        "sheetId",
+        "col",
+        "row"
+      ],
+      "additionalProperties": false
+    },
+    "T209": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "PAINT_FORMAT"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T210": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "DELETE_UNFILTERED_CONTENT"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T211": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "TOGGLE_CHECKBOX"
+        },
+        "sheetId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T5"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "sheetId",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "T212": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_NEW_CHART_TO_CAROUSEL"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T213": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "ADD_FIGURE_CHART_TO_CAROUSEL"
+        },
+        "carouselFigureId": {
+          "type": "string"
+        },
+        "chartFigureId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "carouselFigureId",
+        "chartFigureId",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T214": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "UPDATE_CAROUSEL_ACTIVE_ITEM"
+        },
+        "figureId": {
+          "type": "string"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/T50"
+            },
+            {
+              "$ref": "#/$defs/T51"
+            }
+          ]
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "figureId",
+        "item",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    },
+    "T215": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "POPOUT_CHART_FROM_CAROUSEL"
+        },
+        "carouselId": {
+          "type": "string"
+        },
+        "chartId": {
+          "type": "string"
+        },
+        "sheetId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "carouselId",
+        "chartId",
+        "sheetId"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

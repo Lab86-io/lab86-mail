@@ -170,7 +170,7 @@ try {
     await open('grid');
     await waitForEngine();
     await typeCell('C2', '=B2*2');
-    await page.getByText('Saved · revision 3', { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Saved · revision 3', exact: true }).waitFor({ timeout: 10_000 });
     const saves = await bodies('/api/documents/sheet-a');
     assert.equal(saves.length, 1, 'one autosave for one edit');
     assert.equal(saves[0].body.expectedRevision, 2);
@@ -199,7 +199,7 @@ try {
   await step('formatting: bold from the keyboard is saved in the snapshot', async () => {
     await selectCell('B1');
     await page.keyboard.press('Control+b');
-    await page.getByText('Saved · revision 4', { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Saved · revision 4', exact: true }).waitFor({ timeout: 10_000 });
     const saves = await bodies('/api/documents/sheet-a');
     const model = saves[saves.length - 1].body.model;
     const styles = JSON.stringify(model.workbook.styles || {});
@@ -218,7 +218,7 @@ try {
     await page.locator('section[aria-label="Files"]').waitFor();
     await page.locator('button[title="Launch budget"]').click();
     await waitForEngine();
-    await page.getByText('Saved · revision 4', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Saved · revision 4', exact: true }).waitFor();
     const reopened = await page.evaluate(() => globalThis.__sheet.documents.get('sheet-a').model);
     assert.equal(reopened.version, 2);
     assert.equal(reopened.workbook.sheets[0].cells.C2, '=B2*2');
@@ -280,7 +280,9 @@ try {
       history.pushState(null, '', '?scenario=flush-fail&view=files&document=sheet-a');
       window.dispatchEvent(new Event('lab86-mail:files-navigate'));
     });
-    await page.getByText('Recovered unsaved edits', { exact: true }).waitFor({ timeout: 10_000 });
+    await page
+      .getByRole('button', { name: 'Recovered unsaved edits', exact: true })
+      .waitFor({ timeout: 10_000 });
     await waitForEngine();
     await page.screenshot({ path: join(artifacts, 'sheet-recovered.png') });
     const recoveredModel = await page.evaluate(() => globalThis.__sheet.documents.get('sheet-a').model);
@@ -401,7 +403,7 @@ try {
   await step('AI change set applies through engine commands bound to the base revision', async () => {
     await open('suggest');
     await waitForEngine();
-    const assistant = page.getByRole('complementary', { name: 'Document assistant' });
+    const assistant = page.getByRole('region', { name: 'Suggested document edits' });
     await assistant.getByText('Plan!B6').waitFor();
     await assistant.getByRole('button', { name: 'Apply', exact: true }).click();
     await page.waitForFunction(() => typeof globalThis.__sheet.releaseSuggestion === 'function');
@@ -416,10 +418,12 @@ try {
     );
     const applied = (await bodies('/api/documents/sheet-a/suggestions/fill-total'))[0].body;
     assert.equal(applied.expectedRevision, 2);
-    assert.equal(applied.model.version, 2);
-    assert.equal(applied.model.workbook.sheets[0].cells.B6, '=B4+B5');
-    assert.equal(applied.model.workbook.sheets[0].cells.A5, 'Contingency');
-    await page.getByText('Saved · revision 3', { exact: true }).waitFor();
+    assert.equal(applied.model, undefined, 'the server evaluates the reviewed commands');
+    const savedModel = await page.evaluate(() => globalThis.__sheet.documents.get('sheet-a').model);
+    assert.equal(savedModel.version, 2);
+    assert.equal(savedModel.workbook.sheets[0].cells.B6, '=B4+B5');
+    assert.equal(savedModel.workbook.sheets[0].cells.A5, 'Contingency');
+    await page.getByRole('button', { name: 'Saved · revision 3', exact: true }).waitFor();
     const { parsed } = await exportWorkbook();
     assert.equal(parsed.getWorksheet('Plan').getCell('B6').formula, 'B4+B5');
     assert.equal(parsed.getWorksheet('Plan').getCell('B6').result, 5060, 'applied formulas evaluate');
@@ -431,7 +435,7 @@ try {
     await open('grid');
     await waitForEngine();
     await typeCell('C2', '=B2*3');
-    await page.getByText('Saved · revision 3', { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Saved · revision 3', exact: true }).waitFor({ timeout: 10_000 });
     const saved = await page.evaluate(() => globalThis.__sheet.documents.get('sheet-a').model);
     assert.equal(saved.version, 2);
     assert.equal(saved.workbook.sheets.find((sheet) => sheet.name === 'Plan').cells.C2, '=B2*3');

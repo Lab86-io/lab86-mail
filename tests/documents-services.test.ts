@@ -139,7 +139,12 @@ describe('document AI proposal service', () => {
                   },
                 ],
               }
-            : { model: createDefaultDocumentModel(kind, `proposal-${kind}`) }),
+            : kind === 'sheet'
+              ? {
+                  changes: [{ sheet: 'new-workbook-sheet-1', cell: 'A1', content: 'Forecast' }],
+                  commands: [],
+                }
+              : { model: createDefaultDocumentModel(kind, `proposal-${kind}`) }),
         },
       };
     });

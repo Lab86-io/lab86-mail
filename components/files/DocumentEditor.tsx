@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { DocumentSaveStatus } from '@/components/files/DocumentSaveStatus';
 import { PresentationEditor } from '@/components/files/editors/PresentationEditor';
 import { RichDocumentEditor } from '@/components/files/editors/RichDocumentEditor';
 import { OdooSpreadsheetEditor } from '@/components/files/OdooSpreadsheetEditor';
@@ -35,12 +36,10 @@ import type {
   SheetGridModel,
 } from '@/lib/documents/model';
 import {
-  applySheetChangeSet,
   downloadBlob,
   exportXlsxBlob,
   type SpreadsheetSession,
 } from '@/lib/documents/odoo-spreadsheet-engine';
-import { ODOO_SPREADSHEET_ASSET_BASE, ODOO_SPREADSHEET_VERSION } from '@/lib/documents/sheet-workbook';
 import { cn } from '@/lib/utils';
 
 interface EditorDocument extends AlbatrossDocumentRecord {
@@ -491,11 +490,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const googleBehind =
     Boolean(document.google) && (document.google?.syncedRevision || 0) < revisionRef.current;
   const engineSheet = model.kind === 'sheet';
-  const googleWriteNotice =
-    googleModelWriteLimitation(model) ||
-    (engineSheet
-      ? 'This sheet opens in Odoo. Download Spreadsheet to preserve its workbook features; Google sync is unavailable here.'
-      : undefined);
+  const googleWriteNotice = googleModelWriteLimitation(model);
   const googleWriteBlocked = engineSheet || Boolean(googleWriteNotice);
   const importNotes = document.importSource?.warnings || [];
 
@@ -516,7 +511,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           <input
             aria-label="File name"
             disabled={applying}
@@ -526,49 +521,47 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
               setTitle(event.target.value);
               setDirty(true);
             }}
-            className="block h-6 w-full truncate bg-transparent text-[13.5px] font-medium outline-none"
+            style={{ fieldSizing: 'content' }}
+            className="block h-6 min-w-0 max-w-full truncate bg-transparent text-[13.5px] font-medium outline-none"
           />
-          <div
-            role="status"
-            aria-live="polite"
-            className="flex items-center gap-1.5 text-[10.5px] text-[var(--color-text-faint)]"
-          >
-            {applying ? (
-              'Applying revision…'
-            ) : saveMutation.isPending ? (
-              <>
-                <Loader2 className="size-2.5 animate-spin" /> Saving
-              </>
-            ) : saveError ? (
-              'Save needs attention · draft retained'
-            ) : recovered ? (
-              'Recovered unsaved edits'
-            ) : dirty ? (
-              'Unsaved changes'
-            ) : (
-              <>
-                <Check className="size-2.5" /> Saved · revision {revisionRef.current}
-              </>
-            )}
-            {googleBehind ? <span>· Google version behind</span> : null}
-          </div>
+          <DocumentSaveStatus
+            applying={applying}
+            saving={saveMutation.isPending}
+            error={Boolean(saveError)}
+            recovered={Boolean(recovered)}
+            dirty={dirty}
+            revision={revisionRef.current}
+            googleBehind={googleBehind}
+          />
         </div>
         <Button
-          variant="outline"
-          size="sm"
-          onClick={() => publishMutation.mutate()}
-          disabled={googleWriteBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
-          aria-label={document.google ? 'Sync Google' : 'Publish to Google'}
-          title={googleWriteBlocked ? googleWriteNotice : undefined}
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Version history"
+          title="Version history"
+          aria-pressed={historyOpen}
+          onClick={() => setHistoryOpen((value) => !value)}
         >
-          {publishMutation.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <CloudUpload className="size-3.5" />
-          )}
-          <span className="hidden sm:inline">{document.google ? 'Sync Google' : 'Publish'}</span>
+          <History className="size-3.5" />
         </Button>
-        {document.google ? (
+        {!googleWriteBlocked ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => publishMutation.mutate()}
+            disabled={googleWriteBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
+            aria-label={document.google ? 'Sync Google' : 'Publish to Google'}
+            title={googleWriteBlocked ? googleWriteNotice || undefined : undefined}
+          >
+            {publishMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <CloudUpload className="size-3.5" />
+            )}
+            <span className="hidden sm:inline">{document.google ? 'Sync Google' : 'Publish'}</span>
+          </Button>
+        ) : null}
+        {document.google && !googleWriteBlocked ? (
           <Button
             variant="outline"
             size="icon-sm"
@@ -616,11 +609,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         </Button>
       </header>
 
-      {googleWriteBlocked ? (
-        <p className="border-b border-[var(--color-border)] px-4 py-2 text-[11px] text-[var(--color-text-muted)]">
-          {googleWriteNotice}
-        </p>
-      ) : null}
       {saveError ? (
         <div
           role="alert"
@@ -689,53 +677,31 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         </div>
       ) : null}
 
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 text-[11px] text-[var(--color-text-muted)]">
-        <span>Albatross / {kindName(document.kind)}</span>
-        <span className="hidden sm:inline">Private working copy</span>
-        {engineSheet ? (
-          <a
-            className="hidden underline-offset-2 hover:underline md:inline"
-            href={`${ODOO_SPREADSHEET_ASSET_BASE}/LICENSE`}
-            target="_blank"
-            rel="noreferrer"
-            title="Spreadsheet engine license"
-          >
-            Engine: o-spreadsheet {ODOO_SPREADSHEET_VERSION} (LGPL-3.0)
-          </a>
-        ) : null}
-        {document.importSource ? (
-          <span className="hidden min-w-0 items-center gap-2 truncate lg:flex">
-            <span className="truncate">Imported from {document.importSource.filename}</span>
-            <a
-              className="shrink-0 underline-offset-2 hover:underline"
-              href={`/api/documents/${documentId}/original`}
-            >
-              Download original
-            </a>
-            {importNotes.length ? (
-              <button
-                type="button"
+      {document.importSource ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-1 text-[11px] text-[var(--color-text-muted)]">
+          {document.importSource ? (
+            <span className="hidden min-w-0 items-center gap-2 truncate lg:flex">
+              <span className="truncate">Imported from {document.importSource.filename}</span>
+              <a
                 className="shrink-0 underline-offset-2 hover:underline"
-                aria-expanded={importNotesOpen}
-                onClick={() => setImportNotesOpen((value) => !value)}
+                href={`/api/documents/${documentId}/original`}
               >
-                {importNotes.length} import {importNotes.length === 1 ? 'note' : 'notes'}
-              </button>
-            ) : null}
-          </span>
-        ) : null}
-        <Button
-          className="ml-auto"
-          variant="ghost"
-          size="xs"
-          aria-pressed={historyOpen}
-          onClick={() => {
-            setHistoryOpen((value) => !value);
-          }}
-        >
-          <History className="size-3.5" /> Versions
-        </Button>
-      </div>
+                Download original
+              </a>
+              {importNotes.length ? (
+                <button
+                  type="button"
+                  className="shrink-0 underline-offset-2 hover:underline"
+                  aria-expanded={importNotesOpen}
+                  onClick={() => setImportNotesOpen((value) => !value)}
+                >
+                  {importNotes.length} import {importNotes.length === 1 ? 'note' : 'notes'}
+                </button>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {importNotesOpen && importNotes.length ? (
         <section
           aria-label="Import notes"
@@ -799,7 +765,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
       <DocumentSuggestionReview
         documentId={documentId}
         document={document}
-        session={session}
         blocked={dirty || saveMutation.isPending}
         onApplying={setApplying}
         onChanged={async (revision, options) => {
@@ -1626,14 +1591,12 @@ function DocumentHistory({
 function DocumentSuggestionReview({
   documentId,
   document,
-  session,
   onChanged,
   blocked,
   onApplying,
 }: {
   documentId: string;
   document: EditorDocument;
-  session: SpreadsheetSession | null;
   onChanged: (revision?: number, options?: { engineCurrent?: boolean }) => Promise<void>;
   blocked: boolean;
   onApplying: (value: boolean) => void;
@@ -1645,25 +1608,6 @@ function DocumentSuggestionReview({
     mutationFn: async (input: { suggestionId: string; decision: 'apply' | 'dismiss' }) => {
       if (input.decision === 'apply' && blocked)
         throw new Error('Save your changes before applying a suggestion.');
-      const suggestion = localSuggestions.find((item) => item.suggestionId === input.suggestionId);
-      const changeSet =
-        input.decision === 'apply' && suggestion?.proposedModel.kind === 'sheet-changes'
-          ? suggestion.proposedModel
-          : null;
-      let engineModel: AlbatrossDocumentModel | undefined;
-      if (changeSet) {
-        if (!session) throw new Error('The spreadsheet is still opening. Try again in a moment.');
-        // Apply through engine commands (each undoable), then persist the
-        // resulting full snapshot bound to the suggestion's base revision.
-        const outcome = applySheetChangeSet(session, changeSet);
-        if (outcome.failed.length) {
-          const first = outcome.failed[0];
-          throw new Error(
-            `${outcome.failed.length} of ${changeSet.changes.length} changes could not be applied (${first.sheet}${first.cell ? `!${first.cell}` : ''}: ${first.reason}). Nothing was changed.`,
-          );
-        }
-        engineModel = session.snapshot();
-      }
       if (input.decision === 'apply') onApplying(true);
       const result = await fetchJson<{ ok: true; document?: EditorDocument }>(
         `/api/documents/${documentId}/suggestions/${input.suggestionId}`,
@@ -1673,18 +1617,10 @@ function DocumentSuggestionReview({
           body: JSON.stringify({
             decision: input.decision,
             expectedRevision: document.currentRevision,
-            model: engineModel,
           }),
         },
-      ).catch((error) => {
-        if (changeSet && session) {
-          // The server refused; take the engine back to the reviewed state.
-          const steps = changeSet.changes.length + (changeSet.newSheets?.length || 0);
-          for (let index = 0; index < steps; index += 1) session.model.dispatch('REQUEST_UNDO');
-        }
-        throw error;
-      });
-      return { ...input, revision: result.document?.currentRevision, engineCurrent: Boolean(changeSet) };
+      );
+      return { ...input, revision: result.document?.currentRevision, engineCurrent: false };
     },
     onSuccess: async (input) => {
       setLocalSuggestions((current) => current.filter((item) => item.suggestionId !== input.suggestionId));
@@ -1768,11 +1704,19 @@ function DocumentSuggestionReview({
 
 function SheetChangeList({ changeSet }: { changeSet: SheetChangeSet }) {
   const shown = changeSet.changes.slice(0, 12);
+  const commands = changeSet.commands || [];
   const remaining = changeSet.changes.length - shown.length;
   return (
     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-[11px]">
       {changeSet.newSheets?.length ? (
         <p className="mb-1 text-[var(--color-text-muted)]">New sheets: {changeSet.newSheets.join(', ')}</p>
+      ) : null}
+      {commands.length ? (
+        <ul className="mb-2 space-y-1">
+          {[...new Set(commands.map((command) => command.type))].map((type) => (
+            <li key={type}>{type.toLowerCase().replaceAll('_', ' ')}</li>
+          ))}
+        </ul>
       ) : null}
       <ul className="space-y-0.5 font-mono">
         {shown.map((change) => (
