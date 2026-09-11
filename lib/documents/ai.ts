@@ -11,6 +11,12 @@ import {
   type SheetChangeSet,
   sheetModelSchema,
 } from './model';
+import {
+  composePresentation,
+  PRESENTATION_DESIGN_GUIDANCE,
+  presentationBriefSchema,
+  requestedPresentationSlideCount,
+} from './presentation-design';
 import { MAX_SHEET_CHANGES, sheetChangeSchema, workbookText } from './sheet-workbook';
 
 const defaultDependencies = {
@@ -122,6 +128,35 @@ export async function generateDocumentProposal(input: {
   current?: AlbatrossDocumentRecord;
   sourceContext?: string;
 }): Promise<DocumentProposal> {
+  const blankDeck =
+    input.current?.model.kind === 'deck' &&
+    input.current.model.slides.every((slide) =>
+      slide.elements.every((element) => element.type === 'text' && !element.text?.trim()),
+    );
+  if (input.kind === 'deck' && (!input.current || blankDeck)) {
+    const { object } = await dependencies.generateObjectForCurrentUser({
+      userId: input.userId,
+      feature: 'document_generation',
+      speed: 'primary',
+      maxOutputTokens: 14_000,
+      schema: presentationBriefSchema,
+      system: PRESENTATION_DESIGN_GUIDANCE,
+      prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+    });
+    try {
+      const brief = presentationBriefSchema.parse(object);
+      const count = requestedPresentationSlideCount(input.instruction);
+      if (count && brief.slides.length !== count)
+        throw new DocumentGenerationError(
+          `The generator returned ${brief.slides.length} slides instead of the requested ${count}. No incomplete deck was saved.`,
+        );
+      return { title: brief.title, summary: brief.summary, model: composePresentation(brief) };
+    } catch (error) {
+      throw new DocumentGenerationError('The presentation generator returned an incomplete design.', {
+        cause: error,
+      });
+    }
+  }
   if (input.current && isSheetWorkbookModel(input.current.model)) {
     return generateSheetChangeSet({ ...input, current: input.current });
   }
@@ -145,16 +180,32 @@ export async function generateDocumentProposal(input: {
     schema,
     system: `You are Albatross's document editor. Produce a complete, directly editable canonical model for the requested ${documentKindLabel(input.kind).toLowerCase()}.
 ${modelGuidance(input.kind)}
+${input.kind === 'deck' ? 'Preserve the existing art direction, background and text colors, spacing and visual hierarchy. Add real slide content with varied layouts; never put editing instructions into slides. All elements must fit within the 0–100 canvas.' : ''}
 Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup. Return the full model, a concise title, and a one-sentence summary of what changed.`,
     prompt: `${current}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
   });
   try {
-    return schema.parse(object) as {
+    const parsed = schema.parse(object);
+    if (parsed.model.kind === 'deck') {
+      const count = requestedPresentationSlideCount(input.instruction);
+      if (count && parsed.model.slides.length !== count)
+        throw new DocumentGenerationError(
+          `The generator returned ${parsed.model.slides.length} slides instead of the requested ${count}. No incomplete deck was saved.`,
+        );
+    }
+    if (
+      input.current &&
+      parsed.title === input.current.title &&
+      JSON.stringify(parsed.model) === JSON.stringify(schemas[input.kind].parse(input.current.model))
+    )
+      throw new DocumentGenerationError('The generated revision contains no changes. Nothing was applied.');
+    return parsed as {
       title: string;
       summary: string;
       model: AlbatrossDocumentModel;
     };
   } catch (error) {
+    if (error instanceof DocumentGenerationError) throw error;
     throw new DocumentGenerationError(`The document model returned invalid ${input.kind} output.`, {
       cause: error,
     });

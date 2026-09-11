@@ -5,6 +5,7 @@ import {
   type UIMessage,
 } from 'ai';
 import { after, type NextRequest } from 'next/server';
+import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
@@ -212,7 +213,9 @@ export async function POST(req: NextRequest) {
           ),
         ),
       ),
-      convertToModelMessages(prepared.messages).then(sanitizeToolPairs),
+      hydrateChatAttachments(user.userId, prepared.messages)
+        .then(convertToModelMessages)
+        .then(sanitizeToolPairs),
     ]);
     const stream = await runAgent({
       messages: modelMessages,

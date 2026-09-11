@@ -130,7 +130,7 @@ export const ChainOfThoughtStep = memo(
             className="-mx-px absolute top-5 bottom-0 left-1/2 w-px bg-[var(--color-border)] group-last/step:hidden"
           />
         </div>
-        <div className="min-w-0 flex-1 space-y-1.5 overflow-hidden pb-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5 pb-3">
           <div className="min-w-0">{label}</div>
           {description && <div className="text-[11.5px] text-[var(--color-text-muted)]">{description}</div>}
           {children}

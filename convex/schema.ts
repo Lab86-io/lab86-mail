@@ -1787,6 +1787,16 @@ export default defineSchema({
     currentRevision: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    google: v.optional(
+      v.object({
+        connectionId: v.string(),
+        fileId: v.string(),
+        session: v.string(),
+        syncedRevision: v.number(),
+      }),
+    ),
+    lastWopiSave: v.optional(v.object({ id: v.string(), revision: v.number() })),
+    wopiLock: v.optional(v.object({ value: v.string(), sessionId: v.string(), expiresAt: v.number() })),
   })
     .index('by_user', ['userId'])
     .index('by_user_document', ['userId', 'documentId'])

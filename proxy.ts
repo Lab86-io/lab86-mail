@@ -129,7 +129,10 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
 }
 
 export function isOfficeServerRoute(pathname: string) {
-  return /^\/api\/office\/[a-zA-Z0-9-]+\/(?:callback|content)$/u.test(pathname);
+  return (
+    /^\/api\/office\/[a-zA-Z0-9-]+\/(?:callback|content)$/u.test(pathname) ||
+    /^\/api\/office\/wopi\/[a-zA-Z0-9-]+(?:\/contents)?$/u.test(pathname)
+  );
 }
 
 export function isBasicAuthBypassAllowed(req: Request) {

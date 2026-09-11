@@ -299,3 +299,88 @@ describe('binary Office working copies', () => {
     ).toMatchObject({ lastRevision: 2 });
   });
 });
+
+describe('Collabora locks and Google save state', () => {
+  test('locks are exclusive, expire, bind writes to the editor, and protect Google sync state', async () => {
+    const t = convexTest(schema, modules);
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['original'])));
+    await t.mutation(office.create, {
+      ...auth,
+      documentId: 'wopi',
+      title: 'File.docx',
+      extension: 'docx',
+      storageId,
+      size: 8,
+      sha256: 'original',
+      google: {
+        connectionId: 'connection',
+        fileId: 'google-file',
+        session: 'initial-token',
+        syncedRevision: 1,
+      },
+    });
+    for (const sessionId of ['a', 'b'])
+      await t.mutation(office.startSession, {
+        ...auth,
+        documentId: 'wopi',
+        sessionId,
+        key: sessionId,
+        expectedRevision: 1,
+      });
+    const lock = (sessionId: string, operation: string, value: string) =>
+      t.mutation(office.wopiLock, { ...auth, documentId: 'wopi', sessionId, operation, value });
+    expect(await lock('a', 'LOCK', 'first')).toEqual({ ok: true, value: 'first' });
+    expect(await lock('b', 'LOCK', 'second')).toEqual({ ok: false, value: 'first' });
+    expect(await lock('b', 'UNLOCK', 'first')).toEqual({ ok: false, value: 'first' });
+    expect(await lock('a', 'REFRESH_LOCK', 'first')).toEqual({ ok: true, value: 'first' });
+    const changed = await t.run((ctx) => ctx.storage.store(new Blob(['change'])));
+    const save = {
+      ...auth,
+      documentId: 'wopi',
+      sessionId: 'a',
+      key: 'a',
+      expectedRevision: 1,
+      storageId: changed,
+      size: 6,
+      sha256: 'change',
+    };
+    expect(await t.mutation(office.saveVersion, { ...save, wopiLock: 'wrong' })).toMatchObject({
+      ok: false,
+      code: 'LOCK_CONFLICT',
+    });
+    expect(
+      await t.mutation(office.saveVersion, { ...save, wopiLock: 'first', saveRequestId: 'verified-save' }),
+    ).toMatchObject({
+      ok: true,
+      revision: 2,
+    });
+    expect(
+      await t.mutation(office.linkGoogle, {
+        ...auth,
+        documentId: 'wopi',
+        expectedSession: 'stale',
+        session: 'new-token',
+        syncedRevision: 2,
+      }),
+    ).toEqual({ ok: false });
+    expect(
+      await t.mutation(office.linkGoogle, {
+        ...auth,
+        documentId: 'wopi',
+        expectedSession: 'initial-token',
+        session: 'new-token',
+        syncedRevision: 2,
+      }),
+    ).toEqual({ ok: true });
+    expect((await t.query(office.get, { ...auth, documentId: 'wopi' })).lastWopiSave).toEqual({
+      id: 'verified-save',
+      revision: 2,
+    });
+    await t.run(async (ctx) => {
+      const document = await ctx.db.query('officeDocuments').first();
+      await ctx.db.patch(document!._id, { wopiLock: { value: 'first', sessionId: 'a', expiresAt: 1 } });
+    });
+    expect(await lock('b', 'LOCK', 'second')).toEqual({ ok: true, value: 'second' });
+    expect(await lock('b', 'UNLOCK', 'second')).toEqual({ ok: true, value: '' });
+  });
+});

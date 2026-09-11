@@ -31,7 +31,12 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 describe('proxy basic-auth bypass guard', () => {
   test('bypasses only the exact capability-authenticated Office server endpoints', () => {
     setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
-    for (const path of ['/api/office/file-123/callback', '/api/office/file-123/content']) {
+    for (const path of [
+      '/api/office/file-123/callback',
+      '/api/office/file-123/content',
+      '/api/office/wopi/file-123',
+      '/api/office/wopi/file-123/contents',
+    ]) {
       expect(isOfficeServerRoute(path)).toBe(true);
       expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(false);
     }
@@ -41,6 +46,8 @@ describe('proxy basic-auth bypass guard', () => {
       '/api/office/file-123/session',
       '/api/office/file-123/content/extra',
       '/api/office/file-123/callback-admin',
+      '/api/office/wopi/file-123/admin',
+      '/api/office/wopi',
     ]) {
       expect(isOfficeServerRoute(path)).toBe(false);
       expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(true);

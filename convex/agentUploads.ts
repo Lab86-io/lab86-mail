@@ -72,7 +72,7 @@ export const getUpload = query({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const row = await ctx.db.get(args.uploadId);
-    return row && row.userId === userId ? row : null;
+    return row && row.userId === userId ? { ...row, url: await ctx.storage.getUrl(row.storageId) } : null;
   },
 });
 

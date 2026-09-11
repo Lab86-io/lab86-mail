@@ -60,6 +60,24 @@ afterEach(() => {
 });
 
 describe('document AI proposal service', () => {
+  test('a generated summary cannot claim an unchanged model was edited', async () => {
+    const current = documentRecord('deck');
+    if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing slide content';
+    __setDocumentAiDepsForTest({
+      generateObjectForCurrentUser: (async () => ({
+        object: { title: current.title, summary: 'Filled in six slides', model: current.model },
+      })) as any,
+    });
+    await expect(
+      generateDocumentProposal({
+        userId: 'user-1',
+        kind: 'deck',
+        instruction: 'Improve this slide',
+        current,
+      }),
+    ).rejects.toThrow('contains no changes');
+  });
+
   test('generates validated doc, sheet, and deck proposals with bounded context', async () => {
     const generated = mock(async (input: any) => {
       const kind = input.prompt.includes('spreadsheet')
@@ -71,7 +89,21 @@ describe('document AI proposal service', () => {
         object: {
           title: `${kind} proposal`,
           summary: `Prepared ${kind}`,
-          model: createDefaultDocumentModel(kind, `proposal-${kind}`),
+          ...(kind === 'deck'
+            ? {
+                palette: 'ink',
+                slides: [
+                  {
+                    layout: 'cover',
+                    title: 'Launch day',
+                    kicker: 'RELEASE',
+                    body: 'The launch is ready.',
+                    items: [],
+                    notes: '',
+                  },
+                ],
+              }
+            : { model: createDefaultDocumentModel(kind, `proposal-${kind}`) }),
         },
       };
     });
