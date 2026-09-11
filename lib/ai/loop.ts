@@ -793,6 +793,7 @@ export async function runAgent({
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
+  const timezone = userTimezone || 'UTC';
   const tools = liftToolsForAgent(operationBatchId, timezone);
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
@@ -820,7 +821,6 @@ export async function runAgent({
               ]);
               signal?.throwIfAborted();
               const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
-              const timezone = userTimezone || 'UTC';
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
               const system = [base, extraSystem, narrative, agentTimeContext(timezone)]
