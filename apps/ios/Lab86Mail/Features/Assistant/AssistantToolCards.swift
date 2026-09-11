@@ -1,5 +1,6 @@
 import Charts
 import Kingfisher
+import MobileAPI
 import SwiftUI
 
 // Native renderings of the agent's show_* display tools. The server envelope
@@ -95,6 +96,7 @@ enum AssistantToolCard: Equatable, Sendable {
     case link(title: String, url: URL?, detail: String?)
     case images([ImageCard])
     case weather(WeatherCard)
+    case briefNode(BriefNode)
     case draft(DraftCard)
     case email(EmailCard)
     case chart(ChartCard)
@@ -158,8 +160,8 @@ enum AssistantToolCard: Equatable, Sendable {
             guard !columns.isEmpty, !rows.isEmpty else { break }
             return .table(TableCard(
                 title: payload["title"]?.stringValue,
-                columns: Array(columns.prefix(3)),
-                rows: rows.map { Array($0.prefix(3)) }
+                columns: columns,
+                rows: rows
             ))
 
         case "show_plan", "show_progress":
@@ -207,7 +209,10 @@ enum AssistantToolCard: Equatable, Sendable {
             guard !images.isEmpty else { break }
             return .images(images)
 
-        case "show_weather":
+        case "show_map", "show_code_diff", "show_terminal", "show_weather":
+            if let node = AssistantDisplayNode.decode(toolName: toolName, payload: payload) {
+                return .briefNode(node)
+            }
             let location = payload["locationName"]?.stringValue ?? "Weather"
             if let summary = output["summary"]?.stringValue {
                 return .weather(WeatherCard(location: location, line: summary))
@@ -345,19 +350,21 @@ struct AssistantToolCardView: View {
 
             case .table(let table):
                 cardShell(table.title) {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                        GridRow {
-                            ForEach(table.columns, id: \.self) { column in
-                                Text(column)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Divider()
-                        ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    ScrollView(.horizontal) {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                             GridRow {
-                                ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                                    Text(cell).font(.footnote).lineLimit(2)
+                                ForEach(Array(table.columns.enumerated()), id: \.offset) { _, column in
+                                    Text(column)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Divider()
+                            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                                GridRow {
+                                    ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                        Text(cell).font(.footnote).lineLimit(2)
+                                    }
                                 }
                             }
                         }
@@ -439,6 +446,15 @@ struct AssistantToolCardView: View {
                             }
                         }
                     }
+                }
+
+            case .briefNode(let node):
+                switch node.kind {
+                case "weather": BriefWeatherNodeView(node: node)
+                case "geo_map": BriefGeoMapNodeView(node: node)
+                case "code_diff": BriefCodeDiffNodeView(node: node)
+                case "terminal": BriefTerminalNodeView(node: node)
+                default: EmptyView()
                 }
 
             case .weather(let weather):

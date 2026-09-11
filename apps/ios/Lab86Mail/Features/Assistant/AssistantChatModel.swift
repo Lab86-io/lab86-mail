@@ -12,14 +12,20 @@ struct AssistantToolCardSource: Equatable, Sendable {
 
 enum AssistantChatPart: Identifiable, Equatable, Sendable {
     case text(id: String, String)
+    case reasoning(AssistantReasoningPart)
+    case toolRow(AssistantToolRow)
     case card(id: String, AssistantToolCard, source: AssistantToolCardSource?)
     case approval(AssistantInlineApproval)
+    case question(AssistantQuestionPart)
 
     var id: String {
         switch self {
         case .text(let id, _): id
+        case .reasoning(let reasoning): reasoning.id
+        case .toolRow(let row): row.id
         case .card(let id, _, _): id
         case .approval(let approval): approval.id
+        case .question(let question): question.id
         }
     }
 }
@@ -83,12 +89,12 @@ struct AssistantChatMessage: Identifiable, Equatable, Sendable {
 
     let id: String
     let role: Role
-    // Ordered content: streamed text blocks interleaved with native renderings
-    // of the agent's display-tool outputs, in arrival order.
+    // Ordered content: streamed text, reasoning, tool rows, designed cards,
+    // and questions, in arrival order.
     var parts: [AssistantChatPart]
-    // Human-readable description of the tool the agent is currently running,
-    // shown inline while the turn streams.
-    var toolActivity: String?
+    // Web or connector sources the reply cited.
+    var sources: [AssistantSourceLink] = []
+    var endedTextIDs: Set<String> = []
 
     init(id: String, role: Role, text: String = "", parts: [AssistantChatPart]? = nil) {
         self.id = id
@@ -103,12 +109,25 @@ struct AssistantChatMessage: Identifiable, Equatable, Sendable {
         }.joined(separator: "\n\n")
     }
 
+    /// Tool rows, questions, and cards count as content: a turn that only ran
+    /// tools still shows its work log.
     var isVisuallyEmpty: Bool {
         parts.allSatisfy { part in
-            if case .text(_, let text) = part {
+            switch part {
+            case .text(_, let text):
                 return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .reasoning(let reasoning):
+                return reasoning.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default:
+                return false
             }
-            return false
+        }
+    }
+
+    var toolRows: [AssistantToolRow] {
+        parts.compactMap { part in
+            if case .toolRow(let row) = part { return row }
+            return nil
         }
     }
 }
@@ -151,6 +170,7 @@ final class AssistantChatModel {
     private let draftStore: AssistantDraftStore?
     private let ownerIDProvider: @MainActor () -> String?
     private var streamTask: Task<Void, Never>?
+    private var activeReplyID: String?
     // toolCallId → toolName; the output chunk carries only the call id.
     private var toolNamesByCallID: [String: String] = [:]
     private var approvalInputsByCallID: [String: JSONValue] = [:]
@@ -158,6 +178,8 @@ final class AssistantChatModel {
     private var uploadContext = ""
     private var currentApprovalContinuationID: String?
     private var lastFailedApprovalID: String?
+    /// Wall clock for row and reasoning timestamps. Tests pin it.
+    var clock: @MainActor () -> Date = { Date() }
 
     init(
         backend: BackendClient,
@@ -239,6 +261,23 @@ final class AssistantChatModel {
         }
     }
 
+    /// Records the answer to an `ask_*` question and resumes the turn. The
+    /// answer travels as the tool output of that call, the way the web's
+    /// `addToolResult` does it.
+    func answerQuestion(_ questionID: String, output: JSONValue) {
+        guard !isStreaming, !isUploading else { return }
+        for messageIndex in messages.indices {
+            for partIndex in messages[messageIndex].parts.indices {
+                guard case .question(var question) = messages[messageIndex].parts[partIndex],
+                      question.id == questionID, !question.isAnswered else { continue }
+                question.answer = output
+                messages[messageIndex].parts[partIndex] = .question(question)
+                beginApprovalContinuation(approvalID: questionID)
+                return
+            }
+        }
+    }
+
     private func beginApprovalContinuation(approvalID: String) {
         errorMessage = nil
         lastFailedUserText = nil
@@ -257,6 +296,7 @@ final class AssistantChatModel {
         let reply = AssistantChatMessage(id: Self.newMessageID(), role: .assistant, text: "")
         messages.append(reply)
         isStreaming = true
+        activeReplyID = reply.id
         return reply.id
     }
 
@@ -265,6 +305,8 @@ final class AssistantChatModel {
         streamTask = nil
         canContinue = true
         finishStreaming()
+        activeReplyID = nil
+        Task { await persistTranscript() }
     }
 
     private func streamReply(into replyID: String) async {
@@ -307,7 +349,7 @@ final class AssistantChatModel {
         } catch is CancellationError {
             // A stopped turn keeps whatever text already arrived.
         } catch {
-            if !Task.isCancelled {
+            if !Task.isCancelled, activeReplyID == replyID {
                 errorMessage = (error as? BackendError)?.errorDescription ?? error.localizedDescription
                 if let approvalID = currentApprovalContinuationID {
                     lastFailedApprovalID = approvalID
@@ -320,7 +362,9 @@ final class AssistantChatModel {
                 }
             }
         }
+        guard activeReplyID == replyID else { return }
         finishStreaming()
+        activeReplyID = nil
         await persistTranscript()
     }
 
@@ -328,93 +372,260 @@ final class AssistantChatModel {
     /// caller; tests feed the same events to exercise the same transitions.
     func apply(event: JSONValue, to replyID: String) {
         guard let type = event["type"]?.stringValue,
+              activeReplyID == replyID,
               let index = messages.firstIndex(where: { $0.id == replyID }) else { return }
         switch type {
         case "text-start":
             partCounter += 1
-            messages[index].parts.append(.text(id: "\(replyID)-t\(partCounter)", ""))
-            messages[index].toolActivity = nil
+            let id = event["id"]?.stringValue.map { "\(replyID)-text-\($0)" } ?? "\(replyID)-t\(partCounter)"
+            messages[index].parts.append(.text(id: id, ""))
         case "text-delta":
             guard let delta = event["delta"]?.stringValue else { return }
-            if case .text(let id, let existing) = messages[index].parts.last {
-                messages[index].parts[messages[index].parts.count - 1] = .text(id: id, existing + delta)
+            let expectedID = event["id"]?.stringValue.map { "\(replyID)-text-\($0)" }
+            if let partIndex = messages[index].parts.lastIndex(where: { part in
+                if case .text(let id, _) = part { return expectedID == nil || id == expectedID }
+                return false
+            }), case .text(let id, let existing) = messages[index].parts[partIndex] {
+                messages[index].parts[partIndex] = .text(id: id, existing + delta)
             } else {
                 partCounter += 1
-                messages[index].parts.append(.text(id: "\(replyID)-t\(partCounter)", delta))
+                messages[index].parts.append(.text(id: expectedID ?? "\(replyID)-t\(partCounter)", delta))
             }
-            messages[index].toolActivity = nil
-        case "tool-input-start", "tool-input-available":
-            if let name = event["toolName"]?.stringValue {
-                if let callID = event["toolCallId"]?.stringValue {
-                    toolNamesByCallID[callID] = name
-                    if let input = event["input"] {
-                        approvalInputsByCallID[callID] = input
-                        if name == "ask_approval",
-                           !Self.containsApproval(callID: callID, in: messages[index].parts) {
-                            messages[index].parts.append(
-                                .approval(
-                                    Self.makeApproval(
-                                        id: "approval-\(callID)",
-                                        callID: callID,
-                                        toolName: name,
-                                        input: input,
-                                        usesApprovalResponse: false
-                                    )
-                                )
+        case "text-end":
+            if let streamID = event["id"]?.stringValue {
+                messages[index].endedTextIDs.insert("\(replyID)-text-\(streamID)")
+            } else if let part = messages[index].parts.last, case .text(let id, _) = part {
+                messages[index].endedTextIDs.insert(id)
+            }
+        case "reasoning-start":
+            partCounter += 1
+            let id = event["id"]?.stringValue ?? "r\(partCounter)"
+            messages[index].parts.append(
+                .reasoning(AssistantReasoningPart(id: "\(replyID)-reasoning-\(id)", text: "", startedAt: clock()))
+            )
+        case "reasoning-delta":
+            guard let delta = event["delta"]?.stringValue else { return }
+            let id = event["id"]?.stringValue.map { "\(replyID)-reasoning-\($0)" }
+            if let partIndex = reasoningIndex(in: index, id: id),
+               case .reasoning(var reasoning) = messages[index].parts[partIndex] {
+                reasoning.text += delta
+                messages[index].parts[partIndex] = .reasoning(reasoning)
+            } else {
+                partCounter += 1
+                messages[index].parts.append(
+                    .reasoning(AssistantReasoningPart(
+                        id: id ?? "\(replyID)-reasoning-\(partCounter)",
+                        text: delta,
+                        startedAt: clock()
+                    ))
+                )
+            }
+        case "reasoning-end":
+            let id = event["id"]?.stringValue.map { "\(replyID)-reasoning-\($0)" }
+            guard let partIndex = reasoningIndex(in: index, id: id),
+                  case .reasoning(var reasoning) = messages[index].parts[partIndex] else { return }
+            reasoning.endedAt = clock()
+            messages[index].parts[partIndex] = .reasoning(reasoning)
+        case "tool-input-start":
+            guard let callID = event["toolCallId"]?.stringValue,
+                  let name = event["toolName"]?.stringValue else { return }
+            toolNamesByCallID[callID] = name
+            // Questions render as forms once their input is complete; they
+            // never take a row.
+            guard !name.hasPrefix("ask_") else { return }
+            if rowIndex(in: index, callID: callID) == nil {
+                messages[index].parts.append(
+                    .toolRow(AssistantToolRow(callID: callID, toolName: name, startedAt: clock()))
+                )
+            }
+        case "tool-input-delta":
+            guard let callID = event["toolCallId"]?.stringValue,
+                  let delta = event["inputTextDelta"]?.stringValue,
+                  let partIndex = rowIndex(in: index, callID: callID),
+                  case .toolRow(var row) = messages[index].parts[partIndex] else { return }
+            row.inputText += delta
+            messages[index].parts[partIndex] = .toolRow(row)
+        case "tool-input-available":
+            guard let callID = event["toolCallId"]?.stringValue else { return }
+            let name = event["toolName"]?.stringValue ?? toolNamesByCallID[callID] ?? "tool"
+            toolNamesByCallID[callID] = name
+            let input = event["input"] ?? .object([:])
+            approvalInputsByCallID[callID] = input
+            if name == "ask_approval" {
+                if !Self.containsApproval(callID: callID, in: messages[index].parts) {
+                    messages[index].parts.append(
+                        .approval(
+                            Self.makeApproval(
+                                id: "approval-\(callID)",
+                                callID: callID,
+                                toolName: name,
+                                input: input,
+                                usesApprovalResponse: false
                             )
-                        }
-                    }
+                        )
+                    )
                 }
-                messages[index].toolActivity = Self.describeTool(name)
+            } else if let kind = AssistantQuestionPart.Kind(rawValue: name) {
+                if !Self.containsQuestion(callID: callID, in: messages[index].parts) {
+                    messages[index].parts.append(
+                        .question(AssistantQuestionPart(
+                            id: "question-\(callID)",
+                            toolCallID: callID,
+                            kind: kind,
+                            input: input,
+                            answer: nil
+                        ))
+                    )
+                }
+            } else if let partIndex = rowIndex(in: index, callID: callID),
+                      case .toolRow(var row) = messages[index].parts[partIndex] {
+                row.input = input
+                row.toolName = name
+                messages[index].parts[partIndex] = .toolRow(row)
+            } else if !name.hasPrefix("ask_") {
+                messages[index].parts.append(
+                    .toolRow(AssistantToolRow(callID: callID, toolName: name, input: input, startedAt: clock()))
+                )
             }
         case "tool-approval-request":
             guard let approvalID = event["approvalId"]?.stringValue,
                   let callID = event["toolCallId"]?.stringValue,
                   let input = approvalInputsByCallID[callID] else { return }
-            if !Self.containsApproval(callID: callID, in: messages[index].parts) {
-                messages[index].parts.append(
-                    .approval(
-                        Self.makeApproval(
-                            id: approvalID,
-                            callID: callID,
-                            toolName: toolNamesByCallID[callID] ?? "ask_approval",
-                            input: input,
-                            usesApprovalResponse: true
-                        )
-                    )
-                )
+            let approval = Self.makeApproval(
+                id: approvalID, callID: callID,
+                toolName: toolNamesByCallID[callID] ?? "ask_approval",
+                input: input, usesApprovalResponse: true
+            )
+            if let existing = messages[index].parts.firstIndex(where: { part in
+                if case .approval(let value) = part { return value.toolCallID == callID }
+                return false
+            }) {
+                messages[index].parts[existing] = .approval(approval)
+            } else {
+                messages[index].parts.removeAll { part in
+                    if case .toolRow(let row) = part { return row.callID == callID }
+                    return false
+                }
+                messages[index].parts.append(.approval(approval))
             }
-            messages[index].toolActivity = nil
         case "tool-output-available":
-            guard let callID = event["toolCallId"]?.stringValue,
-                  let name = toolNamesByCallID[callID] else { return }
+            guard let callID = event["toolCallId"]?.stringValue else { return }
+            let name = toolNamesByCallID[callID] ?? "tool"
+            guard !name.hasPrefix("ask_") else { return }
             let output = event["output"] ?? .null
-            if let card = AssistantToolCard.parse(toolName: name, output: output, toolCallID: callID) {
-                partCounter += 1
-                let source = AssistantToolCardSource(
-                    toolName: name,
-                    toolCallID: callID,
-                    input: approvalInputsByCallID[callID],
-                    output: output
+            let card = name.hasPrefix("show_") ? AssistantToolCard.parse(toolName: name, output: output, toolCallID: callID) : nil
+            if let partIndex = rowIndex(in: index, callID: callID),
+               case .toolRow(var row) = messages[index].parts[partIndex] {
+                row.state = output["ok"]?.boolValue == false ? .failed : .done
+                row.errorText = output["error"]?.stringValue
+                row.output = output
+                row.card = card
+                row.endedAt = clock()
+                messages[index].parts[partIndex] = .toolRow(row)
+            } else {
+                messages[index].parts.append(
+                    .toolRow(AssistantToolRow(
+                        callID: callID,
+                        toolName: name,
+                        state: .done,
+                        input: approvalInputsByCallID[callID],
+                        output: output,
+                        card: card,
+                        startedAt: clock(),
+                        endedAt: clock()
+                    ))
                 )
-                messages[index].parts.append(.card(id: "\(replyID)-c\(partCounter)", card, source: source))
-                messages[index].toolActivity = nil
-                ingestDraft(card)
             }
+            if let card { ingestDraft(card) }
+        case "tool-output-error":
+            guard let callID = event["toolCallId"]?.stringValue else { return }
+            let name = toolNamesByCallID[callID] ?? "tool"
+            let errorText = event["errorText"]?.stringValue?.nilIfBlank ?? "The step failed."
+            if let partIndex = rowIndex(in: index, callID: callID),
+               case .toolRow(var row) = messages[index].parts[partIndex] {
+                row.state = .failed
+                row.errorText = errorText
+                row.endedAt = clock()
+                messages[index].parts[partIndex] = .toolRow(row)
+            } else {
+                messages[index].parts.append(
+                    .toolRow(AssistantToolRow(
+                        callID: callID,
+                        toolName: name,
+                        state: .failed,
+                        input: approvalInputsByCallID[callID],
+                        errorText: errorText,
+                        startedAt: clock(),
+                        endedAt: clock()
+                    ))
+                )
+            }
+        case "data-tool-shape":
+            guard let callID = event["id"]?.stringValue, let data = event["data"],
+                  let partIndex = rowIndex(in: index, callID: callID),
+                  case .toolRow(var row) = messages[index].parts[partIndex] else { return }
+            row.shapeJSON = data
+            row.shape = ToolShape.decode(data)
+            messages[index].parts[partIndex] = .toolRow(row)
+        case "source-url":
+            guard let url = event["url"]?.stringValue?.nilIfBlank else { return }
+            let id = event["sourceId"]?.stringValue ?? url
+            guard !messages[index].sources.contains(where: { $0.id == id }) else { return }
+            messages[index].sources.append(
+                AssistantSourceLink(id: id, url: url, title: event["title"]?.stringValue?.nilIfBlank)
+            )
         case "error":
             errorMessage = event["errorText"]?.stringValue ?? "Albatross couldn’t finish that."
             canContinue = !messages[index].isVisuallyEmpty
+            if let continuation = currentApprovalContinuationID {
+                lastFailedApprovalID = continuation
+            } else if !canContinue {
+                lastFailedUserText = messages.last(where: { $0.role == .user })?.text
+            }
         case "finish":
-            canContinue = event["finishReason"]?.stringValue == "length"
+            canContinue = canContinue || event["finishReason"]?.stringValue == "length"
         default:
             break
         }
     }
 
+    private func rowIndex(in messageIndex: Int, callID: String) -> Int? {
+        messages[messageIndex].parts.lastIndex { part in
+            if case .toolRow(let row) = part { return row.callID == callID }
+            return false
+        }
+    }
+
+    /// The reasoning part with the given id, else the last open one.
+    private func reasoningIndex(in messageIndex: Int, id: String?) -> Int? {
+        let parts = messages[messageIndex].parts
+        if let id, let exact = parts.lastIndex(where: { $0.id == id }) { return exact }
+        return parts.lastIndex { part in
+            if case .reasoning(let reasoning) = part { return reasoning.isStreaming }
+            return false
+        }
+    }
+
     private func finishStreaming() {
         isStreaming = false
+        let now = clock()
         for index in messages.indices {
-            messages[index].toolActivity = nil
+            for partIndex in messages[index].parts.indices {
+                switch messages[index].parts[partIndex] {
+                case .toolRow(var row) where row.state == .running:
+                    // A row that never got its output cannot stay live once
+                    // the stream is gone.
+                    row.state = .failed
+                    row.errorText = row.errorText ?? "Did not finish"
+                    row.endedAt = now
+                    messages[index].parts[partIndex] = .toolRow(row)
+                case .reasoning(var reasoning) where reasoning.isStreaming:
+                    reasoning.endedAt = now
+                    messages[index].parts[partIndex] = .reasoning(reasoning)
+                default:
+                    continue
+                }
+            }
         }
         // An assistant turn that produced nothing at all should not linger as
         // an empty row, but keep the failed user turn for explicit Retry.
@@ -453,24 +664,61 @@ final class AssistantChatModel {
     }
 
     /// The transcript as sent to the agent and saved to history. Internal so
-    /// tests can prove a saved card restores with the same identity.
-    func transcriptJSON() -> JSONValue {
+    /// tests can prove a saved card restores with the same identity. Display
+    /// parts (shapes, sources) only travel to history; the agent request
+    /// carries the parts the model reads.
+    func transcriptJSON(includeDisplayParts: Bool = false) -> JSONValue {
         .array(messages.compactMap { message in
-            let parts = message.parts.compactMap { part -> JSONValue? in
+            var parts: [JSONValue] = []
+            for part in message.parts {
                 switch part {
                 case .text(_, let text):
-                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return nil
+                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    parts.append(.object(["type": .string("text"), "text": .string(text)]))
+                case .reasoning(let reasoning):
+                    guard !reasoning.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                    var saved: [String: JSONValue] = ["type": .string("reasoning"), "text": .string(reasoning.text)]
+                    if includeDisplayParts {
+                        saved["startedAt"] = reasoning.startedAt.map { .number($0.timeIntervalSince1970 * 1_000) }
+                        saved["endedAt"] = reasoning.endedAt.map { .number($0.timeIntervalSince1970 * 1_000) }
                     }
-                    return .object(["type": .string("text"), "text": .string(text)])
+                    parts.append(.object(saved))
+                case .toolRow(let row):
+                    var saved = Self.toolRowPartJSON(row)
+                    if includeDisplayParts, case .object(var fields) = saved {
+                        fields["startedAt"] = row.startedAt.map { .number($0.timeIntervalSince1970 * 1_000) }
+                        fields["endedAt"] = row.endedAt.map { .number($0.timeIntervalSince1970 * 1_000) }
+                        saved = .object(fields)
+                    }
+                    parts.append(saved)
+                    if includeDisplayParts, let shapeJSON = row.shapeJSON {
+                        parts.append(.object([
+                            "type": .string("data-tool-shape"),
+                            "id": .string(row.callID),
+                            "data": shapeJSON,
+                        ]))
+                    }
                 case .approval(let approval):
-                    return Self.approvalPartJSON(approval)
+                    parts.append(Self.approvalPartJSON(approval))
+                case .question(let question):
+                    parts.append(Self.questionPartJSON(question))
                 case .card(_, _, let source):
                     // Cards travel with the transcript so reopening the chat
                     // brings them back, in the same tool-part shape the web
                     // product writes.
-                    guard let source else { return nil }
-                    return Self.cardPartJSON(source)
+                    guard let source else { continue }
+                    parts.append(Self.cardPartJSON(source))
+                }
+            }
+            if includeDisplayParts {
+                for source in message.sources {
+                    var part: [String: JSONValue] = [
+                        "type": .string("source-url"),
+                        "sourceId": .string(source.id),
+                        "url": .string(source.url),
+                    ]
+                    if let title = source.title { part["title"] = .string(title) }
+                    parts.append(.object(part))
                 }
             }
             guard !parts.isEmpty else { return nil }
@@ -480,6 +728,42 @@ final class AssistantChatModel {
                 "parts": .array(parts),
             ])
         })
+    }
+
+    static func toolRowPartJSON(_ row: AssistantToolRow) -> JSONValue {
+        var part: [String: JSONValue] = [
+            "type": .string("dynamic-tool"),
+            "toolName": .string(row.toolName),
+            "toolCallId": .string(row.callID),
+            "input": row.input ?? .object([:]),
+        ]
+        switch row.state {
+        case .running:
+            part["state"] = .string(row.input == nil ? "input-streaming" : "input-available")
+        case .done:
+            part["state"] = .string("output-available")
+            part["output"] = row.output ?? .null
+        case .failed:
+            part["state"] = .string("output-error")
+            part["errorText"] = .string(row.errorText ?? "The step failed.")
+        }
+        return .object(part)
+    }
+
+    static func questionPartJSON(_ question: AssistantQuestionPart) -> JSONValue {
+        var part: [String: JSONValue] = [
+            "type": .string("dynamic-tool"),
+            "toolName": .string(question.toolName),
+            "toolCallId": .string(question.toolCallID),
+            "input": question.input,
+        ]
+        if let answer = question.answer {
+            part["state"] = .string("output-available")
+            part["output"] = answer
+        } else {
+            part["state"] = .string("input-available")
+        }
+        return .object(part)
     }
 
     static func approvalPartJSON(_ approval: AssistantInlineApproval) -> JSONValue {
@@ -543,6 +827,15 @@ final class AssistantChatModel {
         }
     }
 
+    private static func containsQuestion(callID: String, in parts: [AssistantChatPart]) -> Bool {
+        parts.contains { part in
+            if case .question(let question) = part {
+                return question.toolCallID == callID
+            }
+            return false
+        }
+    }
+
     private static func makeApproval(
         id: String,
         callID: String,
@@ -575,7 +868,7 @@ final class AssistantChatModel {
 
     // Best-effort history save; a failure never interrupts the conversation.
     private func persistTranscript() async {
-        guard case let .array(items) = transcriptJSON(), !items.isEmpty else { return }
+        guard case let .array(items) = transcriptJSON(includeDisplayParts: true), !items.isEmpty else { return }
         let title = messages.first(where: { $0.role == .user }).map { String($0.text.prefix(64)) }
         _ = try? await backend.post(
             path: "/api/chats",
@@ -773,9 +1066,16 @@ final class AssistantChatModel {
             messages = restored
             errorMessage = nil
             lastFailedUserText = nil
+            lastFailedApprovalID = nil
+            currentApprovalContinuationID = nil
+            canContinue = false
             for message in restored {
                 for part in message.parts {
-                    if case .card(_, let card, _) = part { ingestDraft(card) }
+                    switch part {
+                    case .card(_, let card, _): ingestDraft(card)
+                    case .toolRow(let row): if let card = row.card { ingestDraft(card) }
+                    default: continue
+                    }
                 }
             }
         } catch {
@@ -820,8 +1120,11 @@ final class AssistantChatModel {
               let roleValue = json["role"]?.stringValue,
               let role = AssistantChatMessage.Role(rawValue: roleValue) else { return nil }
         var parts: [AssistantChatPart] = []
+        var sources: [AssistantSourceLink] = []
+    var endedTextIDs: Set<String> = []
         for (offset, part) in (json["parts"]?.arrayValue ?? []).enumerated() {
-            switch part["type"]?.stringValue {
+            let type = part["type"]?.stringValue ?? ""
+            switch type {
             case "text":
                 guard let text = part["text"]?.stringValue, !text.isEmpty else { continue }
                 if case .text(let textID, let existing)? = parts.last, !existing.isEmpty {
@@ -829,33 +1132,103 @@ final class AssistantChatModel {
                 } else {
                     parts.append(.text(id: "\(id)-t\(offset)", text))
                 }
-            case "dynamic-tool", "tool":
-                guard part["state"]?.stringValue == "output-available",
-                      let toolName = part["toolName"]?.stringValue,
-                      let callID = part["toolCallId"]?.stringValue,
-                      let output = part["output"],
-                      let card = AssistantToolCard.parse(toolName: toolName, output: output, toolCallID: callID)
-                else { continue }
-                let source = AssistantToolCardSource(
-                    toolName: toolName,
-                    toolCallID: callID,
-                    input: part["input"],
-                    output: output
-                )
-                parts.append(.card(id: "\(id)-c\(offset)", card, source: source))
+            case "reasoning":
+                guard let text = (part["text"] ?? part["reasoning"])?.stringValue?.nilIfBlank else { continue }
+                parts.append(.reasoning(AssistantReasoningPart(
+                    id: "\(id)-reasoning-\(offset)", text: text,
+                    startedAt: CalendarDateParser.date(part["startedAt"]),
+                    endedAt: CalendarDateParser.date(part["endedAt"]) ?? .distantPast
+                )))
+            case "data-tool-shape":
+                guard let callID = part["id"]?.stringValue, let data = part["data"],
+                      let rowIndex = parts.lastIndex(where: { candidate in
+                          if case .toolRow(let row) = candidate { return row.callID == callID }
+                          return false
+                      }),
+                      case .toolRow(var row) = parts[rowIndex] else { continue }
+                row.shapeJSON = data
+                row.shape = ToolShape.decode(data)
+                parts[rowIndex] = .toolRow(row)
+            case "source-url":
+                guard let url = part["url"]?.stringValue?.nilIfBlank else { continue }
+                sources.append(AssistantSourceLink(
+                    id: part["sourceId"]?.stringValue ?? url,
+                    url: url,
+                    title: part["title"]?.stringValue?.nilIfBlank
+                ))
             default:
-                continue
+                guard let restored = restoredToolPart(part, type: type, callID: nil) else { continue }
+                parts.append(restored)
             }
         }
-        return AssistantChatMessage(id: id, role: role, parts: parts)
+        var message = AssistantChatMessage(id: id, role: role, parts: parts)
+        message.sources = sources
+        return message
+    }
+
+    /// One saved tool part: the web writes `tool-<name>` parts, this client
+    /// writes `dynamic-tool`. Questions and approvals come back as forms,
+    /// answered or still open; everything else is a work log row.
+    private static func restoredToolPart(_ part: JSONValue, type: String, callID: String?) -> AssistantChatPart? {
+        let toolName: String
+        if type == "dynamic-tool" || type == "tool" {
+            guard let name = part["toolName"]?.stringValue else { return nil }
+            toolName = name
+        } else if type.hasPrefix("tool-") {
+            toolName = part["toolName"]?.stringValue ?? String(type.dropFirst("tool-".count))
+        } else {
+            return nil
+        }
+        guard let callID = callID ?? part["toolCallId"]?.stringValue else { return nil }
+        let state = part["state"]?.stringValue ?? "output-available"
+        let input = part["input"] ?? .object([:])
+        if toolName == "ask_approval" || state.hasPrefix("approval-") {
+            let usesApprovalResponse = state.hasPrefix("approval-")
+            var approval = makeApproval(
+                id: part["approval"]?["id"]?.stringValue ?? "approval-\(callID)",
+                callID: callID,
+                toolName: toolName,
+                input: input,
+                usesApprovalResponse: usesApprovalResponse
+            )
+            if usesApprovalResponse {
+                approval.decision = part["approval"]?["approved"]?.boolValue
+            } else if state == "output-available", let decision = part["output"]?["decision"]?.stringValue {
+                approval.decision = decision == "approved"
+            }
+            return .approval(approval)
+        }
+        if let kind = AssistantQuestionPart.Kind(rawValue: toolName) {
+            return .question(AssistantQuestionPart(
+                id: "question-\(callID)",
+                toolCallID: callID,
+                kind: kind,
+                input: input,
+                answer: state == "output-available" ? part["output"] : nil
+            ))
+        }
+        var row = AssistantToolRow(
+            callID: callID, toolName: toolName, input: part["input"],
+            startedAt: CalendarDateParser.date(part["startedAt"]),
+            endedAt: CalendarDateParser.date(part["endedAt"])
+        )
+        switch state {
+        case "output-available":
+            row.state = .done
+            row.output = part["output"] ?? .null
+            row.card = toolName.hasPrefix("show_") ? AssistantToolCard.parse(toolName: toolName, output: row.output ?? .null, toolCallID: callID) : nil
+        case "output-error":
+            row.state = .failed
+            row.errorText = part["errorText"]?.stringValue
+        default:
+            // A call saved mid-flight has no result to show.
+            row.state = .failed
+            row.errorText = "Did not finish"
+        }
+        return .toolRow(row)
     }
 
     private static func newMessageID() -> String {
         "msg-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-    }
-
-    private static func describeTool(_ name: String) -> String {
-        let readable = name.replacingOccurrences(of: "_", with: " ")
-        return "Working — \(readable)"
     }
 }

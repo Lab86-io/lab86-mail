@@ -109,12 +109,12 @@ struct AssistantDraftArtifactTests {
         #expect(toolPart["toolCallId"]?.stringValue == "call-1")
         #expect(toolPart["state"]?.stringValue == "output-available")
         let restored = try #require(AssistantChatModel.message(from: assistant))
-        guard case .card(_, .draft(let restoredDraft), let source)? = restored.parts.first else {
+        guard case .toolRow(let row)? = restored.parts.first, case .draft(let restoredDraft)? = row.card else {
             Issue.record("Expected the restored message to carry the draft card")
             return
         }
         #expect(restoredDraft.toolCallID == "call-1")
-        #expect(source?.toolCallID == "call-1")
+        #expect(row.cardSource?.toolCallID == "call-1")
         #expect(AssistantDraftKey(sessionID: "session-1", toolCallID: restoredDraft.toolCallID ?? "") == key)
     }
 
