@@ -435,3 +435,28 @@ test('XLSX inline rich runs are preserved alongside plain inline strings', async
   expect((result[0].parts[0] as any).text).toContain('A1: Gross margin');
   expect((result[0].parts[0] as any).text).toContain('B1: Plain');
 });
+
+test('cached attachment references each count toward the model payload limit', async () => {
+  const bytes = new Uint8Array(14 * 1024 * 1024);
+  let downloads = 0;
+  __setChatUploadDepsForTest({
+    convexQuery: (async () => ({
+      url: 'https://storage.test/file',
+      name: 'large.pdf',
+      contentType: 'application/pdf',
+      size: bytes.length,
+    })) as any,
+    fetch: async () => {
+      downloads++;
+      return new Response(bytes);
+    },
+  });
+  const part = { type: 'file', url: '/api/agent/uploads/repeated' };
+  await expect(
+    hydrateChatAttachments('owner', [
+      { id: 'one', role: 'user', parts: [part] },
+      { id: 'two', role: 'user', parts: [part] },
+    ] as any),
+  ).rejects.toThrow('25 MB');
+  expect(downloads).toBe(1);
+});

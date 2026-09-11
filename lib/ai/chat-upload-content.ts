@@ -123,16 +123,15 @@ export async function hydrateChatAttachments(
         if (inline[2].length > Math.ceil((MAX_CHAT_BYTES * 4) / 3) + 4)
           throw new Error('Conversation attachments exceed 25 MB.');
         const bytes = Buffer.from(inline[2], 'base64');
-        total += bytes.length;
         upload = { file: { name: part.filename || 'Attachment', contentType: type }, bytes };
       } else if (!upload) {
         upload = await readChatUpload(userId, id, signal);
-        total += upload.bytes.length;
         cache.set(id, upload);
       }
+      if (!upload) throw new Error('Attachment unavailable.');
+      total += upload.bytes.length;
       if (total > MAX_CHAT_BYTES)
         throw new Error('Conversation attachments exceed 25 MB. Start a new chat with the files you need.');
-      if (!upload) throw new Error('Attachment unavailable.');
       const { file, bytes } = upload;
       const type = file.contentType || 'application/octet-stream';
       if (type.startsWith('image/') || type === 'application/pdf') {

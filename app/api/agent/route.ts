@@ -161,6 +161,12 @@ export async function POST(req: NextRequest) {
   }
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'agent',
+      limit: 60,
+      windowMs: 60_000,
+    });
     const prepared = prepareAgentMessages(body.messages);
     const compactionNote =
       prepared.omitted || prepared.compacted
@@ -188,24 +194,17 @@ export async function POST(req: NextRequest) {
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
     const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
-      enforceUserRateLimit({
-        userId: user.userId,
-        key: 'agent',
-        limit: 60,
-        windowMs: 60_000,
-      }).then(() =>
-        !briefContext && body.areaDiscovery
-          ? readAreaDiscoveryContext({
-              userId: user.userId,
-              areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+      !briefContext && body.areaDiscovery
+        ? readAreaDiscoveryContext({
+            userId: user.userId,
+            areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+          })
+            .then((result) => result.systemContext)
+            .catch((error) => {
+              console.warn('[agent-route] area discovery context failed', errorForLog(error));
+              return '';
             })
-              .then((result) => result.systemContext)
-              .catch((error) => {
-                console.warn('[agent-route] area discovery context failed', errorForLog(error));
-                return '';
-              })
-          : '',
-      ),
+        : '',
       Promise.all(
         contextAttachments.map((attachment) =>
           readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(

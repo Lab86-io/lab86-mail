@@ -144,9 +144,11 @@ try {
   // same dynamic tool shape persisted by the native chat; no live AI or mail.
   await textarea.fill('Draft a synthetic note');
   await textarea.press('Control+Enter');
+  // Streaming rendering may buffer the final word. Accept either complete
+  // rendered form here; require the full sentence after finishAgent() below.
   await chat
     .locator('[data-message-role="assistant"]')
-    .getByText('The draft stays', { exact: true })
+    .getByText(/^The draft stays(?: here\.)?$/)
     .waitFor();
   await chat.getByRole('button', { name: 'Show current page' }).click();
   await page.setViewportSize({ width: 390, height: 844 });

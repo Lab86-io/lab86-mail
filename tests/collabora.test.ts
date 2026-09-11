@@ -184,3 +184,23 @@ test('PutFile accepts the shared lock across sessions and returns the current lo
     __setOfficeServiceDepsForTest();
   }
 });
+
+test('PutFile lock conflicts report only an active lock, before reading the upload', async () => {
+  const { POST } = await import('../app/api/office/wopi/[documentId]/contents/route');
+  for (const [lock, expected] of [
+    [undefined, ''],
+    [{ value: 'expired', sessionId: 'session', expiresAt: Date.now() - 1 }, ''],
+    [{ value: 'active', sessionId: 'session', expiresAt: Date.now() + 60000 }, 'active'],
+  ] as const) {
+    setup({ getOfficeFile: async () => ({ ...file, wopiLock: lock }) });
+    const response = await POST(
+      new Request(
+        `https://app.test/api/office/wopi/${file.documentId}/contents?access_token=${capability()}`,
+        { method: 'POST', headers: { 'x-wopi-lock': 'expired' }, body: 'invalid office archive' },
+      ),
+      { params: Promise.resolve({ documentId: file.documentId }) },
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get('x-wopi-lock')).toBe(expected);
+  }
+});

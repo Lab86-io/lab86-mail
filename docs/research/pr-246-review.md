@@ -27,3 +27,27 @@ Focused tests cover two-session saves, owner/lock conflicts, stable Google ident
 Collabora close-message reference: https://sdk.collaboraonline.com/CO-SDK-manual.pdf. No UI redesign was introduced. Original Dia/browser research and the unavailable Mobbin tooling are recorded in [dogfood notes](chat-dogfood-2026-09-11.md).
 
 The template's Claude delegation checklist predates the supplied ownership instruction allowing Codex to implement web UI directly; it is not marked as performed. CodeRabbit's generic docstring-percentage recommendation was not used to add boilerplate to unrelated functions; comments document the security and concurrency boundaries changed here.
+
+## Follow-up review (fe65a1d)
+
+Four valid follow-up issues are fixed: the rate-limit gate now completes before
+context reads and attachment downloads; every attachment reference counts toward
+the 25 MB hydrated payload limit even when storage retrieval is cached; and initial
+PutFile conflicts return an empty lock header when the stored lock has expired.
+Focused regressions cover those three, and the browser assertion now accepts
+both observed streaming render states before asserting the full final sentence.
+
+One suggestion was not applied; the streaming assertion was made tolerant of either rendering state:
+
+- The workspace browser check intentionally observes an unfinished text stream.
+  Streamdown buffers the last word, so `The draft stays` is the rendered text at
+  that point. The assertion now accepts either exact rendered form within the assistant
+  message. The full `The draft stays here.` sentence is required after the
+  fixture finishes the stream.
+- Reconciliation must not replace an unrecognized provider version with an
+  arbitrarily chosen pending token. `linkGoogle` only persists numeric pending
+  provider versions, and reconciliation compares those monotonic versions. If
+  canonical state is malformed or unrecognized, preserving the pending save and
+  failing closed protects edits; clearing it without establishing version order
+  would lose the recovery record or overwrite newer state. Existing regressions
+  explicitly verify this boundary and successful recovery for valid versions.

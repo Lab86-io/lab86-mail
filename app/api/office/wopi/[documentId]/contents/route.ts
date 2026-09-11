@@ -36,8 +36,9 @@ export async function POST(request: Request, context: Context) {
     const { documentId } = await context.params;
     const { file, session, sessionId, userId } = await wopiContext(request, documentId);
     const lock = request.headers.get('x-wopi-lock') || '';
-    if (!lock || file.wopiLock?.value !== lock || file.wopiLock.expiresAt <= Date.now())
-      return new Response(null, { status: 409, headers: { 'X-WOPI-Lock': file.wopiLock?.value || '' } });
+    const activeLock = file.wopiLock && file.wopiLock.expiresAt > Date.now() ? file.wopiLock.value : '';
+    if (!lock || activeLock !== lock)
+      return new Response(null, { status: 409, headers: { 'X-WOPI-Lock': activeLock } });
     const requestId = request.headers.get('x-cool-wopi-extendeddata') || '';
     const saveRequestId = /^[a-zA-Z0-9-]{1,80}$/.test(requestId) ? requestId : undefined;
     const expectedRevision = file.currentRevision;
