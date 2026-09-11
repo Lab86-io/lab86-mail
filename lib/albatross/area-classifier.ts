@@ -120,7 +120,10 @@ export function matchThreadToFacts(
 const assignmentSchema = z.object({
   areaId: z.string().min(1),
   evidence: z.array(z.string().trim().min(3).max(240)).min(1).max(3),
-  factIds: z.array(z.string().min(1)).max(4).default([]),
+  // Omitting a key from `required` makes OpenAI strict JSON schema reject the
+  // whole call, so factIds must stay a plain required array. The routing prompt
+  // already instructs the model to send [] when no facts apply.
+  factIds: z.array(z.string().min(1)).max(4),
   reason: z.string().min(1).max(240),
 });
 
