@@ -67,6 +67,51 @@ export const listDocs = query({
   },
 });
 
+/** Read a bounded edition page in generation order, including existing stored reports. */
+export const dailyReportPage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    cursor: v.union(v.string(), v.null()),
+    limit: v.number(),
+    summaryOnly: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const editions = args.edition
+      ? ctx.db
+          .query('userDocs')
+          .withIndex('by_user_kind_report_edition_generated', (q) =>
+            q.eq('userId', args.userId).eq('kind', 'dailyReport').eq('doc.kind', args.edition),
+          )
+      : ctx.db
+          .query('userDocs')
+          .withIndex('by_user_kind_report_generated', (q) =>
+            q.eq('userId', args.userId).eq('kind', 'dailyReport'),
+          );
+    // A Convex document can be 1 MiB. Eight records stay below the 16 MiB
+    // execution read limit even when every edition carries a large HTML artifact.
+    const result = await editions.order('desc').paginate({
+      cursor: args.cursor,
+      numItems: Math.min(8, Math.max(1, Math.floor(args.limit))),
+    });
+    return {
+      ...result,
+      page: result.page.map((row) =>
+        args.summaryOnly
+          ? {
+              _id: row.key,
+              kind: row.doc.kind || 'manual',
+              generatedAt: row.doc.generatedAt || 0,
+              title: row.doc.title || 'Daily Report',
+            }
+          : row.doc,
+      ),
+    };
+  },
+});
+
 export const upsertDoc = mutation({
   args: {
     internalSecret: v.optional(v.string()),
