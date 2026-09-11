@@ -1,4 +1,6 @@
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import { api, convexQuery } from '../hosted/convex';
+import { isConvexConfigured } from '../hosted/env';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
@@ -15,7 +17,7 @@ import {
   MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
-import { kvGet, kvList, kvUpsert } from './kv';
+import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 let persistSettledDailyReport: typeof kvUpsert = kvUpsert;
 
@@ -37,19 +39,58 @@ export async function getDailyReport(id: string) {
   return report ? migrateDailyReportForRead(report) : null;
 }
 
+export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
+
+async function readReportRows<T>(
+  limit: number,
+  summaryOnly: boolean,
+  edition?: DailyReport['kind'],
+): Promise<T[]> {
+  const count = Math.min(100, Math.max(1, Math.floor(limit)));
+  if (!isConvexConfigured()) {
+    const reports = await kvList<DailyReport>('dailyReport');
+    return reports
+      .filter((report) => !edition || report.kind === edition)
+      .sort((a, b) => b.generatedAt - a.generatedAt)
+      .slice(0, count)
+      .map((report) =>
+        summaryOnly
+          ? {
+              _id: report._id,
+              kind: report.kind,
+              generatedAt: report.generatedAt,
+              title: report.title,
+            }
+          : report,
+      ) as T[];
+  }
+  const userId = requireStoreUserId();
+  const rows: T[] = [];
+  let cursor: string | null = null;
+  do {
+    const result: { page: T[]; continueCursor: string; isDone: boolean } = await convexQuery(
+      (api as any).userData.dailyReportPage,
+      { userId, edition, cursor, limit: Math.min(8, count - rows.length), summaryOnly },
+    );
+    rows.push(...result.page);
+    if (result.isDone || rows.length >= count) break;
+    cursor = result.continueCursor;
+  } while (cursor);
+  return rows;
+}
+
 export async function getLatestDailyReport(kind?: DailyReport['kind']) {
-  const reports = await kvList<DailyReport>('dailyReport');
-  const matching = kind ? reports.filter((report) => report.kind === kind) : reports;
-  matching.sort((a, b) => b.generatedAt - a.generatedAt);
-  return matching[0] ? migrateDailyReportForRead(matching[0]) : null;
+  const [latest] = await readReportRows<DailyReport>(1, false, kind);
+  return latest ? migrateDailyReportForRead(latest) : null;
 }
 
 export async function listDailyReports(limit = 20) {
-  const reports = await kvList<DailyReport>('dailyReport', { limit: Math.max(limit, 1000) });
-  reports.sort((a, b) => b.generatedAt - a.generatedAt);
-  // NB: explicit arg — a bare `.map(migrateDailyReport)` passes the array
-  // index as `now` and silently breaks settle-on-read.
-  return Promise.all(reports.slice(0, limit).map((report) => migrateDailyReportForRead(report)));
+  const reports = await readReportRows<DailyReport>(limit, false);
+  return Promise.all(reports.map((report) => migrateDailyReportForRead(report)));
+}
+
+export async function listDailyReportSummaries(limit = 20) {
+  return readReportRows<DailyReportSummary>(limit, true);
 }
 
 // Generation runs in the web process; a deploy/restart mid-run (SIGTERM skips

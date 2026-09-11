@@ -16,6 +16,7 @@ import {
 import {
   getDailyReport as getDailyReportStore,
   getLatestDailyReport,
+  listDailyReportSummaries,
   listDailyReports as listDailyReportsStore,
   saveDailyReport,
 } from '../store/daily-reports';
@@ -136,9 +137,12 @@ export const listDailyReportsTool = defineTool({
   description: 'List stored Daily Reports.',
   category: 'ai',
   mutating: false,
-  input: z.object({ limit: z.number().int().min(1).max(100).default(20) }).optional(),
+  input: z
+    .object({ limit: z.number().int().min(1).max(100).default(20), summaryOnly: z.boolean().default(false) })
+    .optional(),
   output: z.object({ reports: z.array(z.any()) }),
   async handler(input) {
+    if (input?.summaryOnly) return { reports: await listDailyReportSummaries(input.limit || 20) };
     const reports = await listDailyReportsStore(input?.limit || 20);
     return { reports: reports.map(attachDailyReportArt) };
   },

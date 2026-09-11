@@ -364,6 +364,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_kind', ['userId', 'kind'])
     .index('by_user_kind_updatedAt', ['userId', 'kind', 'updatedAt'])
+    .index('by_user_kind_report_generated', ['userId', 'kind', 'doc.generatedAt'])
+    .index('by_user_kind_report_edition_generated', ['userId', 'kind', 'doc.kind', 'doc.generatedAt'])
     .index('by_user_kind_key', ['userId', 'kind', 'key'])
     .index('by_user_kind_ref', ['userId', 'kind', 'ref'])
     .index('by_user_kind_ref_updatedAt', ['userId', 'kind', 'ref', 'updatedAt']),

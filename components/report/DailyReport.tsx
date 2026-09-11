@@ -801,7 +801,8 @@ export function DailyReport({
 
   const historyQuery = useQuery({
     queryKey: ['daily-report', 'history'],
-    queryFn: async () => callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 30 }),
+    queryFn: async () =>
+      callTool<{ reports: ReportSummary[] }>('list_daily_reports', { limit: 30, summaryOnly: true }),
     staleTime: 30_000,
   });
   const history = historyQuery.data?.reports || [];
@@ -1137,7 +1138,20 @@ export function DailyReport({
             : cn('@container', embedded ? 'py-1' : 'scrollable px-5 py-5'),
         )}
       >
-        {reportQuery.isLoading && !report ? (
+        {reportQuery.isError && !report ? (
+          <div role="alert" className="px-6 py-12 text-center">
+            <p className="text-sm text-[var(--color-text-muted)]">Your brief couldn’t load. Try again.</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => void reportQuery.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
+        ) : reportQuery.isLoading && !report ? (
           <BriefSkeleton masthead={!embedded} />
         ) : showGeneratingState || showsLetter || (displayArtifact && report?.html) ? (
           // Vortex while composing; when the brief lands, the vortex collapses

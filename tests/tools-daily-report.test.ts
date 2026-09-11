@@ -47,6 +47,15 @@ describe('daily report tools', () => {
 
       const listed = await runTool(listDailyReportsTool.handler, { limit: 5 });
       expect(listed.reports.some((report: any) => report._id === 'report_test_1')).toBe(true);
+      const summaries = await runTool(listDailyReportsTool.handler, { limit: 5, summaryOnly: true });
+      const summary = summaries.reports.find((report: any) => report._id === 'report_test_1');
+      expect(summary).toEqual({
+        _id: 'report_test_1',
+        kind: 'manual',
+        generatedAt: Date.parse('2026-06-10T08:00:00.000Z'),
+        title: 'Morning brief',
+      });
+      expect(listed.reports.find((report: any) => report._id === 'report_test_1')?.sections).toBeDefined();
 
       const fetched = await runTool(getDailyReportTool.handler, { id: 'report_test_1' });
       expect(fetched.report?.title).toBe('Morning brief');
