@@ -58,6 +58,9 @@ export interface ClientState {
   // never persisted.
   pendingOpenIntentId: string | null;
   pendingOpenWorkId: string | null;
+  /** A task card or board to open once the Tasks surface mounts (shape card actions). */
+  pendingOpenCardId: string | null;
+  pendingOpenBoardId: string | null;
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
@@ -149,6 +152,8 @@ export interface ClientState {
   setGuidedWorkId: (workId: string | null) => void;
   setPendingOpenIntentId: (intentId: string | null) => void;
   setPendingOpenWorkId: (workId: string | null) => void;
+  setPendingOpenCardId: (cardId: string | null) => void;
+  setPendingOpenBoardId: (boardId: string | null) => void;
   setSearchDraft: (draft: string) => void;
   setTranslatedSearch: (
     intent: string | null,
@@ -330,6 +335,8 @@ export const useClientStore = create<ClientState>()(
       guidedWorkId: null,
       pendingOpenIntentId: null,
       pendingOpenWorkId: null,
+      pendingOpenCardId: null,
+      pendingOpenBoardId: null,
       searchDraft: '',
       nlSearchIntent: null,
       translatedQuery: null,
@@ -426,6 +433,8 @@ export const useClientStore = create<ClientState>()(
       setGuidedWorkId: (guidedWorkId) => set({ guidedWorkId }),
       setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),
+      setPendingOpenCardId: (pendingOpenCardId) => set({ pendingOpenCardId }),
+      setPendingOpenBoardId: (pendingOpenBoardId) => set({ pendingOpenBoardId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),

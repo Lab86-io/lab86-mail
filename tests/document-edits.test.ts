@@ -218,7 +218,10 @@ describe('document editing through the agent AI SDK toolset', () => {
     expect(TOOLS.document_edit).toBe(documentEdit);
     expect(AGENT_TOOL_NAMES.has('document_edit')).toBe(true);
     const tools = liftToolsForAgent('batch-test');
-    expect(tools.document_edit.inputSchema).toBe(documentEdit.input);
+    // The model sees a JSON schema derived from the zod input (patterns
+    // stripped for the OpenAI Responses API); invokeTool still validates with zod.
+    expect(tools.document_edit.inputSchema.jsonSchema).toMatchObject({ type: 'object' });
+    expect(JSON.stringify(tools.document_edit.inputSchema.jsonSchema)).not.toContain('"pattern"');
     const result = await withToolContext(() =>
       runWithAiRequestContext({ userId: 'test_user_tools', agent: 'ai' }, () =>
         tools.document_edit.execute(args()),

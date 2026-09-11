@@ -11,10 +11,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
-  Brain,
   CalendarDays,
   Check,
-  CreditCard,
   KeyRound,
   Loader2,
   MoreHorizontal,
@@ -30,19 +28,11 @@ import { useSearchParams } from 'next/navigation';
 import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
-import {
-  type ModelOption,
-  normalizeOpenRouterFastModel,
-  normalizeOpenRouterPrimaryModel,
-  OPENROUTER_FAST_MODEL_OPTIONS,
-  OPENROUTER_PRIMARY_MODEL_OPTIONS,
-  type Provider,
-  setProviderForByok,
-} from '@/components/hosted/ai-options';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { AiSection } from '@/components/settings/AiSection';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import { Badge } from '@/components/ui/badge';
@@ -89,7 +79,16 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
-  ai: () => <AiSection />,
+  ai: () => (
+    <AiSection
+      heading={
+        <SectionHeading
+          title="AI"
+          blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
+        />
+      }
+    />
+  ),
   narrative: () => <NarrativeSettings />,
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
@@ -1101,345 +1100,6 @@ function ConnectionsSection() {
         </div>
       ) : null}
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// AI
-// ---------------------------------------------------------------------------
-
-function AiSection() {
-  const qc = useQueryClient();
-  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
-  const [provider, setProvider] = useState<Provider>('openrouter');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
-  const [fastModel, setFastModel] = useState('');
-
-  const { data: ai } = useQuery({
-    queryKey: ['ai-settings'],
-    queryFn: async () => {
-      const data = await fetchJson('/api/ai/settings');
-      const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
-      const nextMode = requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86';
-      const computedProvider = (
-        nextMode === 'lab86' ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
-      ) as Provider;
-      setAiMode(nextMode);
-      setProvider(computedProvider);
-      setModel(
-        computedProvider === 'openrouter'
-          ? normalizeOpenRouterPrimaryModel(data.settings?.model)
-          : data.settings?.model || '',
-      );
-      setFastModel(
-        computedProvider === 'openrouter'
-          ? normalizeOpenRouterFastModel(data.settings?.fastModel)
-          : data.settings?.fastModel || '',
-      );
-      return data;
-    },
-  });
-  // Saving before the server settings hydrate would persist these defaults
-  // over the user's real configuration — gate every write on first load.
-  const aiLoaded = Boolean(ai);
-
-  const saveAi = useMutation({
-    mutationFn: async () => {
-      return postJson('/api/ai/settings', {
-        mode: aiMode,
-        provider: aiMode === 'lab86' ? 'openrouter' : provider,
-        model:
-          aiMode === 'lab86' || provider === 'openrouter'
-            ? normalizeOpenRouterPrimaryModel(model)
-            : undefined,
-        fastModel:
-          aiMode === 'lab86' || provider === 'openrouter'
-            ? normalizeOpenRouterFastModel(fastModel)
-            : undefined,
-        apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
-      });
-    },
-    onSuccess: () => {
-      setApiKey('');
-      toast.success('AI settings saved');
-      qc.invalidateQueries({ queryKey: ['ai-settings'] });
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not save AI settings'),
-  });
-
-  const deleteKey = useMutation({
-    // Delete the key that is actually stored, not whatever the selector
-    // currently points at.
-    mutationFn: async () => {
-      const storedProvider = ai?.key?.provider;
-      if (!storedProvider) throw new Error('No stored API key to remove.');
-      return fetch(`/api/ai/settings?provider=${encodeURIComponent(storedProvider)}`, {
-        method: 'DELETE',
-      }).then(check);
-    },
-    onSuccess: () => {
-      toast.success('API key removed');
-      qc.invalidateQueries({ queryKey: ['ai-settings'] });
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not remove key'),
-  });
-
-  const checkout = useMutation({
-    mutationFn: async () => postJson('/api/billing/checkout', {}),
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not start checkout'),
-  });
-  const portal = useMutation({
-    mutationFn: async () => postJson('/api/billing/portal', {}),
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not open billing portal'),
-  });
-
-  const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
-  const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
-  const paidPlan = ai?.usage?.paidPlan;
-  const pricesPresent =
-    typeof paidPlan?.monthlyUsd === 'number' &&
-    typeof paidPlan?.annualUsd === 'number' &&
-    typeof paidPlan?.byokMonthlyUsd === 'number' &&
-    typeof paidPlan?.byokAnnualUsd === 'number';
-  const priceLine = pricesPresent
-    ? `Pro (hosted AI) is $${paidPlan.monthlyUsd}/mo or $${paidPlan.annualUsd}/yr · bring-your-own-key is $${paidPlan.byokMonthlyUsd}/mo or $${paidPlan.byokAnnualUsd}/yr.`
-    : 'Two plans: hosted AI, or bring your own key for less.';
-  const primaryOptions = (ai?.modelOptions?.openrouter?.primary ||
-    OPENROUTER_PRIMARY_MODEL_OPTIONS) as ModelOption[];
-  const fastOptions = (ai?.modelOptions?.openrouter?.fast || OPENROUTER_FAST_MODEL_OPTIONS) as ModelOption[];
-  const primaryModelDetail = primaryOptions.find((option) => option.id === model)?.detail;
-  const fastModelDetail = fastOptions.find((option) => option.id === fastModel)?.detail;
-  const showOpenRouterModels = aiMode === 'lab86' || provider === 'openrouter';
-
-  return (
-    <section>
-      <SectionHeading
-        title="AI"
-        blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
-      />
-      {!aiLoaded ? (
-        <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
-          <Ring className="size-3.5" /> Loading your AI configuration…
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <ModeCard
-              active={aiMode === 'lab86'}
-              disabled={requireOpenRouter}
-              title="Lab86 AI"
-              description="Included with Pro. Curated models, zero setup, budgeted for you."
-              icon={<Brain className="size-4" />}
-              onClick={() => setAiMode('lab86')}
-            />
-            <ModeCard
-              active={aiMode === 'byok'}
-              title="My own API key"
-              description="Bring an OpenRouter, OpenAI, or Anthropic key. You pay your provider directly."
-              icon={<KeyRound className="size-4" />}
-              onClick={() => setAiMode('byok')}
-            />
-          </div>
-
-          <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)] sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Provider</Label>
-              {aiMode === 'lab86' ? (
-                <Input value="OpenRouter (Lab86 managed)" readOnly />
-              ) : (
-                <Select
-                  value={provider}
-                  onValueChange={(value) =>
-                    setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
-                  }
-                  disabled={requireOpenRouter}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
-                    {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Normal model</Label>
-              {showOpenRouterModels ? (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {primaryOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value="Provider default" readOnly />
-              )}
-              {showOpenRouterModels && primaryModelDetail ? (
-                <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
-              ) : null}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Fast model</Label>
-              {showOpenRouterModels ? (
-                <Select value={fastModel} onValueChange={setFastModel}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {fastOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value="Provider default" readOnly />
-              )}
-              {showOpenRouterModels && fastModelDetail ? (
-                <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
-              ) : null}
-            </div>
-            {aiMode === 'lab86' ? (
-              <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label>API key</Label>
-                <div className="flex gap-2">
-                  <Input
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={ai?.key?.masked || 'Paste key to save or replace'}
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  {ai?.key ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      onClick={() => deleteKey.mutate()}
-                      disabled={deleteKey.isPending}
-                      title={`Remove stored ${ai.key.provider} key`}
-                      className="shrink-0 self-center text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )}
-            <div className="sm:col-span-2">
-              <Button
-                type="button"
-                onClick={() => saveAi.mutate()}
-                disabled={!aiLoaded || saveAi.isPending}
-                className="w-full sm:w-auto"
-              >
-                {saveAi.isPending ? <Ring className="size-3" /> : <Check className="size-3.5" />}
-                Save AI settings
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-[12.5px] shadow-[var(--shadow-soft)]">
-            <span className="text-[var(--color-text-muted)]">
-              {subscriptionsDisabled
-                ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
-                : ai?.usage?.status === 'reduced_cost'
-                  ? 'AI is using reduced-cost routing for the rest of this billing period.'
-                  : ai?.usage?.status === 'exhausted'
-                    ? 'AI chat is paused for this billing period — core mail automation continues.'
-                    : priceLine}
-            </span>
-            {!subscriptionsDisabled ? (
-              <span className="ml-auto flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => checkout.mutate()}
-                  disabled={checkout.isPending}
-                >
-                  <CreditCard className="size-3.5" />
-                  Upgrade
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => portal.mutate()}
-                  disabled={portal.isPending}
-                >
-                  Manage
-                </Button>
-              </span>
-            ) : null}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ModeCard({
-  active,
-  disabled,
-  title,
-  description,
-  icon,
-  onClick,
-}: {
-  active: boolean;
-  disabled?: boolean;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`rounded-xl border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-        active
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] shadow-[var(--shadow-soft)]'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-text-faint)]'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span className={active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)]'}>
-          {icon}
-        </span>
-        <span className="text-[13.5px] font-semibold">{title}</span>
-        {active ? (
-          <Badge className="ml-auto bg-[var(--color-accent)] text-[10px] text-[var(--color-accent-foreground)]">
-            Active
-          </Badge>
-        ) : null}
-      </div>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>
-    </button>
   );
 }
 

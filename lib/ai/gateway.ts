@@ -14,6 +14,7 @@ import {
 } from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
+import { type CatalogModel, loadRuntimeModelCatalog, resolveSavedModelId } from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
@@ -130,9 +131,18 @@ const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: 
 // User model overrides apply to fast/primary only; nano/classify stay on the
 // cheap platform default so a bulk sweep can never burn the user's premium
 // model — and so Area routing precision doesn't drift with a user's model pick.
-function settingsModelFor(speed: AiSpeed, settings?: RuntimeState['settings'] | null) {
+export function settingsModelFor(
+  speed: AiSpeed,
+  settings?: RuntimeState['settings'] | null,
+  catalog?: CatalogModel[],
+  provider = settings?.provider,
+) {
   if (speed === 'nano' || speed === 'classify') return undefined;
-  return speed === 'fast' ? settings?.fastModel : settings?.model;
+  const chosen = speed === 'fast' ? settings?.fastModel : settings?.model;
+  // A retired id moves to its catalog replacement instead of failing at the
+  // provider. A direct vendor key gets the vendor's own id form (Anthropic ids
+  // use dashes, not dots); OpenRouter keeps the canonical vendor/model id.
+  return resolveSavedModelId(chosen, provider, catalog);
 }
 
 interface RuntimeState {
@@ -185,13 +195,18 @@ export async function resolveAiRuntime(input: {
       : undefined;
 
   if (userId) {
-    const state = await convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId });
+    const [state, catalog] = await Promise.all([
+      convexQuery<RuntimeState>(api.ai.getRuntimeState, { userId }),
+      speed === 'primary' || speed === 'fast' ? loadRuntimeModelCatalog() : Promise.resolve(undefined),
+    ]);
     const mode = state.settings?.enabled === false ? 'lab86' : state.settings?.mode || 'lab86';
     if (isUserOpenRouterKeyRequired()) {
       if (state.key?.provider === 'openrouter') {
         const apiKey = decryptSecret(state.key.encryptedKey);
         const modelName =
-          narrativeModel || settingsModelFor(speed, state.settings) || modelFor('openrouter', speed);
+          narrativeModel ||
+          settingsModelFor(speed, state.settings, catalog, 'openrouter') ||
+          modelFor('openrouter', speed);
         return {
           userId,
           source: 'byok',
@@ -218,7 +233,9 @@ export async function resolveAiRuntime(input: {
           'The selected narrative model requires an OpenRouter key. Choose Current model in Narrative settings to use your existing provider.',
         );
       const modelName =
-        narrativeModel || settingsModelFor(speed, state.settings) || modelFor(provider, speed);
+        narrativeModel ||
+        settingsModelFor(speed, state.settings, catalog, provider) ||
+        modelFor(provider, speed);
       return {
         userId,
         source: 'byok',
@@ -232,8 +249,8 @@ export async function resolveAiRuntime(input: {
     const budgetPolicy = assertLab86Budget(state, entitlement, input.feature);
     if (budgetPolicy.forceFastModel && speed === 'primary') speed = 'fast';
     platformPreference = {
-      provider: narrativeModel ? 'openrouter' : state.settings?.provider,
-      modelName: narrativeModel || settingsModelFor(speed, state.settings),
+      provider: 'openrouter',
+      modelName: narrativeModel || settingsModelFor(speed, state.settings, catalog, 'openrouter'),
     };
   }
 
@@ -452,14 +469,25 @@ export function maxOutputTokensForFeature(feature: string, explicit?: number) {
  * Anthropic runtimes get no options here (they ignore OpenAI keys).
  */
 export function agentProviderOptions(runtime: ResolvedAiRuntime, promptCacheKey?: string) {
-  if (runtime.provider !== 'openai' && runtime.provider !== 'openrouter') return undefined;
-  return {
-    openai: {
-      reasoningEffort: AGENT_REASONING_EFFORT,
-      parallelToolCalls: true,
-      ...(promptCacheKey ? { promptCacheKey } : {}),
-    },
-  };
+  // Direct OpenAI runs on the Responses API: Chat Completions rejects function
+  // tools together with any reasoning effort on GPT-5.5. Responses also streams
+  // reasoning summaries and takes a prompt cache key.
+  if (runtime.provider === 'openai') {
+    return {
+      openai: {
+        reasoningEffort: AGENT_REASONING_EFFORT,
+        reasoningSummary: 'auto',
+        parallelToolCalls: true,
+        ...(promptCacheKey ? { promptCacheKey } : {}),
+      },
+    };
+  }
+  // OpenRouter speaks Chat Completions and maps reasoning_effort upstream
+  // itself (verified live with tools on GPT-5.5).
+  if (runtime.provider === 'openrouter') {
+    return { openai: { reasoningEffort: AGENT_REASONING_EFFORT, parallelToolCalls: true } };
+  }
+  return undefined;
 }
 
 export type { ResolvedAiRuntime };
@@ -575,9 +603,9 @@ function routePlatformModel(modelName: string): RoutedModel | null {
   const vendor = classifyModel(name);
   if (vendor === 'openai' && openai) {
     const id = toDirectModelId(name);
-    // .chat() = Chat Completions, the tool-call format the agent expects
-    // (matches how models run via OpenRouter).
-    return { provider: 'openai', modelName: id, model: openai.chat(id) };
+    // Responses API: reasoning plus function tools plus prompt caching. Chat
+    // Completions rejects tools together with any reasoning effort on GPT-5.5.
+    return { provider: 'openai', modelName: id, model: openai.responses(id) };
   }
   if (vendor === 'anthropic' && anthropic) {
     const id = toDirectModelId(name);
@@ -590,7 +618,7 @@ function routePlatformModel(modelName: string): RoutedModel | null {
   // No OpenRouter — last resort is a direct key that can serve this vendor.
   if (vendor === 'openai' && openai) {
     const id = toDirectModelId(name);
-    return { provider: 'openai', modelName: id, model: openai.chat(id) };
+    return { provider: 'openai', modelName: id, model: openai.responses(id) };
   }
   if (vendor === 'anthropic' && anthropic) {
     const id = toDirectModelId(name);

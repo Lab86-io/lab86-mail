@@ -7,11 +7,12 @@ import {
 import { after, type NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
+import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { captureNarrativeTurn } from '@/lib/narrative/service';
+import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 import { withDeadline } from '@/lib/shared/deadline';
 
@@ -171,7 +172,7 @@ export async function POST(req: NextRequest) {
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
-    const [areaDiscoveryContext, attachedContexts, modelMessages, memoryId] = await Promise.all([
+    const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
       enforceUserRateLimit({
         userId: user.userId,
         key: 'agent',
@@ -198,26 +199,11 @@ export async function POST(req: NextRequest) {
         ),
       ),
       convertToModelMessages(prepared.messages).then(sanitizeToolPairs),
-      latestUser
-        ? withDeadline(
-            captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
-            3000,
-            'Narrative turn capture',
-          ).catch(() => null)
-        : Promise.resolve(null),
     ]);
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
-        [
-          body.extraSystem,
-          areaDiscoveryContext,
-          ...attachedContexts,
-          compactionNote,
-          memoryId
-            ? `The current user statement was recorded as narrative observation ${memoryId}. You may reference it when recording a meaningful change; it is a user report, not independent proof.`
-            : '',
-        ]
+        [body.extraSystem, areaDiscoveryContext, ...attachedContexts, compactionNote]
           .filter(Boolean)
           .join('\n\n') || undefined,
       userId: user.userId,
@@ -225,7 +211,20 @@ export async function POST(req: NextRequest) {
       userName: user.name,
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
       narrativeTopics,
+      toolGroups: initialToolGroups({
+        hasWorkContext: contextAttachments.some((attachment) => attachment.kind === 'work'),
+        hasAreaContext: Boolean(body.areaDiscovery),
+        narrativeEnabled: narrativeEnabled(user.userId),
+      }),
       signal: req.signal,
+    });
+    after(async () => {
+      if (!latestUser) return;
+      await withDeadline(
+        captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
+        3000,
+        'Narrative turn capture',
+      ).catch(() => null);
     });
     // The loop that always closes: after every Work-scoped turn, the server
     // reconciles the turn back into the Work document — chat-created artifacts,

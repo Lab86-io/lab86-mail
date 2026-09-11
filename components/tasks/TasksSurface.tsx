@@ -161,6 +161,39 @@ export function TasksSurface() {
     } catch {}
   };
   const [openCardRequest, setOpenCardRequest] = useState<OpenCardRequest | null>(null);
+  const pendingBoardId = useClientStore((state) => state.pendingOpenBoardId);
+  const pendingCardId = useClientStore((state) => state.pendingOpenCardId);
+  const setPendingBoardId = useClientStore((state) => state.setPendingOpenBoardId);
+  const setPendingCardId = useClientStore((state) => state.setPendingOpenCardId);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingBoardId && !pendingCardId) return;
+    let cancelled = false;
+    setNavigationError(null);
+    void (async () => {
+      let boardId = pendingBoardId;
+      if (!boardId && pendingCardId) {
+        const result = await callTool<{ card: { boardId: string } }>('tasks_get_card', {
+          cardId: pendingCardId,
+        });
+        boardId = result.card.boardId;
+      }
+      if (cancelled) return;
+      if (boardId) setSelectedBoardId(boardId);
+      setLens('board');
+      if (pendingCardId) setOpenCardRequest({ cardId: pendingCardId, nonce: Date.now() });
+      setPendingBoardId(null);
+      setPendingCardId(null);
+    })().catch((error) => {
+      if (cancelled) return;
+      setNavigationError(error instanceof Error ? error.message : 'Could not open this task.');
+      setPendingBoardId(null);
+      setPendingCardId(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingBoardId, pendingCardId, setPendingBoardId, setPendingCardId]);
   // BoardView portals its view/column/share controls up into this header slot
   // so they sit inline with the "Tasks" title instead of in a second toolbar row.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
@@ -279,6 +312,11 @@ export function TasksSurface() {
           {/* BoardView portals its view/column/share controls in here. */}
           <div ref={setHeaderSlot} className="flex shrink-0 items-center gap-1.5" />
         </header>
+        {navigationError ? (
+          <p role="alert" className="px-4 py-2 text-[12px] text-[var(--color-danger)]">
+            {navigationError}
+          </p>
+        ) : null}
         {lens === 'projects' ? (
           <ProjectsLens
             onOpenTask={(boardId, cardId) => {

@@ -268,6 +268,14 @@ function searchSentences(what: string, failed: string): SentenceBuilder {
 // so tests can prove every sentence obeys the style rules.
 export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   // --- Teach / areas ---
+  enable_tools: (args) => {
+    const groups = Array.isArray(args.groups) ? args.groups.map(String).join(', ') : '';
+    return {
+      running: groups ? `Loading ${groups} tools` : 'Loading more tools',
+      done: groups ? `Loaded ${groups} tools` : 'Loaded more tools',
+      failed: 'Failed to load more tools',
+    };
+  },
   corpus_search: searchSentences('your mail', 'Mail search failed'),
   corpus_count: fixed('Counting matching mail', 'Counted the matching mail', 'Mail count failed'),
   thread_timeline: fixed(

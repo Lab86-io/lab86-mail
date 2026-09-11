@@ -2,16 +2,22 @@
 
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { DefaultChatTransport } from 'ai';
+import { type ChatTransport, DefaultChatTransport, type UIMessage } from 'ai';
 import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
 import { HitlPart } from '@/components/ai-elements/hitl-parts';
+import { RevealDot } from '@/components/ai-elements/reveal-dot';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
-import { AskHoldComposer, type DoorRequest } from '@/components/shell/AskHoldComposer';
+import { WorkLog } from '@/components/ai-elements/work-log';
+import {
+  AskHoldComposer,
+  type AskHoldComposerProps,
+  type DoorRequest,
+} from '@/components/shell/AskHoldComposer';
 import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
@@ -26,7 +32,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { HistoryIcon } from '@/components/ui/history';
-import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
 import { Message, MessageContent } from '@/components/ui/message';
 import { PlusIcon } from '@/components/ui/plus';
@@ -43,6 +48,7 @@ import {
   toolActivityState,
   toolPartName,
 } from '@/lib/albatross/teach-ui';
+import { groupMessageParts, reasoningLabel, toolPartSignature } from '@/lib/chat/work-log';
 import { assistantLauncherPlacement, isAssistantShortcut, useClientStore } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { formatDate } from '@/lib/shared/format';
@@ -139,7 +145,13 @@ export function AIBarTrigger() {
 // One conversation owner across corner, split, and chat-only presentations.
 // AssistantWorkspace owns the outer frame; transport, tool cards, attachments
 // and composer state stay mounted here when that presentation changes.
-export function AssistantChat() {
+export function AssistantChat({
+  transport: previewTransport,
+  preview = false,
+}: {
+  transport?: ChatTransport<UIMessage>;
+  preview?: boolean;
+} = {}) {
   const reduceMotion = useReducedMotion() ?? false;
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const setAiBarOpen = useClientStore((s) => s.setAiBarOpen);
@@ -162,7 +174,6 @@ export function AssistantChat() {
   const setPendingReplyBody = useClientStore((s) => s.setPendingReplyBody);
   const qc = useQueryClient();
 
-  const [input, setInput] = useState('');
   // Files attached to the next message (images/PDFs the model can read).
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -193,7 +204,7 @@ export function AssistantChat() {
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
-    transport,
+    transport: previewTransport ?? transport,
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
     // (ask_user, ask_approval, ask_parameters, ask_preferences,
     // ask_question_flow). The built-in
@@ -283,18 +294,18 @@ export function AssistantChat() {
   // a bug, not a continuation; stale sessions stay in history instead.
   const CHAT_RESTORE_WINDOW_MS = 30 * 60_000;
   useEffect(() => {
-    if (!aiBarOpen || restoredRef.current) return;
+    if (preview || !aiBarOpen || restoredRef.current) return;
     restoredRef.current = true;
     const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
     if (chatScopeKind === 'global' && lastChatId && fresh && messages.length === 0) {
       sessionIdRef.current = lastChatId;
       void loadSession(lastChatId);
     }
-  }, [aiBarOpen, chatScopeKind, lastChatId, lastChatAt, messages.length, loadSession]);
+  }, [preview, aiBarOpen, chatScopeKind, lastChatId, lastChatAt, messages.length, loadSession]);
 
   // Autosave once the stream settles (debounced so multi-step turns save once).
   useEffect(() => {
-    if (status === 'streaming' || status === 'submitted') return;
+    if (preview || status === 'streaming' || status === 'submitted') return;
     if (!messages.length || !sessionIdRef.current) return;
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     const id = sessionIdRef.current;
@@ -317,7 +328,7 @@ export function AssistantChat() {
     return () => {
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     };
-  }, [chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
+  }, [preview, chatScopeAreaId, chatScopeKind, chatScopeWorkId, messages, status, qc]);
 
   const startNewChat = useCallback(() => {
     if (busy) return;
@@ -337,7 +348,7 @@ export function AssistantChat() {
       const data = await res.json();
       return (data?.sessions || []) as ChatSessionSummary[];
     },
-    enabled: aiBarOpen,
+    enabled: aiBarOpen && !preview,
     staleTime: 30_000,
   });
   const chatSessions = sessionsData || [];
@@ -372,10 +383,24 @@ export function AssistantChat() {
     void kickAdvance(cards.map((card) => card.id));
   }, []);
 
+  const messageSnapshot = useRef(messages);
+  messageSnapshot.current = messages;
+  const toolSignature = toolPartSignature(messages);
+
+  const partHandlers = useMemo<ChatPartHandlers>(
+    () => ({
+      answer: answerHitl,
+      openDraft: (draft) => openComposeNew(draft),
+      openThread: (target) => routeEmailPreviewThread(target, { setThreadAccount, setSelectedThread }),
+    }),
+    [answerHitl, openComposeNew, setThreadAccount, setSelectedThread],
+  );
+
   // --- UI tool intercept ---
   const handled = useRef<Set<string>>(new Set());
   useEffect(() => {
-    for (const m of messages) {
+    if (!toolSignature || preview) return;
+    for (const m of messageSnapshot.current) {
       if (m.role !== 'assistant') continue;
       for (const part of m.parts || []) {
         const type = (part as any).type;
@@ -433,7 +458,8 @@ export function AssistantChat() {
       }
     }
   }, [
-    messages,
+    toolSignature,
+    preview,
     setQuery,
     setSelectedThread,
     openComposeNew,
@@ -444,7 +470,8 @@ export function AssistantChat() {
 
   // Refresh server queries when any mutating mail tool finishes.
   useEffect(() => {
-    for (const m of messages) {
+    if (!toolSignature || preview) return;
+    for (const m of messageSnapshot.current) {
       for (const part of m.parts || []) {
         const type = (part as any).type;
         const state = (part as any).state;
@@ -464,7 +491,7 @@ export function AssistantChat() {
         }
       }
     }
-  }, [messages, qc]);
+  }, [toolSignature, preview, qc]);
 
   // Message count from the previous commit — messages at or above this index
   // mounted in this commit (a restored batch gets staggered entrances, a
@@ -477,7 +504,7 @@ export function AssistantChat() {
   const send = async (text: string) => {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
-    if ((!trimmed && !filesForTurn.length) || busy) return;
+    if ((!trimmed && !filesForTurn.length) || busy) return false;
     sessionLoadGenerationRef.current += 1;
     emptyRetryCount.current = 0; // fresh turn — reset empty-completion retries
 
@@ -489,7 +516,7 @@ export function AssistantChat() {
       } catch (err: any) {
         toast.error(err?.message || 'Could not upload files for the assistant');
         setUploadingFiles(false);
-        return;
+        return false;
       }
       setUploadingFiles(false);
     }
@@ -527,7 +554,6 @@ export function AssistantChat() {
         ].join('\n')
       : '';
     const files = filesForTurn.length ? createFileList(filesForTurn) : undefined;
-    setInput('');
     setPendingFiles([]);
     sendMessage(
       { text: trimmed || 'Use the attached file(s).', ...(files ? { files } : {}) } as any,
@@ -539,15 +565,11 @@ export function AssistantChat() {
         },
       } as any,
     );
-  };
-
-  const submit = () => {
-    if (streaming || uploadingFiles) return;
-    void send(input);
+    return true;
   };
 
   const last = messages[messages.length - 1];
-  const showLoader = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
+  const waitingForContent = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
 
   // Stagger only the batch that mounts together (a restored conversation).
   // A message appended while chatting has index >= the previous commit's
@@ -708,24 +730,7 @@ export function AssistantChat() {
       ) : (
         <ChatContainerRoot className="relative flex-1">
           <ChatContainerContent className="gap-4 px-3.5 py-4">
-            <ChatPartContext.Provider
-              value={{
-                answer: answerHitl,
-                openDraft: (draft) =>
-                  openComposeNew({
-                    to: draft.to,
-                    cc: draft.cc,
-                    bcc: draft.bcc,
-                    subject: draft.subject,
-                    body: draft.body,
-                  }),
-                openThread: (target) =>
-                  routeEmailPreviewThread(target, {
-                    setThreadAccount,
-                    setSelectedThread,
-                  }),
-              }}
-            >
+            <ChatPartContext.Provider value={partHandlers}>
               {messages.map((m, i) => (
                 <MessageFloat
                   key={m.id}
@@ -748,9 +753,11 @@ export function AssistantChat() {
                 </MessageFloat>
               ))}
             </ChatPartContext.Provider>
-            {showLoader ? (
+            {waitingForContent ? (
               <div className="flex items-center gap-2 px-1 py-0.5 text-[12px] text-[var(--color-text-muted)]">
-                <Loader variant="typing" />
+                <span role="status" aria-label="Working">
+                  <RevealDot />
+                </span>
               </div>
             ) : null}
             {error ? (
@@ -778,13 +785,11 @@ export function AssistantChat() {
       {/* Composer: a rounded floating field pinned to the panel bottom —
             no hard border-t seam, it hovers over the translucent surface. */}
       <div ref={inputWrapRef}>
-        <AskHoldComposer
-          value={input}
-          onValueChange={setInput}
+        <ChatComposer
           busy={busy}
           streaming={streaming}
-          canSend={Boolean(input.trim()) || pendingFiles.length > 0}
-          onSend={submit}
+          hasFiles={pendingFiles.length > 0}
+          onSendText={send}
           onStop={stop}
           onHold={holdFromBar}
           onHeld={afterHeld}
@@ -868,7 +873,7 @@ export function AssistantChat() {
 }
 
 // Soft spring entrance for each chat message; instant under reduced motion.
-function MessageFloat({
+const MessageFloat = memo(function MessageFloat({
   delay,
   reduceMotion,
   children,
@@ -887,7 +892,7 @@ function MessageFloat({
       {children}
     </motion.div>
   );
-}
+});
 
 const BASE_SUGGESTIONS = [
   'What needs my reply today? Open the most urgent one.',
@@ -927,46 +932,113 @@ interface HoldReplyContext {
   onKept?: (cards: HoldCard[]) => void;
 }
 
-function MessageView({
-  message,
-  streaming = false,
-  hold,
-}: {
-  message: any;
-  streaming?: boolean;
-  hold?: HoldReplyContext;
-}) {
-  const isUser = message.role === 'user';
-  if (isUser) {
-    const text = userTextFromMessage(message);
+export const MessageView = memo(
+  function MessageView({
+    message,
+    streaming = false,
+    hold,
+  }: {
+    message: any;
+    streaming?: boolean;
+    hold?: HoldReplyContext;
+  }) {
+    const isUser = message.role === 'user';
+    if (isUser) {
+      const text = userTextFromMessage(message);
+      return (
+        <Message className="justify-end">
+          <MessageContent className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
+            {text || '(empty)'}
+          </MessageContent>
+        </Message>
+      );
+    }
+    const replyText = streaming ? '' : replyTextFromMessage(message);
     return (
-      <Message className="justify-end">
-        <MessageContent className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
-          {text || '(empty)'}
-        </MessageContent>
+      <Message className="justify-start">
+        <div className="flex w-full min-w-0 flex-col gap-2">
+          <Thought parts={message.parts || []} streaming={streaming} />
+          {groupMessageParts(message.parts || []).map((segment) =>
+            segment.kind === 'work-log' ? (
+              <WorkLog
+                key={segment.key}
+                rows={segment.rows}
+                finished={!streaming}
+                renderRich={renderRichTool}
+              />
+            ) : segment.part.type === 'reasoning' || segment.part.type === 'thinking' ? null : (
+              <Part key={`${message.id}-${segment.index}`} part={segment.part} streaming={streaming} />
+            ),
+          )}
+          {hold && replyText ? (
+            <HoldThisControl
+              messageId={String(message.id)}
+              conversationId={hold.conversationId}
+              userText={hold.userText}
+              replyText={replyText}
+              onKept={(result) => hold.onKept?.(result.existing ? [] : result.cards)}
+              className="-mt-0.5"
+            />
+          ) : null}
+        </div>
       </Message>
     );
-  }
-  const replyText = streaming ? '' : replyTextFromMessage(message);
+  },
+  (previous, next) =>
+    previous.message === next.message &&
+    previous.streaming === next.streaming &&
+    previous.hold?.conversationId === next.hold?.conversationId &&
+    previous.hold?.userText === next.hold?.userText &&
+    previous.hold?.onKept === next.hold?.onKept,
+);
+
+function renderRichTool(toolName: string, output: unknown) {
+  return <RichDisplayPart toolName={toolName} output={output} />;
+}
+
+function Thought({ parts, streaming }: { parts: any[]; streaming: boolean }) {
+  const reasoning = parts.filter((part) => part.type === 'reasoning' || part.type === 'thinking');
+  const text = reasoning.map((part) => part.text || part.reasoning || '').join('\n');
+  const live = streaming && reasoning.some((part) => part.state !== 'done');
+  const start = useRef<number | null>(null);
+  const [duration, setDuration] = useState<number>();
+  useEffect(() => {
+    if (live && start.current == null) start.current = Date.now();
+    if (!live && start.current != null && duration == null) setDuration(Date.now() - start.current);
+  }, [live, duration]);
+  if (!text.trim()) return null;
   return (
-    <Message className="justify-start">
-      <div className="flex w-full min-w-0 flex-col gap-2">
-        {(message.parts || []).map((part: any, i: number) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: streamed parts are append-only with no stable id
-          <Part key={`${message.id}-${i}`} part={part} streaming={streaming} />
-        ))}
-        {hold && replyText ? (
-          <HoldThisControl
-            messageId={String(message.id)}
-            conversationId={hold.conversationId}
-            userText={hold.userText}
-            replyText={replyText}
-            onKept={(result) => hold.onKept?.(result.existing ? [] : result.cards)}
-            className="-mt-0.5"
-          />
-        ) : null}
-      </div>
-    </Message>
+    <Reasoning className="w-full text-[12px] text-[var(--color-text-muted)]">
+      <ReasoningTrigger>{reasoningLabel(live, duration)}</ReasoningTrigger>
+      <ReasoningContent markdown className="mt-1.5">
+        {text}
+      </ReasoningContent>
+    </Reasoning>
+  );
+}
+
+function ChatComposer({
+  onSendText,
+  hasFiles,
+  ...props
+}: Omit<AskHoldComposerProps, 'value' | 'onValueChange' | 'canSend' | 'onSend'> & {
+  onSendText: (text: string) => Promise<boolean>;
+  hasFiles: boolean;
+}) {
+  const [value, setValue] = useState('');
+  return (
+    <AskHoldComposer
+      {...props}
+      value={value}
+      onValueChange={setValue}
+      canSend={Boolean(value.trim()) || hasFiles}
+      onSend={() => {
+        const sent = value;
+        void onSendText(sent).then((accepted) => {
+          if (accepted) setValue((current) => (current === sent ? '' : current));
+        });
+      }}
+    />
   );
 }
 
@@ -1031,7 +1103,7 @@ function AskUserPart({ part }: { part: any }) {
   );
 }
 
-function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
+const Part = memo(function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
   const type = part.type;
   if (type === 'text') {
     const text = part.text || '';
@@ -1039,7 +1111,7 @@ function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
     if (!text.trim()) return null;
     return (
       <Markdown
-        streaming={streaming}
+        streaming={streaming && part.state !== 'done'}
         className="prose prose-sm max-w-none text-[13px] leading-relaxed text-[var(--color-text)] dark:prose-invert [&_a]:text-[var(--color-accent)]"
       >
         {text}
@@ -1083,7 +1155,7 @@ function Part({ part, streaming = false }: { part: any; streaming?: boolean }) {
     );
   }
   return null;
-}
+});
 
 // Non-ask_user human-in-the-loop forms (approval card, sliders, preferences,
 // question flow), wired to the same addToolResult continuation.

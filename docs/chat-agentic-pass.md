@@ -1,6 +1,6 @@
 # Chat agentic pass
 
-Date: 2026-09-11. Owner: Claude. Scope: web, iOS, and macOS chat.
+Date: 2026-09-11. Owner: Codex, continued from Claude. Scope: web, iOS, and macOS chat.
 
 This document is the contract for the chat window work. Every platform
 implements the same three things: the live work log, the result shapes, and
@@ -177,6 +177,11 @@ Platform notes:
   word animation is kept and pointed at a new `sd-rise` keyframe in
   `app/globals.css` that copies the chip motion. The indicator is a
   `::after` on the last block of the streaming markdown container.
+- Web components come from the configured registries, not from scratch: the
+  work log is built on `@ai-elements/chain-of-thought` and `@ai-elements/tool`,
+  the running header text uses a shimmer from `@ai-elements` or `@loading-ui`,
+  and the reasoning line stays on the existing prompt-kit reasoning component.
+  Installed items are restyled to the app tokens and never forked.
 - iOS and macOS: `SwiftStreamingMarkdown` keeps parsing. The view feeds it
   the metered text, not the raw buffer. The word transition uses
   `.transition(.offset(y: 6).combined(with: .opacity))` with the same curve.
@@ -213,3 +218,8 @@ Native reads `activity` from the shape when present and falls back to
   both show the work log and a card.
 - The turn-level tests in `tests/agent-loop-helpers.test.ts` cover the
   forwarder. `tests/tool-shapes.test.ts` covers every shape kind.
+
+## Recovery and validation
+
+See [the recovery research notes](research/chat-revamp-2026-09-11.md) for the recovered work and evidence.
+The final changes go directly to staging. The user requested CI validation instead of local test runs.

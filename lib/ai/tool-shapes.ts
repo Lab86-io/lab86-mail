@@ -1314,8 +1314,11 @@ function genericShape(toolName: string, input: Rec, output: Rec): ToolShape | nu
  * show). Failures stay on the activity row; the row already carries the
  * failure detail.
  */
+const NO_SHAPE_NAMES = new Set(['enable_tools']);
+
 export function resolveToolShape(toolName: string, input: unknown, output: unknown): ToolShape | null {
-  if (NO_SHAPE_PREFIXES.some((prefix) => toolName.startsWith(prefix))) return null;
+  if (NO_SHAPE_NAMES.has(toolName) || NO_SHAPE_PREFIXES.some((prefix) => toolName.startsWith(prefix)))
+    return null;
   const out = asRecord(output);
   if (out.ok === false) return null;
   const args = asRecord(input);

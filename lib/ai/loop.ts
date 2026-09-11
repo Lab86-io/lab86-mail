@@ -2,6 +2,7 @@ import {
   tool as aiTool,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  jsonSchema,
   type ModelMessage,
   stepCountIs,
   streamText,
@@ -23,6 +24,14 @@ import {
 } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
+import {
+  activeToolNames,
+  ENABLE_TOOLS_NAME,
+  enabledGroupsFromSteps,
+  enableToolsDescription,
+  enableToolsInputSchema,
+  enableToolsResult,
+} from './tool-groups';
 import { resolveToolShape, type ToolShape } from './tool-shapes';
 
 /** Search text only, never attachment bytes or opaque tool/image payloads. */
@@ -255,13 +264,41 @@ async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promis
   }
 }
 
+/**
+ * The JSON schema the model sees for a registry tool. Regex patterns are
+ * dropped: the OpenAI Responses API rejects lookarounds (zod's email pattern
+ * has one), and the registry re-validates every call with the real zod schema
+ * in invokeTool, so the model-facing schema only needs shape and descriptions.
+ */
+export function modelInputSchema(input: unknown) {
+  const schema = (input as z.ZodTypeAny | undefined) ?? z.object({});
+  let json: Record<string, unknown>;
+  try {
+    json = z.toJSONSchema(schema, { unrepresentable: 'any', io: 'input' }) as Record<string, unknown>;
+  } catch {
+    return schema as any;
+  }
+  return jsonSchema(stripPatterns(json) as any);
+}
+
+export function stripPatterns<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(stripPatterns) as T;
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (key === 'pattern' && typeof entry === 'string') continue;
+    out[key] = stripPatterns(entry);
+  }
+  return out as T;
+}
+
 export function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     lifted[name] = aiTool({
       description: t.description + (t.mutating ? ' (mutating — surfaces a confirmation in the UI)' : ''),
-      inputSchema: ((t.input as unknown) ?? z.object({})) as any,
+      inputSchema: modelInputSchema(t.input),
       execute: async (args: unknown) => {
         const context = getAiRequestContext();
         const result = await withToolTimeout(
@@ -412,6 +449,14 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
         .min(2)
         .max(5),
     }),
+  });
+  // On-demand tool groups (lib/ai/tool-groups.ts). The call itself is the
+  // signal: prepareStep reads enable_tools calls from earlier steps and widens
+  // the active set for the next one.
+  lifted[ENABLE_TOOLS_NAME] = aiTool({
+    description: enableToolsDescription(),
+    inputSchema: enableToolsInputSchema,
+    execute: async ({ groups }: { groups: string[] }) => enableToolsResult(groups),
   });
   return lifted;
 }
@@ -595,7 +640,21 @@ interface AgentStreamOptions {
   system: string;
   messages: ModelMessage[];
   tools: Record<string, any>;
+  /** Tool groups active from the first step (from the chat scope). */
+  toolGroups?: string[];
   signal?: AbortSignal;
+}
+
+/**
+ * The active tool names for a step: core tools plus the scope groups plus any
+ * group the model enabled in an earlier step of this turn.
+ */
+export function activeToolsForStep(
+  toolNames: Iterable<string>,
+  initialGroups: readonly string[],
+  steps: ReadonlyArray<{ content?: unknown }>,
+): string[] {
+  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]);
 }
 
 /**
@@ -612,11 +671,15 @@ async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptio
   for (let index = 0; index < runtimes.length; index += 1) {
     const runtime = runtimes[index];
     let streamError: unknown;
+    const toolNames = Object.keys(options.tools);
+    const initialGroups = options.toolGroups ?? [];
     const result = streamText({
       model: runtime.model,
       system: options.system,
       messages: options.messages,
       tools: options.tools,
+      activeTools: activeToolsForStep(toolNames, initialGroups, []),
+      prepareStep: ({ steps }) => ({ activeTools: activeToolsForStep(toolNames, initialGroups, steps) }),
       abortSignal: options.signal,
       // Multi-step flows (fetch a file → store → attach → send) need headroom
       // beyond the old 6-step cap.
@@ -684,6 +747,8 @@ export interface AgentRunOpts {
   /** IANA timezone reported by the client (e.g. America/New_York). */
   userTimezone?: string;
   narrativeTopics?: string[];
+  /** Tool groups active from the first step (lib/ai/tool-groups.ts). */
+  toolGroups?: string[];
   signal?: AbortSignal;
 }
 
@@ -712,6 +777,7 @@ export async function runAgent({
   userName,
   userTimezone,
   narrativeTopics,
+  toolGroups,
   signal,
 }: AgentRunOpts): Promise<AgentRun> {
   if (!hasPlatformAi() && !userId) {
@@ -724,21 +790,6 @@ export async function runAgent({
   // preferences are ALWAYS in play — the recall tool remains for ad-hoc
   // lookups, but the agent never starts blind. Memories and narrative context
   // are independent reads, so they run together.
-  const memoryQuery = narrativeQueryFromMessages(messages);
-  const [memories, narrative] = await Promise.all([
-    userId
-      ? runWithAiRequestContext(requestContext, () => listMemories().catch(() => [])).then((rows) =>
-          rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })),
-        )
-      : Promise.resolve([]),
-    boundedAgentNarrativeContext(userId, memoryQuery, narrativePrompt, narrativeTopics, signal),
-  ]);
-  signal?.throwIfAborted();
-  const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
-  const timezone = userTimezone || 'UTC';
-  // Static instructions first, per-turn context last: providers cache the
-  // shared prefix, so the parts that change every turn sit at the end.
-  const system = [base, extraSystem, narrative, agentTimeContext(timezone)].filter(Boolean).join('\n\n');
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
@@ -758,11 +809,33 @@ export async function runAgent({
             writer.write({ type: 'start' });
             let completed: any[] = [];
             try {
+              const memoryQuery = narrativeQueryFromMessages(messages);
+              const [memories, narrative] = await Promise.all([
+                userId
+                  ? runWithAiRequestContext(requestContext, () => listMemories().catch(() => [])).then(
+                      (rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })),
+                    )
+                  : Promise.resolve([]),
+                boundedAgentNarrativeContext(userId, memoryQuery, narrativePrompt, narrativeTopics, signal),
+              ]);
+              signal?.throwIfAborted();
+              const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
+              const timezone = userTimezone || 'UTC';
+              // Static instructions first, per-turn context last: providers cache the
+              // shared prefix, so the parts that change every turn sit at the end.
+              const system = [base, extraSystem, narrative, agentTimeContext(timezone)]
+                .filter(Boolean)
+                .join('\n\n');
+
               completed = await runWithAiRequestContext(requestContext, () =>
-                streamAgentTurn(writer, { userId, system, messages, tools, signal }),
+                streamAgentTurn(writer, { userId, system, messages, tools, toolGroups, signal }),
               );
               writer.write({ type: 'finish', finishReason: 'stop' });
             } catch (err: any) {
+              if (signal?.aborted) {
+                writer.write({ type: 'abort' });
+                return;
+              }
               // Auth errors get a clear "fix your key" message instead of being
               // masked as a transient failure or thrown as an opaque provider string.
               if (isAuthError(err)) {
