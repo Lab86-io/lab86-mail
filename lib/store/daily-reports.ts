@@ -41,13 +41,19 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
+const readDefaults = { query: convexQuery, configured: isConvexConfigured };
+let readDependencies = readDefaults;
+export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
+  readDependencies = { ...readDefaults, ...overrides };
+}
+
 async function readReportRows<T>(
   limit: number,
   summaryOnly: boolean,
   edition?: DailyReport['kind'],
 ): Promise<T[]> {
   const count = Math.min(100, Math.max(1, Math.floor(limit)));
-  if (!isConvexConfigured()) {
+  if (!readDependencies.configured()) {
     const reports = await kvList<DailyReport>('dailyReport');
     return reports
       .filter((report) => !edition || report.kind === edition)
@@ -68,7 +74,7 @@ async function readReportRows<T>(
   const rows: T[] = [];
   let cursor: string | null = null;
   do {
-    const result: { page: T[]; continueCursor: string; isDone: boolean } = await convexQuery(
+    const result: { page: T[]; continueCursor: string; isDone: boolean } = await readDependencies.query(
       (api as any).userData.dailyReportPage,
       { userId, edition, cursor, limit: Math.min(8, count - rows.length), summaryOnly },
     );

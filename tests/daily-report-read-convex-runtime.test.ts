@@ -84,3 +84,44 @@ describe('bounded brief reads', () => {
     expect((await t.query(api.userData.dailyReportPage, args)).page[0].html).toHaveLength(750_000);
   });
 });
+
+test('existing generic store operations preserve edition ownership and do not overwrite create-if-absent records', async () => {
+  const t = convexTest(schema, modules);
+  const base = { internalSecret: secret, userId: 'reader', kind: 'dailyReport', key: 'edition' };
+  expect(await t.query(api.userData.getDoc, base)).toBeNull();
+  expect(
+    (await t.mutation(api.userData.createDocIfAbsent, { ...base, ref: 'morning', doc: { generatedAt: 1 } }))
+      .created,
+  ).toBe(true);
+  expect(
+    (await t.mutation(api.userData.createDocIfAbsent, { ...base, doc: { generatedAt: 2 } })).doc.generatedAt,
+  ).toBe(1);
+  expect(
+    (await t.mutation(api.userData.upsertDoc, { ...base, ref: 'morning', doc: { generatedAt: 3 } })).created,
+  ).toBe(false);
+  expect(
+    (
+      await t.mutation(api.userData.upsertDoc, {
+        ...base,
+        key: 'second',
+        ref: 'evening',
+        doc: { generatedAt: 4 },
+      })
+    ).created,
+  ).toBe(true);
+  expect((await t.query(api.userData.getDoc, base))?.doc.generatedAt).toBe(3);
+  const owner = { internalSecret: secret, userId: 'reader', kind: 'dailyReport' };
+  expect((await t.query(api.userData.listDocs, owner)).map((r) => r.key).sort()).toEqual([
+    'edition',
+    'second',
+  ]);
+  expect((await t.query(api.userData.listDocs, { ...owner, ref: 'morning', limit: 1 }))[0].key).toBe(
+    'edition',
+  );
+  expect(await t.query(api.userData.listDocs, { ...owner, userId: 'other' })).toEqual([]);
+  expect((await t.mutation(api.userData.deleteDoc, { ...base, userId: 'other' })).deleted).toBe(false);
+  expect((await t.mutation(api.userData.deleteDoc, { ...base, key: 'second' })).deleted).toBe(true);
+  expect((await t.mutation(api.userData.deleteDocs, { ...owner, ref: 'morning', limit: 1 })).deleted).toBe(1);
+  await t.mutation(api.userData.upsertDoc, { ...base, doc: { generatedAt: 5 } });
+  expect((await t.mutation(api.userData.deleteDocs, owner)).deleted).toBe(1);
+});
