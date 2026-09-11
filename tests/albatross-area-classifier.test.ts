@@ -243,6 +243,7 @@ describe('grounded structured output', () => {
       target: 'draft-7',
       io: 'input',
     });
+    expect(jsonSchema.required).toContain('assignments');
     const assignmentItems = (jsonSchema.properties.assignments as any).items;
     expect(assignmentItems.required).toEqual(expect.arrayContaining(Object.keys(assignmentItems.properties)));
     expect(assignmentItems.required).toContain('factIds');
