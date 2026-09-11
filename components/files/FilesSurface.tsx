@@ -28,7 +28,6 @@ import {
 import {
   type ChangeEvent,
   type DragEvent,
-  type ReactNode,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -41,6 +40,7 @@ import {
   GoogleDocumentEditor,
   type GoogleEditorSource,
 } from '@/components/files/DocumentEditor';
+import { FileLocationPicker } from '@/components/files/FileLocationPicker';
 import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { AppleLogo, GoogleLogo, MicrosoftLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
@@ -780,7 +780,7 @@ export function FilesSurface() {
   return (
     <section
       aria-label="Files"
-      className="relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-bg)]"
+      className="@container/files relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-content)]"
       onDragEnter={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -834,21 +834,27 @@ export function FilesSurface() {
         {...({ webkitdirectory: '' } as any)}
       />
 
-      <header className="flex min-h-14 items-center gap-3 border-b border-[var(--color-border)] px-4">
-        <div className="min-w-0 flex-1 sm:flex-none">
+      {/* Two bars. The header names the surface and holds search and the two
+          verbs; the toolbar below holds where you are and how the list reads. */}
+      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] p-3 @min-[680px]/files:grid-cols-[auto_minmax(160px,1fr)_auto_auto] @min-[680px]/files:px-4">
+        <div className="min-w-0">
           <h1 className="text-[15px] font-semibold tracking-tight">Files</h1>
-          <p className="hidden text-[11px] text-[var(--color-text-faint)] sm:block">
-            One place for the work behind your work
+          <p className="hidden truncate text-[11.5px] text-[var(--color-text-muted)] @min-[680px]/files:block">
+            {deferredSearch
+              ? 'Library names, plus drive names and content, account-wide'
+              : location.kind === 'all'
+                ? 'Your library and every connected drive'
+                : `Files in ${location.label}`}
           </p>
         </div>
-        <label className="relative ml-auto hidden w-full max-w-md sm:block">
+        <label className="relative col-span-3 row-start-2 block min-w-0 @min-[680px]/files:col-span-1 @min-[680px]/files:col-start-2 @min-[680px]/files:row-start-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input
             aria-label="Search files"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={`Search ${location.label}`}
-            className="control-field h-9 w-full pl-8 pr-3 text-[12.5px]"
+            className="control-field h-8 w-full pl-8 pr-3 text-[12.5px]"
           />
         </label>
         <Button
@@ -859,7 +865,7 @@ export function FilesSurface() {
           onClick={() => setConnectionsOpen(true)}
         >
           <Cloud className="size-3.5" />
-          <span className="hidden sm:inline">Drives</span>
+          <span className="hidden @min-[480px]/files:inline">Drives</span>
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -904,216 +910,106 @@ export function FilesSurface() {
         </DropdownMenu>
       </header>
 
-      <div className="border-b border-[var(--color-border)] px-3 py-2 sm:hidden">
-        <label className="relative block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
-          <input
-            aria-label="Search files"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={`Search ${location.label}`}
-            className="control-field h-10 w-full pl-8 pr-3 text-base"
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+          <FileLocationPicker
+            locations={locations.map((item) => ({
+              id: item.id,
+              label: item.label,
+              needsAttention: item.connection?.status === 'error',
+            }))}
+            value={locationId}
+            onChange={(id) => {
+              setSearch('');
+              if (id === 'icloud' && !icloudStack.length) void chooseICloudFolder();
+              else setLocationId(id);
+            }}
+            onManage={() => setConnectionsOpen(true)}
           />
-        </label>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col sm:grid sm:grid-cols-[210px_minmax(0,1fr)]">
-        <nav
-          aria-label="File locations"
-          className="hidden min-w-0 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)]/55 p-2 sm:block sm:min-h-0 sm:overflow-y-auto sm:border-b-0 sm:border-r"
-        >
-          <div className="hidden sm:block sm:space-y-0.5">
-            <LocationButton
-              active={locationId === 'all'}
-              icon={<FolderOpen className="size-4" />}
-              label="All files"
-              onClick={() => setLocationId('all')}
-            />
-            <LocationButton
-              active={locationId === 'albatross'}
-              icon={<HardDrive className="size-4" />}
-              label="Albatross"
-              count={localItems.length}
-              onClick={() => setLocationId('albatross')}
-            />
-          </div>
-          <div className="mt-3 hidden sm:block">
-            <div className="mb-1 flex items-center justify-between px-2">
-              <span className="text-[10px] font-medium text-[var(--color-text-faint)]">Locations</span>
-              <button
-                type="button"
-                aria-label="Manage drives"
-                className="rounded p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)]"
-                onClick={() => setConnectionsOpen(true)}
-              >
-                <Settings2 className="size-3.5" />
-              </button>
-            </div>
-            <div className="space-y-0.5">
-              {connections.map((connection) => (
-                <LocationButton
-                  key={connection.connectionId}
-                  active={locationId === connection.connectionId}
-                  icon={<ProviderMark provider={connection.provider} className="size-4" />}
-                  label={
-                    connection.accountEmail || connection.displayName || providerLabel(connection.provider)
-                  }
-                  alert={connection.status === 'error'}
-                  onClick={() => setLocationId(connection.connectionId)}
-                />
-              ))}
-              <LocationButton
-                active={locationId === 'icloud'}
-                icon={<AppleLogo className="size-4" />}
-                label={icloudStack.length ? icloudStack[0].name : 'iCloud Drive'}
-                onClick={() => {
-                  if (icloudStack.length) setLocationId('icloud');
-                  else void chooseICloudFolder();
-                }}
-              />
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setConnectionsOpen(true)}
-            className="mt-4 hidden w-full items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-2.5 py-2 text-left text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)] sm:flex"
-          >
-            <Plus className="size-3.5" />
-            Add a drive
-          </button>
-        </nav>
-
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 sm:px-4">
-            <select
-              aria-label="File location"
-              value={locationId}
-              onChange={(event) => {
-                setLocationId(event.target.value);
+          {location.kind === 'connection' && folderStack.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Back one folder"
+              onClick={() => {
                 setSearch('');
+                setFolderStack((current) => current.slice(0, -1));
               }}
-              className="control-field h-10 min-w-0 flex-1 px-2 text-base sm:hidden"
             >
-              {locations.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            {location.kind === 'connection' && folderStack.length > 1 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Back one folder"
-                onClick={() => {
-                  setSearch('');
-                  setFolderStack((current) => current.slice(0, -1));
-                }}
-              >
-                <ArrowLeft className="size-3.5" />
-              </Button>
-            ) : location.kind === 'icloud' && icloudStack.length > 1 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Back one folder"
-                onClick={() => {
-                  const next = icloudStack.slice(0, -1);
-                  const parent = next.at(-1);
-                  if (parent?.handle) {
-                    void loadICloudDirectory(parent.handle, next);
-                  }
-                }}
-              >
-                <ArrowLeft className="size-3.5" />
-              </Button>
-            ) : null}
-            <nav
-              className={cn(
-                'min-w-0 max-w-full flex-1 items-center overflow-hidden text-[12.5px]',
-                (location.kind === 'connection' && folderStack.length > 1) ||
-                  (location.kind === 'icloud' && icloudStack.length > 1)
-                  ? 'flex'
-                  : 'hidden sm:flex',
-              )}
-              aria-label="Folder path"
+              <ArrowLeft className="size-3.5" />
+            </Button>
+          ) : location.kind === 'icloud' && icloudStack.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Back one folder"
+              onClick={() => {
+                const next = icloudStack.slice(0, -1);
+                const parent = next.at(-1);
+                if (parent?.handle) {
+                  void loadICloudDirectory(parent.handle, next);
+                }
+              }}
             >
-              {(location.kind === 'connection'
-                ? folderStack
-                : location.kind === 'icloud' && icloudStack.length
-                  ? icloudStack.map((item) => ({ id: item.name, name: item.name }))
-                  : [{ id: location.id, name: location.label }]
-              ).map((crumb, index, list) => (
-                <span key={crumb.id || crumb.name} className="flex min-w-0 items-center">
-                  {index ? (
-                    <ChevronRight className="mx-0.5 size-3 shrink-0 text-[var(--color-text-faint)]" />
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={index === list.length - 1}
-                    onClick={() => {
-                      setSearch('');
-                      if (location.kind === 'connection')
-                        setFolderStack((current) => current.slice(0, index + 1));
-                      else if (location.kind === 'icloud') {
-                        const next = icloudStack.slice(0, index + 1);
-                        if (next.at(-1)?.handle) void loadICloudDirectory(next.at(-1)!.handle, next);
-                      }
-                    }}
-                    className={cn(
-                      'truncate',
-                      index === list.length - 1
-                        ? 'font-medium text-[var(--color-text)]'
-                        : 'text-[var(--color-text-muted)]',
-                    )}
-                  >
-                    {crumb.name}
-                  </button>
-                </span>
-              ))}
-            </nav>
-            <span className="ml-1 hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
-              {visibleItems.length}
-              {hasMore ? '+' : ''} {visibleItems.length === 1 ? 'item' : 'items'}
-            </span>
-            <div className="ml-auto flex items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5">
-              <button
-                type="button"
-                aria-label="List view"
-                aria-pressed={layout === 'list'}
-                onClick={() => setLayout('list')}
-                className={cn(
-                  'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
-                  layout === 'list' &&
-                    'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
-                )}
-              >
-                <List className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Grid view"
-                aria-pressed={layout === 'grid'}
-                onClick={() => setLayout('grid')}
-                className={cn(
-                  'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
-                  layout === 'grid' &&
-                    'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
-                )}
-              >
-                <Grid2X2 className="size-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-xs sm:px-4">
+              <ArrowLeft className="size-3.5" />
+            </Button>
+          ) : null}
+          <nav
+            className={cn(
+              'min-w-0 max-w-full flex-1 items-center overflow-hidden text-[12.5px]',
+              (location.kind === 'connection' && folderStack.length > 1) ||
+                (location.kind === 'icloud' && icloudStack.length > 1)
+                ? 'flex'
+                : 'hidden',
+            )}
+            aria-label="Folder path"
+          >
+            {(location.kind === 'connection'
+              ? folderStack
+              : location.kind === 'icloud' && icloudStack.length
+                ? icloudStack.map((item) => ({ id: item.name, name: item.name }))
+                : [{ id: location.id, name: location.label }]
+            ).map((crumb, index, list) => (
+              <span key={crumb.id || crumb.name} className="flex min-w-0 items-center">
+                {index ? (
+                  <ChevronRight className="mx-0.5 size-3 shrink-0 text-[var(--color-text-faint)]" />
+                ) : null}
+                <button
+                  type="button"
+                  disabled={index === list.length - 1}
+                  onClick={() => {
+                    setSearch('');
+                    if (location.kind === 'connection')
+                      setFolderStack((current) => current.slice(0, index + 1));
+                    else if (location.kind === 'icloud') {
+                      const next = icloudStack.slice(0, index + 1);
+                      if (next.at(-1)?.handle) void loadICloudDirectory(next.at(-1)!.handle, next);
+                    }
+                  }}
+                  className={cn(
+                    'truncate',
+                    index === list.length - 1
+                      ? 'font-medium text-[var(--color-text)]'
+                      : 'text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {crumb.name}
+                </button>
+              </span>
+            ))}
+          </nav>
+          <span className="ml-1 hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
+            {visibleItems.length}
+            {hasMore ? '+' : ''} {visibleItems.length === 1 ? 'item' : 'items'}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
             <select
               aria-label="File type"
               value={fileType}
               onChange={(event) => setFileType(event.target.value)}
-              className="control-field h-9 px-2 text-base sm:text-xs"
+              className="control-field h-8 px-2 text-base sm:text-[12px]"
             >
               <option value="all">All types</option>
               <option value="documents">Documents</option>
@@ -1125,120 +1021,138 @@ export function FilesSurface() {
               aria-label="Sort files"
               value={sort}
               onChange={(event) => setSort(event.target.value)}
-              className="control-field h-9 px-2 text-base sm:text-xs"
+              className="control-field h-8 px-2 text-base sm:text-[12px]"
             >
-              <option value="name">Name</option>
+              <option value="name">By name</option>
               <option value="modified">Recently modified</option>
             </select>
-            <span className="min-w-0 text-[var(--color-text-muted)]">
-              {deferredSearch
-                ? 'Library names · drive names and content, account-wide'
-                : location.kind === 'all'
-                  ? 'Library and connected drive folders'
-                  : 'Files in this location'}
-            </span>
           </div>
-
-          {location.kind === 'all' && cloudFailures.length ? (
-            <div
-              role="status"
-              className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-2 text-xs text-[var(--color-text)]"
+          <div className="flex items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5">
+            <button
+              type="button"
+              aria-label="List view"
+              aria-pressed={layout === 'list'}
+              onClick={() => setLayout('list')}
+              className={cn(
+                'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
+                layout === 'list' &&
+                  'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
+              )}
             >
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              <details className="min-w-0 flex-1">
-                <summary className="cursor-pointer">
-                  {cloudFailures.length} {cloudFailures.length === 1 ? 'drive needs' : 'drives need'}{' '}
-                  attention. Your other files are still available.
-                </summary>
-                <ul className="mt-2 space-y-1 break-words text-[var(--color-text-muted)]">
-                  {cloudFailures.map((failure) => (
-                    <li key={failure.connection}>
-                      {failure.connection} — {failure.message}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  className="mt-2 min-h-9 font-medium underline underline-offset-2"
-                  onClick={() => setConnectionsOpen(true)}
-                >
-                  Manage connections
-                </button>
-              </details>
+              <List className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Grid view"
+              aria-pressed={layout === 'grid'}
+              onClick={() => setLayout('grid')}
+              className={cn(
+                'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
+                layout === 'grid' &&
+                  'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
+              )}
+            >
+              <Grid2X2 className="size-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {location.kind === 'all' && cloudFailures.length ? (
+          <div
+            role="status"
+            className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-2 text-xs text-[var(--color-text)]"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <details className="min-w-0 flex-1">
+              <summary className="cursor-pointer">
+                {cloudFailures.length} {cloudFailures.length === 1 ? 'drive needs' : 'drives need'} attention.
+                Your other files are still available.
+              </summary>
+              <ul className="mt-2 space-y-1 break-words text-[var(--color-text-muted)]">
+                {cloudFailures.map((failure) => (
+                  <li key={failure.connection}>
+                    {failure.connection} — {failure.message}
+                  </li>
+                ))}
+              </ul>
               <button
                 type="button"
-                className="shrink-0 font-medium underline underline-offset-2"
-                onClick={() => void cloudQuery.refetch()}
+                className="mt-2 min-h-9 font-medium underline underline-offset-2"
+                onClick={() => setConnectionsOpen(true)}
               >
-                Retry
+                Manage connections
               </button>
-            </div>
-          ) : null}
-
-          {loadError && visibleItems.length ? (
-            <div
-              role="status"
-              className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-text-muted)]"
+            </details>
+            <button
+              type="button"
+              className="shrink-0 font-medium underline underline-offset-2"
+              onClick={() => void cloudQuery.refetch()}
             >
-              <span className="min-w-0 flex-1">Some files could not refresh. Showing available files.</span>
-              <button type="button" onClick={retryFiles} className="min-h-9 underline underline-offset-2">
-                Retry
-              </button>
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {loadError && visibleItems.length ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-text-muted)]"
+          >
+            <span className="min-w-0 flex-1">Some files could not refresh. Showing available files.</span>
+            <button type="button" onClick={retryFiles} className="min-h-9 underline underline-offset-2">
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        <div className="relative min-h-0 flex-1 overflow-y-auto">
+          {loadError && !visibleItems.length ? (
+            <ErrorState message={(loadError as Error).message} onRetry={retryFiles} />
+          ) : (loading || search.trim() !== deferredSearch) && !visibleItems.length ? (
+            <div className="grid h-full place-items-center">
+              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <Ring className="size-4" />
+                Loading files…
+              </div>
+            </div>
+          ) : visibleItems.length ? (
+            layout === 'list' ? (
+              <FileList items={visibleItems} showLocation={location.kind === 'all'} onOpen={openItem} />
+            ) : (
+              <FileGrid items={visibleItems} onOpen={openItem} />
+            )
+          ) : (
+            <EmptyFiles
+              location={location}
+              hasConnections={connections.length > 0}
+              searching={Boolean(deferredSearch) || fileType !== 'all'}
+              hasMore={hasMore}
+              onUpload={() => fileInputRef.current?.click()}
+              onConnect={() => setConnectionsOpen(true)}
+              onChooseICloud={() => void chooseICloudFolder()}
+            />
+          )}
+          {hasMore ? (
+            <div className="border-t border-[var(--color-border)] p-4 text-center">
+              <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                More sources remain to check. Sorting and type filters apply to loaded files.
+              </p>
+              <Button
+                variant="outline"
+                disabled={libraryQuery.isFetching || cloudQuery.isFetching}
+                onClick={() => {
+                  if ((location.kind === 'all' || location.kind === 'albatross') && libraryQuery.hasNextPage)
+                    void libraryQuery.fetchNextPage();
+                  if ((location.kind === 'all' || location.kind === 'connection') && cloudQuery.hasNextPage)
+                    void cloudQuery.fetchNextPage();
+                }}
+              >
+                {libraryQuery.isFetching || cloudQuery.isFetching ? 'Loading…' : 'Load more files'}
+              </Button>
             </div>
           ) : null}
-
-          <div className="relative min-h-0 flex-1 overflow-y-auto">
-            {loadError && !visibleItems.length ? (
-              <ErrorState message={(loadError as Error).message} onRetry={retryFiles} />
-            ) : (loading || search.trim() !== deferredSearch) && !visibleItems.length ? (
-              <div className="grid h-full place-items-center">
-                <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                  <Ring className="size-4" />
-                  Loading files…
-                </div>
-              </div>
-            ) : visibleItems.length ? (
-              layout === 'list' ? (
-                <FileList items={visibleItems} showLocation={location.kind === 'all'} onOpen={openItem} />
-              ) : (
-                <FileGrid items={visibleItems} onOpen={openItem} />
-              )
-            ) : (
-              <EmptyFiles
-                location={location}
-                hasConnections={connections.length > 0}
-                searching={Boolean(deferredSearch) || fileType !== 'all'}
-                hasMore={hasMore}
-                onUpload={() => fileInputRef.current?.click()}
-                onConnect={() => setConnectionsOpen(true)}
-                onChooseICloud={() => void chooseICloudFolder()}
-              />
-            )}
-            {hasMore ? (
-              <div className="border-t border-[var(--color-border)] p-4 text-center">
-                <p className="mb-2 text-xs text-[var(--color-text-muted)]">
-                  More sources remain to check. Sorting and type filters apply to loaded files.
-                </p>
-                <Button
-                  variant="outline"
-                  disabled={libraryQuery.isFetching || cloudQuery.isFetching}
-                  onClick={() => {
-                    if (
-                      (location.kind === 'all' || location.kind === 'albatross') &&
-                      libraryQuery.hasNextPage
-                    )
-                      void libraryQuery.fetchNextPage();
-                    if ((location.kind === 'all' || location.kind === 'connection') && cloudQuery.hasNextPage)
-                      void cloudQuery.fetchNextPage();
-                  }}
-                >
-                  {libraryQuery.isFetching || cloudQuery.isFetching ? 'Loading…' : 'Load more files'}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        </main>
-      </div>
+        </div>
+      </main>
 
       {dragging ? (
         <div
@@ -1270,48 +1184,6 @@ export function FilesSurface() {
   );
 }
 
-function LocationButton({
-  active,
-  icon,
-  label,
-  count,
-  alert,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  count?: number;
-  alert?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={active ? 'location' : undefined}
-      title={label}
-      className={cn(
-        'flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-[12px] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:w-full',
-        active
-          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)]',
-      )}
-    >
-      {icon}
-      <span className="max-w-36 truncate">{label}</span>
-      {alert ? (
-        <span
-          className="ml-auto size-1.5 rounded-full bg-[var(--color-danger)]"
-          title="Connection needs attention"
-        />
-      ) : count ? (
-        <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)]">{count}</span>
-      ) : null}
-    </button>
-  );
-}
-
 function FileList({
   items,
   showLocation,
@@ -1325,7 +1197,7 @@ function FileList({
     <div className="min-w-0" data-file-list>
       <div
         className={cn(
-          'sticky top-0 z-10 hidden h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 px-4 text-[10px] font-medium text-[var(--color-text-faint)] backdrop-blur md:grid',
+          'sticky top-0 z-10 hidden h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-content)]/95 px-4 text-[10px] font-medium text-[var(--color-text-faint)] backdrop-blur md:grid',
           showLocation
             ? 'grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_120px_90px_70px_28px]'
             : 'grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_90px_100px_28px]',
@@ -1686,7 +1558,7 @@ function ProviderConnectionRow({
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] font-medium">{provider.label}</span>
             {connections.length ? (
-              <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-emerald-700 dark:text-emerald-300">
+              <span className="rounded-ui bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-emerald-700 dark:text-emerald-300">
                 Connected
               </span>
             ) : null}

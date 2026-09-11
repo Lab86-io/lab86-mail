@@ -309,7 +309,7 @@ export const calendarSuggestTimes = defineTool({
 export const calendarCreateEvent = defineTool({
   name: 'calendar_create_event',
   description:
-    'Create a calendar event. Times are ISO timestamps; allDay uses date granularity. IMPORTANT: adding attendees emails real invitations — confirm with the user before passing attendees. The operation is recorded and undoable via undo_operation.',
+    'Create a calendar event. Times are ISO timestamps; allDay uses date granularity. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
   category: 'calendar',
   mutating: true,
   input: z.object({
@@ -321,6 +321,7 @@ export const calendarCreateEvent = defineTool({
     allDay: z.boolean().default(false),
     description: z.string().optional(),
     location: z.string().optional(),
+    conferencing: z.literal('google_meet').optional(),
     attendees: z.array(participantSchema).default([]),
     recurrence: z.array(z.string()).optional(),
     busy: z.boolean().default(true),
@@ -331,6 +332,8 @@ export const calendarCreateEvent = defineTool({
     calendarId: z.string(),
     operationId: z.string(),
     htmlLink: z.string().optional(),
+    conferenceUrl: z.string().optional(),
+    conferencingPending: z.boolean().optional(),
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
@@ -345,6 +348,7 @@ export const calendarCreateEvent = defineTool({
       allDay: args.allDay,
       description: args.description,
       location: args.location,
+      conferencing: args.conferencing,
       participants: args.attendees,
       recurrence: args.recurrence,
       busy: args.busy,

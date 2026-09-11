@@ -72,17 +72,7 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
       variants={fadeIn}
       transition={transition}
     >
-      <motion.div
-        className="flex flex-col items-center justify-center border-b p-4 text-sm sm:hidden"
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={transition}
-      >
-        <p>Weekly view is not recommended on smaller devices.</p>
-        <p>Please switch to a desktop device or use the daily view instead.</p>
-      </motion.div>
-
-      <motion.div className="hidden min-h-0 flex-1 flex-col sm:flex" variants={staggerContainer}>
+      <motion.div className="flex min-h-0 flex-1 flex-col" variants={staggerContainer}>
         <div>
           {/* Week header */}
           <motion.div
@@ -97,19 +87,20 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
               {weekDays.map((day, index) => (
                 <motion.span
                   key={day.toISOString()}
-                  className="py-1 sm:py-2 text-center text-xs font-medium text-t-quaternary"
+                  data-calendar-week-day
+                  className="min-w-0 py-1 text-center text-xs font-medium text-t-quaternary @min-[700px]/calendar-view:py-2"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05, ...transition }}
                 >
                   {/* Mobile: Show only day abbreviation and number */}
-                  <span className="block sm:hidden">
+                  <span className="block @min-[700px]/calendar-view:hidden">
                     <span className={cn(isToday(day) && 'text-[var(--color-accent)]')}>
                       {format(day, 'EEE').charAt(0)}
                     </span>
                     <span
                       className={cn(
-                        'mx-auto mt-0.5 grid size-5 place-items-center rounded-full text-xs font-semibold',
+                        'mx-auto mt-0.5 grid size-5 place-items-center rounded-ui text-xs font-semibold',
                         isToday(day)
                           ? 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
                           : 'text-t-secondary',
@@ -119,13 +110,13 @@ export function CalendarWeekView({ singleDayEvents, multiDayEvents }: IProps) {
                     </span>
                   </span>
                   {/* Desktop: weekday + date, with today called out like Amie/Motion */}
-                  <span className="hidden items-center justify-center gap-1.5 sm:inline-flex">
+                  <span className="hidden items-center justify-center gap-1.5 @min-[700px]/calendar-view:inline-flex">
                     <span className={cn(isToday(day) && 'font-semibold text-[var(--color-accent)]')}>
                       {format(day, 'EE')}
                     </span>
                     <span
                       className={cn(
-                        'grid size-6 place-items-center rounded-full font-semibold tabular-nums',
+                        'grid size-6 place-items-center rounded-ui font-semibold tabular-nums',
                         isToday(day)
                           ? 'bg-[var(--color-accent)] text-[var(--color-accent-foreground)]'
                           : 'text-t-secondary',

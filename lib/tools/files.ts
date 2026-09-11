@@ -30,7 +30,7 @@ export function __setCloudFileToolDepsForTest(overrides: Partial<typeof defaultD
 export const cloudFileSearch = defineTool({
   name: 'cloud_file_search',
   description:
-    'Search or list the user’s connected Google Drive and OneDrive files. Returns real provider ids, types, and open URLs. Use google_file_import on a returned Google Doc, Sheet, or Slides file before reading or editing its contents.',
+    'Search or list the user’s connected Google Drive and OneDrive files. Returns real provider ids, types, and open URLs. Use google_document_get to read an original Google file and google_document_edit to propose edits in its editor. Use google_file_import only when an Albatross copy is wanted.',
   category: 'documents',
   mutating: false,
   input: z.object({

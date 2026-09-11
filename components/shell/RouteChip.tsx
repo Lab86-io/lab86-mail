@@ -93,7 +93,7 @@ export function RouteChip({
         if (!disabled) onFlip?.();
       }}
       className={cn(
-        'relative inline-flex h-6 select-none items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] font-medium leading-none',
+        'relative inline-flex h-6 select-none items-center overflow-hidden rounded-ui border px-2.5 text-[11.5px] font-medium leading-none',
         'transition-[opacity,background-color,color,border-color] duration-[var(--duration-fast)] motion-reduce:transition-none',
         hold
           ? 'bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'

@@ -457,7 +457,7 @@ export function MessageDraft(props: MessageDraftProps) {
               variant="outline"
               size="sm"
               onClick={handleUndo}
-              className="rounded-full"
+              className="rounded-ui"
             >
               Undo
             </Button>

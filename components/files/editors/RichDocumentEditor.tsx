@@ -181,7 +181,7 @@ export function RichDocumentEditor({
       <div
         role="toolbar"
         aria-label="Document formatting"
-        className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+        className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-content)] px-3 py-2"
       >
         <select
           aria-label="Paragraph style"

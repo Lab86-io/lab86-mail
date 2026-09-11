@@ -1,5 +1,9 @@
 # Soft-square corners
 
+Superseded on 2026-09-10 by
+[albatross-corner-system-2026-09-10.md](albatross-corner-system-2026-09-10.md), which
+changes the radius table and uses `superellipse(1.6)` after the final softening review.
+
 Date: 2026-09-09. Web-only iteration; no native changes. Staging release requested
 after local acceptance; no production deployment authorized.
 

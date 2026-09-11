@@ -81,7 +81,7 @@ function PromptInput({
         <div
           onClick={handleClick}
           className={cn(
-            'control-field cursor-text rounded-xl p-2 has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-[var(--color-accent)]',
+            'control-field cursor-text rounded-ui p-2 has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-[var(--color-accent)]',
             disabled && 'cursor-not-allowed opacity-60',
             className,
           )}

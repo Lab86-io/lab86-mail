@@ -20,7 +20,7 @@ function ScrollButton({ className, variant = 'outline', size = 'sm', ...props }:
       variant={variant}
       size={size}
       className={cn(
-        'h-10 w-10 rounded-full transition-all duration-150 ease-out',
+        'h-10 w-10 rounded-ui transition-all duration-150 ease-out',
         !isAtBottom
           ? 'translate-y-0 scale-100 opacity-100'
           : 'pointer-events-none translate-y-4 scale-95 opacity-0',

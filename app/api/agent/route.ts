@@ -12,6 +12,8 @@ import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { type BriefResponseRef, briefResponseRefSchema } from '@/lib/brief/response';
+import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief/response-context';
 import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 import { withDeadline } from '@/lib/shared/deadline';
@@ -28,6 +30,7 @@ const MAX_COMPACT_TEXT_CHARS = 12_000;
 interface AgentRequestBody {
   messages: UIMessage[];
   extraSystem?: string;
+  briefResponse?: BriefResponseRef;
   timezone?: string;
   areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
   contextAttachments?: Array<{ kind: 'work'; id: string }>;
@@ -162,7 +165,18 @@ export async function POST(req: NextRequest) {
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
         : '';
-    const contextAttachments = normalizeContextAttachments(body.contextAttachments);
+    const reference =
+      body.briefResponse === undefined ? undefined : briefResponseRefSchema.safeParse(body.briefResponse);
+    if (reference && !reference.success)
+      throw new InvalidContextAttachmentError('Invalid brief response reference.');
+    const briefContext = reference?.success
+      ? await readBriefResponseContext(user.userId, reference.data, req.signal)
+      : null;
+    const contextAttachments = briefContext
+      ? briefContext.workId
+        ? [{ kind: 'work' as const, id: briefContext.workId }]
+        : []
+      : normalizeContextAttachments(body.contextAttachments);
     const narrativeTopics = [
       ...contextAttachments.map((item) => `work:${item.id}`),
       ...(body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
@@ -179,7 +193,7 @@ export async function POST(req: NextRequest) {
         limit: 60,
         windowMs: 60_000,
       }).then(() =>
-        body.areaDiscovery
+        !briefContext && body.areaDiscovery
           ? readAreaDiscoveryContext({
               userId: user.userId,
               areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
@@ -203,7 +217,13 @@ export async function POST(req: NextRequest) {
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
-        [body.extraSystem, areaDiscoveryContext, ...attachedContexts, compactionNote]
+        [
+          body.extraSystem,
+          briefContext?.systemContext,
+          areaDiscoveryContext,
+          ...attachedContexts,
+          compactionNote,
+        ]
           .filter(Boolean)
           .join('\n\n') || undefined,
       userId: user.userId,
@@ -253,13 +273,15 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     const status =
-      err instanceof AuthRequiredError
-        ? 401
-        : err instanceof InvalidContextAttachmentError
-          ? 400
-          : err instanceof WorkContextNotFoundError
-            ? 404
-            : 500;
+      err instanceof BriefResponseContextError
+        ? err.status
+        : err instanceof AuthRequiredError
+          ? 401
+          : err instanceof InvalidContextAttachmentError
+            ? 400
+            : err instanceof WorkContextNotFoundError
+              ? 404
+              : 500;
     console.error('[agent-route]', errorForLog(err));
     if (status === 500) {
       return agentErrorStreamResponse(err?.message || 'agent failed');

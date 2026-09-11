@@ -1,16 +1,26 @@
+import type { ArtStyle } from './art-style';
 import { ART_POOL, type ArtPiece } from './daily-art-pool';
+import { LOCAL_ART_PALETTES } from './local-art-palettes';
 
-export interface DailyArt {
+export interface DailyArtCandidate {
   imageUrl: string;
-  // Ordered alternates tried (client-side, via onerror) when imageUrl fails to
-  // load — drawn from OTHER museums first, then bundled local assets last, so
-  // the hero is never blank no matter which single source is down.
-  fallbacks: string[];
   title: string;
   artist: string;
   date: string;
   credit: string;
   source: string;
+  sourceUrl?: string;
+  style?: ArtStyle;
+  palette?: string[];
+}
+
+export interface DailyArt extends DailyArtCandidate {
+  // Ordered alternates tried (client-side, via onerror) when imageUrl fails to
+  // load — drawn from OTHER museums first, then bundled local assets last, so
+  // the hero is never blank no matter which single source is down.
+  fallbacks: string[];
+  /** Metadata travels with each fallback so the displayed work is credited. */
+  fallbackArt?: DailyArtCandidate[];
 }
 
 // Bundled last-resort backstops served from the app's own origin. Absolute URLs
@@ -39,6 +49,16 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
   const key = `${day.getUTCFullYear()}-${day.getUTCMonth() + 1}-${day.getUTCDate()}`;
   const hash = hashString(key);
   const locals = localFallbacks();
+  const localArt: DailyArtCandidate[] = locals.map((imageUrl, index) => ({
+    imageUrl,
+    title: '',
+    artist: '',
+    date: '',
+    credit: '',
+    source: '',
+    style: 'modern',
+    palette: [...LOCAL_ART_PALETTES[index]],
+  }));
 
   if (ART_POOL.length === 0) {
     return {
@@ -49,22 +69,53 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
       date: '',
       credit: '',
       source: '',
+      fallbackArt: localArt.slice(1),
     };
   }
 
-  const chosen = ART_POOL[hash % ART_POOL.length];
-  const candidates = [chosen, ...pickAlternates(chosen, hash)].filter((piece) => piece.source !== 'aic');
-  const primary = candidates[0] ?? chosen;
-  const alternates = candidates.slice(1);
+  // Choose the museum first so a larger collection cannot crowd out the others.
+  const sources = [...new Set(ART_POOL.map((piece) => piece.source))];
+  const source = sources[hash % sources.length];
+  const collection = ART_POOL.filter((piece) => piece.source === source);
+  const primary = collection[hashString(`art:${key}`) % collection.length];
+  const alternates = pickAlternates(primary, hash).map(artCandidate);
+  const fallbackArt = [...alternates, ...localArt];
   return {
-    imageUrl: highResolutionArtUrl(primary.imageUrl),
-    fallbacks: [...alternates.map((a) => highResolutionArtUrl(a.imageUrl)), ...locals],
-    title: primary.title,
-    artist: primary.artist,
-    date: primary.date,
-    credit: [primary.title, primary.artist, primary.date].filter(Boolean).join(', '),
-    source: primary.sourceName,
+    ...artCandidate(primary),
+    fallbacks: fallbackArt.map((piece) => piece.imageUrl),
+    fallbackArt,
   };
+}
+
+export function artCandidate(piece: ArtPiece): DailyArtCandidate {
+  return {
+    imageUrl: highResolutionArtUrl(piece.imageUrl),
+    title: piece.title,
+    artist: piece.artist,
+    date: piece.date,
+    credit: [piece.title, piece.artist, piece.date].filter(Boolean).join(', '),
+    source: piece.sourceName,
+    sourceUrl: piece.sourceUrl,
+    style: piece.style,
+    palette: [...piece.palette],
+  };
+}
+
+export function dailyArtCandidates(art: DailyArt): DailyArtCandidate[] {
+  return [
+    art,
+    ...art.fallbacks.map(
+      (imageUrl) =>
+        art.fallbackArt?.find((piece) => piece.imageUrl === imageUrl) ?? {
+          imageUrl,
+          title: '',
+          artist: '',
+          date: '',
+          credit: '',
+          source: '',
+        },
+    ),
+  ];
 }
 
 export function highResolutionArtUrl(url: string): string {

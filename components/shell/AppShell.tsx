@@ -53,9 +53,11 @@ import { WakeNudgeHost } from './WakeNudge';
 // that collapses to an icon strip rather than unmounting.
 export function AppShell({
   clerkEnabled,
+  userName,
   initialView,
 }: {
   clerkEnabled: boolean;
+  userName?: string;
   initialView?: PrimaryView;
 }) {
   const railOpen = useClientStore((s) => s.railOpen);
@@ -167,9 +169,8 @@ export function AppShell({
   const mailish =
     visiblePrimaryView === 'mail' || visiblePrimaryView === 'today' || visiblePrimaryView === 'areas';
   const readerVisible = !!(composeMode || (selectedThreadId && mailish));
-  // Mail is the only surface built as a card the reader can halve. Everywhere
-  // else the reader arrives as a sheet over the page, so Today and Areas keep
-  // their own full-width shape instead of pretending to be an inbox.
+  // Mail splits in place. Linked messages from Today and Areas remain sheets
+  // so opening a source does not reflow the document being read.
   const readerSplit = !isMobile && readerVisible && visiblePrimaryView === 'mail';
   const readerSheet = !isMobile && readerVisible && !readerSplit;
   // The assistant has its own stable frame around these page/reader panes.
@@ -243,97 +244,99 @@ export function AppShell({
         open={railOpen}
         onOpenChange={setRailOpen}
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
-        className="h-dvh overflow-hidden bg-[var(--color-bg)]"
+        className="relative h-dvh overflow-hidden bg-[var(--color-bg)]"
       >
         <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen && !isMobile ? <RailResizeHandle /> : null}
         <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
-          <ChatWorkspace mobile={isMobile}>
-            {isMobile ? (
-              <MobileNavigation onSearch={() => useClientStore.getState().setPaletteOpen(true)} />
-            ) : null}
-            {/* SidebarProvider nests a 0ms TooltipProvider; restore the app's
+          <div data-workspace-panel className="workspace-panel">
+            <ChatWorkspace mobile={isMobile} clerkEnabled={clerkEnabled} userName={userName}>
+              {isMobile ? (
+                <MobileNavigation onSearch={() => useClientStore.getState().setPaletteOpen(true)} />
+              ) : null}
+              {/* SidebarProvider nests a 0ms TooltipProvider; restore the app's
               default delay for the reader/inbox content it wraps. */}
-            <TooltipProvider delayDuration={350}>
-              <Group
-                orientation="horizontal"
-                defaultLayout={defaultLayout}
-                onLayoutChanged={onLayoutChanged}
-                data-panel-resizing={panelResizing || undefined}
-                className="min-h-0 w-full flex-1"
-              >
-                <Panel
-                  id="inbox"
-                  defaultSize={panelIds.length === 1 ? '100%' : '40%'}
-                  minSize={isMobile ? '0%' : '280px'}
+              <TooltipProvider delayDuration={350}>
+                <Group
+                  orientation="horizontal"
+                  defaultLayout={defaultLayout}
+                  onLayoutChanged={onLayoutChanged}
+                  data-panel-resizing={panelResizing || undefined}
+                  className="min-h-0 w-full flex-1"
                 >
-                  <ReflowPanel>
-                    <motion.div
-                      animate={{
-                        x: isMobile && readerVisible ? '-22%' : '0%',
-                        opacity: isMobile && readerVisible ? 0.72 : 1,
-                      }}
-                      transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-                      className="h-full w-full"
-                      aria-hidden={(isMobile && readerVisible) || undefined}
-                      inert={isMobile && readerVisible}
-                    >
-                      <PrimarySurface view={visiblePrimaryView} selectedWorkId={selectedWorkId} />
-                    </motion.div>
-                  </ReflowPanel>
-                </Panel>
-
-                {readerSplit ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
-                {readerSplit ? (
-                  <Panel id="reader" defaultSize="40%" minSize="360px">
+                  <Panel
+                    id="inbox"
+                    defaultSize={panelIds.length === 1 ? '100%' : '40%'}
+                    minSize={isMobile ? '0%' : '280px'}
+                  >
                     <ReflowPanel>
-                      {/* Slide-in masks the thread's hydration moment. */}
                       <motion.div
-                        key={selectedThreadId || 'compose'}
-                        initial={{ x: 28, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-                        className="h-full min-w-0"
+                        animate={{
+                          x: isMobile && readerVisible ? '-22%' : '0%',
+                          opacity: isMobile && readerVisible ? 0.72 : 1,
+                        }}
+                        transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                        className="h-full w-full"
+                        aria-hidden={(isMobile && readerVisible) || undefined}
+                        inert={isMobile && readerVisible}
                       >
-                        <ThreadView />
+                        <PrimarySurface view={visiblePrimaryView} selectedWorkId={selectedWorkId} />
                       </motion.div>
                     </ReflowPanel>
                   </Panel>
-                ) : null}
-              </Group>
 
-              {/* Off Mail there is no card to halve, so the thread visits as a
+                  {readerSplit ? <ResizeSeparator onResizeStateChange={setPanelResizing} /> : null}
+                  {readerSplit ? (
+                    <Panel id="reader" defaultSize="40%" minSize="360px">
+                      <ReflowPanel>
+                        {/* Slide-in masks the thread's hydration moment. */}
+                        <motion.div
+                          key={selectedThreadId || 'compose'}
+                          initial={{ x: 28, opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                          className="h-full min-w-0"
+                        >
+                          <ThreadView />
+                        </motion.div>
+                      </ReflowPanel>
+                    </Panel>
+                  ) : null}
+                </Group>
+
+                {/* Off Mail there is no card to halve, so the thread visits as a
                 sheet over the page. The surface underneath keeps its own
                 width and stays usable — this is not a modal. */}
-              <AnimatePresence initial={false}>
-                {isMobile && readerVisible ? (
-                  <motion.div
-                    key="mobile-reader"
-                    initial={{ x: '100%' }}
-                    animate={{ x: 0 }}
-                    exit={{ x: '100%' }}
-                    transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
-                  >
-                    <ThreadView />
-                  </motion.div>
-                ) : null}
-                {readerSheet ? (
-                  <motion.div
-                    key="reader-sheet"
-                    initial={{ x: 32, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    exit={{ x: 32, opacity: 0 }}
-                    transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
-                  >
-                    <ThreadView variant="sheet" />
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </TooltipProvider>
-          </ChatWorkspace>
+                <AnimatePresence initial={false}>
+                  {isMobile && readerVisible ? (
+                    <motion.div
+                      key="mobile-reader"
+                      initial={{ x: '100%' }}
+                      animate={{ x: 0 }}
+                      exit={{ x: '100%' }}
+                      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute inset-0 z-20 h-full w-full bg-[var(--color-bg)] shadow-[var(--shadow-pop)]"
+                    >
+                      <ThreadView />
+                    </motion.div>
+                  ) : null}
+                  {readerSheet ? (
+                    <motion.div
+                      key="reader-sheet"
+                      initial={{ x: 32, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      exit={{ x: 32, opacity: 0 }}
+                      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute inset-y-0 right-0 z-30 w-[min(560px,calc(100%-96px))]"
+                    >
+                      <ThreadView variant="sheet" />
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </TooltipProvider>
+            </ChatWorkspace>
+          </div>
           <AIBarTrigger />
           <AlbatrossCompanion />
           <WakeNudgeHost />
@@ -348,7 +351,17 @@ export function AppShell({
   );
 }
 
-function ChatWorkspace({ children, mobile = false }: { children: ReactNode; mobile?: boolean }) {
+function ChatWorkspace({
+  children,
+  mobile = false,
+  clerkEnabled,
+  userName,
+}: {
+  children: ReactNode;
+  mobile?: boolean;
+  clerkEnabled?: boolean;
+  userName?: string;
+}) {
   const open = useClientStore((s) => s.aiBarOpen);
   const presentation = useClientStore((s) => s.assistantPresentation);
   const setPresentation = useClientStore((s) => s.setAssistantPresentation);
@@ -360,7 +373,7 @@ function ChatWorkspace({ children, mobile = false }: { children: ReactNode; mobi
       onPresentationChange={setPresentation}
       onClose={() => setOpen(false)}
       mobile={mobile}
-      assistant={<AssistantChat />}
+      assistant={<AssistantChat clerkEnabled={clerkEnabled} userName={userName} />}
     >
       <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">{children}</div>
     </AssistantWorkspace>
@@ -536,7 +549,7 @@ function RailResizeHandle() {
       onPointerDown={onPointerDown}
       onDoubleClick={() => setRailWidth(RAIL_DEFAULT)}
       title="Drag to resize · double-click to reset"
-      className="group relative z-20 hidden w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] p-0 outline-none md:block"
+      className="group absolute inset-y-0 left-[var(--sidebar-width)] z-20 hidden w-[6px] -translate-x-1/2 cursor-col-resize rounded-none bg-[var(--color-transparent)] p-0 outline-none md:block"
     >
       <span
         className={cn(
@@ -552,10 +565,7 @@ function RailResizeHandle() {
 }
 
 function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizing: boolean) => void }) {
-  // The seam of the one mail surface: the list and reader halves open toward
-  // this 6px grab area, which paints itself as card surface with top/bottom
-  // borders that continue the halves' outline, plus a 1px interior rule. The
-  // vertical inset matches the halves' sm:p-2 gutter.
+  // A single interior divider; the shared workspace owns the outer edge.
   return (
     <Separator
       onPointerDown={() => {
@@ -570,12 +580,9 @@ function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizi
       }}
       className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none"
     >
+      <span className="pointer-events-none absolute inset-0 bg-[var(--color-bg-elevated)]" aria-hidden />
       <span
-        className="pointer-events-none absolute inset-x-0 inset-y-2 border-y border-[var(--color-border)] bg-[var(--color-bg-elevated)]"
-        aria-hidden
-      />
-      <span
-        className="pointer-events-none absolute bottom-2 left-1/2 top-2 w-px -translate-x-1/2 bg-[var(--color-border)]/70 transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
+        className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-[var(--color-border)]/70 transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden
       />
     </Separator>

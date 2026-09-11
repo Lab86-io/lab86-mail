@@ -32,7 +32,7 @@ describe('workspace foundations', () => {
       query: 'from:alex',
       accountFilter: ['mailbox-a'],
       aiBarOpen: true,
-      assistantPresentation: 'split',
+      assistantPresentation: 'full',
     });
     expect(paths).toEqual(['/?view=chat']);
     useClientStore.getState().setAssistantPresentation('full');
@@ -54,23 +54,42 @@ describe('workspace foundations', () => {
     expect(settingsTabFromSearch('appearance')).toBe('appearance');
   });
 
-  test('page navigation reveals its destination while retaining the conversation', () => {
+  test('leaving the Chat destination closes it without discarding the conversation', () => {
     useClientStore.setState({ aiBarOpen: true, assistantPresentation: 'full', lastChatId: 'chat-a' });
     navigateSearchTarget({ kind: 'page', view: 'calendar' }, useClientStore.getState(), () => {});
     expect(useClientStore.getState()).toMatchObject({
       primaryView: 'calendar',
-      aiBarOpen: true,
-      assistantPresentation: 'split',
+      aiBarOpen: false,
+      assistantPresentation: 'corner',
       lastChatId: 'chat-a',
     });
     const full = { aiBarOpen: true, assistantPresentation: 'full' as const };
-    expect(assistantAfterPageNavigation(full, { mobile: true })).toEqual({ aiBarOpen: false });
-    expect(assistantAfterPageNavigation(full, { availableWidth: 645 })).toEqual({ aiBarOpen: false });
-    expect(assistantAfterPageNavigation(full, { availableWidth: 646 })).toEqual({
-      assistantPresentation: 'split',
-    });
+    for (const viewport of [{ mobile: true }, { availableWidth: 645 }, { availableWidth: 1440 }]) {
+      expect(assistantAfterPageNavigation(full, viewport)).toEqual({
+        aiBarOpen: false,
+        assistantPresentation: 'corner',
+      });
+    }
     expect(assistantAfterPageNavigation({ ...full, aiBarOpen: false }, { mobile: true })).toEqual({});
     expect(assistantAfterPageNavigation({ ...full, assistantPresentation: 'corner' })).toEqual({});
+  });
+
+  test('an intentional split survives page navigation only when both panes fit', () => {
+    const split = { aiBarOpen: true, assistantPresentation: 'split' as const };
+    expect(assistantAfterPageNavigation(split, { availableWidth: 646 })).toEqual({});
+    expect(assistantAfterPageNavigation(split, { availableWidth: 645 })).toEqual({ aiBarOpen: false });
+    expect(assistantAfterPageNavigation(split, { mobile: true })).toEqual({ aiBarOpen: false });
+    useClientStore.setState(split);
+    useClientStore.getState().setPrimaryView('calendar');
+    expect(useClientStore.getState()).toMatchObject({ primaryView: 'calendar', ...split });
+  });
+
+  test('the launcher invitation is transient and Sidebar Chat starts with its own invitation', () => {
+    useClientStore.getState().setAssistantInvitation('Draft an email');
+    expect(useClientStore.getState().assistantInvitation).toBe('Draft an email');
+    expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('assistantInvitation');
+    useClientStore.getState().setPrimaryView('chat');
+    expect(useClientStore.getState().assistantInvitation).toBeNull();
   });
 
   test('mail text decodes once and remains plain text, including hostile and invalid entities', () => {

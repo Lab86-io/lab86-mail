@@ -174,7 +174,6 @@ export function Inbox() {
   const queryError = useClientStore((s) => s.queryError);
   const setQueryError = useClientStore((s) => s.setQueryError);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
-  const composeOpen = useClientStore((s) => !!s.compose.mode);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -805,16 +804,11 @@ export function Inbox() {
   // One surface, split inside: with a reader open, the list is the left half
   // of the mail card. Its right edge opens toward the seam the resize
   // separator paints; the reader half closes the rectangle.
-  const readerOpen = !!(composeOpen || selectedThreadId);
   return (
-    <section
-      className={cn('flex h-full flex-col bg-[var(--color-bg)] p-1.5 sm:p-2', readerOpen && 'sm:pr-0')}
-    >
+    <section className="flex h-full min-h-0 flex-col">
       <div
-        className={cn(
-          'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]',
-          readerOpen && 'sm:rounded-r-none sm:border-r-0',
-        )}
+        data-mail-frame
+        className={cn('flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]')}
       >
         {/* Compose, the categories, and the folders live with the mail now,
             not in the product's navigation rail. */}
@@ -839,7 +833,7 @@ export function Inbox() {
                 ).length
               }
             />
-            <InputGroup className="flex-1">
+            <InputGroup className="bg-[var(--color-control)] flex-1">
               <InputGroupAddon>
                 {translating ? (
                   <OrbitRing className="size-4 text-[var(--color-accent)]" />
@@ -893,7 +887,7 @@ export function Inbox() {
               onClick={refreshInbox}
               aria-label="Check for new mail"
               className={cn(
-                'h-9 w-9 shrink-0 rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
+                'h-9 w-9 shrink-0 border-[var(--color-control-border)] bg-[var(--color-control)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
                 isFetching && !isFetchingNextPage && 'text-[var(--color-accent)]',
               )}
               title="Check for new mail"
@@ -1153,7 +1147,10 @@ function useSenderLogo(email: string): string | null {
 
 export function InboxDateGroup({ label }: { label: string }) {
   return (
-    <div data-mail-date-group className="flex items-baseline gap-2.5 bg-[var(--color-bg-subtle)] px-3 py-2.5">
+    <div
+      data-mail-date-group
+      className="flex items-baseline gap-2.5 bg-[var(--color-bg-elevated)] px-3 py-2.5"
+    >
       <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
         {label}
       </span>
@@ -1336,7 +1333,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
               onKeyDown={(event) => event.stopPropagation()}
               title="Which mailbox"
               aria-label={`Which mailbox: ${accountLabel || item.accountAlias || item.account || senderLabel}`}
-              className="grid size-8 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              className="grid size-8 place-items-center rounded-ui outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
             >
               <Avatar
                 name={senderLabel || item.account}

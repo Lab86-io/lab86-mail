@@ -34,12 +34,20 @@ function count(html: string, needle: string) {
 }
 
 describe('the daily letter', () => {
-  test('renders in one 620 px measure with no story cards and no grid', () => {
+  test('keeps narrative regions together while weather belongs to the masthead', () => {
     const html = render(letterBriefDocumentFixture);
     expect(html).toContain('data-brief-letter="daily"');
-    expect(html).toContain('max-width:620px');
+    expect(html).toContain('daily-brief-layout');
+    expect(html).not.toContain('data-brief-column="weather"');
+    expect(html.indexOf('data-brief-column="narrative"')).toBeLessThan(
+      html.indexOf('data-brief-region="lede"'),
+    );
     expect(html).not.toContain('data-brief-editorial-grid');
     expect(html).not.toContain('data-brief-story-card');
+    const headed = render(letterBriefDocumentFixture, { masthead: true });
+    expect(headed.indexOf('data-brief-header-weather')).toBeLessThan(
+      headed.indexOf('data-brief-column="narrative"'),
+    );
   });
 
   test('the lede region is the serif opening with a dinkus and no border', () => {

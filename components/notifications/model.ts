@@ -266,3 +266,25 @@ export function filterNotificationItems(items: NotificationItem[], filter: Notif
       filter === 'all' || (filter === 'unread' ? item.unread || item.attention : item.kind === filter),
   );
 }
+
+export const NOTIFICATION_FILTERS: ReadonlyArray<{ value: NotificationFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'unread', label: 'Needs you' },
+  { value: 'question', label: 'Questions' },
+  { value: 'approval', label: 'Approvals' },
+  { value: 'checkin', label: 'Check-ins' },
+];
+
+/** How many items each filter would show. The header filter prints these. */
+export function notificationFilterCounts(
+  projection: NotificationProjection,
+): Record<NotificationFilter, number> {
+  const items = [...projection.attention, ...projection.updates];
+  return {
+    all: items.length,
+    unread: filterNotificationItems(items, 'unread').length,
+    question: filterNotificationItems(items, 'question').length,
+    approval: filterNotificationItems(items, 'approval').length,
+    checkin: filterNotificationItems(items, 'checkin').length,
+  };
+}

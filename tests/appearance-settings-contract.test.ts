@@ -9,14 +9,19 @@ describe('Appearance and rail integration', () => {
   const initial = useClientStore.getState();
   afterEach(() => useClientStore.setState(initial, true));
 
-  test('rail footer is exactly Settings, Notifications, Profile with no account or theme control', () => {
+  test('rail header owns Notifications beside collapse; footer keeps Settings and Profile', () => {
     const rail = source('components/shell/Rail.tsx');
     const footer = rail.slice(rail.indexOf('<SidebarFooter>'), rail.indexOf('</SidebarFooter>'));
     expect(footer).toContain('aria-label="Settings"');
-    expect(footer).toContain('<NotificationCenter');
+    expect(footer).not.toContain('<NotificationCenter');
     expect(footer).toContain('title="Profile"');
-    expect(footer.indexOf('aria-label="Settings"')).toBeLessThan(footer.indexOf('<NotificationCenter'));
-    expect(footer.indexOf('<NotificationCenter')).toBeLessThan(footer.indexOf('title="Profile"'));
+    expect(footer.indexOf('aria-label="Settings"')).toBeLessThan(footer.indexOf('title="Profile"'));
+    const header = rail.slice(rail.indexOf('<SidebarHeader'), rail.indexOf('</SidebarHeader>'));
+    expect(header).toContain('<NotificationCenter');
+    expect(header).toContain('data-rail-utilities');
+    expect(header).toContain('group-data-[collapsible=icon]:flex-col');
+    expect(header.indexOf('<NotificationCenter')).toBeLessThan(header.indexOf('<SidebarTrigger'));
+    expect(header).toContain('group-data-[collapsible=icon]:order-first');
     expect(footer).not.toContain('<AccountScopePopover');
     expect(footer).not.toContain('<ThemePanel');
   });

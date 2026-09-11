@@ -18,6 +18,7 @@ import {
   type AskHoldComposerProps,
   type DoorRequest,
 } from '@/components/shell/AskHoldComposer';
+import { AssistantGreeting } from '@/components/shell/AssistantGreeting';
 import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
@@ -52,6 +53,7 @@ import { groupMessageParts, reasoningLabel, toolPartSignature } from '@/lib/chat
 import { assistantLauncherPlacement, isAssistantShortcut, useClientStore } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { formatDate } from '@/lib/shared/format';
+import { assistantPageContext, assistantPhrases } from '@/lib/shell/assistant-context';
 import { cn } from '@/lib/utils';
 import { AssistantLauncher } from './ShellActions';
 
@@ -108,6 +110,8 @@ export function AIBarTrigger() {
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
   const threadFullscreen = useClientStore((s) => s.threadFullscreen);
   const readerOpen = useClientStore((s) => !!(s.selectedThreadId || s.compose.mode));
+  const primaryView = useClientStore((s) => s.primaryView);
+  const assistantDocument = useClientStore((s) => s.assistantDocument);
   const [shortcut, setShortcut] = useState('⌘K');
   useEffect(() => {
     setShortcut(mailSearchShortcutLabel(navigator.platform).replace('F', 'K'));
@@ -119,6 +123,17 @@ export function AIBarTrigger() {
     const handler = (e: KeyboardEvent) => {
       if (isAssistantShortcut(e)) {
         e.preventDefault();
+        if (!aiBarOpen) {
+          const launcher = document.querySelector<HTMLButtonElement>('[data-assistant-launcher]');
+          if (launcher) {
+            // The shortcut opens the exact invitation currently on the button,
+            // including its document context and chosen presentation.
+            launcher.click();
+            return;
+          }
+          const state = useClientStore.getState();
+          state.setAssistantInvitation(assistantPhrases(state.primaryView, state.assistantDocument)[0]);
+        }
         setAiBarOpen(!aiBarOpen);
       }
     };
@@ -139,7 +154,19 @@ export function AIBarTrigger() {
   });
   if (placement === 'hidden') return null;
 
-  return <AssistantLauncher placement={placement} shortcut={shortcut} onOpen={() => setAiBarOpen(true)} />;
+  return (
+    <AssistantLauncher
+      placement={placement}
+      shortcut={shortcut}
+      phrases={assistantPhrases(primaryView, assistantDocument)}
+      onOpen={(phrase) => {
+        useClientStore.getState().setAssistantInvitation(phrase);
+        if (primaryView === 'files' && assistantDocument)
+          useClientStore.getState().setAssistantPresentation('split');
+        else setAiBarOpen(true);
+      }}
+    />
+  );
 }
 
 // One conversation owner across corner, split, and chat-only presentations.
@@ -148,9 +175,13 @@ export function AIBarTrigger() {
 export function AssistantChat({
   transport: previewTransport,
   preview = false,
+  clerkEnabled = false,
+  userName,
 }: {
   transport?: ChatTransport<UIMessage>;
   preview?: boolean;
+  clerkEnabled?: boolean;
+  userName?: string;
 } = {}) {
   const reduceMotion = useReducedMotion() ?? false;
   const aiBarOpen = useClientStore((s) => s.aiBarOpen);
@@ -160,6 +191,11 @@ export function AssistantChat({
   const account = useClientStore((s) => s.account);
   const threadAccount = useClientStore((s) => s.threadAccount);
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
+  const invitation = useClientStore((s) => s.assistantInvitation);
+  const pendingBriefResponse = useClientStore((s) => s.assistantBriefRequest);
+  const briefContext = useClientStore((s) => s.assistantBriefContext);
+  const primaryView = useClientStore((s) => s.primaryView);
+  const assistantDocument = useClientStore((s) => s.assistantDocument);
   const chatScopeKind = useClientStore((s) => s.chatScopeKind);
   const chatScopeAreaId = useClientStore((s) => s.chatScopeAreaId);
   const chatScopeWorkId = useClientStore((s) => s.chatScopeWorkId);
@@ -186,19 +222,29 @@ export function AssistantChat({
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
-        body: {
+        body: () => ({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          briefResponse: useClientStore.getState().assistantBriefContext?.reference,
           areaDiscovery:
-            chatScopeKind === 'area' && chatScopeAreaId
+            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'area' && chatScopeAreaId
               ? { mode: 'area', areaId: chatScopeAreaId }
               : undefined,
           contextAttachments:
-            chatScopeKind === 'work' && chatScopeWorkId ? [{ kind: 'work', id: chatScopeWorkId }] : undefined,
-          extraSystem:
+            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
+              ? [{ kind: 'work', id: chatScopeWorkId }]
+              : undefined,
+          extraSystem: [
+            assistantPageContext(
+              useClientStore.getState().primaryView,
+              useClientStore.getState().assistantDocument,
+            ),
             chatScopeKind === 'area' && chatScopeAreaId
               ? `This conversation is scoped to Albatross Area ${chatScopeAreaId}. Keep context and questions within that Area unless the user explicitly broadens scope.`
-              : undefined,
-        },
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        }),
       }),
     [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
   );
@@ -276,6 +322,7 @@ export function AssistantChat({
           return false;
         }
         if (data?.ok && Array.isArray(data.session?.messages)) {
+          useClientStore.getState().clearBriefResponse();
           sessionIdRef.current = id;
           setLastChatId(id);
           setMessages(data.session.messages);
@@ -297,7 +344,13 @@ export function AssistantChat({
     if (preview || !aiBarOpen || restoredRef.current) return;
     restoredRef.current = true;
     const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
-    if (chatScopeKind === 'global' && lastChatId && fresh && messages.length === 0) {
+    if (
+      !useClientStore.getState().assistantBriefRequest &&
+      chatScopeKind === 'global' &&
+      lastChatId &&
+      fresh &&
+      messages.length === 0
+    ) {
       sessionIdRef.current = lastChatId;
       void loadSession(lastChatId);
     }
@@ -334,6 +387,7 @@ export function AssistantChat({
     if (busy) return;
     sessionLoadGenerationRef.current += 1;
     sessionIdRef.current = null;
+    useClientStore.getState().clearBriefResponse();
     setLastChatId(null);
     setMessages([]);
   }, [busy, setLastChatId, setMessages]);
@@ -415,6 +469,28 @@ export function AssistantChat({
             : type.startsWith('tool-')
               ? type.replace(/^tool-/, '')
               : '';
+        if (name?.startsWith('document_') && (part as any).state === 'output-available') {
+          const result = (part as any).output;
+          const id = (part as any).toolCallId;
+          if (result?.documentId && id && !handled.current.has(id)) {
+            handled.current.add(id);
+            void qc.invalidateQueries({ queryKey: ['document', result.documentId] });
+          }
+        }
+        if (name === 'google_document_edit' && (part as any).state === 'output-available') {
+          const result = (part as any).output;
+          const id = (part as any).toolCallId;
+          if (result?.status === 'proposed' && result.fileId && id && !handled.current.has(id)) {
+            handled.current.add(id);
+            qc.setQueryData(
+              ['google-document-suggestions', result.connectionId, result.fileId],
+              (current: any[] = []) =>
+                current.some((item) => item.suggestionId === result.suggestionId)
+                  ? current
+                  : [...current, result],
+            );
+          }
+        }
         if (!name?.startsWith('ui_')) continue;
         const state = (part as any).state;
         if (state !== 'input-available' && state !== 'output-available') continue;
@@ -460,6 +536,7 @@ export function AssistantChat({
   }, [
     toolSignature,
     preview,
+    qc,
     setQuery,
     setSelectedThread,
     openComposeNew,
@@ -534,6 +611,10 @@ export function AssistantChat({
           ? account
           : '';
     const contextLines = [
+      assistantPageContext(
+        useClientStore.getState().primaryView,
+        useClientStore.getState().assistantDocument,
+      ),
       activeAccount
         ? `Active account: ${activeAccount}`
         : 'Working across all mailboxes (call list_accounts to enumerate).',
@@ -561,12 +642,68 @@ export function AssistantChat({
         body: {
           extraSystem: [contextLines, uploadContext].filter(Boolean).join('\n\n') || undefined,
           contextAttachments:
-            chatScopeKind === 'work' && chatScopeWorkId ? [{ kind: 'work', id: chatScopeWorkId }] : undefined,
+            !useClientStore.getState().assistantBriefContext && chatScopeKind === 'work' && chatScopeWorkId
+              ? [{ kind: 'work', id: chatScopeWorkId }]
+              : undefined,
         },
       } as any,
     );
     return true;
   };
+
+  useEffect(() => {
+    if (!pendingBriefResponse || busy) return;
+    if (chatScopeKind !== 'global') {
+      // Finish and save the existing scoped turn before opening this distinct
+      // handoff. Otherwise a response about Work B would be saved under Work A.
+      if (sessionIdRef.current && messages.length) {
+        void fetch('/api/chats', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            id: sessionIdRef.current,
+            messages,
+            scopeKind: chatScopeKind,
+            areaId: chatScopeAreaId || undefined,
+            workId: chatScopeWorkId || undefined,
+          }),
+        }).catch(() => undefined);
+      }
+      restoredRef.current = true;
+      setChatScope({ kind: 'global' });
+      return;
+    }
+    const request = useClientStore.getState().claimBriefResponse(pendingBriefResponse.id);
+    if (!request) return; // Atomic claim also prevents Strict Mode double submission.
+    sessionLoadGenerationRef.current += 1;
+    emptyRetryCount.current = 0;
+    restoredRef.current = true;
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = newChatId();
+      if (chatScopeKind === 'global') setLastChatId(sessionIdRef.current);
+    }
+    void sendMessage(
+      { text: `Regarding “${request.title}”:\n${request.response}` },
+      {
+        body: {
+          briefResponse: request.reference,
+          contextAttachments: [],
+          areaDiscovery: undefined,
+          extraSystem: undefined,
+        },
+      },
+    );
+  }, [
+    pendingBriefResponse,
+    busy,
+    sendMessage,
+    chatScopeKind,
+    chatScopeAreaId,
+    chatScopeWorkId,
+    messages,
+    setChatScope,
+    setLastChatId,
+  ]);
 
   const last = messages[messages.length - 1];
   const waitingForContent = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
@@ -578,7 +715,10 @@ export function AssistantChat({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-list-divider)] px-4 py-3">
+      <header
+        data-assistant-header
+        className="rounded-ui mx-3 mb-1 mt-3 flex shrink-0 items-center justify-between gap-2 border border-[color-mix(in_oklab,var(--color-border)_55%,transparent)] bg-[var(--color-content)] px-2 py-1.5 shadow-[0_2px_10px_rgb(15_23_42/0.025)]"
+      >
         <div className="flex min-w-0 items-center gap-2 text-[13px]">
           {/* Assistant presence: a still gradient pearl that only turns
                 while the model is actually streaming. */}
@@ -608,22 +748,20 @@ export function AssistantChat({
           </button>
         </div>
         <div className="flex items-center gap-0.5">
-          {presentation !== 'corner' ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
-              title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
-              aria-label={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
-              className="hidden md:inline-flex"
-            >
-              {presentation === 'full' ? (
-                <PanelLeftOpen className="size-4" />
-              ) : (
-                <PanelLeftClose className="size-4" />
-              )}
-            </Button>
-          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
+            title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+            aria-label={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
+            className="hidden md:inline-flex"
+          >
+            {presentation === 'full' ? (
+              <PanelLeftOpen className="size-4" />
+            ) : (
+              <PanelLeftClose className="size-4" />
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -700,27 +838,49 @@ export function AssistantChat({
         </div>
       </header>
 
+      {briefContext || pendingBriefResponse ? (
+        <div
+          className="mx-3 mb-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]"
+          data-assistant-brief-context
+        >
+          <span className="truncate">
+            {pendingBriefResponse ? 'Up next · ' : 'From your brief · '}
+            {(pendingBriefResponse || briefContext)?.title}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy && !pendingBriefResponse}
+            onClick={() => {
+              if (pendingBriefResponse) useClientStore.setState({ assistantBriefRequest: null });
+              else useClientStore.getState().clearBriefResponse();
+            }}
+          >
+            {pendingBriefResponse ? 'Cancel' : 'Detach'}
+          </Button>
+        </div>
+      ) : null}
       {messages.length === 0 ? (
         <div className="scrollable flex flex-1 flex-col items-center justify-center gap-5 px-5 py-8 text-center">
-          <div className="space-y-1.5">
-            <h3 className="text-[14px] font-medium text-[var(--color-text)]">How can I help?</h3>
-            <p className="mx-auto max-w-[300px] text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-              Search, triage, summarize, draft replies, schedule sends, look up contacts and calendar,
-              research links — and act across your inbox in real time.
-            </p>
-          </div>
+          <AssistantGreeting
+            phrase={invitation || assistantPhrases(primaryView, assistantDocument)[0]}
+            clerkEnabled={clerkEnabled}
+            userName={userName}
+          />
           <div className="flex w-full max-w-[320px] flex-col gap-2">
-            {(chatScopeKind === 'work'
-              ? WORK_SUGGESTIONS
-              : selectedThreadId
-                ? THREAD_SUGGESTIONS
-                : BASE_SUGGESTIONS
+            {(primaryView === 'files' && assistantDocument
+              ? assistantPhrases(primaryView, assistantDocument)
+              : chatScopeKind === 'work'
+                ? WORK_SUGGESTIONS
+                : selectedThreadId
+                  ? THREAD_SUGGESTIONS
+                  : BASE_SUGGESTIONS
             ).map((s) => (
               <PromptSuggestion
                 key={s}
                 variant="outline"
                 onClick={() => void send(s)}
-                className="h-auto w-full justify-start whitespace-normal rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-text)] shadow-none transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                className="h-auto w-full justify-start whitespace-normal rounded-ui border-[var(--color-control-border)] bg-[var(--color-control)] px-3 py-2.5 text-left text-[12.5px] font-normal text-[var(--color-text)] shadow-none transition-colors hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
               >
                 {s}
               </PromptSuggestion>
@@ -785,7 +945,22 @@ export function AssistantChat({
       {/* Composer: a rounded floating field pinned to the panel bottom —
             no hard border-t seam, it hovers over the translucent surface. */}
       <div ref={inputWrapRef}>
+        {primaryView === 'files' && assistantDocument ? (
+          <p
+            data-assistant-document-context
+            className="mb-2 truncate px-1 text-[11px] text-[var(--color-text-muted)]"
+            title={assistantDocument.title}
+          >
+            {assistantDocument.title}
+            {assistantDocument.dirty ? ' · Unsaved changes' : ''}
+          </p>
+        ) : null}
         <ChatComposer
+          placeholder={
+            primaryView === 'files' && assistantDocument
+              ? 'Describe the changes you have in mind…'
+              : undefined
+          }
           busy={busy}
           streaming={streaming}
           hasFiles={pendingFiles.length > 0}
@@ -799,7 +974,7 @@ export function AssistantChat({
             <>
               {chatScopeKind !== 'global' ? (
                 <div className="flex px-1 pt-1">
-                  <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
+                  <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-ui border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10.5px] text-[var(--color-accent)]">
                     <span className="truncate">
                       {chatScopeKind === 'work' ? 'Work' : 'Area'}: {chatScopeLabel || 'Current context'}
                     </span>
@@ -821,7 +996,7 @@ export function AssistantChat({
                   {pendingFiles.map((file, index) => (
                     <span
                       key={`${file.name}-${file.size}-${file.lastModified}`}
-                      className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
+                      className="inline-flex items-center gap-1 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)]"
                     >
                       {file.name}
                       <button

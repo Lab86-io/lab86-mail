@@ -21,7 +21,7 @@ export function NotificationCenter({ className, onOpen }: { className?: string; 
       aria-current={selected ? 'page' : undefined}
       onClick={onOpen || (() => setPrimaryView('notifications'))}
       className={cn(
-        'relative grid size-8 shrink-0 place-items-center rounded-[var(--radius-control)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+        'corner-smooth relative grid size-8 shrink-0 place-items-center rounded-[var(--radius-control)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-ring)]',
         selected && 'bg-[var(--color-control)] text-[var(--color-text)]',
         className,
       )}

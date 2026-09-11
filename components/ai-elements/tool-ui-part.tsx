@@ -123,6 +123,7 @@ export const TOOL_UI_RENDERED_TOOLS: ReadonlySet<string> = new Set([
   'document_apply_instruction',
   'document_publish_google',
   'google_file_import',
+  'google_document_edit',
   'albatross_record_progress',
   'albatross_replan_work',
   'show_weather',
@@ -241,6 +242,7 @@ export function ToolUiDisplayPart({
       'document_suggest_changes',
       'document_apply_instruction',
       'google_file_import',
+      'google_document_edit',
     ].includes(toolName) &&
     internalOpenPath
   ) {
@@ -271,7 +273,13 @@ export function ToolUiDisplayPart({
           if (!path) return;
           event.preventDefault();
           window.history.pushState(window.history.state, '', path);
-          useClientStore.getState().setPrimaryView('files');
+          const state = useClientStore.getState();
+          const besideChat =
+            state.aiBarOpen &&
+            window.innerWidth >= 768 &&
+            (document.querySelector('[data-assistant-workspace]')?.clientWidth || 0) >= 646;
+          state.setPrimaryView('files');
+          if (besideChat) state.setAssistantPresentation('split');
           window.dispatchEvent(new Event('lab86-mail:files-navigate'));
         }}
         className="group flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)]"
@@ -288,7 +296,8 @@ export function ToolUiDisplayPart({
                 ? `Saved revision ${output.revision} · Open file`
                 : 'Open the editable file'}
           </span>
-          {toolName === 'document_edit' && typeof output.summary === 'string' ? (
+          {['document_edit', 'google_document_edit'].includes(toolName) &&
+          typeof output.summary === 'string' ? (
             <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">{output.summary}</span>
           ) : null}
         </span>

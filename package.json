@@ -20,7 +20,8 @@
     "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:preview": "bun scripts/preview-app-workspace.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.78",
@@ -66,6 +67,7 @@
     "date-fns": "^4.4.0",
     "docx": "9.7.1",
     "dompurify": "3.4.5",
+    "dropcap.js": "1.0.1",
     "exceljs": "4.4.0",
     "geist": "1.7.0",
     "html-to-text": "10.0.0",

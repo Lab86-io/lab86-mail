@@ -2,7 +2,6 @@
 
 import type { CSSProperties } from 'react';
 import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
-import { TodayWeather } from '@/components/narrative/TodayWorkspace';
 import { Avatar } from '@/components/ui/avatar';
 import { briefRefKey } from '@/lib/brief/hydration';
 import {
@@ -26,8 +25,8 @@ import type { BriefNodeContext } from './BriefNodeView';
 import { BriefNodeView } from './BriefNodeView';
 import { payloadForBriefAction } from './brief-action-runtime';
 
-/* The letter form of a brief (2026-09-03). One measure, top to bottom: the
- * lede in the display face, a dinkus, the lanes as real mail rows, the week
+/* The letter keeps its narrative in one column, with weather in the masthead:
+ * the lede, lanes as real mail rows, the week
  * ahead with weekday names in the data voice, three area lines, and one
  * footer count. No tiles, no cards, no counts in headings. The same renderer
  * carries the area pulse: lede, pulse lines, one prompt, live open work. */
@@ -59,94 +58,95 @@ export function BriefLetter({
   return (
     <div
       data-brief-letter={kind}
-      className="mx-auto flex w-full flex-col"
-      style={{ maxWidth: BRIEF_LETTER_MEASURE_PX } satisfies CSSProperties}
+      className={cn('mx-auto w-full', kind === 'daily' && 'daily-brief-layout')}
+      style={kind === 'daily' ? undefined : ({ maxWidth: BRIEF_LETTER_MEASURE_PX } satisfies CSSProperties)}
     >
-      {document.regions.map((region) => {
-        if (region.id === 'lede') {
-          return (
-            <section key={region.id} data-brief-region={region.id} className="blur-in">
-              {kind === 'daily' ? <TodayWeather /> : null}
-              {kind === 'daily' ? (
-                <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
-              ) : (
-                <LetterLede node={region.tree} />
-              )}
-              <div aria-hidden className="flex justify-center py-5">
-                <span className="h-px w-10 bg-[var(--color-border-strong)]" />
-              </div>
-              {empty ? (
-                <p className="mb-6 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
-                  {BRIEF_LETTER_EMPTY_COPY}
-                </p>
-              ) : null}
-            </section>
-          );
-        }
-        if (region.tree.kind === 'entity_list' && region.id !== 'areas') {
-          const start = rowIndex;
-          rowIndex += region.tree.items.length;
-          return (
-            <LetterLane
-              key={region.id}
-              regionId={region.id}
-              node={region.tree}
-              context={context}
-              firstRowIndex={start}
-            />
-          );
-        }
-        if (region.id === 'week-ahead' && region.tree.kind === 'text') {
+      <div data-brief-column="narrative" className="min-w-0">
+        {document.regions.map((region) => {
+          if (region.id === 'lede') {
+            return (
+              <section key={region.id} data-brief-region={region.id} className="blur-in">
+                {kind === 'daily' ? (
+                  <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
+                ) : (
+                  <LetterLede node={region.tree} />
+                )}
+                <div aria-hidden className="flex justify-center py-5">
+                  <span className="h-px w-10 bg-[var(--color-border-strong)]" />
+                </div>
+                {empty ? (
+                  <p className="mb-6 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
+                    {BRIEF_LETTER_EMPTY_COPY}
+                  </p>
+                ) : null}
+              </section>
+            );
+          }
+          if (region.tree.kind === 'entity_list' && region.id !== 'areas') {
+            const start = rowIndex;
+            rowIndex += region.tree.items.length;
+            return (
+              <LetterLane
+                key={region.id}
+                regionId={region.id}
+                node={region.tree}
+                context={context}
+                firstRowIndex={start}
+              />
+            );
+          }
+          if (region.id === 'week-ahead' && region.tree.kind === 'text') {
+            return (
+              <section key={region.id} data-brief-region={region.id} className="blur-in mb-8">
+                <span className="mb-2 block text-[11px] font-semibold text-[var(--color-accent-2)]">
+                  Week ahead
+                </span>
+                <WeekAheadText text={region.tree.text} />
+              </section>
+            );
+          }
+          if (region.id === 'areas' && region.tree.kind === 'entity_list') {
+            return <LetterAreas key={region.id} node={region.tree} context={context} />;
+          }
+          if (region.id === 'pulse' && region.tree.kind === 'stack') {
+            return (
+              <section
+                key={region.id}
+                data-brief-region={region.id}
+                className="blur-in mb-8 flex flex-col gap-2"
+              >
+                {region.tree.children.map((child, index) =>
+                  child.kind === 'text' ? (
+                    <PulseLine key={child.id ?? index} text={child.text} />
+                  ) : (
+                    <BriefNodeView
+                      key={child.id ?? index}
+                      node={child}
+                      context={context}
+                      regionSummary={region.summary}
+                    />
+                  ),
+                )}
+              </section>
+            );
+          }
+          // The ask prompt and the live open-work list keep their canvas
+          // renderers; the letter only sets the measure and the rhythm.
           return (
             <section key={region.id} data-brief-region={region.id} className="blur-in mb-8">
-              <span className="mb-2 block text-[11px] font-semibold text-[var(--color-accent-2)]">
-                Week ahead
-              </span>
-              <WeekAheadText text={region.tree.text} />
+              <BriefNodeView node={region.tree} context={context} regionSummary={region.summary} topLevel />
             </section>
           );
-        }
-        if (region.id === 'areas' && region.tree.kind === 'entity_list') {
-          return <LetterAreas key={region.id} node={region.tree} context={context} />;
-        }
-        if (region.id === 'pulse' && region.tree.kind === 'stack') {
-          return (
-            <section
-              key={region.id}
-              data-brief-region={region.id}
-              className="blur-in mb-8 flex flex-col gap-2"
-            >
-              {region.tree.children.map((child, index) =>
-                child.kind === 'text' ? (
-                  <PulseLine key={child.id ?? index} text={child.text} />
-                ) : (
-                  <BriefNodeView
-                    key={child.id ?? index}
-                    node={child}
-                    context={context}
-                    regionSummary={region.summary}
-                  />
-                ),
-              )}
-            </section>
-          );
-        }
-        // The ask prompt and the live open-work list keep their canvas
-        // renderers; the letter only sets the measure and the rhythm.
-        return (
-          <section key={region.id} data-brief-region={region.id} className="blur-in mb-8">
-            <BriefNodeView node={region.tree} context={context} regionSummary={region.summary} topLevel />
-          </section>
-        );
-      })}
-      {footer ? (
-        <p
-          data-brief-letter-footer
-          className="mt-2 border-t border-[var(--color-border)] pt-4 text-[12.5px] text-[var(--color-text-muted)]"
-        >
-          {footer}
-        </p>
-      ) : null}
+        })}
+        {footer ? (
+          <p
+            data-brief-letter-footer
+            className="mt-2 border-t border-[var(--color-border)] pt-4 text-[12.5px] text-[var(--color-text-muted)]"
+          >
+            {footer}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -165,7 +165,10 @@ function LetterLede({ node }: { node: BriefNode }) {
             {child.text}
           </p>
         ) : child.kind === 'text' ? (
-          <p key={child.id ?? index} className="text-[14px] leading-relaxed text-[var(--color-text-muted)]">
+          <p
+            key={child.id ?? index}
+            className="indent-[1.5em] text-[14px] leading-relaxed text-[var(--color-text-muted)]"
+          >
             {child.text}
           </p>
         ) : null,

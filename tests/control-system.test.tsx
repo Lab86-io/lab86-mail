@@ -6,12 +6,13 @@ import { Button, buttonVariants } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
+import { cn } from '../lib/utils';
 
 describe('shared control surfaces', () => {
   test('neutral and primary buttons use the shared depth token; quiet controls stay flat', () => {
     for (const variant of ['default', 'outline'] as const) {
       expect(buttonVariants({ variant })).toContain('shadow-[var(--shadow-control)]');
-      expect(buttonVariants({ variant })).toContain('rounded-[var(--radius-control)]');
+      expect(buttonVariants({ variant })).toContain('rounded-ui');
       expect(buttonVariants({ variant })).toContain('corner-smooth');
     }
     for (const variant of ['ghost', 'secondary'] as const) {
@@ -47,7 +48,7 @@ describe('shared control surfaces', () => {
     for (const radius of ['rounded-full', 'rounded-none']) {
       const button = renderToStaticMarkup(<Button className={radius}>Override</Button>);
       expect(button).toContain(radius);
-      expect(button).not.toContain('rounded-[var(--radius-control)]');
+      expect(button).not.toContain('rounded-ui');
     }
     const card = renderToStaticMarkup(<Card>Content</Card>);
     expect(card).toContain('shadow-none');
@@ -55,6 +56,12 @@ describe('shared control surfaces', () => {
     expect(card).toContain('rounded-[var(--radius-panel)]');
     const squareCard = renderToStaticMarkup(<Card className="rounded-none">Content</Card>);
     expect(squareCard).not.toContain('rounded-[var(--radius-panel)]');
+    expect(cn('rounded-xl', 'rounded-ui')).toBe('rounded-ui');
+    expect(cn('rounded-ui', 'rounded-none')).toBe('rounded-none');
+    expect(cn('rounded-ui', 'rounded-t-none')).toBe('rounded-ui rounded-t-none');
+    expect(cn('rounded-ui', 'rounded-t-ui')).toBe('rounded-ui rounded-t-ui');
+    expect(cn('rounded-t-ui', 'rounded-t-none')).toBe('rounded-t-none');
+    expect(cn('rounded-l-ui', 'rounded-r-none')).toBe('rounded-l-ui rounded-r-none');
   });
 
   test('launcher keeps one stable name and shortcut in both placements, with no decorative glow', () => {
@@ -74,6 +81,8 @@ describe('shared control surfaces', () => {
       expect(html).not.toContain('sparkle');
       expect(html).not.toContain('border-beam');
       expect(html).not.toContain('ask-assistant-glow');
+      expect(html).not.toContain('<svg');
+      expect(html).not.toContain('assistant-launcher__mark');
     }
   });
 

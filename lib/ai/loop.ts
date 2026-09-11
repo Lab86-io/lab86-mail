@@ -194,6 +194,8 @@ export const AGENT_TOOL_NAMES = new Set([
   'document_export',
   'cloud_file_search',
   'google_file_import',
+  'google_document_get',
+  'google_document_edit',
   'mcp_search',
   'mcp_connection_status',
   'github_search',

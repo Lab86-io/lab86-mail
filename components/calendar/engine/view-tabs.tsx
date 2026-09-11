@@ -1,10 +1,16 @@
-import { CalendarRange, Columns, Grid2X2, Grid3X3, List } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { CalendarRange, ChevronDown, Columns, Grid2X2, Grid3X3, List } from 'lucide-react';
 import { memo } from 'react';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { TCalendarView } from '@/components/calendar/engine/types';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cn } from '@/lib/utils';
 
 const tabs = [
   {
@@ -38,62 +44,49 @@ function Views() {
   const { view, setView } = useCalendar();
 
   return (
-    <Tabs
-      value={view}
-      onValueChange={(value) => setView(value as TCalendarView)}
-      className="gap-4 sm:w-auto w-full"
-    >
-      <TabsList className="h-auto gap-2 rounded-xl p-1 w-full">
-        {tabs.map(({ icon: Icon, name, value }) => {
-          const isActive = view === value;
-
-          return (
-            <motion.div
-              key={value}
-              layout
-              className={cn(
-                'flex h-8 items-center justify-center overflow-hidden rounded-md',
-                isActive ? 'flex-1' : 'flex-none',
-              )}
-              onClick={() => setView(value as TCalendarView)}
-              initial={false}
-              animate={{
-                width: isActive ? 120 : 32,
-              }}
-              transition={{
-                type: 'tween',
-                stiffness: 400,
-                damping: 25,
-              }}
-            >
-              <TabsTrigger value={value} asChild>
-                <motion.div
-                  className="flex h-8 w-full items-center justify-center cursor-pointer"
-                  animate={{ filter: 'blur(0px)' }}
-                  exit={{ filter: 'blur(2px)' }}
-                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                >
+    <>
+      <div className="calendar-view-menu">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" aria-label="Calendar view">
+              {tabs.find((tab) => tab.value === view)?.icon()}
+              {tabs.find((tab) => tab.value === view)?.name}
+              <ChevronDown className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuRadioGroup value={view} onValueChange={(value) => setView(value as TCalendarView)}>
+              {tabs.map(({ name, value, icon: Icon }) => (
+                <DropdownMenuRadioItem key={value} value={value}>
                   <Icon />
-                  <AnimatePresence initial={false}>
-                    {isActive && (
-                      <motion.span
-                        className="font-medium"
-                        initial={{ opacity: 0, scaleX: 0.8 }}
-                        animate={{ opacity: 1, scaleX: 1 }}
-                        transition={{ duration: 0.25, ease: 'easeOut' }}
-                        style={{ originX: 0 }}
-                      >
-                        {name}
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              </TabsTrigger>
-            </motion.div>
-          );
-        })}
-      </TabsList>
-    </Tabs>
+                  {name}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <Tabs
+        value={view}
+        onValueChange={(value) => setView(value as TCalendarView)}
+        className="calendar-view-tabs min-w-0"
+      >
+        <TabsList aria-label="Calendar view" className="h-8 gap-0.5 rounded-ui bg-[var(--color-control)] p-0">
+          {tabs.map(({ icon: Icon, name, value }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              aria-label={name}
+              title={name}
+              className="h-7 min-w-7 flex-none gap-1.5 px-1.5 text-xs data-[state=active]:bg-[var(--color-accent-soft)] data-[state=active]:text-[var(--color-accent)]"
+            >
+              <Icon />
+              {view === value ? <span className="font-normal">{name}</span> : null}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+    </>
   );
 }
 

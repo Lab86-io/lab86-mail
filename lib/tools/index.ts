@@ -107,6 +107,7 @@ import {
   documentSuggestChanges,
 } from './documents';
 import { cloudFileSearch, googleFileImport } from './files';
+import { googleDocumentEdit, googleDocumentGet } from './google-documents';
 import {
   getMessage,
   getSmartCategoryStats,
@@ -290,6 +291,8 @@ const allTools: AnyTool[] = [
   documentExport,
   cloudFileSearch,
   googleFileImport,
+  googleDocumentGet,
+  googleDocumentEdit,
   extractActionItems,
   translateThread,
   preSendCritique,

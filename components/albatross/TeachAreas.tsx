@@ -331,7 +331,7 @@ function TeachChat() {
                 size="icon-sm"
                 onClick={submit}
                 disabled={!streaming && !input.trim()}
-                className="rounded-full"
+                className="rounded-ui"
                 aria-label={streaming ? 'Stop' : 'Send'}
               >
                 {streaming ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}

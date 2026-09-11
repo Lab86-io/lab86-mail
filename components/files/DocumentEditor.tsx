@@ -7,26 +7,22 @@ import {
   CloudUpload,
   Download,
   ExternalLink,
-  Presentation as FilePresentation,
-  FileSpreadsheet,
-  FileText,
   History,
   Loader2,
-  PanelRight,
   Plus,
   RefreshCw,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { PresentationEditor } from '@/components/files/editors/PresentationEditor';
 import { RichDocumentEditor } from '@/components/files/editors/RichDocumentEditor';
 import { OdooSpreadsheetEditor } from '@/components/files/OdooSpreadsheetEditor';
 import { useDocumentPanel, useNarrowDocumentWorkspace } from '@/components/files/useDocumentPanel';
 import { useOutgoingEdits } from '@/components/files/useOutgoingEdits';
 import { Button } from '@/components/ui/button';
-import { documentDraftMatchesSave, documentSuggestionMatchesDraft } from '@/lib/documents/autosave';
+import { useClientStore } from '@/lib/client-state';
+import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib/documents/draft-store';
 import { googleModelWriteLimitation } from '@/lib/documents/google-write-policy';
 import type {
@@ -85,22 +81,37 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-function KindIcon({ kind, className }: { kind: DocumentKind; className?: string }) {
-  if (kind === 'sheet') return <FileSpreadsheet className={className} />;
-  if (kind === 'deck') return <FilePresentation className={className} />;
-  return <FileText className={className} />;
-}
-
 function kindName(kind: DocumentKind) {
   if (kind === 'sheet') return 'Spreadsheet';
   if (kind === 'deck') return 'Presentation';
   return 'Document';
 }
 
+function useAssistantDocument(
+  context: import('@/lib/shell/assistant-context').AssistantDocumentContext | null,
+) {
+  const key = context ? `${context.provider}:${context.id}` : null;
+  const serialized = JSON.stringify(context);
+  useEffect(() => {
+    useClientStore.getState().setAssistantDocument(JSON.parse(serialized));
+  }, [serialized]);
+  useEffect(
+    () => () => {
+      const state = useClientStore.getState();
+      const active = state.assistantDocument;
+      if (active && `${active.provider}:${active.id}` === key) state.setAssistantDocument(null);
+    },
+    [key],
+  );
+}
+
+function openDocumentChat() {
+  useClientStore.getState().setAssistantPresentation('split');
+}
+
 export function DocumentEditor({ documentId, onClose }: { documentId: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const { ref: workspaceRef, narrow, measured } = useNarrowDocumentWorkspace();
-  const initializedPanels = useRef(false);
   const revisionRef = useRef(0);
   const revisionKeyRef = useRef('0');
   const loadedRevisionRef = useRef<number | null>(null);
@@ -117,7 +128,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const [title, setTitle] = useState('');
   const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
   const [engineKey, setEngineKey] = useState(0);
   const [session, setSession] = useState<SpreadsheetSession | null>(null);
   const [recovered, setRecovered] = useState<string | null>(null);
@@ -126,14 +136,7 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const draftKey = `document:${documentId}`;
   dirtyRef.current = dirty;
   useEffect(() => {
-    if (!measured) return;
-    if (!initializedPanels.current) {
-      initializedPanels.current = true;
-      setAiOpen(!narrow);
-    } else if (narrow) {
-      setAiOpen(false);
-      setHistoryOpen(false);
-    }
+    if (measured && narrow) setHistoryOpen(false);
   }, [measured, narrow]);
 
   const documentQuery = useQuery({
@@ -142,6 +145,18 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     staleTime: 10_000,
   });
   const document = documentQuery.data?.document;
+  useAssistantDocument(
+    document
+      ? {
+          id: documentId,
+          provider: 'albatross',
+          title: title || document.title,
+          kind: document.kind,
+          revision: document.currentRevision,
+          dirty,
+        }
+      : null,
+  );
 
   const adoptServerDocument = useCallback((latest: EditorDocument) => {
     setTitle(latest.title);
@@ -500,9 +515,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <span className="grid size-8 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <KindIcon kind={document.kind} className="size-4" />
-        </span>
         <div className="min-w-0 flex-1">
           <input
             aria-label="File name"
@@ -598,18 +610,8 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
             )}
           </Button>
         )}
-        <Button
-          variant={aiOpen ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setAiOpen((current) => !current);
-            setHistoryOpen(false);
-          }}
-          aria-pressed={aiOpen}
-          aria-label="Toggle document assistant"
-        >
-          <PanelRight className="size-4" />
-          <span className="hidden sm:inline">Albatross</span>
+        <Button variant="outline" size="sm" onClick={openDocumentChat} aria-label="Edit with Albatross">
+          <span>Albatross</span>
         </Button>
       </header>
 
@@ -728,7 +730,6 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
           aria-pressed={historyOpen}
           onClick={() => {
             setHistoryOpen((value) => !value);
-            setAiOpen(false);
           }}
         >
           <History className="size-3.5" /> Versions
@@ -754,16 +755,16 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
       <div
         className={cn(
           'grid min-h-0 flex-1',
-          aiOpen || historyOpen
+          historyOpen
             ? 'relative grid-cols-1 @[900px]/document:grid-cols-[minmax(0,1fr)_320px]'
             : 'grid-cols-1',
         )}
       >
         <fieldset
           disabled={applying}
-          inert={applying || (narrow && (aiOpen || historyOpen))}
-          aria-hidden={narrow && (aiOpen || historyOpen) ? true : undefined}
-          className="min-h-0 min-w-0 overflow-hidden bg-[var(--color-bg-subtle)]"
+          inert={applying || (narrow && historyOpen)}
+          aria-hidden={narrow && historyOpen ? true : undefined}
+          className="min-h-0 min-w-0 overflow-hidden bg-[var(--color-content)]"
         >
           {model.kind === 'doc' ? (
             <RichDocumentEditor model={model} onChange={editModel} readOnly={applying} />
@@ -792,27 +793,25 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
               await documentQuery.refetch();
             }}
           />
-        ) : aiOpen ? (
-          <DocumentAiRail
-            documentId={documentId}
-            document={document}
-            session={session}
-            blocked={dirty || saveMutation.isPending}
-            onApplying={setApplying}
-            onChanged={async (revision, options) => {
-              setDirty(false);
-              if (revision !== undefined) {
-                revisionRef.current = revision;
-                revisionKeyRef.current = String(revision);
-                // The live engine already holds this revision's state; don't rebuild it.
-                if (options?.engineCurrent) loadedRevisionRef.current = revision;
-              }
-              await documentQuery.refetch();
-            }}
-            onClose={() => setAiOpen(false)}
-          />
         ) : null}
       </div>
+      <DocumentSuggestionReview
+        documentId={documentId}
+        document={document}
+        session={session}
+        blocked={dirty || saveMutation.isPending}
+        onApplying={setApplying}
+        onChanged={async (revision, options) => {
+          setDirty(false);
+          if (revision !== undefined) {
+            revisionRef.current = revision;
+            revisionKeyRef.current = String(revision);
+            // The live engine already holds this revision's state; don't rebuild it.
+            if (options?.engineCurrent) loadedRevisionRef.current = revision;
+          }
+          await documentQuery.refetch();
+        }}
+      />
     </section>
   );
 }
@@ -825,8 +824,7 @@ export function GoogleDocumentEditor({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { ref: workspaceRef, narrow, measured } = useNarrowDocumentWorkspace();
-  const initializedPanels = useRef(false);
+  const { ref: workspaceRef } = useNarrowDocumentWorkspace();
   const saveQueuedRef = useRef(false);
   const titleRef = useRef('');
   const modelRef = useRef<AlbatrossDocumentModel | null>(null);
@@ -840,18 +838,10 @@ export function GoogleDocumentEditor({
   const [title, setTitle] = useState('');
   const [model, setModel] = useState<AlbatrossDocumentModel | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
   const [recovered, setRecovered] = useState<string | null>(null);
   const [staleDraft, setStaleDraft] = useState<RetainedDraft<AlbatrossDocumentModel> | null>(null);
   const draftKey = `google:${source.connectionId}:${source.fileId}:${source.mimeType}`;
   dirtyRef.current = dirty;
-  useEffect(() => {
-    if (!measured) return;
-    if (!initializedPanels.current) {
-      initializedPanels.current = true;
-      setAiOpen(!narrow);
-    } else if (narrow) setAiOpen(false);
-  }, [measured, narrow]);
 
   const queryKey = ['google-document', source.connectionId, source.fileId] as const;
   const fileQuery = useQuery({
@@ -866,7 +856,30 @@ export function GoogleDocumentEditor({
     },
     staleTime: 10_000,
   });
+  const suggestionKey = ['google-document-suggestions', source.connectionId, source.fileId];
+  const suggestions = useQuery<GoogleEditorSuggestion[]>({
+    queryKey: suggestionKey,
+    initialData: [],
+    enabled: false,
+  });
+  const dismissSuggestion = (id: string) =>
+    queryClient.setQueryData(suggestionKey, (items: GoogleEditorSuggestion[] = []) =>
+      items.filter((item) => item.suggestionId !== id),
+    );
   const file = fileQuery.data?.file;
+  useAssistantDocument(
+    file
+      ? {
+          id: source.fileId,
+          provider: 'google',
+          connectionId: source.connectionId,
+          mimeType: source.mimeType,
+          title: title || file.title,
+          kind: file.kind,
+          dirty,
+        }
+      : null,
+  );
 
   useEffect(() => {
     if (!file || dirty) return;
@@ -1176,9 +1189,6 @@ export function GoogleDocumentEditor({
         >
           <ArrowLeft className="size-4" />
         </Button>
-        <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
-          <KindIcon kind={file.kind} className="size-4" />
-        </span>
         <div className="min-w-0 flex-1">
           <input
             aria-label="File name"
@@ -1212,28 +1222,12 @@ export function GoogleDocumentEditor({
             </a>
           </Button>
         ) : null}
-        <Button
-          variant={aiOpen ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setAiOpen((current) => !current)}
-          aria-pressed={aiOpen}
-        >
-          <span className="sr-only">Toggle document assistant</span>
-          <PanelRight className="size-4" />
-          <span className="hidden sm:inline">Albatross</span>
+        <Button variant="outline" size="sm" onClick={openDocumentChat} aria-label="Edit with Albatross">
+          <span>Albatross</span>
         </Button>
       </header>
-      <div
-        className={cn(
-          'grid min-h-0 flex-1',
-          aiOpen ? 'relative grid-cols-1 @[900px]/document:grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-1',
-        )}
-      >
-        <div
-          inert={narrow && aiOpen}
-          aria-hidden={narrow && aiOpen ? true : undefined}
-          className="min-h-0 overflow-hidden bg-[var(--color-bg-subtle)]"
-        >
+      <div className="grid min-h-0 flex-1 grid-cols-1">
+        <div className="min-h-0 overflow-hidden bg-[var(--color-content)]">
           {model.kind === 'doc' ? (
             <RichDocumentEditor model={model} onChange={editModel} plainTextOnly />
           ) : null}
@@ -1247,40 +1241,66 @@ export function GoogleDocumentEditor({
           ) : null}
           {model.kind === 'deck' ? <PresentationEditor model={model} onChange={editModel} /> : null}
         </div>
-        {aiOpen ? (
-          <GoogleDocumentAiRail
-            source={source}
-            title={title}
-            model={model}
-            blocked={Boolean(saveError) || saveMutation.isPending}
-            onApply={(suggestion) => {
-              if (saveBlockedRef.current || saveMutation.isPending) {
-                toast.error('Save or recover your changes before applying a suggestion.');
-                return false;
-              }
-              const limitation = googleModelWriteLimitation(suggestion.proposedModel);
-              if (limitation) {
-                toast.error(limitation);
-                return false;
-              }
-              if (
-                !documentSuggestionMatchesDraft(
-                  { title: titleRef.current, model: modelRef.current },
-                  suggestion.base,
-                )
-              ) {
-                toast.error('This file changed after the proposal started. Ask for a fresh suggestion.');
-                return false;
-              }
-              titleRef.current = suggestion.title;
-              setTitle(suggestion.title);
-              editModel(suggestion.proposedModel);
-              return true;
-            }}
-            onClose={() => setAiOpen(false)}
-          />
-        ) : null}
       </div>
+      {suggestions.data?.length ? (
+        <section
+          aria-label="Suggested document edits"
+          className="max-h-[40%] shrink-0 overflow-auto border-t border-[var(--color-border)] bg-[var(--color-content)] p-3"
+        >
+          <h2 className="text-xs font-medium">Suggested edits</h2>
+          {suggestions.data.map((suggestion) => (
+            <div
+              key={suggestion.suggestionId}
+              className="mt-2 rounded-ui border border-[var(--color-border)] p-3 text-xs"
+            >
+              <p>{suggestion.summary}</p>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  size="xs"
+                  disabled={
+                    dirty ||
+                    Boolean(saveError) ||
+                    saveMutation.isPending ||
+                    suggestion.expectedProviderVersion !== versionKeyRef.current
+                  }
+                  onClick={() => {
+                    if (
+                      dirtyRef.current ||
+                      saveBlockedRef.current ||
+                      saveMutation.isPending ||
+                      suggestion.expectedProviderVersion !== versionKeyRef.current
+                    ) {
+                      toast.error(
+                        'This file changed. Save or recover your edits and ask for a fresh proposal.',
+                      );
+                      return;
+                    }
+                    const limitation = googleModelWriteLimitation(suggestion.model);
+                    if (limitation) {
+                      toast.error(limitation);
+                      return;
+                    }
+                    titleRef.current = suggestion.title;
+                    setTitle(suggestion.title);
+                    editModel(suggestion.model);
+                    dismissSuggestion(suggestion.suggestionId);
+                  }}
+                >
+                  Apply
+                </Button>
+                <Button variant="ghost" size="xs" onClick={() => dismissSuggestion(suggestion.suggestionId)}>
+                  Dismiss
+                </Button>
+              </div>
+              {suggestion.expectedProviderVersion !== versionKeyRef.current ? (
+                <p role="status" className="mt-2">
+                  This file changed. Ask for a fresh proposal.
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -1544,12 +1564,11 @@ function DocumentHistory({
   );
 }
 
-function DocumentAiRail({
+function DocumentSuggestionReview({
   documentId,
   document,
   session,
   onChanged,
-  onClose,
   blocked,
   onApplying,
 }: {
@@ -1557,31 +1576,11 @@ function DocumentAiRail({
   document: EditorDocument;
   session: SpreadsheetSession | null;
   onChanged: (revision?: number, options?: { engineCurrent?: boolean }) => Promise<void>;
-  onClose: () => void;
   blocked: boolean;
   onApplying: (value: boolean) => void;
 }) {
-  const panel = useDocumentPanel(onClose);
-  const [instruction, setInstruction] = useState('');
   const [localSuggestions, setLocalSuggestions] = useState(document.suggestions || []);
   useEffect(() => setLocalSuggestions(document.suggestions || []), [document.suggestions]);
-
-  const suggestMutation = useMutation({
-    mutationFn: () => {
-      if (blocked) throw new Error('Save your changes before requesting a suggestion.');
-      return fetchJson<{ ok: true; suggestion: DocumentSuggestion }>(`/api/documents/${documentId}/ai`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction, mode: 'suggest' }),
-      });
-    },
-    onSuccess: ({ suggestion }) => {
-      setLocalSuggestions((current) => [suggestion, ...current]);
-      setInstruction('');
-      toast.success('Suggestion ready to review');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
   const decisionMutation = useMutation({
     mutationFn: async (input: { suggestionId: string; decision: 'apply' | 'dismiss' }) => {
@@ -1639,128 +1638,73 @@ function DocumentAiRail({
     onSettled: () => onApplying(false),
   });
 
+  if (!localSuggestions.length) return null;
   return (
-    <aside
-      {...panel}
-      aria-label="Document assistant"
-      className="absolute inset-0 z-10 flex min-h-0 flex-col border-t border-[var(--color-border)] bg-[var(--color-bg)] @[900px]/document:static @[900px]/document:border-l @[900px]/document:border-t-0"
+    <section
+      aria-label="Suggested document edits"
+      className="max-h-[40%] shrink-0 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-content)] p-3"
     >
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <AlbatrossMark className="size-3.5 text-[var(--color-accent)]" />
-        <span className="text-[12.5px] font-medium">Albatross editor</span>
-        <Button
-          className="ml-auto"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Close AI editor"
-          onClick={onClose}
-        >
-          <X className="size-3.5" />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
-          {document.model.kind === 'sheet' && document.model.version === 2
-            ? 'Ask for formulas, fills, or new sheets. Albatross proposes cell changes you review; applying runs them in the spreadsheet as undoable steps and saves a new revision.'
-            : 'Ask for a rewrite, analysis, formula pass, or new slides. Albatross proposes a complete revision and waits for you to apply it.'}
+      <h2 className="text-xs font-medium">Suggested edits</h2>
+      {blocked ? (
+        <p role="status" className="mt-2 text-xs text-[var(--color-text-muted)]">
+          Save or recover your edits before applying a suggestion.
         </p>
-        <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2">
-          <textarea
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            placeholder={
-              document.kind === 'sheet'
-                ? 'e.g. Add a forecast tab with formulas'
-                : document.kind === 'deck'
-                  ? 'e.g. Turn this into a 6-slide client narrative'
-                  : 'e.g. Make this concise and add an executive summary'
-            }
-            rows={4}
-            className="w-full resize-none bg-transparent text-[12px] leading-relaxed outline-none placeholder:text-[var(--color-text-faint)]"
-          />
-          <Button
-            size="sm"
-            className="mt-2 w-full"
-            onClick={() => suggestMutation.mutate()}
-            disabled={blocked || !instruction.trim() || suggestMutation.isPending}
-          >
-            {suggestMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            Propose changes
-          </Button>
-        </div>
-        {blocked ? (
-          <p role="status" className="mt-2 text-xs text-[var(--color-text-muted)]">
-            Save or recover your edits to work with Albatross.
-          </p>
-        ) : null}
-        <div className="mt-5 flex items-center gap-2">
-          <PanelRight className="size-3.5 text-[var(--color-text-faint)]" />
-          <h2 className="text-[11px] font-medium text-[var(--color-text-faint)]">Suggestions</h2>
-        </div>
-        <div className="mt-2 space-y-2">
-          {localSuggestions.length ? (
-            localSuggestions.map((suggestion) => (
-              <div
-                key={suggestion.suggestionId}
-                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
-              >
-                <div className="text-[12px] font-medium">{suggestion.title}</div>
-                <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-                  {suggestion.description}
-                </p>
-                {suggestion.proposedModel.kind === 'sheet-changes' ? (
-                  <SheetChangeList changeSet={suggestion.proposedModel} />
-                ) : null}
-                <div className="mt-3 flex gap-2">
-                  <Button
-                    size="xs"
-                    onClick={() =>
-                      decisionMutation.mutate({ suggestionId: suggestion.suggestionId, decision: 'apply' })
-                    }
-                    disabled={
-                      blocked ||
-                      decisionMutation.isPending ||
-                      suggestion.baseRevision !== document.currentRevision
-                    }
-                  >
-                    <Check className="size-3" /> Apply
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() =>
-                      decisionMutation.mutate({ suggestionId: suggestion.suggestionId, decision: 'dismiss' })
-                    }
-                    disabled={decisionMutation.isPending}
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-                {suggestion.baseRevision !== document.currentRevision ? (
-                  <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-                    This suggestion cannot be matched to your current revision. Ask for a fresh proposal to
-                    preserve your newer work.
-                  </p>
-                ) : null}
+      ) : null}
+      <div className="mt-2 space-y-2">
+        {localSuggestions.length ? (
+          localSuggestions.map((suggestion) => (
+            <div
+              key={suggestion.suggestionId}
+              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
+            >
+              <div className="text-[12px] font-medium">{suggestion.title}</div>
+              <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                {suggestion.description}
+              </p>
+              {suggestion.proposedModel.kind === 'sheet-changes' ? (
+                <SheetChangeList changeSet={suggestion.proposedModel} />
+              ) : null}
+              <div className="mt-3 flex gap-2">
+                <Button
+                  size="xs"
+                  onClick={() =>
+                    decisionMutation.mutate({ suggestionId: suggestion.suggestionId, decision: 'apply' })
+                  }
+                  disabled={
+                    blocked ||
+                    decisionMutation.isPending ||
+                    suggestion.baseRevision !== document.currentRevision
+                  }
+                >
+                  <Check className="size-3" /> Apply
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() =>
+                    decisionMutation.mutate({ suggestionId: suggestion.suggestionId, decision: 'dismiss' })
+                  }
+                  disabled={decisionMutation.isPending}
+                >
+                  Dismiss
+                </Button>
               </div>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-[var(--color-border)] px-3 py-5 text-center text-[11px] text-[var(--color-text-faint)]">
-              No pending suggestions
+              {suggestion.baseRevision !== document.currentRevision ? (
+                <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                  This suggestion cannot be matched to your current revision. Ask for a fresh proposal to
+                  preserve your newer work.
+                </p>
+              ) : null}
             </div>
-          )}
-        </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-[var(--color-border)] px-3 py-5 text-center text-[11px] text-[var(--color-text-faint)]">
+            No pending suggestions
+          </div>
+        )}
       </div>
-    </aside>
+    </section>
   );
-}
-
-interface GoogleDocumentSuggestion {
-  suggestionId: string;
-  title: string;
-  description: string;
-  proposedModel: AlbatrossDocumentModel;
-  base: { title: string; model: AlbatrossDocumentModel };
 }
 
 function SheetChangeList({ changeSet }: { changeSet: SheetChangeSet }) {
@@ -1792,172 +1736,10 @@ function SheetChangeList({ changeSet }: { changeSet: SheetChangeSet }) {
   );
 }
 
-function GoogleDocumentAiRail({
-  source,
-  title,
-  model,
-  blocked,
-  onApply,
-  onClose,
-}: {
-  source: GoogleEditorSource;
+interface GoogleEditorSuggestion {
+  suggestionId: string;
+  expectedProviderVersion: string;
   title: string;
+  summary: string;
   model: AlbatrossDocumentModel;
-  blocked: boolean;
-  onApply: (suggestion: GoogleDocumentSuggestion) => boolean;
-  onClose: () => void;
-}) {
-  const panel = useDocumentPanel(onClose);
-  const [instruction, setInstruction] = useState('');
-  const [suggestions, setSuggestions] = useState<GoogleDocumentSuggestion[]>([]);
-  const suggestMutation = useMutation({
-    mutationFn: async (input: { base: GoogleDocumentSuggestion['base']; instruction: string }) => {
-      const result = await fetchJson<{ ok: true; suggestion: Omit<GoogleDocumentSuggestion, 'base'> }>(
-        '/api/files/google/editor',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...source, ...input.base, instruction: input.instruction }),
-        },
-      );
-      return { ...result.suggestion, base: input.base };
-    },
-    onSuccess: (suggestion, input) => {
-      setSuggestions((current) => [suggestion, ...current]);
-      setInstruction((current) => (current === input.instruction ? '' : current));
-      toast.success('Suggestion ready to review');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  return (
-    <aside
-      {...panel}
-      aria-label="Google document assistant"
-      className="absolute inset-0 z-10 flex min-h-0 flex-col border-t border-[var(--color-border)] bg-[var(--color-bg)] @[900px]/document:static @[900px]/document:border-l @[900px]/document:border-t-0"
-    >
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <AlbatrossMark className="size-3.5 text-[var(--color-accent)]" />
-        <span className="text-[12.5px] font-medium">Albatross editor</span>
-        <Button
-          className="ml-auto"
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Close AI editor"
-          onClick={onClose}
-        >
-          <X className="size-3.5" />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <p className="text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">
-          Proposed changes stay local until you apply them. Applied edits save back to this same Google file.
-        </p>
-        <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2">
-          <textarea
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            placeholder={
-              model.kind === 'sheet'
-                ? 'e.g. Add a forecast tab with formulas'
-                : model.kind === 'deck'
-                  ? 'e.g. Turn this into a 6-slide client narrative'
-                  : 'e.g. Make this concise and add an executive summary'
-            }
-            rows={4}
-            className="w-full resize-none bg-transparent text-[12px] leading-relaxed outline-none placeholder:text-[var(--color-text-faint)]"
-          />
-          <Button
-            size="sm"
-            className="mt-2 w-full"
-            onClick={() => suggestMutation.mutate({ base: { title, model }, instruction })}
-            disabled={blocked || !instruction.trim() || suggestMutation.isPending}
-          >
-            {suggestMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            Propose changes
-          </Button>
-        </div>
-        {blocked ? (
-          <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-            Save or recover your edits to work with Albatross.
-          </p>
-        ) : null}
-        <div className="mt-5 flex items-center gap-2">
-          <PanelRight className="size-3.5 text-[var(--color-text-faint)]" />
-          <h2 className="text-[11px] font-medium text-[var(--color-text-faint)]">Suggestions</h2>
-        </div>
-        <div className="mt-2 space-y-2">
-          {suggestions.length ? (
-            suggestions.map((suggestion) => (
-              <div
-                key={suggestion.suggestionId}
-                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3"
-              >
-                <div className="text-[12px] font-medium">{suggestion.title}</div>
-                <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-                  {suggestion.description}
-                </p>
-                <div className="mt-3 flex gap-2">
-                  <Button
-                    size="xs"
-                    disabled={
-                      blocked ||
-                      Boolean(googleModelWriteLimitation(suggestion.proposedModel)) ||
-                      !documentSuggestionMatchesDraft({ title, model }, suggestion.base)
-                    }
-                    onClick={() => {
-                      const limitation = googleModelWriteLimitation(suggestion.proposedModel);
-                      if (limitation) {
-                        toast.error(limitation);
-                        return;
-                      }
-                      if (!onApply(suggestion)) return;
-                      setSuggestions((current) =>
-                        current.filter((candidate) => candidate.suggestionId !== suggestion.suggestionId),
-                      );
-                      toast.success('Suggestion applied; saving to Google Drive');
-                    }}
-                  >
-                    <Check className="size-3" /> Apply
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() =>
-                      setSuggestions((current) =>
-                        current.filter((candidate) => candidate.suggestionId !== suggestion.suggestionId),
-                      )
-                    }
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-                {!documentSuggestionMatchesDraft({ title, model }, suggestion.base) ? (
-                  <p
-                    role="status"
-                    className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]"
-                  >
-                    This file changed after the proposal started. Your newer edits are safe; ask for a fresh
-                    suggestion.
-                  </p>
-                ) : null}
-                {googleModelWriteLimitation(suggestion.proposedModel) ? (
-                  <p
-                    role="status"
-                    className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]"
-                  >
-                    {googleModelWriteLimitation(suggestion.proposedModel)}
-                  </p>
-                ) : null}
-              </div>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-[var(--color-border)] px-3 py-5 text-center text-[11px] text-[var(--color-text-faint)]">
-              No pending suggestions
-            </div>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
 }

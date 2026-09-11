@@ -103,7 +103,7 @@ function FullPlayer({
             variant="default"
             size="icon"
             onClick={controls.onPlayPause}
-            className="-mt-4 size-10 shrink-0 rounded-full"
+            className="-mt-4 size-10 shrink-0 rounded-ui"
             aria-label={controls.isPlaying ? "Pause" : "Play"}
           >
             {controls.isPlaying ? (
@@ -190,7 +190,7 @@ function CompactPlayer({
         variant="default"
         size="icon"
         onClick={controls.onPlayPause}
-        className="relative size-10 shrink-0 rounded-full shadow-md"
+        className="relative size-10 shrink-0 rounded-ui shadow-md"
         aria-label={controls.isPlaying ? "Pause" : "Play"}
       >
         {controls.isPlaying ? (

@@ -277,8 +277,8 @@ export function Rail({
         {/* Albatross is the product; Lab86 is the company that makes it. The
             wordmark only shows when the rail is expanded; the trigger centres
             itself when collapsed so it doubles as the expand button. */}
-        <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
-          <span className="max-w-40 whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
+        <div className="flex items-center justify-between gap-2 px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
+          <span className="max-w-40 overflow-hidden whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="block font-display text-[17px] font-semibold leading-none tracking-tight text-[var(--color-text)]">
               Albatross
             </span>
@@ -286,10 +286,21 @@ export function Rail({
               by Lab86
             </span>
           </span>
-          <SidebarTrigger
-            title="Toggle navigation rail"
-            className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
-          />
+          <div
+            data-rail-utilities
+            className="flex shrink-0 items-center gap-1 group-data-[collapsible=icon]:flex-col"
+          >
+            <NotificationCenter
+              onOpen={() => {
+                setPrimaryView('notifications');
+                closeMobileSidebar();
+              }}
+            />
+            <SidebarTrigger
+              title="Toggle navigation rail"
+              className="size-8 shrink-0 group-data-[collapsible=icon]:order-first text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
+            />
+          </div>
         </div>
 
         <RailPrimaryActions searchShortcut={searchShortcut} onSearch={() => setPaletteOpen(true)} />
@@ -452,12 +463,6 @@ export function Rail({
               <Settings className="size-4" aria-hidden />
             </Link>
           </Button>
-          <NotificationCenter
-            onOpen={() => {
-              setPrimaryView('notifications');
-              closeMobileSidebar();
-            }}
-          />
           <div className="rail-profile grid size-9 shrink-0 place-items-center" title="Profile">
             {clerkEnabled ? (
               <UserButton />

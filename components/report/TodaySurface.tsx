@@ -142,13 +142,15 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
 
   return (
     <section className="report-paper flex h-full min-h-0 flex-col">
-      <div className="@container min-h-0 flex-1 overflow-y-auto">
+      <div className="brief-wall @container min-h-0 flex-1 overflow-y-auto">
         {/* The plate. It carries the day's art, its dateline and its edition
           title, and it derives all three from today rather than from the brief,
-          so it is right on a morning when nothing has been written yet. */}
+          so it is right on a morning when nothing has been written yet. Its
+          picture frame sits outside the text inset that the header and the
+          content below share. */}
         <BriefMasthead generatedAt={nowMs} bleed={false} />
 
-        <header className="border-b border-[var(--color-border)] px-5 pb-4">
+        <header className="border-b border-[var(--color-border)] px-[var(--brief-text-inset)] pb-4">
           <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-x-6 gap-y-3">
             <div className="min-w-0">
               <p className="max-w-xl text-[13px] leading-relaxed text-[var(--color-text-muted)]">{shape}</p>
@@ -177,7 +179,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                   aria-pressed={capacity === option}
                   onClick={() => setCapacity(option)}
                   className={cn(
-                    'rounded-full px-3 py-1 text-[12px] transition-colors',
+                    'rounded-ui px-3 py-1 text-[12px] transition-colors',
                     capacity === option
                       ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                       : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
@@ -210,7 +212,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
                       setCapacity(next);
                       setDayChangedOpen(false);
                     }}
-                    className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                    className="rounded-ui border border-[var(--color-border)] px-3 py-1 text-[12px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
                   >
                     {label}
                   </button>
@@ -220,7 +222,7 @@ export function TodaySurface({ brief }: { brief?: ReactNode }) {
           ) : null}
         </header>
 
-        <div className="px-5 pb-16 pt-6">
+        <div className="px-[var(--brief-text-inset)] pb-16 pt-6">
           <div className="mx-auto grid max-w-5xl gap-8 @container lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
             <div className="min-w-0">
               {loading ? (

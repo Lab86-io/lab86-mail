@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Output } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { resolveShape } from '@/lib/albatross/shape-policy';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { withDeadline } from '@/lib/shared/deadline';
 import type { NarrativeEntry } from './core';
@@ -44,6 +45,7 @@ const defaults = {
       title: detail.work.title || detail.work.rawText,
       state: detail.work.workState || detail.work.status,
       guided: !!detail.execution?.currentStep,
+      shape: resolveShape(detail.work.shape),
       nextStep: detail.execution?.currentStep?.title,
     };
   },

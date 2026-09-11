@@ -2,10 +2,12 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { BriefResponseRequest } from '@/lib/brief/response';
 import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { CalendarSearchTarget } from './search/global-search';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
+import type { AssistantDocumentContext } from './shell/assistant-context';
 import { pageNavigationAssistantState } from './shell/assistant-navigation';
 
 export interface ComposePrefill {
@@ -96,6 +98,15 @@ export interface ClientState {
   railWidth: number;
   aiBarOpen: boolean;
   assistantPresentation: 'corner' | 'split' | 'full';
+  assistantDocument: AssistantDocumentContext | null;
+  assistantBriefRequest: BriefResponseRequest | null;
+  assistantBriefContext: Pick<BriefResponseRequest, 'title' | 'reference'> | null;
+  queueBriefResponse: (request: BriefResponseRequest) => boolean;
+  claimBriefResponse: (id: string) => BriefResponseRequest | null;
+  clearBriefResponse: () => void;
+  assistantInvitation: string | null;
+  setAssistantInvitation: (phrase: string | null) => void;
+  setAssistantDocument: (document: AssistantDocumentContext | null) => void;
   chatScopeKind: 'global' | 'area' | 'work';
   chatScopeAreaId: string | null;
   chatScopeWorkId: string | null;
@@ -322,7 +333,7 @@ export function persistedClientState(s: ClientState) {
 
 export const useClientStore = create<ClientState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       account: '',
       accountFilter: [],
       primaryView: 'today',
@@ -359,6 +370,27 @@ export const useClientStore = create<ClientState>()(
       railWidth: 240,
       aiBarOpen: false,
       assistantPresentation: 'corner',
+      assistantDocument: null,
+      assistantBriefRequest: null,
+      assistantBriefContext: null,
+      queueBriefResponse: (request) => {
+        if (get().assistantBriefRequest || !request.response.trim()) return false;
+        set({ assistantBriefRequest: request, aiBarOpen: true, assistantPresentation: 'split' });
+        return true;
+      },
+      claimBriefResponse: (id) => {
+        const request = get().assistantBriefRequest;
+        if (!request || request.id !== id) return null;
+        set({
+          assistantBriefRequest: null,
+          assistantBriefContext: { title: request.title, reference: request.reference },
+        });
+        return request;
+      },
+      clearBriefResponse: () => set({ assistantBriefRequest: null, assistantBriefContext: null }),
+      assistantInvitation: null,
+      setAssistantInvitation: (assistantInvitation) => set({ assistantInvitation }),
+      setAssistantDocument: (assistantDocument) => set({ assistantDocument }),
       chatScopeKind: 'global',
       chatScopeAreaId: null,
       chatScopeWorkId: null,
@@ -389,7 +421,7 @@ export const useClientStore = create<ClientState>()(
         // it. Its route must leave the underlying selection and filters alone.
         set((state) =>
           primaryView === 'chat'
-            ? { aiBarOpen: true, assistantPresentation: 'split' }
+            ? { aiBarOpen: true, assistantPresentation: 'full', assistantInvitation: null }
             : {
                 primaryView,
                 ...pageNavigationAssistantState(state),
@@ -487,6 +519,7 @@ export const useClientStore = create<ClientState>()(
       setAssistantPresentation: (assistantPresentation) => set({ assistantPresentation, aiBarOpen: true }),
       setChatScope: ({ kind, areaId, workId, label }) =>
         set({
+          assistantBriefContext: null,
           chatScopeKind: kind,
           chatScopeAreaId: areaId || null,
           chatScopeWorkId: workId || null,

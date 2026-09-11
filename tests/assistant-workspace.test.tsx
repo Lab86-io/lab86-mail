@@ -305,7 +305,7 @@ if (process.env.ALBATROSS_WORKSPACE_DOM_TEST !== '1') {
       expect(button.dataset.rotating).toBe('true');
       expect(button.dataset.phrase).toBe('0');
       // Every phrase is rendered from the first paint, so width is reserved.
-      expect(host.querySelectorAll('.assistant-launcher__phrase').length).toBe(
+      expect(host.querySelectorAll('.assistant-launcher__measure').length).toBe(
         ASSISTANT_LAUNCHER_PHRASES.length,
       );
       expect(host.querySelector('[aria-live]')).toBeNull();

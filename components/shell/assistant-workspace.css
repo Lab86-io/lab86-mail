@@ -1,3 +1,18 @@
+/* One outer frame for every page, reader, and split/full assistant. */
+.workspace-panel {
+  position: relative;
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  margin: var(--workspace-gutter);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  corner-shape: var(--corner-shape-ui);
+  background: var(--color-bg-elevated);
+}
+
 /* Assistant workspace + launcher.
 
    Owned by components/shell/AssistantWorkspace.tsx and ShellActions.tsx.
@@ -206,16 +221,15 @@
 .assistant-workspace__seam::before {
   content: "";
   position: absolute;
-  inset: 8px 0;
-  border-block: 1px solid var(--color-border);
+  inset: 0;
   background: var(--color-bg-elevated);
 }
 
 .assistant-workspace__seam::after {
   content: "";
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 0;
+  bottom: 0;
   left: 50%;
   width: 1px;
   transform: translateX(-50%);
@@ -244,7 +258,6 @@
   grid-row: 1;
   height: 100%;
   background: var(--color-bg-elevated);
-  border-left: 1px solid var(--color-border);
 }
 
 .assistant-workspace[data-resizing="true"] {
@@ -272,14 +285,13 @@
   grid-row: 1;
   z-index: 2;
   height: 100%;
-  background: var(--color-bg);
+  background: var(--color-bg-elevated);
 }
 
 .assistant-workspace[data-layout="full"][data-mobile="false"] .assistant-workspace__frame {
   max-inline-size: 920px;
   margin-inline: auto;
   background: var(--color-bg-elevated);
-  border-inline: 1px solid var(--color-border);
 }
 
 /* ---- opaque fallbacks ---- */
@@ -352,14 +364,14 @@
   right: 16px;
   z-index: 50;
   display: inline-grid;
-  grid-template-columns: auto minmax(0, auto) auto;
+  grid-template-columns: minmax(0, auto) auto;
   align-items: center;
   column-gap: 10px;
   min-height: 44px;
   max-width: calc(100vw - 32px);
-  padding: 6px 10px 6px 8px;
+  padding: 6px 12px;
   border: 1px solid var(--color-control-border);
-  border-radius: var(--radius-launcher) var(--radius-launcher) var(--radius-xs) var(--radius-launcher);
+  border-radius: var(--radius-launcher);
   corner-shape: var(--corner-shape-ui);
   background: var(--color-bg-elevated);
   color: var(--color-text);
@@ -405,17 +417,6 @@
   outline-offset: 2px;
 }
 
-.assistant-launcher__mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-control);
-  corner-shape: var(--corner-shape-ui);
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-
 .assistant-launcher__copy {
   display: grid;
   gap: 1px;
@@ -434,39 +435,30 @@
   white-space: nowrap;
 }
 
-/* Every phrase occupies the same grid cell, so the cell is as wide as the
-   longest phrase from the first paint and the button never changes width.
-   The change is sequenced, not crossfaded: the old line settles out first,
-   then the new one rises in, so no frame shows two lines on top of each
-   other. */
+/* All phrases reserve one footprint; letters roll within a clipped line. */
 .assistant-launcher__phrases {
+  position: relative;
   display: grid;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 18px;
+  letter-spacing: normal;
+}
+
+.assistant-launcher__measure {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: nowrap;
 }
 
 .assistant-launcher__phrase {
-  grid-area: 1 / 1;
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: 14.5px;
-  font-weight: 500;
-  line-height: 17px;
-  letter-spacing: -0.005em;
+  position: absolute;
+  inset: 0;
   white-space: nowrap;
-  color: var(--color-text);
-  transition:
-    opacity 360ms var(--ease-enter) 260ms,
-    transform 360ms var(--ease-enter) 260ms,
-    visibility 0s linear 260ms;
-}
-
-.assistant-launcher__phrase[data-active="false"] {
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(5px);
-  transition:
-    opacity 240ms var(--ease-exit),
-    transform 240ms var(--ease-exit),
-    visibility 0s linear 240ms;
+  perspective: 400px;
 }
 
 .assistant-launcher__key {
@@ -488,12 +480,6 @@
 @media (forced-colors: active) {
   .assistant-launcher {
     border-color: ButtonText;
-  }
-  .assistant-launcher__mark {
-    forced-color-adjust: none;
-    background: Canvas;
-    color: ButtonText;
-    border: 1px solid ButtonText;
   }
 }
 

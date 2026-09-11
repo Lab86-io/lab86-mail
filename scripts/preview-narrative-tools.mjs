@@ -71,7 +71,7 @@ const fontFaces = [...styles.matchAll(/@font-face\s*\{[^}]+\}/g)].map((match) =>
 const previewStyles = `${fontFaces}\n${currentCss.css}\n${componentCss}\n:root{${fontVariables}}`;
 const server = serve({
   hostname: '127.0.0.1',
-  port: process.argv.includes('--controls') ? 18840 : 18839,
+  port: Number(process.env.NARRATIVE_PREVIEW_PORT || (process.argv.includes('--controls') ? 18840 : 18839)),
   fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === '/preview.js')

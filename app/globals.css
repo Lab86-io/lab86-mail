@@ -30,11 +30,15 @@
   --color-destructive-foreground: var(--color-danger-foreground);
   --color-input: var(--color-control-border);
   --color-ring: var(--color-accent);
-  --radius: 0.875rem;
-  --radius-sm: 0.625rem;
-  --radius-md: 0.875rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.25rem;
+  --radius: var(--radius-ui);
+  --radius-xs: var(--radius-ui);
+  --radius-sm: var(--radius-ui);
+  --radius-md: var(--radius-ui);
+  --radius-lg: var(--radius-ui);
+  --radius-xl: var(--radius-ui);
+  --radius-2xl: var(--radius-ui);
+  --radius-3xl: var(--radius-ui);
+  --radius-4xl: var(--radius-ui);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -139,11 +143,16 @@
   /* shadow */
   --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 24px rgb(15 23 42 / 0.06);
   --shadow-control: none;
-  --radius-control: 9px;
-  --radius-launcher: 14px;
-  --radius-panel: 24px;
-  --radius-overlay: 18px;
+  --radius-ui: 9.5px;
+  --radius-ui-corner: 9.5px;
   --corner-shape-ui: round;
+  --radius-detail: 4px;
+  --radius-control: var(--radius-ui);
+  --radius-card: var(--radius-ui);
+  --radius-overlay: var(--radius-ui);
+  --radius-panel: var(--radius-ui);
+  --radius-launcher: var(--radius-ui);
+  --workspace-gutter: 6px;
   --color-field: var(--color-bg-elevated);
   /* Working surfaces are opaque. Elevation is reserved for floating UI;
      list rules have their own role instead of locally weakening borders. */
@@ -151,13 +160,6 @@
   --color-content: var(--color-bg-elevated);
   --color-list-divider: color-mix(in oklab, var(--color-border) 82%, var(--color-text-faint));
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
-
-  /* radii */
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius: 14px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
 
   /* motion — Linear-calibrated: fast for hover/color, normal for state
      changes, moderate for panels/dialogs. Nothing springy; if an animation
@@ -170,18 +172,73 @@
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 }
 
-/* Soft-square corners are progressive enhancement, not a clipping mask. Keep
-   ordinary round radii in browsers without corner-shape. The longer supported
-   radii compensate for the squarer curve without changing control dimensions. */
-@supports (corner-shape: superellipse(1.6)) {
+/* Shared soft-square corners. Fixed radii keep the long edges straight;
+   ordinary round corners provide the fallback without clipping masks. */
+@supports (corner-shape: superellipse(1.475)) {
   @layer base {
     :root {
-      --corner-shape-ui: superellipse(1.6);
-      --radius-control: 13px;
-      --radius-launcher: 20px;
-      --radius-panel: 34px;
-      --radius-overlay: 26px;
+      --corner-shape-ui: superellipse(1.475);
+      --radius-ui: 14px;
+      --radius-ui-corner: 14px;
     }
+  }
+}
+
+/* One shape for rounded application surfaces, including shadcn size aliases
+   and arbitrary radius utilities. New UI uses rounded-ui. Full circles are
+   reserved for avatars, status dots and progress indicators. */
+@utility rounded-ui {
+  border-radius: var(--radius-ui);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded {
+  border-radius: var(--radius-ui);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-* {
+  border-radius: --value(--radius-*, [*]);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-full {
+  corner-shape: round;
+}
+
+/* Joined controls keep their exposed corners and square internal seams. */
+@utility rounded-t-ui {
+  border-top-left-radius: var(--radius-ui-corner);
+  border-top-right-radius: var(--radius-ui-corner);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-b-ui {
+  border-bottom-left-radius: var(--radius-ui-corner);
+  border-bottom-right-radius: var(--radius-ui-corner);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-l-ui {
+  border-top-left-radius: var(--radius-ui-corner);
+  border-bottom-left-radius: var(--radius-ui-corner);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-r-ui {
+  border-top-right-radius: var(--radius-ui-corner);
+  border-bottom-right-radius: var(--radius-ui-corner);
+  corner-shape: var(--corner-shape-ui);
+}
+
+.editorial-initial {
+  float: left;
+  margin-inline-end: 0.12em;
+  margin-block-start: 0.08em;
+  color: var(--color-accent);
+  font-size: 3em;
+  font-weight: 500;
+  line-height: 0.8;
+}
+
+@layer base {
+  :where(button, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="option"]) {
+    border-radius: var(--radius-ui);
+    corner-shape: var(--corner-shape-ui);
   }
 }
 
@@ -543,7 +600,8 @@
     padding: 2px 6px;
     border: 1px solid var(--color-border);
     border-bottom-width: 2px;
-    border-radius: 4px;
+    border-radius: var(--radius-detail);
+    corner-shape: var(--corner-shape-ui);
     background: var(--color-bg-subtle);
     color: var(--color-text-muted);
   }
@@ -663,7 +721,8 @@
   }
 
   .email-body code {
-    border-radius: 4px;
+    border-radius: var(--radius-detail);
+    corner-shape: var(--corner-shape-ui);
     background: var(--color-bg-muted);
     padding: 0.08rem 0.28rem;
     font-family: var(--font-mono);
@@ -673,7 +732,8 @@
   .email-body pre {
     margin: 0.75rem 0;
     overflow-x: auto;
-    border-radius: 6px;
+    border-radius: var(--radius-ui);
+    corner-shape: var(--corner-shape-ui);
     background: var(--color-bg-subtle);
     padding: 0.75rem;
     white-space: pre-wrap;
@@ -869,11 +929,14 @@
       );
   }
 
-  .app-paper,
-  .report-paper {
+  .app-paper {
     isolation: isolate;
     background-color: var(--color-bg);
     background-image: none;
+  }
+  .report-paper {
+    isolation: isolate;
+    background: var(--color-content);
   }
   .dark .app-paper,
   .dark .report-paper {
@@ -999,7 +1062,8 @@
     height: 20px;
     padding: 0 4px;
     border: 1px solid var(--color-border);
-    border-radius: 4px;
+    border-radius: var(--radius-detail);
+    corner-shape: var(--corner-shape-ui);
     color: var(--color-text-muted);
     font: 10px var(--font-sans);
   }

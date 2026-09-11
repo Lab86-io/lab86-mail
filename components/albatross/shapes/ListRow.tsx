@@ -71,7 +71,7 @@ export function ListRow({
         disabled={busy}
         onClick={() => onToggle(item.id)}
         className={cn(
-          'relative flex size-[18px] shrink-0 items-center justify-center rounded-full border',
+          'relative flex size-[18px] shrink-0 items-center justify-center rounded-ui border',
           'transition-colors duration-[var(--duration-fast)]',
           item.done
             ? 'border-[var(--color-accent)]'

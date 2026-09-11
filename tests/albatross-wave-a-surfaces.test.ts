@@ -135,7 +135,7 @@ describe('the Work detail owns the horizon control', () => {
   test('one responsive shell mounts the wake nudge once, and the bell stays quiet', () => {
     const shell = read('components/shell/AppShell.tsx');
     expect(shell.split('<WakeNudgeHost />')).toHaveLength(2);
-    expect(shell.split('<ChatWorkspace mobile={isMobile}>')).toHaveLength(2);
+    expect(shell.match(/<ChatWorkspace\s/g)).toHaveLength(1);
     expect(shell).not.toContain('key={permutation}');
     const bell = read('components/notifications/model.ts');
     expect(bell).toContain("row.type !== 'work_wake'");

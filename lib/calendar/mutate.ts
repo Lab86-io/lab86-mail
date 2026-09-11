@@ -8,6 +8,7 @@ import {
   nylasErrorStatus,
   withNylasRetry,
 } from '@/lib/nylas/retry';
+import { safeExternalUrl } from '@/lib/shared/url';
 import { type EventInputRow, maybeKickCalendarSync, toEventInput } from './sync';
 
 const calendarApi = (api as any).calendarData;
@@ -29,6 +30,7 @@ export interface CreateEventInput {
   allDay?: boolean;
   description?: string;
   location?: string;
+  conferencing?: 'google_meet';
   participants?: Array<{ email: string; name?: string }>;
   recurrence?: string[];
   busy?: boolean;
@@ -62,6 +64,9 @@ export interface UnsubscribeCalendarInput {
 export async function createCalendarEvent(input: CreateEventInput) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
+  if (input.conferencing === 'google_meet' && account.provider !== 'google') {
+    throw new Error('Google Meet requires a connected Google calendar. Choose a Google account.');
+  }
   // Resolve to a calendar this account can actually WRITE to. A requested
   // calendar is honored only if it belongs to this account AND is not read-only
   // — agents frequently pass a read-only/subscribed calendar id (holidays,
@@ -87,6 +92,9 @@ export async function createCalendarEvent(input: CreateEventInput) {
     title: input.title,
     description: input.description,
     location: input.location,
+    ...(input.conferencing === 'google_meet'
+      ? { conferencing: { provider: 'Google Meet', autocreate: {} } }
+      : {}),
     busy: input.busy ?? true,
     when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
     participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
@@ -147,7 +155,15 @@ export async function createCalendarEvent(input: CreateEventInput) {
     },
   });
   kickSyncAfterMutation(account);
-  return { eventId: created.id as string, calendarId, operationId, htmlLink: row?.htmlLink };
+  const conferenceUrl = safeExternalUrl(created.conferencing?.details?.url || '') || undefined;
+  return {
+    eventId: created.id as string,
+    calendarId,
+    operationId,
+    htmlLink: row?.htmlLink,
+    ...(conferenceUrl ? { conferenceUrl } : {}),
+    ...(input.conferencing && !conferenceUrl ? { conferencingPending: true } : {}),
+  };
 }
 
 async function recoverCreatedEventByMetadata(grantId: string, calendarId: string, requestId: string) {

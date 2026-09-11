@@ -24,23 +24,18 @@ import { cn } from '@/lib/utils';
 import {
   filterNotificationItems,
   INITIAL_NOTIFICATION_VIEW,
+  NOTIFICATION_FILTERS,
   type NotificationAction,
   type NotificationFilter,
   type NotificationItem,
   type NotificationProjection,
   type NotificationViewState,
+  notificationFilterCounts,
   parseNotificationViewState,
 } from './model';
 import { type CurrentMove, useNotifications } from './useNotifications';
 
 const glyphs = { question: CircleHelp, approval: ShieldCheck, checkin: Clock3, update: Bell };
-const filters: Array<{ value: NotificationFilter; label: string }> = [
-  { value: 'all', label: 'All notifications' },
-  { value: 'unread', label: 'Needs attention & unread' },
-  { value: 'question', label: 'Questions' },
-  { value: 'approval', label: 'Approvals' },
-  { value: 'checkin', label: 'Check-ins' },
-];
 
 function timeLabel(timestamp?: number) {
   if (!timestamp) return null;
@@ -164,6 +159,15 @@ export function NotificationsView({
   const attention = filterNotificationItems(projection.attention, view.filter);
   const updates = filterNotificationItems(projection.updates, view.filter);
   const visibleItems = [...attention, ...updates];
+  const counts = notificationFilterCounts(projection);
+  const unreadUpdates = updates.filter((item) => item.unreadNotificationIds.length > 0);
+
+  const applyFilter = (filter: NotificationFilter) => {
+    scrollTopRef.current = 0;
+    pendingScrollRestore.current = null;
+    setView((current) => ({ ...current, filter, selectedId: null, scrollTop: 0 }));
+    if (listRef.current) listRef.current.scrollTop = 0;
+  };
 
   const perform = async (operation: () => Promise<void>, failure: string) => {
     if (busyRef.current) return;
@@ -248,11 +252,14 @@ export function NotificationsView({
     }
   };
 
-  const section = (title: string, items: NotificationItem[], empty: string) => (
+  const section = (title: string, items: NotificationItem[], empty: string, action?: ReactNode) => (
     <section aria-label={title}>
-      <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-5 pb-2 pt-6">
-        <h2 className="text-[12px] font-semibold text-[var(--color-text-muted)]">{title}</h2>
-        <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
+      <div className="flex items-baseline justify-between gap-3 border-b border-[var(--color-border)] px-5 pb-2 pt-6">
+        <h2 className="text-[12px] font-semibold text-[var(--color-text-muted)]">
+          {title}
+          <span className="ml-2 font-normal tabular-nums text-[var(--color-text-faint)]">{items.length}</span>
+        </h2>
+        {action}
       </div>
       {items.length ? (
         <ul>
@@ -329,40 +336,54 @@ export function NotificationsView({
       className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-bg-elevated)]"
       data-notifications-workspace
     >
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-5 sm:px-7">
-        <div>
-          <h1 className="font-serif text-[25px] tracking-tight text-[var(--color-text)]">Notifications</h1>
-          <p className="mt-1 text-[12px] text-[var(--color-text-muted)]" aria-live="polite">
-            {isLoading
-              ? 'Finding what needs you…'
-              : `${projection.attention.length} waiting on you · ${projection.unreadUpdates} unread updates`}
-          </p>
+      <header className="shrink-0 border-b border-[var(--color-border)] px-5 pb-3 pt-5 sm:px-7">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+          <div className="min-w-0">
+            <h1 className="font-serif text-[25px] tracking-tight text-[var(--color-text)]">Notifications</h1>
+            <p className="mt-1 text-[12px] text-[var(--color-text-muted)]" aria-live="polite">
+              {isLoading
+                ? 'Finding what needs you…'
+                : `${projection.attention.length} waiting on you · ${projection.unreadUpdates} unread updates`}
+            </p>
+          </div>
+          {onOpenActivity && (
+            <Button variant="ghost" size="sm" onClick={onOpenActivity} className="-mr-2 h-9 shrink-0">
+              Activity history <ArrowUpRight className="size-3.5" aria-hidden />
+            </Button>
+          )}
         </div>
-        <label className="sr-only" htmlFor="notifications-filter">
-          Filter notifications
-        </label>
-        <select
-          id="notifications-filter"
-          value={view.filter}
-          onChange={(event) => {
-            scrollTopRef.current = 0;
-            pendingScrollRestore.current = null;
-            setView((current) => ({
-              ...current,
-              filter: event.target.value as NotificationFilter,
-              selectedId: null,
-              scrollTop: 0,
-            }));
-            if (listRef.current) listRef.current.scrollTop = 0;
-          }}
-          className="control-field h-11 max-w-full rounded-[var(--radius-control)] px-3 text-[12px]"
-        >
-          {filters.map((filter) => (
-            <option key={filter.value} value={filter.value}>
-              {filter.label}
-            </option>
-          ))}
-        </select>
+        {/* The filter is a row of pressed buttons with live counts, so the
+            shape of the inbox reads before a single row does. */}
+        <fieldset className="-mx-1 mt-3 flex min-w-0 flex-wrap items-center gap-1 border-0 p-0">
+          <legend className="sr-only">Filter notifications</legend>
+          {NOTIFICATION_FILTERS.map((filter) => {
+            const active = view.filter === filter.value;
+            return (
+              <button
+                key={filter.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => applyFilter(filter.value)}
+                className={cn(
+                  'flex h-9 items-center gap-1.5 rounded-ui px-3 text-[12px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+                  active
+                    ? 'bg-[var(--color-control)] font-medium text-[var(--color-text)] shadow-[var(--shadow-control)]'
+                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]',
+                )}
+              >
+                {filter.label}
+                <span
+                  className={cn(
+                    'tabular-nums',
+                    active ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-faint)]',
+                  )}
+                >
+                  {isLoading ? '–' : counts[filter.value]}
+                </span>
+              </button>
+            );
+          })}
+        </fieldset>
       </header>
       <div className="flex min-h-0 flex-1">
         <div
@@ -405,6 +426,20 @@ export function NotificationsView({
                 view.filter === 'all'
                   ? 'No new updates. Your history lives in Activity.'
                   : 'No updates match this filter.',
+                unreadUpdates.length > 0 ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void perform(async () => {
+                        for (const item of unreadUpdates) await onRead(item);
+                      }, 'Could not mark these updates read. They are still unread.')
+                    }
+                    className="text-[11.5px] text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline disabled:opacity-60"
+                  >
+                    Mark all read
+                  </button>
+                ) : null,
               )}
               <div className="space-y-3 px-5 py-6 text-[11px] text-[var(--color-text-faint)]">
                 {recentLimitReached && (

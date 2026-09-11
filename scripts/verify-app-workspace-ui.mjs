@@ -59,7 +59,10 @@ try {
     assert.equal(await textarea.inputValue(), 'Keep this unfinished thought');
     assert.equal(await textarea.getAttribute('data-mount-sentinel'), 'same-composer');
     assert.equal(await chat.locator('[data-route]').getAttribute('data-route'), 'hold');
-    assert.equal(await chat.getByRole('button', { name: 'Remove notes.txt' }).count(), 1);
+    assert.equal(
+      await chat.getByRole('button', { name: 'Remove notes.txt', includeHidden: true }).count(),
+      1,
+    );
   };
   await snapshot('corner');
   await chat.getByRole('button', { name: 'Expand chat beside this page' }).click();
@@ -92,12 +95,19 @@ try {
   await page.locator('[cmdk-item][data-value="page:chat"]').click();
   assert.equal(await page.evaluate(() => window.workspacePreview.state().primaryView), 'mail');
   await assertDraft();
-  await chat.getByRole('button', { name: 'Focus on chat' }).click();
+  assert.equal(await frame.getAttribute('data-layout'), 'full', 'Chat destination opens full screen');
   await textarea.press('Control+p');
   await page.locator('[cmdk-item][data-value="page:files"]').click();
   await page.waitForFunction(() => window.workspacePreview.state().primaryView === 'files');
-  assert.equal(await frame.getAttribute('data-layout'), 'split', 'page selection reveals Files beside chat');
+  assert.equal(
+    await chat.getAttribute('data-layout'),
+    'closed',
+    'leaving Chat reveals Files without a split',
+  );
   await assertDraft();
+  await launcher.click();
+  await chat.getByRole('button', { name: 'Expand chat beside this page' }).click();
+  assert.equal(await frame.getAttribute('data-layout'), 'split', 'splitting is an explicit action');
 
   // Resizing the actual AppShell must preserve the same chat/composer owners.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -239,8 +249,7 @@ try {
   const fileWorkspace = page.locator('[data-document-workspace]');
   const documentText = fileWorkspace.getByRole('textbox', { name: 'Document text', exact: true });
   await documentText.waitFor();
-  const fileAssistant = fileWorkspace.getByRole('button', { name: 'Toggle document assistant' });
-  assert.equal(await fileAssistant.getAttribute('aria-pressed'), 'false');
+  const fileAssistant = fileWorkspace.getByRole('button', { name: 'Edit with Albatross' });
   assert.ok((await documentText.boundingBox()).width >= 350, 'split keeps a readable document canvas');
   await page.waitForTimeout(1000);
   assert.equal(
@@ -251,14 +260,22 @@ try {
     'opening a document must not create an unsolicited edit',
   );
   await fileAssistant.click();
-  const filePanel = fileWorkspace.getByRole('complementary', { name: 'Document assistant', exact: true });
-  await filePanel.waitFor();
-  assert.equal(await fileWorkspace.locator('fieldset').first().getAttribute('inert'), '');
-  assert.equal(await filePanel.evaluate((element) => getComputedStyle(element).position), 'absolute');
-  await page.keyboard.press('Escape');
-  await filePanel.waitFor({ state: 'detached' });
-  assert.equal(await fileAssistant.evaluate((element) => document.activeElement === element), true);
+  assert.equal(
+    await fileWorkspace.getByRole('complementary', { name: 'Document assistant', exact: true }).count(),
+    0,
+  );
+  assert.equal(await fileWorkspace.locator('fieldset').first().getAttribute('inert'), null);
+  assert.equal(await frame.getAttribute('data-layout'), 'split');
+  assert.equal(await chat.locator('[data-assistant-document-context]').innerText(), 'Synthetic plan');
   assert.equal(await textarea.inputValue(), 'Keep this draft while opening a file');
+  await textarea.fill('Tighten this document introduction');
+  await chat.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.waitForFunction(() => window.workspacePreview.requests.length >= 2);
+  const requestContext = await page.evaluate(() => window.workspacePreview.requests.at(-1).body.extraSystem);
+  assert.ok(requestContext.includes('fixture-document'));
+  assert.ok(requestContext.includes('document_get'));
+  assert.ok(requestContext.includes('Current workspace page: files'));
+  await page.evaluate(() => window.workspacePreview.finishAgent());
   await snapshot('file-edits-beside-chat');
   assert.deepEqual(errors, []);
   console.log(
@@ -275,7 +292,7 @@ try {
         'live stream survives presentation/breakpoint/close changes',
         'native-shaped dynamic draft tool renders without navigation or sending',
         'file edit review card opens Files beside chat without losing the conversation or draft',
-        'narrow Files pane uses its own width, with an inert overlay and restored focus',
+        'Files uses the main chat with document context and an editable canvas',
         'opening rich text does not silently save a revision',
       ],
     }),

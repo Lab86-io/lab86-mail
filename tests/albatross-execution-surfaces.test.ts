@@ -187,7 +187,7 @@ describe('the execution loop owns the visible product surfaces', () => {
     expect(detail).toContain('<LapsePrompt');
     // Missed moves live only in the Work detail. The calendar grid has no banner.
     expect(calendar).not.toContain('LapsePrompt');
-    expect(calendar).toContain('<SyncLine');
+    expect(calendar).toContain('<SyncStatus');
     expect(calendar).toContain('<SyncStatus');
     expect(existsSync(join(repoRoot, 'components/albatross/IntentPip.tsx'))).toBe(false);
   });

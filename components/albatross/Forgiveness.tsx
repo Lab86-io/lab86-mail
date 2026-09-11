@@ -126,7 +126,7 @@ export function LapsePrompt({
             aria-pressed={reason === item.kind}
             onClick={() => setReason(reason === item.kind ? null : item.kind)}
             className={cn(
-              'rounded-full border px-3 py-1 text-[12px] transition-colors',
+              'rounded-ui border px-3 py-1 text-[12px] transition-colors',
               reason === item.kind
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                 : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]',

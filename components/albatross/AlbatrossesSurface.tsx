@@ -249,7 +249,7 @@ function FilterPill({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'rounded-full px-3 py-1 text-[12.5px] transition-colors',
+        'rounded-ui px-3 py-1 text-[12.5px] transition-colors',
         active
           ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
@@ -293,7 +293,7 @@ function EmptyState({ filter }: { filter: ListFilter }) {
       <button
         type="button"
         onClick={() => setCaptureOpen(true)}
-        className="mt-5 rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+        className="mt-5 rounded-ui bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
       >
         Get this off my mind
       </button>

@@ -1,9 +1,10 @@
 'use client';
 
-import { MessageCircle, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { buttonVariants } from '@/components/ui/button';
+import { LetterSwap } from '@/components/ui/letter-swap';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import './assistant-workspace.css';
@@ -116,12 +117,14 @@ export function AssistantLauncher({
   shortcut,
   onOpen,
   context,
+  phrases = ASSISTANT_LAUNCHER_PHRASES,
   rotateMs = ASSISTANT_LAUNCHER_ROTATE_MS,
 }: {
   placement: 'stacked' | 'corner';
   shortcut: string;
-  onOpen: () => void;
+  onOpen: (phrase: string) => void;
   context?: string;
+  phrases?: readonly string[];
   rotateMs?: number;
 }) {
   const reduceMotion = usePrefersReducedMotion();
@@ -130,23 +133,29 @@ export function AssistantLauncher({
   const [focused, setFocused] = useState(false);
   const [phraseIndex, setPhraseIndex] = useState(0);
   const idle = documentVisible && !hovered && !focused;
-  const rotating = idle && !reduceMotion && ASSISTANT_LAUNCHER_PHRASES.length > 1;
+  const rotating = idle && !reduceMotion && phrases.length > 1;
+
+  // A new page starts with its primary invitation without remounting the focused button.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: phrase identity intentionally resets the rotation.
+  useEffect(() => setPhraseIndex(0), [phrases]);
 
   useEffect(() => {
     if (!rotating) return;
     const timer = window.setInterval(
       () => {
-        setPhraseIndex((index) => nextLauncherPhrase(index, { idle: true, reduceMotion: false }));
+        setPhraseIndex((index) =>
+          nextLauncherPhrase(index, { idle: true, reduceMotion: false, count: phrases.length }),
+        );
       },
       Math.max(250, rotateMs),
     );
     return () => window.clearInterval(timer);
-  }, [rotating, rotateMs]);
+  }, [rotating, rotateMs, phrases.length]);
 
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => onOpen(phrases[phraseIndex % phrases.length])}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
@@ -160,22 +169,9 @@ export function AssistantLauncher({
       data-phrase={phraseIndex}
       className="assistant-launcher"
     >
-      <span className="assistant-launcher__mark" aria-hidden>
-        <MessageCircle className="size-4" strokeWidth={1.75} />
-      </span>
       <span className="assistant-launcher__copy" aria-hidden>
         <span className="assistant-launcher__eyebrow">{context || 'Ask Albatross'}</span>
-        <span className="assistant-launcher__phrases">
-          {ASSISTANT_LAUNCHER_PHRASES.map((phrase, index) => (
-            <span
-              key={phrase}
-              className="assistant-launcher__phrase"
-              data-active={index === phraseIndex ? 'true' : 'false'}
-            >
-              {phrase}
-            </span>
-          ))}
-        </span>
+        <LetterSwap phrases={phrases} index={phraseIndex % phrases.length} reduceMotion={reduceMotion} />
       </span>
       <kbd className="control-key assistant-launcher__key" aria-hidden>
         {shortcut}

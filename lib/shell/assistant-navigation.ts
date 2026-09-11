@@ -9,11 +9,14 @@ export function assistantAfterPageNavigation(
   viewport: { mobile?: boolean; availableWidth?: number } = {},
 ): Partial<AssistantState> {
   if (!state.aiBarOpen) return {};
+  // A full Chat destination ends when the user chooses another page.
+  // Only an explicitly selected split can remain alongside navigation.
+  if (state.assistantPresentation === 'full') return { aiBarOpen: false, assistantPresentation: 'corner' };
   // A split needs the same 280px page + 6px seam + 360px chat as the frame.
   if (viewport.mobile || (viewport.availableWidth !== undefined && viewport.availableWidth < 646)) {
     return { aiBarOpen: false };
   }
-  return state.assistantPresentation === 'full' ? { assistantPresentation: 'split' } : {};
+  return {};
 }
 
 export function pageNavigationAssistantState(state: AssistantState): Partial<AssistantState> {
