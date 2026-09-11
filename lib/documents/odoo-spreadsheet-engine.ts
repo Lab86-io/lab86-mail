@@ -67,7 +67,7 @@ export const SPREADSHEET_CHART_SCRIPTS = [
   'chart-treemap.js',
 ];
 let chartLoading: Promise<void> | null = null;
-function loadChartLibraries(): Promise<void> {
+export function loadChartLibraries(): Promise<void> {
   chartLoading ??= (async () => {
     // UMD add-ons register against Chart, and the date adapter requires Luxon.
     for (const filename of SPREADSHEET_CHART_SCRIPTS) {
