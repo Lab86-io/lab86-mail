@@ -91,6 +91,24 @@ export interface WorkLogHeader {
   failed: number;
 }
 
+/** A stopped or disconnected turn cannot leave its unfinished tools spinning. */
+export function settleWorkLogRows(rows: WorkLogRow[], finished: boolean): WorkLogRow[] {
+  if (!finished) return rows;
+  return rows.map((row) =>
+    row.state === 'running'
+      ? {
+          ...row,
+          state: 'failed',
+          part: {
+            ...row.part,
+            state: 'output-error',
+            errorText: row.part.errorText || 'This step ended before a result was received.',
+          },
+        }
+      : row,
+  );
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }

@@ -1115,13 +1115,21 @@ final class AssistantChatModel {
         }
     }
 
+    /// Transcript timestamps are epoch milliseconds, independent of their magnitude.
+    private static func transcriptTimestamp(_ value: JSONValue?) -> Date? {
+        if let milliseconds = value?.doubleValue {
+            guard milliseconds.isFinite else { return nil }
+            return Date(timeIntervalSince1970: milliseconds / 1_000)
+        }
+        return value?.stringValue.flatMap(CalendarDateParser.date(fromString:))
+    }
+
     static func message(from json: JSONValue) -> AssistantChatMessage? {
         guard let id = json["id"]?.stringValue,
               let roleValue = json["role"]?.stringValue,
               let role = AssistantChatMessage.Role(rawValue: roleValue) else { return nil }
         var parts: [AssistantChatPart] = []
         var sources: [AssistantSourceLink] = []
-    var endedTextIDs: Set<String> = []
         for (offset, part) in (json["parts"]?.arrayValue ?? []).enumerated() {
             let type = part["type"]?.stringValue ?? ""
             switch type {
@@ -1136,8 +1144,8 @@ final class AssistantChatModel {
                 guard let text = (part["text"] ?? part["reasoning"])?.stringValue?.nilIfBlank else { continue }
                 parts.append(.reasoning(AssistantReasoningPart(
                     id: "\(id)-reasoning-\(offset)", text: text,
-                    startedAt: CalendarDateParser.date(part["startedAt"]),
-                    endedAt: CalendarDateParser.date(part["endedAt"]) ?? .distantPast
+                    startedAt: transcriptTimestamp(part["startedAt"]),
+                    endedAt: transcriptTimestamp(part["endedAt"]) ?? .distantPast
                 )))
             case "data-tool-shape":
                 guard let callID = part["id"]?.stringValue, let data = part["data"],
@@ -1209,8 +1217,8 @@ final class AssistantChatModel {
         }
         var row = AssistantToolRow(
             callID: callID, toolName: toolName, input: part["input"],
-            startedAt: CalendarDateParser.date(part["startedAt"]),
-            endedAt: CalendarDateParser.date(part["endedAt"])
+            startedAt: transcriptTimestamp(part["startedAt"]),
+            endedAt: transcriptTimestamp(part["endedAt"])
         )
         switch state {
         case "output-available":

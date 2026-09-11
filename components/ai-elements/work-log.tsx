@@ -12,7 +12,12 @@
 import type { ReactNode } from 'react';
 import { memo, useEffect, useRef, useState } from 'react';
 import { toolActivityLine } from '@/lib/albatross/teach-ui';
-import { shouldCollapseWorkLog, type WorkLogRow, workLogHeader } from '@/lib/chat/work-log';
+import {
+  settleWorkLogRows,
+  shouldCollapseWorkLog,
+  type WorkLogRow,
+  workLogHeader,
+} from '@/lib/chat/work-log';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -36,7 +41,8 @@ export interface WorkLogProps {
   now?: () => number;
 }
 
-function WorkLogComponent({ rows, finished, renderRich, now = Date.now }: WorkLogProps) {
+function WorkLogComponent({ rows: inputRows, finished, renderRich, now = Date.now }: WorkLogProps) {
+  const rows = settleWorkLogRows(inputRows, finished);
   // Timing: a block that mounts mid-turn measures itself; a block restored
   // from history has no start and shows no duration.
   const [startedAt] = useState<number | null>(() => (finished ? null : now()));

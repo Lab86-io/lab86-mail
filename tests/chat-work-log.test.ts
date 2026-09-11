@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   groupMessageParts,
   reasoningLabel,
+  settleWorkLogRows,
   shouldCollapseWorkLog,
   toolPartSignature,
   workLogHeader,
@@ -68,5 +69,17 @@ describe('chat work log', () => {
     expect(reasoningLabel(true, 2500)).toBe('Thought');
     expect(reasoningLabel(false, 3100)).toBe('Thought for 3s');
     expect(reasoningLabel(false)).toBe('Thought');
+  });
+
+  test('interrupted turns stop their indicators and retain the unfinished step detail', () => {
+    const segment = groupMessageParts([tool('a'), tool('b'), tool('c', 'input-available')])[0];
+    if (segment.kind !== 'work-log') throw new Error('Expected work log');
+    expect(settleWorkLogRows(segment.rows, false)).toBe(segment.rows);
+    const settled = settleWorkLogRows(segment.rows, true);
+    expect(settled[0]).toBe(segment.rows[0]);
+    expect(settled[2].part).toMatchObject({ state: 'output-error', errorText: expect.any(String) });
+    expect(workLogHeader(settled, true)).toMatchObject({ text: '1 step failed', running: false });
+    expect(shouldCollapseWorkLog(settled, true)).toBe(false);
+    expect(segment.rows[2].state).toBe('running');
   });
 });

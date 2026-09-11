@@ -65,6 +65,29 @@ final class AssistantChatRevampTests: XCTestCase {
         XCTAssertFalse(model.transcriptJSON().arrayValue?.first?["parts"]?.arrayValue?.contains { $0["type"]?.stringValue == "data-tool-shape" } ?? true)
     }
 
+    func testTranscriptMillisecondsRestoreNearEpochAndAtCurrentDates() throws {
+        for epoch in [0.0, 1_753_000_000.0] {
+            let model = model()
+            let reply = model.appendAssistantReply()
+            model.clock = { Date(timeIntervalSince1970: epoch) }
+            model.apply(event: event("reasoning-start", ["id": .string("r")]), to: reply)
+            model.apply(event: event("reasoning-delta", ["id": .string("r"), "delta": .string("Check")]), to: reply)
+            model.apply(event: event("tool-input-start", ["toolCallId": .string("call"), "toolName": .string("search_threads")]), to: reply)
+            model.clock = { Date(timeIntervalSince1970: epoch + 3) }
+            model.apply(event: event("reasoning-end", ["id": .string("r")]), to: reply)
+            model.apply(event: event("tool-output-available", ["toolCallId": .string("call"), "output": .object([:])]), to: reply)
+            let saved = try XCTUnwrap(model.transcriptJSON(includeDisplayParts: true).arrayValue?.first)
+            let restored = try XCTUnwrap(AssistantChatModel.message(from: saved))
+            guard case .reasoning(let reasoning)? = restored.parts.first else { return XCTFail("Missing reasoning") }
+            XCTAssertEqual(reasoning.startedAt, Date(timeIntervalSince1970: epoch))
+            XCTAssertEqual(reasoning.endedAt, Date(timeIntervalSince1970: epoch + 3))
+            XCTAssertEqual(reasoning.label, "Thought for 3s")
+            XCTAssertEqual(restored.toolRows.first?.startedAt, Date(timeIntervalSince1970: epoch))
+            XCTAssertEqual(restored.toolRows.first?.endedAt, Date(timeIntervalSince1970: epoch + 3))
+            XCTAssertEqual(AssistantWorkLog.duration(rows: restored.toolRows), 3)
+        }
+    }
+
     func testPendingQuestionsAndApprovalSurviveHistory() throws {
         let model = model()
         let reply = model.appendAssistantReply()
