@@ -17,6 +17,7 @@ struct DocumentEditorView: View {
     @State private var showsAI = false
     @State private var shareURL: URL?
     @State private var errorMessage: String?
+    @State private var loadFailed = false
 
     let documentID: String
 
@@ -24,6 +25,15 @@ struct DocumentEditorView: View {
         Group {
             if let draft {
                 editor(draft)
+            } else if loadFailed {
+                ContentUnavailableView {
+                    Label("Couldn’t open this file", systemImage: "doc.badge.ellipsis")
+                } description: {
+                    Text(errorMessage ?? "Try again, or open the full editor in your browser.")
+                } actions: {
+                    Button("Try again") { Task { await load() } }
+                    if let url = webEditorURL { Link("Open web editor", destination: url) }
+                }
             } else {
                 ProgressView("Opening file…")
             }
@@ -68,17 +78,22 @@ struct DocumentEditorView: View {
                 } label: {
                     Label("Google", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
                 }
-                .disabled(isPublishing || isSaving)
+                .disabled(isPublishing || isSaving || draft?.model.requiresWebEditor == true)
                 Button {
                     showsAI = true
                 } label: {
                     Label("Albatross", systemImage: "sparkles")
+                }
+                .disabled(draft?.model.requiresWebEditor == true)
+                if let url = webEditorURL {
+                    Link(destination: url) { Label("Open web editor", systemImage: "arrow.up.right.square") }
                 }
                 Button {
                     Task { await export() }
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
+                .disabled(draft?.model.requiresWebEditor == true)
             }
         }
         .task(id: documentID) {
@@ -157,6 +172,8 @@ struct DocumentEditorView: View {
                 NativeSheetEditor(activeSheetID: activeSheetID, sheets: sheets) { active, next in
                     updateModel(.sheet(activeSheetID: active, sheets: next))
                 }
+            case .workbook(let snapshot):
+                NativeWorkbookPreview(snapshot: snapshot, webEditorURL: webEditorURL)
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) { active, next in
                     updateModel(.deck(activeSlideID: active, slides: next))
@@ -173,16 +190,22 @@ struct DocumentEditorView: View {
         }
     }
 
+    private var webEditorURL: URL? {
+        AlbatrossDocumentWebLink.url(baseURL: environment.configuration.apiBaseURL, documentID: documentID)
+    }
+
     private func updateModel(_ model: AlbatrossDocumentModel) {
         draft?.model = model
     }
 
     private func load() async {
+        loadFailed = false
         do {
             let document = try await environment.documents.fetchDocument(id: documentID)
             draft = document
             persisted = document
         } catch {
+            loadFailed = true
             errorMessage = error.localizedDescription
         }
     }
@@ -428,6 +451,8 @@ struct GoogleDocumentEditorView: View {
                 NativeSheetEditor(activeSheetID: activeSheetID, sheets: sheets) {
                     updateModel(.sheet(activeSheetID: $0, sheets: $1))
                 }
+            case .workbook(let snapshot):
+                NativeWorkbookPreview(snapshot: snapshot, webEditorURL: document.webURL)
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) {
                     updateModel(.deck(activeSlideID: $0, slides: $1))
@@ -620,18 +645,28 @@ private struct NativeDocEditor: View {
                                     }
                                     Spacer()
                                 }
-                                GrowingTextEditor(
-                                    text: Binding(
-                                        get: { block.text },
-                                        set: { value in update(index) { $0.text = value } }
-                                    ),
-                                    font: blockUIFont(block),
-                                    minimumHeight: block.type == "heading" ? 54 : 44
-                                )
-                                .padding(.horizontal, block.type == "quote" ? 10 : 0)
-                                .overlay(alignment: .leading) {
-                                    if block.type == "quote" {
-                                        Rectangle().fill(.secondary).frame(width: 2)
+                                if let runs = block.runs, !runs.isEmpty {
+                                    Text(richText(runs))
+                                        .font(.body)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                    Text("Formatted block · edit in the web editor")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    GrowingTextEditor(
+                                        text: Binding(
+                                            get: { block.text },
+                                            set: { value in update(index) { $0.text = value } }
+                                        ),
+                                        font: blockUIFont(block),
+                                        minimumHeight: block.type == "heading" ? 54 : 44
+                                    )
+                                    .padding(.horizontal, block.type == "quote" ? 10 : 0)
+                                    .overlay(alignment: .leading) {
+                                        if block.type == "quote" {
+                                            Rectangle().fill(.secondary).frame(width: 2)
+                                        }
                                     }
                                 }
                             }
@@ -675,6 +710,22 @@ private struct NativeDocEditor: View {
             usedLines += estimatedLines
         }
         if !page.isEmpty || result.isEmpty { result.append(page) }
+        return result
+    }
+
+    private func richText(_ runs: [AlbatrossDocRun]) -> AttributedString {
+        var result = AttributedString()
+        for run in runs {
+            var piece = AttributedString(run.text)
+            var font = Font.body
+            if run.bold == true { font = font.bold() }
+            if run.italic == true { font = font.italic() }
+            if run.code == true { font = font.monospaced() }
+            piece.font = font
+            if run.underline == true { piece.underlineStyle = .single }
+            if run.strike == true { piece.strikethroughStyle = .single }
+            result += piece
+        }
         return result
     }
 

@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
+import * as hosted from '../lib/hosted/convex';
 import type { NarrativeEntry } from '../lib/narrative/core';
+import * as narrative from '../lib/narrative/service';
 import {
   evidenceComposition,
   hydrateWorkspace,
@@ -63,6 +66,53 @@ function harness() {
 }
 beforeEach(clearWorkspaceCache);
 describe('Today workspace composition and trust boundary', () => {
+  test('live work hydration preserves its shape and safely defaults unknown shapes', async () => {
+    const enabled = spyOn(narrative, 'narrativeEnabled').mockReturnValue(true);
+    const read = spyOn(narrative, 'readNarrative').mockResolvedValue({
+      entry: source('brief', { level: 'day', text: 'Atlas launch needs QA.' }),
+      sources: [source('one')],
+      revision: 3,
+    });
+    let detail: any = {
+      work: { title: 'Launch Atlas', workState: 'active', shape: 'list' },
+      execution: { currentStep: { title: 'Review QA' } },
+    };
+    const query = spyOn(hosted, 'convexQuery').mockImplementation(async (fn, args) => {
+      expect(args.userId).toBe('owner');
+      if (getFunctionName(fn) === 'narrative:brief') return { enabled: true, entry: { _id: 'brief' } };
+      expect(getFunctionName(fn)).toBe('albatrossWorkV2:workDetail');
+      expect(args.workId).toBe('owned');
+      return detail;
+    });
+    try {
+      const result = await loadNarrativeWorkspace('owner', now);
+      expect(result.threads[0].work).toMatchObject({
+        id: 'owned',
+        title: 'Launch Atlas',
+        state: 'active',
+        shape: 'list',
+        guided: true,
+        nextStep: 'Review QA',
+      });
+      clearWorkspaceCache();
+      detail = { work: { rawText: 'Legacy work', status: 'open', shape: 'unknown' } };
+      const legacy = await loadNarrativeWorkspace('owner', now);
+      expect(legacy.threads[0].work).toMatchObject({
+        title: 'Legacy work',
+        state: 'open',
+        shape: 'quick',
+        guided: false,
+      });
+      clearWorkspaceCache();
+      detail = null;
+      expect((await loadNarrativeWorkspace('owner', now)).threads[0].work).toBeUndefined();
+    } finally {
+      query.mockRestore();
+      read.mockRestore();
+      enabled.mockRestore();
+      clearWorkspaceCache();
+    }
+  });
   test('model selects bounded evidence, never executable UI or arbitrary IDs', () => {
     expect(() => workspaceCompositionSchema.parse({ threads: [] })).toThrow();
     expect(() =>

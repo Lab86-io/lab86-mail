@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
 import { safeExternalUrl } from '@/lib/shared/url';
 import { cleanNarrativeText, type NarrativeEntry } from './core';
 
@@ -25,6 +26,7 @@ export const workspaceCompositionSchema = z
   .strict();
 export type WorkspaceComposition = z.infer<typeof workspaceCompositionSchema>;
 export interface WorkspaceWork {
+  shape?: WorkShape;
   id: string;
   title: string;
   state: string;
@@ -91,6 +93,7 @@ export const workspaceResponseSchema = z.object({
             title: z.string(),
             state: z.string(),
             guided: z.boolean(),
+            shape: z.enum(WORK_SHAPES).optional(),
             nextStep: z.string().optional(),
           })
           .optional(),

@@ -7,11 +7,14 @@ import {
 import { after, type NextRequest } from 'next/server';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
+import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
 import { reconcileWorkTurn } from '@/lib/albatross/work-turn-reconcile';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { captureNarrativeTurn } from '@/lib/narrative/service';
+import { type BriefResponseRef, briefResponseRefSchema } from '@/lib/brief/response';
+import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief/response-context';
+import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 import { withDeadline } from '@/lib/shared/deadline';
 
@@ -27,6 +30,7 @@ const MAX_COMPACT_TEXT_CHARS = 12_000;
 interface AgentRequestBody {
   messages: UIMessage[];
   extraSystem?: string;
+  briefResponse?: BriefResponseRef;
   timezone?: string;
   areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
   contextAttachments?: Array<{ kind: 'work'; id: string }>;
@@ -100,10 +104,10 @@ function prepareAgentMessages(input: UIMessage[]): {
     return compactOldMessage(message);
   });
 
-  while (
-    JSON.stringify(prepared).length > MAX_MODEL_MESSAGE_BYTES &&
-    prepared.length > FULL_RECENT_MESSAGES
-  ) {
+  // Size each message once; drop from the front until the transcript fits.
+  let totalBytes = JSON.stringify(prepared).length;
+  while (totalBytes > MAX_MODEL_MESSAGE_BYTES && prepared.length > FULL_RECENT_MESSAGES) {
+    totalBytes -= JSON.stringify(prepared[0]).length + 1;
     prepared = prepared.slice(1);
     omitted += 1;
   }
@@ -156,62 +160,69 @@ export async function POST(req: NextRequest) {
   }
   try {
     const user = await requireCurrentUser();
-    await enforceUserRateLimit({
-      userId: user.userId,
-      key: 'agent',
-      limit: 60,
-      windowMs: 60_000,
-    });
     const prepared = prepareAgentMessages(body.messages);
     const compactionNote =
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
         : '';
-    const areaDiscoveryContext = body.areaDiscovery
-      ? await readAreaDiscoveryContext({
-          userId: user.userId,
-          areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
-        })
-          .then((result) => result.systemContext)
-          .catch((error) => {
-            console.warn('[agent-route] area discovery context failed', errorForLog(error));
-            return '';
-          })
-      : '';
-    const contextAttachments = normalizeContextAttachments(body.contextAttachments);
-    const attachedContexts = await Promise.all(
-      contextAttachments.map((attachment) =>
-        readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
-          (result) => result.systemContext,
-        ),
-      ),
-    );
-    const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
+    const reference =
+      body.briefResponse === undefined ? undefined : briefResponseRefSchema.safeParse(body.briefResponse);
+    if (reference && !reference.success)
+      throw new InvalidContextAttachmentError('Invalid brief response reference.');
+    const briefContext = reference?.success
+      ? await readBriefResponseContext(user.userId, reference.data, req.signal)
+      : null;
+    const contextAttachments = briefContext
+      ? briefContext.workId
+        ? [{ kind: 'work' as const, id: briefContext.workId }]
+        : []
+      : normalizeContextAttachments(body.contextAttachments);
     const narrativeTopics = [
       ...contextAttachments.map((item) => `work:${item.id}`),
-      ...(areaDiscoveryContext && body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
+      ...(body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
         ? [`area:${body.areaDiscovery.areaId}`]
         : []),
     ];
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
-    const memoryId = latestUser
-      ? await withDeadline(
-          captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
-          3000,
-          'Narrative turn capture',
-        ).catch(() => null)
-      : null;
+    // Every pre-flight read is independent of the others, so they run together:
+    // the model call waits for the slowest one, not for the sum.
+    const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
+      enforceUserRateLimit({
+        userId: user.userId,
+        key: 'agent',
+        limit: 60,
+        windowMs: 60_000,
+      }).then(() =>
+        !briefContext && body.areaDiscovery
+          ? readAreaDiscoveryContext({
+              userId: user.userId,
+              areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+            })
+              .then((result) => result.systemContext)
+              .catch((error) => {
+                console.warn('[agent-route] area discovery context failed', errorForLog(error));
+                return '';
+              })
+          : '',
+      ),
+      Promise.all(
+        contextAttachments.map((attachment) =>
+          readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
+            (result) => result.systemContext,
+          ),
+        ),
+      ),
+      convertToModelMessages(prepared.messages).then(sanitizeToolPairs),
+    ]);
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
         [
           body.extraSystem,
+          briefContext?.systemContext,
           areaDiscoveryContext,
           ...attachedContexts,
           compactionNote,
-          memoryId
-            ? `The current user statement was recorded as narrative observation ${memoryId}. You may reference it when recording a meaningful change; it is a user report, not independent proof.`
-            : '',
         ]
           .filter(Boolean)
           .join('\n\n') || undefined,
@@ -220,7 +231,20 @@ export async function POST(req: NextRequest) {
       userName: user.name,
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
       narrativeTopics,
+      toolGroups: initialToolGroups({
+        hasWorkContext: contextAttachments.some((attachment) => attachment.kind === 'work'),
+        hasAreaContext: Boolean(body.areaDiscovery),
+        narrativeEnabled: narrativeEnabled(user.userId),
+      }),
       signal: req.signal,
+    });
+    after(async () => {
+      if (!latestUser) return;
+      await withDeadline(
+        captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
+        3000,
+        'Narrative turn capture',
+      ).catch(() => null);
     });
     // The loop that always closes: after every Work-scoped turn, the server
     // reconciles the turn back into the Work document — chat-created artifacts,
@@ -232,29 +256,32 @@ export async function POST(req: NextRequest) {
     const workAttachments = contextAttachments.filter((attachment) => attachment.kind === 'work');
     if (workAttachments.length === 1) {
       const workId = workAttachments[0].id;
-      after(() =>
-        reconcileWorkTurn({
+      after(async () => {
+        const steps = await stream.steps;
+        await reconcileWorkTurn({
           userId: user.userId,
           userEmail: user.email,
           userName: user.name,
           workId,
           timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-          steps: Array.isArray(stream.result?.steps) ? stream.result.steps : [],
+          steps: Array.isArray(steps) ? steps : [],
           uiMessages: prepared.messages,
-        }).then(() => undefined),
-      );
+        });
+      });
     }
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {
     if (err instanceof RateLimitError) return rateLimitResponse(err);
     const status =
-      err instanceof AuthRequiredError
-        ? 401
-        : err instanceof InvalidContextAttachmentError
-          ? 400
-          : err instanceof WorkContextNotFoundError
-            ? 404
-            : 500;
+      err instanceof BriefResponseContextError
+        ? err.status
+        : err instanceof AuthRequiredError
+          ? 401
+          : err instanceof InvalidContextAttachmentError
+            ? 400
+            : err instanceof WorkContextNotFoundError
+              ? 404
+              : 500;
     console.error('[agent-route]', errorForLog(err));
     if (status === 500) {
       return agentErrorStreamResponse(err?.message || 'agent failed');

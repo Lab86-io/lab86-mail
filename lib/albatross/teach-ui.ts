@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 export type SettingsTabId =
+  | 'appearance'
   | 'mailboxes'
   | 'connections'
   | 'areas'
@@ -19,6 +20,7 @@ export type SettingsTabId =
   | 'account';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
+  { id: 'appearance', label: 'Appearance' },
   { id: 'mailboxes', label: 'Mailboxes' },
   { id: 'connections', label: 'Connections' },
   { id: 'areas', label: 'Areas' },
@@ -266,6 +268,14 @@ function searchSentences(what: string, failed: string): SentenceBuilder {
 // so tests can prove every sentence obeys the style rules.
 export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   // --- Teach / areas ---
+  enable_tools: (args) => {
+    const groups = Array.isArray(args.groups) ? args.groups.map(String).join(', ') : '';
+    return {
+      running: groups ? `Loading ${groups} tools` : 'Loading more tools',
+      done: groups ? `Loaded ${groups} tools` : 'Loaded more tools',
+      failed: 'Failed to load more tools',
+    };
+  },
   corpus_search: searchSentences('your mail', 'Mail search failed'),
   corpus_count: fixed('Counting matching mail', 'Counted the matching mail', 'Mail count failed'),
   thread_timeline: fixed(
@@ -495,6 +505,16 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
   document_list: fixed('Listing your files', 'Listed your files', 'Listing files failed'),
   document_get: fixed('Opening the file', 'Opened the file', 'Opening the file failed'),
+  document_edit: (_args, out) => ({
+    running: 'Preparing file edits',
+    done:
+      out.status === 'applied'
+        ? 'Saved a new file revision'
+        : out.status === 'proposed'
+          ? 'Added file edits for review — not yet applied'
+          : 'No file edits were applied',
+    failed: 'Applying file edits failed',
+  }),
   document_suggest_changes: fixed(
     'Preparing file suggestions',
     'Added suggestions for review',
@@ -751,6 +771,25 @@ function failureDetail(result: unknown, errorText: string | undefined): string {
 // The one activity sentence for a tool call, in every chat surface.
 // `state` accepts the raw AI SDK part state ('input-streaming',
 // 'input-available', 'output-available', 'output-error').
+/**
+ * The three sentences for one tool call. The server ships these with each
+ * tool shape so native clients read the same grammar the web renders.
+ */
+export function toolSentences(
+  toolName: string,
+  args: unknown,
+  result?: unknown,
+): { running: string; done: string; failed: string } {
+  const name = str(toolName) || 'tool';
+  try {
+    const builder = TOOL_SENTENCES[name];
+    return builder ? builder(asRecord(args), asRecord(result)) : genericSentences(name, asRecord(result));
+  } catch {
+    // Grammar must never take the chat down over garbage args/output.
+    return genericSentences(name, {});
+  }
+}
+
 export function toolActivityLine(
   toolName: string,
   args: unknown,
@@ -759,17 +798,7 @@ export function toolActivityLine(
   errorText?: string,
 ): ToolActivity {
   const normalized = toolActivityState(state, result);
-  const name = str(toolName) || 'tool';
-  let sentences: ToolSentences;
-  try {
-    const builder = TOOL_SENTENCES[name];
-    sentences = builder
-      ? builder(asRecord(args), asRecord(result))
-      : genericSentences(name, asRecord(result));
-  } catch {
-    // Grammar must never take the chat down over garbage args/output.
-    sentences = genericSentences(name, {});
-  }
+  const sentences = toolSentences(toolName, args, result);
   if (normalized === 'running') return { state: 'running', text: `${sentences.running}…` };
   if (normalized === 'done') return { state: 'done', text: sentences.done };
   const detail = failureDetail(result, errorText);

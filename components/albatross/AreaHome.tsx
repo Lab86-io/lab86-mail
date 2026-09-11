@@ -373,7 +373,7 @@ function AreaWorkButton({ onOpen, compact = false }: { onOpen: () => void; compa
       type="button"
       onClick={onOpen}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45',
+        'inline-flex items-center gap-1.5 rounded-ui px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45',
         compact && 'px-2 py-0.5 text-[10.5px]',
       )}
     >
@@ -687,7 +687,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 <button
                   type="button"
                   onClick={() => setSelectedAreaId(null)}
-                  className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
+                  className="rounded-ui px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]"
                 >
                   Areas
                 </button>
@@ -704,7 +704,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                     setChatScope({ kind: 'area', areaId: home.area._id });
                     setAiBarOpen(true);
                   }}
-                  className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)]"
+                  className="rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)]"
                 >
                   Discuss
                 </button>
@@ -712,7 +712,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                   type="button"
                   onClick={() => void refreshArtifact()}
                   disabled={artifactRefreshing || home.livingBrief.status === 'generating'}
-                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
+                  className="inline-flex items-center gap-1 rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                 >
                   <RefreshCw
                     className={cn('size-3', artifactRefreshing && 'motion-safe:animate-spin')}
@@ -1064,7 +1064,7 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
           <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <InputGroup className="relative flex-1 overflow-hidden rounded-xl border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)] focus-within:border-[var(--color-accent)] focus-within:ring-[3px] focus-within:ring-[var(--color-accent)]/20">
+              <InputGroup className="flex-1">
                 <InputGroupAddon>
                   <Search className="size-4 text-[var(--color-text-faint)]" aria-hidden />
                 </InputGroupAddon>
@@ -1667,7 +1667,7 @@ function AreaArtifactCanvas({
           <button
             type="button"
             onClick={onAllAreas}
-            className="rounded-full px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            className="rounded-ui px-2 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
           >
             Areas
           </button>
@@ -1693,7 +1693,7 @@ function AreaArtifactCanvas({
           <button
             type="button"
             onClick={onDiscuss}
-            className="rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            className="rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
           >
             Discuss
           </button>
@@ -1701,7 +1701,7 @@ function AreaArtifactCanvas({
             type="button"
             onClick={onRefresh}
             disabled={updating}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            className="inline-flex items-center gap-1 rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
             title="Compose a fresh Area edition"
           >
             <RefreshCw className={cn('size-3', updating && 'motion-safe:animate-spin')} aria-hidden />
@@ -1717,7 +1717,7 @@ function AreaArtifactCanvas({
             <button
               type="button"
               onClick={onStructuredFallback}
-              className="sr-only focus:not-sr-only focus:rounded-full focus:px-2.5 focus:py-1 focus:text-[11.5px]"
+              className="sr-only focus:not-sr-only focus:rounded-ui focus:px-2.5 focus:py-1 focus:text-[11.5px]"
             >
               Open structured fallback
             </button>
@@ -1754,7 +1754,7 @@ function AreaArtifactUnavailable({
       <button
         type="button"
         onClick={onAllAreas}
-        className="absolute left-4 top-4 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-3 py-1.5 text-[11.5px] text-[var(--color-text-muted)] shadow-sm backdrop-blur hover:text-[var(--color-text)]"
+        className="absolute left-4 top-4 z-10 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-elevated)]/90 px-3 py-1.5 text-[11.5px] text-[var(--color-text-muted)] shadow-sm backdrop-blur hover:text-[var(--color-text)]"
       >
         Areas
       </button>
@@ -2755,7 +2755,7 @@ function AreaAlbatrosses({
         <button
           type="button"
           onClick={() => onViewChange('brief')}
-          className="rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+          className="rounded-ui px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
         >
           Back to brief &amp; inbox
         </button>
@@ -2772,7 +2772,7 @@ function AreaAlbatrosses({
               <button
                 type="button"
                 onClick={() => setCaptureOpen(true)}
-                className="mt-5 rounded-full bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
+                className="mt-5 rounded-ui bg-[var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[var(--color-accent-foreground)] hover:bg-[var(--color-accent-hover)]"
               >
                 Get this off my mind
               </button>

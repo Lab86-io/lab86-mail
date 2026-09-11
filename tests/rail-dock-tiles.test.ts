@@ -2,17 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-// Collapsed-rail dock tile contract (sidebar.tsx SidebarMenuButton +
-// shine-border.tsx). Two regressions this pins down:
+// Collapsed-rail dock tile contract. Two regressions this pins down:
 //
 // 1. Off-center glyphs: the expanded row's p-2/gap-2 plus the icon-mode
 //    label span (max-w-0 but still a flex item) pushed every glyph left by
 //    half a gap per trailing span. Collapsed tiles must drop padding/gap and
 //    take the span out of flow so the glyph centers in the square.
-// 2. The MagicUI shine border was suppressed for ALL collapsed tiles; it is
-//    the SELECTED indicator — hidden only on inactive tiles, and the
-//    expanded row's accent wash stands down in the dock so exactly one
-//    selected marker exists per tile.
+// 2. Selection must survive collapse. Both modes now use one static fill,
+//    without a traveling border, hover halo, or conflicting transparency.
 
 const read = (rel: string) => readFileSync(path.join(process.cwd(), rel), 'utf8');
 
@@ -47,30 +44,32 @@ describe('collapsed dock tile geometry (sidebar.tsx)', () => {
   test('tile overrides land after the caller className so the dock wins the merge', () => {
     const dockBranch = sidebar.slice(sidebar.indexOf('<DockTile'), sidebar.indexOf('const button ='));
     const callerIndex = dockBranch.indexOf('className,');
-    const overrideIndex = dockBranch.indexOf("'overflow-visible data-[active=true]:bg-transparent");
+    const overrideIndex = dockBranch.indexOf(
+      "'justify-center gap-0 p-0! overflow-visible data-[active=true]:shadow-none",
+    );
     expect(callerIndex).toBeGreaterThan(-1);
     expect(overrideIndex).toBeGreaterThan(callerIndex);
   });
 });
 
-describe('selected = shine, hovered = glow (one indicator per tile)', () => {
+describe('quiet rail selection in both modes', () => {
   const sidebar = read('components/ui/sidebar.tsx');
 
-  test('the shine border is hidden only on INACTIVE tiles, not suppressed wholesale', () => {
-    expect(sidebar).toContain('[&[data-active=false]_[data-slot=shine-border]]:hidden');
-    expect(sidebar).not.toContain("'[&_[data-slot=shine-border]]:hidden'");
+  test('rail tiles explicitly opt out of the dock hover effect', () => {
+    expect(sidebar).toContain('glow={false}');
+    expect(read('components/ui/dock.tsx')).toContain('glow && highlighted');
   });
 
-  test('the expanded accent wash stands down in the dock — the shine is the one selected marker', () => {
-    expect(sidebar).toContain('data-[active=true]:bg-transparent');
-    expect(sidebar).toContain('dark:data-[active=true]:bg-transparent');
+  test('the collapsed tile retains the selected fill, without a lifted shadow', () => {
+    expect(sidebar).not.toContain('data-[active=true]:bg-transparent');
     expect(sidebar).toContain('data-[active=true]:shadow-none');
+    expect(read('app/globals.css')).toContain('.rail-wash .rail-selection[data-active="true"]');
   });
 
-  test('expanded rows still mount the shine for the active view (Rail.tsx unchanged)', () => {
+  test('surfaces and areas use the same static selection treatment', () => {
     const rail = read('components/shell/Rail.tsx');
-    expect(rail).toContain('<ShineBorder');
-    expect(rail).toContain('visiblePrimaryView === view ? (');
+    expect(rail).not.toContain('ShineBorder');
+    expect(rail.match(/className="rail-selection"/g)).toHaveLength(2);
   });
 });
 

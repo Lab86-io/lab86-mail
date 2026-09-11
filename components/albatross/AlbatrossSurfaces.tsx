@@ -940,7 +940,7 @@ function AreaPicker({
           key={area.id}
           type="button"
           onClick={() => onPick(area)}
-          className="rounded-full border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          className="rounded-ui border border-[var(--color-control-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
         >
           {area.name}
         </button>
@@ -949,7 +949,7 @@ function AreaPicker({
         <button
           type="button"
           onClick={onNew}
-          className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-control-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          className="inline-flex items-center gap-1 rounded-ui border border-dashed border-[var(--color-control-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
         >
           <Plus className="size-3" />
           New area
@@ -1682,7 +1682,7 @@ function QuestionRow({
                 type="button"
                 onClick={() => onAnswer(choice)}
                 className={cn(
-                  'rounded-full border px-2.5 py-1 text-[12px] transition-colors',
+                  'rounded-ui border px-2.5 py-1 text-[12px] transition-colors',
                   value === choice
                     ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                     : 'border-[var(--color-control-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -4400,7 +4400,7 @@ function NewAreaForm({
               type="button"
               onClick={() => setKind(option)}
               className={cn(
-                'rounded-full border px-2.5 py-1 text-[12px] transition-colors',
+                'rounded-ui border px-2.5 py-1 text-[12px] transition-colors',
                 kind === option
                   ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                   : 'border-[var(--color-control-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',

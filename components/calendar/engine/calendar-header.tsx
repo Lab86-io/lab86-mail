@@ -1,77 +1,63 @@
 'use client';
 
-import { Plus, ZoomIn, ZoomOut } from 'lucide-react';
-import { motion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { MoreHorizontal, Plus, ZoomIn, ZoomOut } from 'lucide-react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
-import { slideFromLeft, slideFromRight, transition } from '@/components/calendar/engine/animations';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DateNavigator } from '@/components/calendar/engine/date-navigator';
 import { TodayButton } from '@/components/calendar/engine/today-button';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import Views from './view-tabs';
+import './calendar-toolbar.css';
 
-// `status` renders right of the date navigator: the sync sentence.
-export function CalendarHeader({ status }: { status?: ReactNode } = {}) {
+/** One control plane. At narrow pane widths the second row contains a named
+ * view picker and display options; date navigation and creation never move. */
+export function CalendarHeader() {
   const { view, events, hourHeight, setHourHeight } = useCalendar();
-
   return (
-    <div className="flex flex-col gap-4 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
-      <motion.div
-        className="flex items-center gap-3"
-        variants={slideFromLeft}
-        initial="initial"
-        animate="animate"
-        transition={transition}
-      >
-        <TodayButton />
-        <DateNavigator view={view} events={events} />
-        {status ? <div className="ml-1 min-w-0 truncate">{status}</div> : null}
-      </motion.div>
-
-      <motion.div
-        className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-1.5"
-        variants={slideFromRight}
-        initial="initial"
-        animate="animate"
-        transition={transition}
-      >
-        <div className="options flex-wrap flex items-center gap-4 md:gap-2">
-          {view === 'week' || view === 'day' ? (
-            <ButtonGroup>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setHourHeight(hourHeight - 16)}
-                title="Shrink hours"
-                disabled={hourHeight <= 40}
-              >
-                <ZoomOut className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setHourHeight(hourHeight + 16)}
-                title="Grow hours"
-                disabled={hourHeight >= 160}
-              >
-                <ZoomIn className="h-4 w-4" />
-              </Button>
-            </ButtonGroup>
-          ) : null}
-          <Views />
+    <header data-calendar-toolbar className="calendar-toolbar shrink-0 border-b border-[var(--color-border)]">
+      <div className="calendar-toolbar__surface">
+        <div data-calendar-date-controls className="calendar-toolbar__date">
+          <TodayButton />
+          <DateNavigator view={view} events={events} />
         </div>
-
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-1.5">
+        <div className="calendar-toolbar__views">
+          <Views />
+          {view === 'week' || view === 'day' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Calendar display options">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setHourHeight(hourHeight - 16)} disabled={hourHeight <= 40}>
+                  <ZoomOut className="size-4" /> Shrink hours
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => setHourHeight(hourHeight + 16)}
+                  disabled={hourHeight >= 160}
+                >
+                  <ZoomIn className="size-4" /> Grow hours
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+        <div className="calendar-toolbar__create">
           <AddEditEventDialog>
-            <Button>
-              <Plus className="h-4 w-4" />
-              Add Event
+            <Button size="sm" aria-label="Add Event">
+              <Plus className="size-4" />
+              <span>Add</span>
             </Button>
           </AddEditEventDialog>
         </div>
-      </motion.div>
-    </div>
+      </div>
+    </header>
   );
 }

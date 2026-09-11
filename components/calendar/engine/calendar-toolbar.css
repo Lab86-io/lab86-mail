@@ -1,0 +1,53 @@
+.calendar-toolbar {
+  container: calendar-toolbar / inline-size;
+  padding: 8px;
+}
+.calendar-toolbar__surface {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 8px;
+}
+.calendar-toolbar__date {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.calendar-toolbar__views {
+  grid-area: 2 / 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.calendar-toolbar__create {
+  grid-area: 1 / 2;
+}
+.calendar-view-tabs {
+  display: none;
+}
+.calendar-view-menu {
+  display: block;
+}
+@container calendar-toolbar (min-width: 600px) {
+  .calendar-view-tabs {
+    display: block;
+  }
+  .calendar-view-menu {
+    display: none;
+  }
+}
+@container calendar-toolbar (min-width: 960px) {
+  .calendar-toolbar__surface {
+    grid-template-columns: minmax(260px, 1fr) auto auto;
+    gap: 12px;
+  }
+  .calendar-toolbar__views {
+    grid-area: 1 / 2;
+  }
+  .calendar-toolbar__create {
+    grid-area: 1 / 3;
+  }
+}

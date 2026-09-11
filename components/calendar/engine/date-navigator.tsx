@@ -1,92 +1,49 @@
 import { formatDate } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
-import { useMemo } from 'react';
-import { buttonHover, transition } from '@/components/calendar/engine/animations';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { getEventsCount, navigateDate, rangeText } from '@/components/calendar/engine/helpers';
 import type { IEvent } from '@/components/calendar/engine/interfaces';
 import type { TCalendarView } from '@/components/calendar/engine/types';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 
-interface IProps {
-  view: TCalendarView;
-  events: IEvent[];
-}
-
-const MotionButton = motion.create(Button);
-const MotionBadge = motion.create(Badge);
-
-export function DateNavigator({ view, events }: IProps) {
+export function DateNavigator({ view, events }: { view: TCalendarView; events: IEvent[] }) {
   const { selectedDate, setSelectedDate } = useCalendar();
-
-  const month = formatDate(selectedDate, 'MMMM');
-  const year = selectedDate.getFullYear();
-
-  const eventCount = useMemo(() => getEventsCount(events, selectedDate, view), [events, selectedDate, view]);
-
-  const handlePrevious = () => setSelectedDate(navigateDate(selectedDate, view, 'previous'));
-  const handleNext = () => setSelectedDate(navigateDate(selectedDate, view, 'next'));
-
+  const range = rangeText(view, selectedDate);
   return (
-    <div className="space-y-0.5">
-      <div className="flex items-center gap-2">
-        <motion.span
-          className="text-lg font-semibold"
-          initial={{ x: -20, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={transition}
-        >
-          {month} {year}
-        </motion.span>
-        <AnimatePresence mode="wait">
-          <MotionBadge
-            key={eventCount}
-            variant="secondary"
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.8, opacity: 0 }}
-            transition={transition}
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2 whitespace-nowrap">
+          <span
+            className="min-w-0 truncate font-display text-[15px] font-medium"
+            title={formatDate(selectedDate, 'MMMM yyyy')}
           >
-            {eventCount} events
-          </MotionBadge>
-        </AnimatePresence>
+            {formatDate(selectedDate, 'MMMM yyyy')}
+          </span>
+          <span className="hidden text-[11px] text-[var(--color-text-muted)] @min-[760px]/calendar-toolbar:inline">
+            {getEventsCount(events, selectedDate, view)} events
+          </span>
+        </div>
+        <p className="truncate text-[11px] text-[var(--color-text-muted)]" title={range}>
+          {view === 'week' ? range.replaceAll(/,? \d{4}/g, '').replace(' - ', ' – ') : range}
+        </p>
       </div>
-
-      <div className="flex items-center gap-2">
-        <MotionButton
-          variant="outline"
-          size="icon"
-          className="h-6 w-6"
-          onClick={handlePrevious}
-          variants={buttonHover}
-          whileHover="hover"
-          whileTap="tap"
+      <div className="flex shrink-0">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Previous date range"
+          onClick={() => setSelectedDate(navigateDate(selectedDate, view, 'previous'))}
         >
-          <ChevronLeft className="h-4 w-4" />
-        </MotionButton>
-
-        <motion.p
-          className="text-sm text-muted-foreground"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={transition}
+          <ChevronLeft className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Next date range"
+          onClick={() => setSelectedDate(navigateDate(selectedDate, view, 'next'))}
         >
-          {rangeText(view, selectedDate)}
-        </motion.p>
-
-        <MotionButton
-          variant="outline"
-          size="icon"
-          className="h-6 w-6"
-          onClick={handleNext}
-          variants={buttonHover}
-          whileHover="hover"
-          whileTap="tap"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </MotionButton>
+          <ChevronRight className="size-4" />
+        </Button>
       </div>
     </div>
   );

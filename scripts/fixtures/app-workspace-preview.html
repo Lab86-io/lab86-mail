@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Albatross · Local dev</title>
+  <script>globalThis.process = {env: {NODE_ENV: 'development'}};</script>
+  <script>
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = '/preview.css'; document.head.append(css);
+    const updates = new EventSource('/preview-css-events');
+    let version;
+    updates.onmessage = (event) => {
+      if (version !== undefined && version !== event.data) {
+        const next = css.cloneNode(); next.href = `/preview.css?v=${event.data}`;
+        next.onload = () => { css.href = next.href; next.remove(); };
+        document.head.append(next);
+      }
+      version = event.data;
+    };
+  </script>
+</head>
+<body><div id="root"></div><script type="module" src="./app-workspace-preview.tsx"></script></body>
+</html>

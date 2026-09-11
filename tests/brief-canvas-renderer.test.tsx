@@ -466,10 +466,11 @@ describe('BriefCanvas degradation', () => {
     expect(html).toContain('Can we confirm the launch date?');
   });
 
-  test('the masthead title is bold and carries the editorial accent', () => {
+  test('the masthead title is bold and carries textured ink from the image palette', () => {
     const html = render(richBriefDocumentFixture, { masthead: true });
     expect(html).toContain('font-bold');
-    expect(html).toContain('--accent-2-hue');
+    expect(html).toContain('--brief-art-ink:#');
+    expect(html).toContain('brief-masthead__ink');
   });
 
   test('future documents reduce to an accessible title and summary', () => {

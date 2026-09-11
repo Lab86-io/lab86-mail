@@ -18,6 +18,7 @@ import {
  *   ?layout=grid              the older editorial grid, for old editions
  *   ?embedded=1               the shape Today renders: no masthead, parent scroll
  *   ?noise=42                 the footer count of the letter
+ *   ?frame=robert-gilt        pins one picture frame on the masthead
  * Not linked from anywhere; 404s outside development. */
 export default function BriefPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
@@ -31,6 +32,7 @@ function BriefPreviewInner() {
   const layout = params.get('layout') ?? 'letter';
   const noiseParam = Number(params.get('noise') ?? '42');
   const noiseCount = Number.isFinite(noiseParam) ? noiseParam : null;
+  const frame = params.get('frame');
   const value =
     layout === 'grid'
       ? richBriefDocumentFixture
@@ -56,7 +58,12 @@ function BriefPreviewInner() {
         </div>
       ) : (
         <div className="h-dvh">
-          <BriefCanvas value={value} masthead={layout !== 'area'} noiseCount={noiseCount} />
+          <BriefCanvas
+            value={value}
+            masthead={layout !== 'area'}
+            mastheadFrame={frame}
+            noiseCount={noiseCount}
+          />
         </div>
       )}
     </QueryProvider>

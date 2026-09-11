@@ -7,12 +7,12 @@ import {
   useMutation as useConvexMutation,
   useQuery_experimental as useConvexQuery,
 } from 'convex/react';
-import { History, Search, Settings } from 'lucide-react';
+import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -24,8 +24,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { PlusIcon } from '@/components/ui/plus';
 import { RowIcon, rowIcon } from '@/components/ui/row-icon';
-import { SettingsIcon } from '@/components/ui/settings';
-import { ShineBorder } from '@/components/ui/shine-border';
 import {
   Sidebar,
   SidebarContent,
@@ -53,17 +51,19 @@ import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
-import { ThemePanel } from './ThemePanel';
+import { RailPrimaryActions } from './ShellActions';
+import { useApplyThemeExtras } from './ThemePanel';
 
 // Top-level surfaces of the product, in the order a person meets them: the
 // day, the things being carried, then the systems those things run on.
 const SURFACES: Array<{
-  view: 'today' | 'albatrosses' | 'mail' | 'calendar' | 'files';
+  view: 'today' | 'albatrosses' | 'mail' | 'calendar' | 'files' | 'chat';
   label: string;
   Icon: any;
 }> = [
   { view: 'today', label: 'Today', Icon: rowIcon(RAIL_SURFACE_ICONS.today) },
   { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(RAIL_SURFACE_ICONS.albatrosses) },
+  { view: 'chat', label: 'Chat', Icon: rowIcon(RAIL_SURFACE_ICONS.chat) },
   { view: 'mail', label: 'Mail', Icon: rowIcon(RAIL_SURFACE_ICONS.mail) },
   { view: 'calendar', label: 'Calendar', Icon: rowIcon(RAIL_SURFACE_ICONS.calendar) },
   { view: 'files', label: 'Files', Icon: rowIcon(RAIL_SURFACE_ICONS.files) },
@@ -124,10 +124,12 @@ export function Rail({
   clerkEnabled?: boolean;
   activeViewOverride?: PrimaryView;
 }) {
+  useApplyThemeExtras();
   const account = useClientStore((s) => s.account);
   const setAccount = useClientStore((s) => s.setAccount);
-  const accountFilter = useClientStore((s) => s.accountFilter);
-  const setAccountFilter = useClientStore((s) => s.setAccountFilter);
+  const chatOpen = useClientStore((s) => s.aiBarOpen);
+  const presentation = useClientStore((s) => s.assistantPresentation);
+  const chatActive = chatOpen && presentation !== 'corner';
   const setPrimaryAccount = useClientStore((s) => s.setPrimaryAccount);
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
@@ -136,7 +138,6 @@ export function Rail({
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
-  const setCaptureOpen = useClientStore((s) => s.setCaptureOpen);
   const paletteOpen = useClientStore((s) => s.paletteOpen);
   const setPaletteOpen = useClientStore((s) => s.setPaletteOpen);
   const { isMobile, openMobile, setOpenMobile } = useSidebar();
@@ -203,9 +204,6 @@ export function Rail({
   });
   const accounts = accountsData?.accounts || [];
   const authedAccounts = accounts.filter((a) => a.authed);
-  const indexingAccounts = authedAccounts.filter(
-    (a) => a.sync && !a.sync.corpusReady && (a.sync.status === 'backfilling' || a.sync.status === 'syncing'),
-  );
   // Live areas — one rail row per active area, so areas behave like first-class
   // places instead of hiding behind one door. Auth-gated: a first-paint query
   // before the Clerk token lands would error.
@@ -279,8 +277,8 @@ export function Rail({
         {/* Albatross is the product; Lab86 is the company that makes it. The
             wordmark only shows when the rail is expanded; the trigger centres
             itself when collapsed so it doubles as the expand button. */}
-        <div className="flex items-center justify-between gap-2 overflow-hidden px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
-          <span className="max-w-40 whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
+        <div className="flex items-center justify-between gap-2 px-1 pt-1 transition-[padding,gap] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
+          <span className="max-w-40 overflow-hidden whitespace-nowrap opacity-100 transition-[max-width,opacity,transform] delay-150 duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:max-w-0 group-data-[collapsible=icon]:translate-x-1 group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 motion-reduce:transition-none">
             <span className="block font-display text-[17px] font-semibold leading-none tracking-tight text-[var(--color-text)]">
               Albatross
             </span>
@@ -288,58 +286,24 @@ export function Rail({
               by Lab86
             </span>
           </span>
-          <SidebarTrigger
-            title="Toggle navigation rail"
-            className="shrink-0 text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
-          />
-        </div>
-
-        {/* The primary action of the whole product. It used to be Compose. */}
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={CAPTURE_BUTTON_LABEL}
-              onClick={() => {
-                setCaptureOpen(true);
+          <div
+            data-rail-utilities
+            className="flex shrink-0 items-center gap-1 group-data-[collapsible=icon]:flex-col"
+          >
+            <NotificationCenter
+              onOpen={() => {
+                setPrimaryView('notifications');
                 closeMobileSidebar();
               }}
-              className="relative bg-[var(--color-accent)] font-medium text-[var(--color-accent-foreground)] shadow-[var(--shadow-soft)] hover:bg-[var(--color-accent-hover)] hover:text-[var(--color-accent-foreground)] focus-visible:ring-[var(--color-accent)]"
-            >
-              <ShineBorder
-                borderWidth={1}
-                duration={10}
-                shineColor={[
-                  'var(--color-accent-shine-1)',
-                  'var(--color-accent-shine-2)',
-                  'var(--color-accent-shine-3)',
-                ]}
-              />
-              <PlusIcon size={16} />
-              <span>{CAPTURE_BUTTON_LABEL}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={`Search everything (${searchShortcut} or /)`}
-              aria-label={`Search everything (${searchShortcut} or slash)`}
-              aria-keyshortcuts="Meta+F Control+F /"
-              title={`Search everything (${searchShortcut} or /)`}
-              onClick={() => setPaletteOpen(true)}
-              className="border border-[var(--color-border)] bg-[var(--color-bg-elevated)] font-medium shadow-[var(--shadow-soft)] hover:border-[var(--color-accent)]/45 focus-visible:ring-[var(--color-accent)]"
-            >
-              <Search className="size-4 shrink-0" aria-hidden />
-              <span>Search</span>
-              <span className="ml-auto flex items-center gap-1 text-[10px] font-normal text-[var(--color-text-faint)] group-data-[collapsible=icon]:hidden">
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
-                  {searchShortcut}
-                </kbd>
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-1.5 py-0.5 font-sans">
-                  /
-                </kbd>
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+            />
+            <SidebarTrigger
+              title="Toggle navigation rail"
+              className="size-8 shrink-0 group-data-[collapsible=icon]:order-first text-[var(--color-text-muted)] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:mx-auto"
+            />
+          </div>
+        </div>
+
+        <RailPrimaryActions searchShortcut={searchShortcut} onSearch={() => setPaletteOpen(true)} />
       </SidebarHeader>
 
       <SidebarContent>
@@ -349,7 +313,7 @@ export function Rail({
               {SURFACES.map(({ view, label, Icon }) => (
                 <SidebarMenuItem key={view}>
                   <SidebarMenuButton
-                    isActive={visiblePrimaryView === view}
+                    isActive={view === 'chat' ? chatActive : !chatActive && visiblePrimaryView === view}
                     tooltip={label}
                     data-rail-target={view}
                     onClick={() => {
@@ -357,19 +321,8 @@ export function Rail({
                       setPrimaryView(view);
                       closeMobileSidebar();
                     }}
-                    className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                    className="rail-selection"
                   >
-                    {visiblePrimaryView === view ? (
-                      <ShineBorder
-                        borderWidth={1}
-                        duration={10}
-                        shineColor={[
-                          'var(--color-accent-shine-1)',
-                          'var(--color-accent-shine-2)',
-                          'var(--color-accent-shine-3)',
-                        ]}
-                      />
-                    ) : null}
                     <Icon />
                     <span>{label}</span>
                     {/* Words, never a count. A number here would be a tally of
@@ -399,19 +352,8 @@ export function Rail({
                       isActive={active}
                       tooltip={area.name}
                       onClick={() => openArea(area._id)}
-                      className="relative overflow-hidden data-[active=true]:bg-[var(--color-accent-soft)] data-[active=true]:text-[var(--color-accent)] data-[active=true]:shadow-[var(--shadow-soft)] dark:data-[active=true]:bg-[var(--color-selected-soft)] dark:data-[active=true]:text-[var(--color-selected)] dark:data-[active=true]:shadow-none"
+                      className="rail-selection"
                     >
-                      {active ? (
-                        <ShineBorder
-                          borderWidth={1}
-                          duration={10}
-                          shineColor={[
-                            'var(--color-accent-shine-1)',
-                            'var(--color-accent-shine-2)',
-                            'var(--color-accent-shine-3)',
-                          ]}
-                        />
-                      ) : null}
                       <AreaRailIcon area={area} />
                       <span className="truncate">{area.name}</span>
                     </SidebarMenuButton>
@@ -506,57 +448,34 @@ export function Rail({
                   <span>Activity</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              <SidebarMenuItem>
-                {/* A client navigation. Assigning window.location reloads the
-                    document, which throws away the warm query cache and tears
-                    down every live Convex subscription on the way to an
-                    internal route. */}
-                <SidebarMenuButton asChild tooltip="Settings">
-                  <Link href="/settings">
-                    <Settings className="size-4 shrink-0" aria-hidden />
-                    <span>Settings</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter>
-        {/* One quiet control strip: profile (settings lives in its popout),
-            account scope, and theme. Collapses to a vertical stack. */}
-        <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:border-[var(--color-transparent)] group-data-[collapsible=icon]:bg-[var(--color-transparent)] group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:shadow-none">
-          <div className="grid h-7 w-7 place-items-center group-data-[collapsible=icon]:size-8">
+        <nav
+          aria-label="Account controls"
+          className="flex items-center justify-between gap-2 border-t border-[var(--color-list-divider)] px-1 pt-3 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0"
+        >
+          <Button asChild variant="ghost" size="icon" title="Settings">
+            <Link href="/settings" aria-label="Settings" onClick={closeMobileSidebar}>
+              <Settings className="size-4" aria-hidden />
+            </Link>
+          </Button>
+          <div className="rail-profile grid size-9 shrink-0 place-items-center" title="Profile">
             {clerkEnabled ? (
-              <UserButton appearance={{ elements: { avatarBox: 'size-6' } }}>
-                <UserButton.MenuItems>
-                  <UserButton.Link label="Settings" href="/settings" labelIcon={<SettingsIcon size={14} />} />
-                </UserButton.MenuItems>
-              </UserButton>
+              <UserButton />
             ) : (
               <div
-                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)] shadow-[var(--shadow-control)]"
+                className="grid size-6 place-items-center rounded-full bg-[var(--color-avatar-bg)] text-[var(--color-text-muted)]"
                 title="Local preview"
               >
                 <UserIcon size={13} />
               </div>
             )}
           </div>
-          <div className="mx-0.5 h-4 w-px bg-[var(--color-border)] group-data-[collapsible=icon]:hidden" />
-          <AccountScopePopover
-            accounts={authedAccounts}
-            accountFilter={accountFilter}
-            setAccountFilter={setAccountFilter}
-            indexingCount={indexingAccounts.length}
-          />
-          <div className="ml-auto group-data-[collapsible=icon]:ml-0">
-            <NotificationCenter />
-          </div>
-          <div>
-            <ThemePanel className="group-data-[collapsible=icon]:size-8" />
-          </div>
-        </div>
+        </nav>
       </SidebarFooter>
     </Sidebar>
   );
@@ -600,7 +519,7 @@ function AccountSyncDot({ sync, authed }: { sync: AccountSync; authed: boolean }
   return <span className={`ml-auto size-1.5 shrink-0 rounded-full ${color}`} />;
 }
 
-function AccountScopePopover({
+export function AccountScopePopover({
   accounts,
   accountFilter,
   setAccountFilter,
@@ -638,9 +557,11 @@ function AccountScopePopover({
         <button
           type="button"
           title={label}
-          className="relative grid h-7 w-7 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)] group-data-[collapsible=icon]:size-8"
+          aria-label={`Choose mailboxes: ${label}`}
+          className="corner-smooth relative flex h-9 shrink-0 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-xs text-[var(--color-text-muted)] outline-none transition-colors hover:bg-[var(--color-control-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
           <RowIcon icon={UsersIcon} size={15} />
+          <span className="hidden lg:inline">{label}</span>
           {!allSelected ? (
             <span className="absolute right-0.5 top-0.5 grid size-3 place-items-center rounded-full bg-[var(--color-accent)] text-[7px] font-semibold leading-none text-[var(--color-accent-foreground)]">
               {effective.length}
@@ -653,7 +574,7 @@ function AccountScopePopover({
           <span className="sr-only">Choose accounts</span>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-64">
+      <DropdownMenuContent align="end" side="bottom" className="w-64">
         <DropdownMenuLabel className="text-[11px] text-[var(--color-text-faint)]">
           Inbox shows · {label}
         </DropdownMenuLabel>

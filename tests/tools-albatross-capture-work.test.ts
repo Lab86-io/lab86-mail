@@ -108,8 +108,9 @@ describe('albatross_capture_work', () => {
 describe('the assistant prompt', () => {
   test('allows the capture tool only on an explicit ask, and forbids emoji and the word AI in output', () => {
     expect(SYSTEM_PROMPT).toContain(
-      'Call albatross_capture_work only when the user explicitly asks to hold, keep, or remember something as Work; never on your own initiative.',
+      'Call albatross_capture_work when the user explicitly asks to create an Albatross or to hold, keep, track, or remember an outcome as Work, including in a response to a brief recommendation.',
     );
+    expect(SYSTEM_PROMPT).toContain('a recommendation alone is not authorization to create another item');
     expect(SYSTEM_PROMPT).toContain('Never use emoji');
     expect(SYSTEM_PROMPT).toContain('Never write the word "AI" in a response.');
   });

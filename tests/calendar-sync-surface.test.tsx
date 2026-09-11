@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderToStaticMarkup as renderMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { CalendarProvider } from '../components/calendar/engine/calendar-context';
 import { CalendarHeader } from '../components/calendar/engine/calendar-header';
@@ -24,11 +24,14 @@ import {
   scrolledBetween,
   usePullToResync,
 } from '../components/calendar/usePullToResync';
+import { TooltipProvider } from '../components/ui/tooltip';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const repoRoot = join(import.meta.dir, '..');
 const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
+const renderToStaticMarkup = (node: React.ReactNode) =>
+  renderMarkup(<TooltipProvider>{node}</TooltipProvider>);
 const NOW = 1_800_000_000_000;
 
 function fakeLineHost() {
@@ -150,23 +153,25 @@ describe('SyncLine', () => {
 });
 
 describe('SyncStatus', () => {
-  test('the sentence is a button with the relative copy', () => {
+  test('an inline check has the relative status in its accessible tooltip', () => {
     const html = renderToStaticMarkup(
-      <SyncStatus
-        lastSyncedAt={NOW - 4 * 60_000}
-        syncing={false}
-        error={null}
-        nowMs={NOW}
-        onResync={() => {}}
-      />,
+      <TooltipProvider>
+        <SyncStatus
+          lastSyncedAt={NOW - 4 * 60_000}
+          syncing={false}
+          error={null}
+          nowMs={NOW}
+          onResync={() => {}}
+        />
+      </TooltipProvider>,
     );
-    expect(html).toContain('<button type="button"');
+    expect(html).toContain('<button');
     expect(html).toContain('data-sync-status');
     expect(html).toContain('data-state="idle"');
-    expect(html).toContain('title="Sync now"');
-    expect(html).toContain('>Synced 4 minutes ago</button>');
-    expect(html).toContain('text-[12px]');
-    expect(html).not.toContain('<svg');
+    expect(html).toContain('title="Synced 4 minutes ago · Sync now"');
+    expect(html).toContain('aria-label="Synced 4 minutes ago · Sync now"');
+    expect(html).not.toContain('>Synced 4 minutes ago<');
+    expect(html).toContain('lucide-check');
   });
 
   test('syncing, failed, and limited states', () => {
@@ -176,40 +181,48 @@ describe('SyncStatus', () => {
       ),
     ).toContain('data-state="syncing"');
     const failed = renderToStaticMarkup(
-      <SyncStatus
-        lastSyncedAt={NOW}
-        syncing={false}
-        error={{ kind: 'failed' }}
-        nowMs={NOW}
-        onResync={() => {}}
-      />,
+      <TooltipProvider>
+        <SyncStatus
+          lastSyncedAt={NOW}
+          syncing={false}
+          error={{ kind: 'failed' }}
+          nowMs={NOW}
+          onResync={() => {}}
+        />
+      </TooltipProvider>,
     );
     expect(failed).toContain('data-state="failed"');
     expect(failed).toContain('Could not sync. Try again.');
     expect(failed).toContain('text-[var(--color-danger)]');
     const limited = renderToStaticMarkup(
-      <SyncStatus
-        lastSyncedAt={NOW}
-        syncing={false}
-        error={{ kind: 'limited', retryAt: NOW + 120_000 }}
-        nowMs={NOW}
-        onResync={() => {}}
-      />,
+      <TooltipProvider>
+        <SyncStatus
+          lastSyncedAt={NOW}
+          syncing={false}
+          error={{ kind: 'limited', retryAt: NOW + 120_000 }}
+          nowMs={NOW}
+          onResync={() => {}}
+        />
+      </TooltipProvider>,
     );
     expect(limited).toContain('data-state="limited"');
     expect(limited).toContain('Too many syncs. Try again in 2 minutes.');
   });
 
-  test('click runs the resync', async () => {
-    let calls = 0;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        <SyncStatus lastSyncedAt={NOW} syncing={false} error={null} nowMs={NOW} onResync={() => calls++} />,
-      );
-    });
-    await act(async () => renderer.root.findByType('button').props.onClick());
-    expect(calls).toBe(1);
+  test('a pending request uses the spinner and disables another request', () => {
+    const html = renderToStaticMarkup(
+      <SyncStatus lastSyncedAt={NOW} syncing={false} busy error={null} nowMs={NOW} onResync={() => {}} />,
+    );
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('data-state="syncing"');
+    expect(html).toContain('lucide-loader-circle');
+  });
+  test('a first sync has an honest tooltip without a status sentence in the row', () => {
+    const html = renderToStaticMarkup(
+      <SyncStatus lastSyncedAt={null} syncing={false} error={null} nowMs={NOW} onResync={() => {}} />,
+    );
+    expect(html).toContain('Waiting for the first calendar sync');
+    expect(html).not.toContain('Not synced yet');
   });
 });
 
@@ -314,12 +327,10 @@ describe('pending events', () => {
 });
 
 describe('CalendarSurface wiring', () => {
-  test('the header renders the status right of the date navigator', () => {
-    const html = renderToStaticMarkup(withCalendar(<CalendarHeader status={<span data-probe="status" />} />));
-    const navigator = html.indexOf('date-navigator');
-    const probe = html.indexOf('data-probe="status"');
-    expect(probe).toBeGreaterThan(-1);
-    if (navigator >= 0) expect(probe).toBeGreaterThan(navigator);
+  test('the header contains date controls and leaves sync in the calendar row', () => {
+    const html = renderToStaticMarkup(withCalendar(<CalendarHeader />));
+    expect(html).toContain('data-calendar-date-controls');
+    expect(html).not.toContain('data-sync-status');
   });
 
   test('the surface posts view_open through the hook, wires pull and the sentence, and drops the pulse strip', () => {
@@ -327,8 +338,8 @@ describe('CalendarSurface wiring', () => {
     expect(source).toContain('useCalendarResync({');
     expect(source).toContain("sync.resync('pull')");
     expect(source).toContain("sync.resync('manual_http')");
-    expect(source).toContain('<SyncLine active={sync.active}');
-    expect(source).toContain('<CalendarHeader status={syncStatus} />');
+    expect(source).not.toContain('<SyncLine');
+    expect(source).toContain('colorByCalendar={colorByCalendar} status={syncStatus}');
     expect(source).toContain('{...pull.handlers}');
     expect(source).toContain('pending: isPendingEventRow(row, syncedAt)');
     expect(source).not.toContain('animate-pulse');

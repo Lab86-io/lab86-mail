@@ -33,12 +33,39 @@ export function fromInitials(value: string | null | undefined): string {
 // strings together, tolerant of whitespace and case differences, and return
 // the snippet with any leading subject echo (plus separator punctuation)
 // removed. A snippet that is only the subject dedupes to ''.
+/** Decode provider-escaped plain text without interpreting markup or creating DOM. */
+export function decodeMailText(value: string | null | undefined): string {
+  const named: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+    ndash: '–',
+    mdash: '—',
+    hellip: '…',
+    lsquo: '‘',
+    rsquo: '’',
+    ldquo: '“',
+    rdquo: '”',
+  };
+  return String(value || '').replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (original, entity: string) => {
+    if (entity[0] !== '#') return named[entity] ?? original;
+    const hex = entity[1].toLowerCase() === 'x';
+    const point = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+      ? String.fromCodePoint(point)
+      : original;
+  });
+}
+
 export function dedupeSnippet(
   subject: string | null | undefined,
   snippet: string | null | undefined,
 ): string {
-  const snip = String(snippet || '').trim();
-  const subj = String(subject || '').trim();
+  const snip = decodeMailText(snippet).trim();
+  const subj = decodeMailText(subject).trim();
   if (!snip || !subj) return snip;
   let i = 0;
   let j = 0;

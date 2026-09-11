@@ -1,5 +1,6 @@
 import Charts
 import Kingfisher
+import MobileAPI
 import SwiftUI
 
 // Native renderings of the agent's show_* display tools. The server envelope
@@ -44,9 +45,19 @@ enum AssistantToolCard: Equatable, Sendable {
     }
 
     struct DraftCard: Equatable, Sendable {
+        // The tool call that produced the draft: with the conversation it is
+        // the artifact's durable identity. Nil only for legacy payloads.
+        let toolCallID: String?
+        let from: String?
         let to: String
+        let cc: String
+        let bcc: String
         let subject: String
         let body: String
+
+        var seed: AssistantDraftSeed {
+            AssistantDraftSeed(fromEmail: from, to: to, cc: cc, bcc: bcc, subject: subject, body: body)
+        }
     }
 
     struct EmailCard: Identifiable, Equatable, Sendable {
@@ -85,6 +96,7 @@ enum AssistantToolCard: Equatable, Sendable {
     case link(title: String, url: URL?, detail: String?)
     case images([ImageCard])
     case weather(WeatherCard)
+    case briefNode(BriefNode)
     case draft(DraftCard)
     case email(EmailCard)
     case chart(ChartCard)
@@ -92,7 +104,7 @@ enum AssistantToolCard: Equatable, Sendable {
 
     // MARK: - Parsing
 
-    static func parse(toolName: String, output: JSONValue) -> AssistantToolCard? {
+    static func parse(toolName: String, output: JSONValue, toolCallID: String? = nil) -> AssistantToolCard? {
         let albatrossTools = ["albatross_record_progress", "albatross_replan_work"]
         guard toolName.hasPrefix("show_") || albatrossTools.contains(toolName) else { return nil }
         if toolName == "albatross_record_progress" {
@@ -148,8 +160,8 @@ enum AssistantToolCard: Equatable, Sendable {
             guard !columns.isEmpty, !rows.isEmpty else { break }
             return .table(TableCard(
                 title: payload["title"]?.stringValue,
-                columns: Array(columns.prefix(3)),
-                rows: rows.map { Array($0.prefix(3)) }
+                columns: columns,
+                rows: rows
             ))
 
         case "show_plan", "show_progress":
@@ -197,7 +209,10 @@ enum AssistantToolCard: Equatable, Sendable {
             guard !images.isEmpty else { break }
             return .images(images)
 
-        case "show_weather":
+        case "show_map", "show_code_diff", "show_terminal", "show_weather":
+            if let node = AssistantDisplayNode.decode(toolName: toolName, payload: payload) {
+                return .briefNode(node)
+            }
             let location = payload["locationName"]?.stringValue ?? "Weather"
             if let summary = output["summary"]?.stringValue {
                 return .weather(WeatherCard(location: location, line: summary))
@@ -205,10 +220,18 @@ enum AssistantToolCard: Equatable, Sendable {
             break
 
         case "show_message_draft":
-            let to = (payload["to"]?.arrayValue ?? []).compactMap(\.stringValue).joined(separator: ", ")
+            let to = addressList(payload["to"])
             guard let subject = payload["subject"]?.stringValue,
                   let body = payload["body"]?.stringValue else { break }
-            return .draft(DraftCard(to: to, subject: subject, body: body))
+            return .draft(DraftCard(
+                toolCallID: toolCallID?.nilIfBlank,
+                from: payload["from"]?.stringValue?.nilIfBlank,
+                to: to,
+                cc: addressList(payload["cc"]),
+                bcc: addressList(payload["bcc"]),
+                subject: subject,
+                body: body
+            ))
 
         case "show_email_preview":
             guard let rawAccount = payload["account"]?.stringValue,
@@ -270,6 +293,13 @@ enum AssistantToolCard: Equatable, Sendable {
         return .summary(tool: toolName, describe(toolName))
     }
 
+    private static func addressList(_ value: JSONValue?) -> String {
+        if let rows = value?.arrayValue {
+            return rows.compactMap { $0.stringValue?.nilIfBlank }.joined(separator: ", ")
+        }
+        return value?.stringValue?.nilIfBlank ?? ""
+    }
+
     private static func scalarText(_ value: JSONValue?) -> String {
         switch value {
         case .string(let string): string
@@ -294,6 +324,8 @@ struct AssistantToolCardView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     let card: AssistantToolCard
+    // The conversation the card belongs to. Drafts need it for identity.
+    var sessionID: String? = nil
     @State private var presentedEmail: AssistantToolCard.EmailCard?
 
     var body: some View {
@@ -318,19 +350,21 @@ struct AssistantToolCardView: View {
 
             case .table(let table):
                 cardShell(table.title) {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                        GridRow {
-                            ForEach(table.columns, id: \.self) { column in
-                                Text(column)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Divider()
-                        ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    ScrollView(.horizontal) {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                             GridRow {
-                                ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                                    Text(cell).font(.footnote).lineLimit(2)
+                                ForEach(Array(table.columns.enumerated()), id: \.offset) { _, column in
+                                    Text(column)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Divider()
+                            ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                                GridRow {
+                                    ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                        Text(cell).font(.footnote).lineLimit(2)
+                                    }
                                 }
                             }
                         }
@@ -414,22 +448,40 @@ struct AssistantToolCardView: View {
                     }
                 }
 
+            case .briefNode(let node):
+                switch node.kind {
+                case "weather": BriefWeatherNodeView(node: node)
+                case "geo_map": BriefGeoMapNodeView(node: node)
+                case "code_diff": BriefCodeDiffNodeView(node: node)
+                case "terminal": BriefTerminalNodeView(node: node)
+                default: EmptyView()
+                }
+
             case .weather(let weather):
                 cardShell(weather.location) {
                     Text(weather.line).font(.footnote)
                 }
 
             case .draft(let draft):
-                cardShell("Draft") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        if !draft.to.isEmpty {
-                            Text("To: \(draft.to)").font(.caption).foregroundStyle(.secondary)
+                if let toolCallID = draft.toolCallID, let sessionID {
+                    // The draft is an editable artifact inside the
+                    // conversation; it never opens the global composer.
+                    AssistantDraftArtifactView(
+                        key: AssistantDraftKey(sessionID: sessionID, toolCallID: toolCallID),
+                        seed: draft.seed
+                    )
+                } else {
+                    cardShell("Draft") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            if !draft.to.isEmpty {
+                                Text("To: \(draft.to)").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(draft.subject).font(.footnote.weight(.semibold))
+                            Text(draft.body)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(8)
                         }
-                        Text(draft.subject).font(.footnote.weight(.semibold))
-                        Text(draft.body)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(8)
                     }
                 }
 

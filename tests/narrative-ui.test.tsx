@@ -43,7 +43,7 @@ describe('narrative surfaces', () => {
       enabled: true,
       entry: { _id: 'chapter', text: 'Your revised plan', model: 'glm', sourceIds: ['one', 'two'] },
     });
-    expect(html).toContain('Your revised plan');
+    expect(html.replace(/<[^>]*>/g, '')).toContain('Your revised plan');
     expect(html).toContain('/narrative?id=chapter');
     expect(html).not.toContain('Original brief');
     const revoked = render(node, ['narrative', 'brief', 123], { enabled: false, entry: null });

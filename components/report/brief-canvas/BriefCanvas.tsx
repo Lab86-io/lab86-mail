@@ -29,6 +29,7 @@ import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import type { PrimaryView } from '@/lib/shared/types';
 import { safeExternalUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
+import './brief-layout.css';
 import { BriefActions } from './BriefActions';
 import { BriefLetter } from './BriefLetter';
 import { BriefMasthead } from './BriefMasthead';
@@ -48,6 +49,7 @@ export function BriefCanvas({
   composing = false,
   onChanged,
   masthead = false,
+  mastheadFrame,
   footer,
   embedded = false,
   noiseCount,
@@ -56,6 +58,8 @@ export function BriefCanvas({
   composing?: boolean;
   onChanged?: () => void;
   masthead?: boolean;
+  /** Pins the masthead's picture frame. Previews use it; the day picks otherwise. */
+  mastheadFrame?: string | null;
   footer?: React.ReactNode;
   /** Flow inside a parent scroll instead of owning the viewport. Today reads as
    *  one page, so the brief cannot bring its own scrollbar to it. */
@@ -292,17 +296,23 @@ export function BriefCanvas({
   return (
     <article
       className={cn(
-        '@container px-4 @[680px]:px-7 @[1200px]:px-10',
-        embedded ? 'py-2' : 'scrollable h-full overflow-y-auto bg-[var(--color-bg)] py-6',
+        '@container/brief-canvas brief-canvas',
+        embedded ? 'brief-canvas--embedded' : 'scrollable h-full overflow-y-auto bg-[var(--color-content)]',
       )}
       data-brief-document-version={document.version}
     >
-      {masthead ? <BriefMasthead generatedAt={document.generatedAt} timezone={document.timezone} /> : null}
+      {masthead ? (
+        <BriefMasthead
+          generatedAt={document.generatedAt}
+          timezone={document.timezone}
+          frameId={mastheadFrame}
+        />
+      ) : null}
       {headerVisible ? (
         <header
           className={cn(
             'mx-auto mb-7 border-b border-[var(--color-border)] pb-5',
-            letterKind ? 'max-w-[620px]' : 'max-w-[1760px]',
+            letterKind === 'daily' ? 'w-full' : letterKind ? 'max-w-[620px]' : 'max-w-[1760px]',
           )}
         >
           {notice ? (
@@ -367,7 +377,7 @@ export function BriefCanvas({
                   <div
                     data-brief-story-card
                     className={cn(
-                      'min-w-0 rounded-[22px] border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                      'min-w-0 rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
                       block.cardClass,
                     )}
                   >

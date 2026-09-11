@@ -51,6 +51,12 @@ struct CalendarView: View {
                 }
             }
         }
+        .onChange(of: navigation.pendingCalendarDay, initial: true) { _, day in
+            guard let day else { return }
+            selectedDay = calendar.startOfDay(for: day)
+            weekPage = Self.weekStart(for: day)
+            navigation.pendingCalendarDay = nil
+        }
         .navigationTitle(navigationTitleText)
         .navigationSubtitle(freshnessSubtitle)
         .navigationBarTitleDisplayMode(.inline)

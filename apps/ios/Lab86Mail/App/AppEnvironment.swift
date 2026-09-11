@@ -28,6 +28,9 @@ final class AppEnvironment {
     let notificationResponseOutbox: NotificationResponseOutbox
     let syncCoordinator = SyncCoordinator()
     let pendingSends: PendingSendCoordinator
+    // Editable email drafts the agent produced inside conversations. Owned
+    // here, not by a conversation, so they survive new chats and relaunch.
+    let assistantDrafts: AssistantDraftStore
     let mobileClient: MobileV1Client?
     let briefHydration: BriefHydrationClient?
     let outboxProcessor: CommandOutboxProcessor?
@@ -97,12 +100,14 @@ final class AppEnvironment {
             )
         )
         convex = convexClient
-        store = ProductStore(
+        let store = ProductStore(
             tools: tools,
             backend: backend,
             convex: convexClient,
             mailPages: mobileClient
         )
+        self.store = store
+        assistantDrafts = AssistantDraftStore(transport: store)
         mailIdentity = MailIdentityStore(tools: tools, baseURL: configuration.apiBaseURL)
         notifications = NotificationCoordinator(
             backend: backend,
@@ -142,13 +147,35 @@ final class AppEnvironment {
     }
 
     func startAssistantChat(scope: AssistantChatScope = .global, route: BarRoute = .ask) {
-        let model = AssistantChatModel(
-            backend: backend,
-            baseURL: configuration.apiBaseURL,
-            scope: scope
-        )
+        let model = makeAssistantChat(scope: scope)
         if route == .hold { model.presetRoute(.hold) }
         assistantChat = model
+        #if os(macOS)
+        navigation.chatPanelPresented = true
+        #else
+        navigation.selectPrimary(.chat)
+        #endif
+    }
+
+    private func makeAssistantChat(scope: AssistantChatScope) -> AssistantChatModel {
+        let sessionStore = self.sessionStore
+        return AssistantChatModel(
+            backend: backend,
+            baseURL: configuration.apiBaseURL,
+            scope: scope,
+            draftStore: assistantDrafts,
+            ownerIDProvider: { sessionStore.ownerID }
+        )
+    }
+
+    /// Brings the conversation that holds an inline draft back on screen,
+    /// restoring it from history when it is not the current one.
+    func revealAssistantChat(sessionID: String) async {
+        if assistantChat?.sessionID != sessionID {
+            let model = makeAssistantChat(scope: .global)
+            await model.restore(sessionID: sessionID)
+            assistantChat = model
+        }
         #if os(macOS)
         navigation.chatPanelPresented = true
         #else
@@ -164,11 +191,7 @@ final class AppEnvironment {
             navigation.chatPanelPresented = false
         } else {
             if assistantChat == nil {
-                assistantChat = AssistantChatModel(
-                    backend: backend,
-                    baseURL: configuration.apiBaseURL,
-                    scope: .global
-                )
+                assistantChat = makeAssistantChat(scope: .global)
             }
             navigation.chatPanelPresented = true
         }

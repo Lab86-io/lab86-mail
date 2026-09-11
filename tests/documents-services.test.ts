@@ -346,6 +346,63 @@ describe('document persistence service', () => {
     ).resolves.toBeNull();
   });
 
+  test.each([
+    true,
+    false,
+  ])('a failed Google link preserves the original error after compensation returns ok:%p', async (archived) => {
+    const linkFailure = new Error('Provider link failed');
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    const document = documentRecord('doc');
+    const mutation = mock(async (reference: any, input: any) => {
+      switch (getFunctionName(reference)) {
+        case 'documents:create':
+          return { ...document, documentId: input.documentId, currentRevision: 1 };
+        case 'documents:linkGoogleFile':
+          throw linkFailure;
+        case 'documents:archive':
+          return { ok: archived };
+        default:
+          throw new Error(`Unexpected mutation: ${getFunctionName(reference)}`);
+      }
+    });
+    __setDocumentServiceDepsForTest({
+      convexMutation: mutation as any,
+      randomUUID: (() => 'orphan-document') as any,
+    });
+    try {
+      await expect(
+        createAndLinkGoogleDocument({
+          userId: 'user-1',
+          kind: 'doc',
+          title: 'Imported document',
+          model: document.model,
+          sourceRefs: [{ kind: 'google_drive', id: 'file-1' }],
+          reason: 'google_import',
+          connectionId: 'google-1',
+          fileId: 'file-1',
+          mimeType: 'application/vnd.google-apps.document',
+        }),
+      ).rejects.toBe(linkFailure);
+      expect(mutation.mock.calls.map(([reference]) => getFunctionName(reference))).toEqual([
+        'documents:create',
+        'documents:linkGoogleFile',
+        'documents:archive',
+      ]);
+      expect(mutation.mock.calls[2][1]).toEqual({ userId: 'user-1', documentId: 'orphan-document' });
+      if (archived) {
+        expect(warning).not.toHaveBeenCalled();
+      } else {
+        expect(warning).toHaveBeenCalledWith(
+          '[google-file-import] failed to archive orphaned document',
+          'orphan-document',
+          'archive returned ok:false',
+        );
+      }
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   test('applies a suggestion through the single transactional service mutation', async () => {
     const mutation = mock(async (_reference: unknown, input: any) => ({
       ok: true,
@@ -786,10 +843,14 @@ describe('Google document publishing', () => {
       if (endpoint === 'https://slides.googleapis.com/v1/presentations' && init?.method === 'POST') {
         return Response.json({ presentationId: 'created-deck' });
       }
-      if (endpoint.includes('docs.googleapis.com') && endpoint.includes('fields=')) {
+      if (endpoint.includes('docs.googleapis.com') && !init?.method) {
         return Response.json({
           revisionId: 'docs-revision-7',
-          body: { content: [{ endIndex: 8 }] },
+          body: {
+            content: [
+              { startIndex: 1, endIndex: 8, paragraph: { elements: [{ textRun: { content: 'Source\n' } }] } },
+            ],
+          },
         });
       }
       if (endpoint.includes('sheets.googleapis.com') && endpoint.includes('fields=sheets')) {

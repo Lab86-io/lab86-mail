@@ -1,0 +1,193 @@
+/* Rich document canvas (Tiptap/ProseMirror) and presentation canvas styles.
+   Scoped to the editors; the page itself stays paper-white in both themes. */
+.doc-rich-text .ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 24rem;
+  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.65;
+  caret-color: var(--color-accent);
+}
+.doc-rich-text .ProseMirror:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 12px;
+  border-radius: 2px;
+}
+.doc-rich-text .ProseMirror[contenteditable="false"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.doc-rich-text[data-empty="true"] .ProseMirror::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.doc-editor-workspace {
+  container-type: inline-size;
+  container-name: richdoc;
+}
+.doc-canvas-scroller {
+  padding: 12px;
+}
+.doc-rich-text {
+  padding: 32px 24px;
+}
+.doc-outline {
+  display: none;
+}
+@container richdoc (min-width: 680px) {
+  .doc-canvas-scroller {
+    padding: 24px;
+  }
+  .doc-rich-text {
+    padding: 56px;
+  }
+}
+@container richdoc (min-width: 1080px) {
+  .doc-outline {
+    display: block;
+  }
+}
+.deck-editor-workspace {
+  container-type: inline-size;
+  container-name: deckeditor;
+}
+.deck-workspace-body {
+  flex-direction: column;
+}
+.deck-filmstrip {
+  height: 112px;
+  overflow-x: auto;
+  border-bottom-width: 1px;
+}
+.deck-thumbnail {
+  width: 128px;
+}
+.deck-canvas-padding {
+  padding: 12px;
+}
+@container deckeditor (min-width: 700px) {
+  .deck-workspace-body {
+    flex-direction: row;
+  }
+  .deck-filmstrip {
+    height: auto;
+    width: 144px;
+    flex-direction: column;
+    overflow-y: auto;
+    border-bottom-width: 0;
+    border-right-width: 1px;
+  }
+  .deck-thumbnail {
+    width: 100%;
+  }
+  .deck-canvas-padding {
+    padding: 24px;
+  }
+}
+.doc-rich-text .ProseMirror p {
+  margin: 0 0 0.65em;
+}
+.doc-rich-text .ProseMirror h1,
+.doc-rich-text .ProseMirror h2,
+.doc-rich-text .ProseMirror h3 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  margin: 1.1em 0 0.45em;
+}
+.doc-rich-text .ProseMirror h1 {
+  font-size: 30px;
+}
+.doc-rich-text .ProseMirror h2 {
+  font-size: 23px;
+}
+.doc-rich-text .ProseMirror h3 {
+  font-size: 18px;
+}
+.doc-rich-text .ProseMirror > :first-child {
+  margin-top: 0;
+}
+.doc-rich-text .ProseMirror ul,
+.doc-rich-text .ProseMirror ol {
+  margin: 0 0 0.65em;
+  padding-left: 1.6em;
+}
+.doc-rich-text .ProseMirror ul {
+  list-style: disc;
+}
+.doc-rich-text .ProseMirror ol {
+  list-style: decimal;
+}
+.doc-rich-text .ProseMirror li > p {
+  margin: 0 0 0.2em;
+}
+.doc-rich-text .ProseMirror li::marker {
+  color: #475569;
+}
+.doc-rich-text .ProseMirror blockquote {
+  margin: 0 0 0.65em;
+  padding-left: 1em;
+  border-left: 2px solid #cbd5e1;
+  color: #475569;
+  font-style: italic;
+}
+.doc-rich-text .ProseMirror code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: #eef2f7;
+}
+.doc-rich-text .ProseMirror s {
+  text-decoration-color: #64748b;
+}
+.doc-rich-text .ProseMirror ::selection {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+/* Presentation canvas: a container so text sizes follow the slide width. */
+.deck-slide {
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #ffffff;
+}
+.deck-slide .deck-element {
+  position: absolute;
+  box-sizing: border-box;
+  line-height: 1.2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.deck-slide .deck-element[data-selected="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.deck-slide button.deck-element,
+.deck-slide [role="button"].deck-element {
+  cursor: pointer;
+  text-align: left;
+}
+.deck-slide .deck-element:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+.deck-slide textarea.deck-element {
+  resize: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}

@@ -1,0 +1,36 @@
+{
+  "package": "@odoo/o-spreadsheet",
+  "version": "19.0.50",
+  "license": "LGPL-3.0-or-later",
+  "repository": "git+https://github.com/odoo/o-spreadsheet.git",
+  "tarball": "https://registry.npmjs.org/@odoo/o-spreadsheet/-/o-spreadsheet-19.0.50.tgz",
+  "bootstrapVersion": "5.3.3",
+  "owlVersion": "2.8.2",
+  "sources": {
+    "spreadsheet": {
+      "commit": "e4992587245f832c0dbf361b1f23f14b74613d4e",
+      "repository": "odoo/o-spreadsheet",
+      "archive": "source.tar.gz",
+      "sha256": "79cb153e2c194127ce1f7f4c959ca0e6f5931fd387b71e59851bb5f545fd1adc"
+    },
+    "owl": {
+      "commit": "54129a5f8dfc1ce16c62ee2f216058c043043a6e",
+      "repository": "odoo/owl",
+      "archive": "/vendor/owl/2.8.2/source.tar.gz",
+      "sha256": "8d9f6faf2289a81c5f9da8895d4bce8032a5c1380c344b083390387f64b5cf6f"
+    }
+  },
+  "modifications": [
+    "The engine ESM Owl import is rewritten to the pinned same-origin vendor URL; no engine logic changes."
+  ],
+  "files": {
+    "dist/o_spreadsheet.xml": "1def6767dbba6ca7887b0b99f9b5d56fc4a25941b0ddd907a0de4d602d8a5ac2",
+    "dist/o_spreadsheet.css": "c8921c1d197428b9d380941dc63afc98244ee968140bbe366fb8302fe8139b81",
+    "LICENSE": "c36e1c9a59945ba0144a6657c4da582f1d23f922678b0cad82bc508746649c94",
+    "readme.md": "38e93a2cd416241320e9b0ccab1471f65bd892f790a088cda0fc0624e242b867",
+    "dist/bootstrap-subset.css": "73d01a75ad5db5252d622d6cd3420cb6ddeac63921590fec5b7f9a7a7ce00820",
+    "dist/o_spreadsheet.esm.js": "5f04c6f8c72a30995d2df5df71036bdf7ab7ff23a908fe60534c4aa449ed068a",
+    "BOOTSTRAP-LICENSE": "8c14611ae41ac6fd543c13349f22188eb12c69b3e59105c5eca3925a8e4eca3e",
+    "source.tar.gz": "79cb153e2c194127ce1f7f4c959ca0e6f5931fd387b71e59851bb5f545fd1adc"
+  }
+}

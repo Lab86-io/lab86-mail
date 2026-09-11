@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { isLocalBasicAuthBypassHost, shouldRequireBasicAuth } from '../proxy';
+import { isLocalBasicAuthBypassHost, isOfficeServerRoute, shouldRequireBasicAuth } from '../proxy';
 
 const ENV_KEYS = [
   'LAB86_MAIL_DISABLE_BASIC_AUTH',
@@ -29,6 +29,23 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
 }
 
 describe('proxy basic-auth bypass guard', () => {
+  test('bypasses only the exact capability-authenticated Office server endpoints', () => {
+    setEnv({ LAB86_MAIL_REQUIRE_BASIC_AUTH: '1', NODE_ENV: 'test' });
+    for (const path of ['/api/office/file-123/callback', '/api/office/file-123/content']) {
+      expect(isOfficeServerRoute(path)).toBe(true);
+      expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(false);
+    }
+    for (const path of [
+      '/api/office',
+      '/api/office/file-123',
+      '/api/office/file-123/session',
+      '/api/office/file-123/content/extra',
+      '/api/office/file-123/callback-admin',
+    ]) {
+      expect(isOfficeServerRoute(path)).toBe(false);
+      expect(shouldRequireBasicAuth(req('mail-staging.lab86.io'), path)).toBe(true);
+    }
+  });
   for (const key of ENV_KEYS) previousEnv.set(key, process.env[key]);
 
   afterEach(() => {

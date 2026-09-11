@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { archiveDocument, getDocument, updateDocument } from '@/lib/documents/service';
+import { DocumentTooLargeError } from '@/lib/documents/sheet-workbook';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -12,12 +13,16 @@ const patchSchema = z.object({
   title: z.string().max(500).optional(),
   model: z.unknown().optional(),
   reason: z.string().max(200).optional(),
+  allowDowngrade: z.boolean().optional(),
 });
 
 function responseForError(error: unknown) {
   if (error instanceof RateLimitError) return rateLimitJson(error);
   if (error instanceof AuthRequiredError) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 401 });
+  }
+  if (error instanceof DocumentTooLargeError) {
+    return NextResponse.json({ ok: false, error: error.message, code: 'TOO_LARGE' }, { status: 413 });
   }
   if (error instanceof z.ZodError) {
     return NextResponse.json(
@@ -66,6 +71,18 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ docum
     });
     if (!result.ok && result.code === 'NOT_FOUND') {
       return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
+    }
+    if (!result.ok && result.code === 'ENGINE_MODEL_REQUIRED') {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'This spreadsheet is kept by the spreadsheet engine. This editor can only save a simplified grid, so nothing was changed.',
+          code: result.code,
+          document: result.document,
+        },
+        { status: 409 },
+      );
     }
     if (!result.ok) {
       return NextResponse.json(

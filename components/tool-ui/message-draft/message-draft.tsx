@@ -284,6 +284,7 @@ export function MessageDraft(props: MessageDraftProps) {
     outcome,
     undoGracePeriod = DEFAULT_GRACE_PERIOD,
     onSend,
+    onEdit,
     onUndo,
     onCancel,
   } = props;
@@ -403,13 +404,15 @@ export function MessageDraft(props: MessageDraftProps) {
 
   const handleAction = React.useCallback(
     async (actionId: string) => {
-      if (actionId === "send") {
+      if (actionId === "edit") {
+        onEdit?.();
+      } else if (actionId === "send" && onSend) {
         handleSend();
       } else if (actionId === "cancel") {
         handleCancel();
       }
     },
-    [handleSend, handleCancel],
+    [handleSend, handleCancel, onEdit, onSend],
   );
 
   const actions: Action[] = [
@@ -419,9 +422,10 @@ export function MessageDraft(props: MessageDraftProps) {
       variant: "ghost",
     },
     {
-      id: "send",
-      label: "Send",
+      id: onEdit ? "edit" : "send",
+      label: onEdit ? "Edit draft" : "Send",
       variant: "default",
+      disabled: !onEdit && !onSend,
     },
   ];
 
@@ -453,7 +457,7 @@ export function MessageDraft(props: MessageDraftProps) {
               variant="outline"
               size="sm"
               onClick={handleUndo}
-              className="rounded-full"
+              className="rounded-ui"
             >
               Undo
             </Button>

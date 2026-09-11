@@ -78,6 +78,8 @@ export type MessageDraftProps = SerializableMessageDraft & {
   className?: string;
   undoGracePeriod?: number;
   onSend?: () => void | Promise<void>;
+  /** Reviewing in an external composer is not a send, and must not mark the card sent. */
+  onEdit?: () => void;
   onUndo?: () => void;
   onCancel?: () => void;
 };

@@ -316,7 +316,7 @@ function AreasStep({
               key={item.name}
               type="button"
               onClick={() => dispatch({ type: 'add_area', name: item.name, kind: item.kind })}
-              className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1 text-[12px] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              className="rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1 text-[12px] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
             >
               <Plus className="mr-1 inline size-3 text-[var(--color-text-faint)]" />
               {item.name}
@@ -523,7 +523,7 @@ function FactsStep({
             type="button"
             onClick={() => setEntryType(item.id)}
             className={cn(
-              'rounded-full border px-3 py-1 text-[12px] transition-colors',
+              'rounded-ui border px-3 py-1 text-[12px] transition-colors',
               entryType === item.id
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                 : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-text-faint)]',

@@ -14,6 +14,8 @@ import { ExternalLink, FileSpreadsheet, FileText, Mail, Paperclip, Presentation 
 import dynamic from 'next/dynamic';
 import { Loader } from '@/components/ui/loader';
 import { emailPreviewThreadTarget } from '@/lib/ai/email-preview-routing';
+import { useClientStore } from '@/lib/client-state';
+import { fileToolNavigationPath } from '@/lib/documents/deep-link';
 
 function LoadingCard() {
   return (
@@ -116,10 +118,12 @@ const MessageDraft = dynamic(() => import('@/components/tool-ui/message-draft').
 // (lib/tools/display.ts) — tested in tests/tools-display.test.ts.
 export const TOOL_UI_RENDERED_TOOLS: ReadonlySet<string> = new Set([
   'document_create',
+  'document_edit',
   'document_suggest_changes',
   'document_apply_instruction',
   'document_publish_google',
   'google_file_import',
+  'google_document_edit',
   'albatross_record_progress',
   'albatross_replan_work',
   'show_weather',
@@ -234,20 +238,50 @@ export function ToolUiDisplayPart({
     output?.ok &&
     [
       'document_create',
+      'document_edit',
       'document_suggest_changes',
       'document_apply_instruction',
       'google_file_import',
+      'google_document_edit',
     ].includes(toolName) &&
     internalOpenPath
   ) {
     const kind = String(output.kind || '');
     const Icon = kind === 'sheet' ? FileSpreadsheet : kind === 'deck' ? Presentation : FileText;
     const title = String(
-      output.title || (toolName === 'document_suggest_changes' ? 'Suggested changes' : 'File'),
+      output.title ||
+        (toolName === 'document_edit'
+          ? 'File edits'
+          : toolName === 'document_suggest_changes'
+            ? 'Suggested changes'
+            : 'File'),
     );
     return (
       <a
         href={internalOpenPath}
+        onClick={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          const path = fileToolNavigationPath(internalOpenPath, window.location.href);
+          if (!path) return;
+          event.preventDefault();
+          window.history.pushState(window.history.state, '', path);
+          const state = useClientStore.getState();
+          const besideChat =
+            state.aiBarOpen &&
+            window.innerWidth >= 768 &&
+            (document.querySelector('[data-assistant-workspace]')?.clientWidth || 0) >= 646;
+          state.setPrimaryView('files');
+          if (besideChat) state.setAssistantPresentation('split');
+          window.dispatchEvent(new Event('lab86-mail:files-navigate'));
+        }}
         className="group flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)]"
       >
         <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
@@ -256,10 +290,16 @@ export function ToolUiDisplayPart({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
           <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)]">
-            {toolName === 'document_suggest_changes'
+            {toolName === 'document_suggest_changes' || output.status === 'proposed'
               ? 'Review the suggestion in the editor'
-              : 'Open the editable file'}
+              : output.status === 'applied'
+                ? `Saved revision ${output.revision} · Open file`
+                : 'Open the editable file'}
           </span>
+          {['document_edit', 'google_document_edit'].includes(toolName) &&
+          typeof output.summary === 'string' ? (
+            <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">{output.summary}</span>
+          ) : null}
         </span>
         <ExternalLink className="size-3.5 text-[var(--color-text-faint)] transition group-hover:text-[var(--color-text)]" />
       </a>
@@ -336,7 +376,7 @@ export function ToolUiDisplayPart({
           <MessageDraft
             {...payload}
             undoGracePeriod={0}
-            onSend={
+            onEdit={
               onOpenDraft
                 ? () =>
                     onOpenDraft({

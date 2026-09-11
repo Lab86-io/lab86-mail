@@ -420,7 +420,7 @@ export const albatrossGetWorkContext = defineTool({
 export const albatrossCaptureWork = defineTool({
   name: 'albatross_capture_work',
   description:
-    'Keep text as Albatross Work when the user explicitly asks to hold, keep, or remember something as work. Never call it on your own initiative. Returns the Work items with their shape and horizon.',
+    'Create Albatross Work when the user explicitly asks to create an Albatross or to hold, keep, track, or remember an outcome as work, including a response to a brief recommendation. Reuse matching existing Work; never treat a recommendation alone as permission. Returns the Work items with their shape and horizon.',
   category: 'tasks',
   mutating: true,
   input: z.object({

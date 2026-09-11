@@ -6,7 +6,7 @@ import type { BarRoute, RouteVerdict } from '@/lib/albatross/route-rules';
 
 // The route state of the bar. The heuristic sets the chip at once. The
 // endpoint confirms `delayMs` after the last keystroke. Tab flips the chip
-// and locks it for this text. A blank field unlocks and reads Ask.
+// and locks it for this text. A choice made before typing is kept as typing starts.
 
 export interface RoutePredictionOptions {
   text: string;
@@ -22,9 +22,9 @@ export interface RoutePrediction {
   pending: boolean;
   /** True after Tab or a preset. A locked chip ignores predictions. */
   locked: boolean;
-  /** True when the field is blank. The chip reads Ask and Tab does nothing. */
+  /** True when the field is blank; a route can still be chosen before typing. */
   empty: boolean;
-  /** Flip the route by hand and lock it. No effect on a blank field. */
+  /** Flip the route by hand and lock it, including before typing. */
   flip: () => void;
   /** Set the route and lock it, for the sidebar door. */
   preset: (route: BarRoute) => void;
@@ -35,14 +35,15 @@ export interface RoutePrediction {
 export function useRoutePrediction({
   text,
   delayMs = ROUTE_CONFIRM_DELAY_MS,
-  predict = predictRoute,
-  instant = instantRoute,
+  predict,
+  instant,
 }: RoutePredictionOptions): RoutePrediction {
   const [route, setRoute] = useState<BarRoute>('ask');
   const [confidence, setConfidence] = useState(0);
   const [pending, setPending] = useState(false);
   const [locked, setLocked] = useState(false);
   const empty = text.trim() === '';
+  const wasEmptyRef = useRef(empty);
 
   const routeRef = useRef(route);
   routeRef.current = route;
@@ -62,15 +63,26 @@ export function useRoutePrediction({
 
   useEffect(() => {
     cancel();
+    const becameEmpty = empty && !wasEmptyRef.current;
+    wasEmptyRef.current = empty;
     if (empty) {
-      setRoute('ask');
-      setConfidence(0);
-      setPending(false);
-      setLocked(false);
+      // A cleared draft resets routing; a callback refresh must not erase a
+      // choice made before typing. Initial state is already empty/unlocked.
+      if (becameEmpty) {
+        lockedRef.current = false;
+        setRoute('ask');
+        setConfidence(0);
+        setPending(false);
+        setLocked(false);
+      }
       return;
     }
     if (lockedRef.current) return;
-    const verdict = instant(text, routeRef.current);
+    // Resolve fallbacks inside the effect. Production minification can inline
+    // a default-parameter function, giving it a new identity on every render.
+    // Effect dependencies must be the caller's optional overrides, not those
+    // synthesized fallback functions (which otherwise reset/restart routing).
+    const verdict = (instant ?? instantRoute)(text, routeRef.current);
     setRoute(verdict.route);
     setConfidence(verdict.confidence);
     setPending(true);
@@ -79,7 +91,7 @@ export function useRoutePrediction({
       timerRef.current = null;
       const controller = new AbortController();
       controllerRef.current = controller;
-      predict(requested, { signal: controller.signal })
+      (predict ?? predictRoute)(requested, { signal: controller.signal })
         .then((confirmed) => {
           // A stale answer never lands on newer text, and never on a locked chip.
           if (controller.signal.aborted) return;
@@ -101,8 +113,8 @@ export function useRoutePrediction({
   }, [text, empty, delayMs, predict, instant, cancel]);
 
   const flip = useCallback(() => {
-    if (textRef.current.trim() === '') return;
     cancel();
+    lockedRef.current = true;
     setRoute((current) => flipRoute(current));
     setConfidence(1);
     setPending(false);
@@ -112,6 +124,7 @@ export function useRoutePrediction({
   const preset = useCallback(
     (next: BarRoute) => {
       cancel();
+      lockedRef.current = true;
       setRoute(next);
       setConfidence(1);
       setPending(false);
@@ -122,6 +135,7 @@ export function useRoutePrediction({
 
   const reset = useCallback(() => {
     cancel();
+    lockedRef.current = false;
     setRoute('ask');
     setConfidence(0);
     setPending(false);

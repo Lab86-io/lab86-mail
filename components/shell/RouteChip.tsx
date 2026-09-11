@@ -16,7 +16,7 @@ export interface RouteChipProps {
   locked?: boolean;
   /** True while the endpoint has not confirmed. The chip dims to 70%. */
   pending?: boolean;
-  /** True on a blank field. The chip reads Ask at 55% and does nothing. */
+  /** Explicitly disables changing the route; an empty field remains selectable. */
   disabled?: boolean;
   reduceMotion?: boolean;
   onFlip?: () => void;
@@ -93,7 +93,7 @@ export function RouteChip({
         if (!disabled) onFlip?.();
       }}
       className={cn(
-        'relative inline-flex h-6 select-none items-center overflow-hidden rounded-full border px-2.5 text-[11.5px] font-medium leading-none',
+        'relative inline-flex h-6 select-none items-center overflow-hidden rounded-ui border px-2.5 text-[11.5px] font-medium leading-none',
         'transition-[opacity,background-color,color,border-color] duration-[var(--duration-fast)] motion-reduce:transition-none',
         hold
           ? 'bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'

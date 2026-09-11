@@ -1,70 +1,131 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { useMemo, useState } from 'react';
-import { getDailyArt } from '@/lib/mail/daily-art';
+import { TodayWeather } from '@/components/narrative/TodayWorkspace';
+import { briefFrameById, briefFrameCreditLine, briefFrameForDay, briefFrameStyle } from '@/lib/brief/frames';
+import { artInkColor } from '@/lib/mail/art-palette';
+import { type DailyArt, dailyArtCandidates, getDailyArt } from '@/lib/mail/daily-art';
 import { dailyBriefDatelineAt, dailyBriefEditionTitleAt } from '@/lib/shared/brief-edition';
 import { cn } from '@/lib/utils';
+import './brief-layout.css';
 
-/* The document-v2 masthead: the same daily-art hero the HTML brief carried,
- * rendered natively. Bleeds edge-to-edge against BriefCanvas's padding. Text
- * sits over the artwork, so it stays white-on-scrim in every theme; the title
- * face follows the customizer via font-display. */
+/* The daily artwork hangs in a real picture frame. The painting box lines up
+ * with the text margin, and the moulding sits outside it, on the wall. The
+ * frame follows the artwork's style. Pale ink comes from its actual palette;
+ * the title face follows the customizer via
+ * font-display. The geometry lives in brief-layout.css. */
 export function BriefMasthead({
   generatedAt,
   timezone,
   bleed = true,
+  frameId,
+  artwork,
 }: {
   generatedAt: number;
   timezone?: string;
-  /** Pull out to the edges of BriefCanvas's own padding. Today places the plate
-   *  at the very top of its scroll, where there is no padding to escape. */
+  /** False when this masthead must supply its own inset outside BriefCanvas. */
   bleed?: boolean;
+  /** Pins one frame, for previews and tests. Unset picks the day's frame. */
+  frameId?: string | null;
+  /** Supplies a specific artwork in the development gallery. */
+  artwork?: DailyArt;
 }) {
-  const art = useMemo(() => getDailyArt(generatedAt), [generatedAt]);
-  const sources = useMemo(() => [art.imageUrl, ...art.fallbacks], [art]);
+  const art = useMemo(() => artwork ?? getDailyArt(generatedAt), [artwork, generatedAt]);
+  // A new day's work remounts the source walker, including after every source fails.
+  return (
+    <MastheadArtwork
+      key={`${generatedAt}:${art.imageUrl}`}
+      art={art}
+      generatedAt={generatedAt}
+      timezone={timezone}
+      bleed={bleed}
+      frameId={frameId}
+    />
+  );
+}
+
+function MastheadArtwork({
+  art,
+  generatedAt,
+  timezone,
+  bleed,
+  frameId,
+}: {
+  art: DailyArt;
+  generatedAt: number;
+  timezone?: string;
+  bleed: boolean;
+  frameId?: string | null;
+}) {
+  const candidates = useMemo(() => dailyArtCandidates(art), [art]);
   const [sourceIndex, setSourceIndex] = useState(0);
-  const src = sourceIndex < sources.length ? sources[sourceIndex] : null;
+  const displayed = candidates[sourceIndex];
+  const src = displayed?.imageUrl;
+  const frame = useMemo(
+    () => briefFrameById(frameId) ?? briefFrameForDay(generatedAt, timezone, displayed?.style ?? 'modern'),
+    [frameId, generatedAt, timezone, displayed?.style],
+  );
+  const ink = useMemo(() => artInkColor(displayed?.palette), [displayed?.palette]);
   const dateline = dailyBriefDatelineAt(generatedAt, timezone);
   const title = dailyBriefEditionTitleAt(generatedAt, timezone);
 
   return (
-    <div className={cn('relative mb-7', bleed && '-mx-4 -mt-6 @[680px]:-mx-7')}>
-      <div className="relative flex min-h-[220px] items-center justify-center overflow-hidden bg-[var(--color-accent-soft)] px-6 py-14 @[680px]:min-h-[300px]">
-        {src ? (
-          // Museum-hosted art with ordered fallbacks; plain accent field when
-          // every source is down.
-          // biome-ignore lint/performance/noImgElement: arbitrary museum-hosted art URLs with client-side onerror fallback walking cannot go through next/image.
-          <img
-            src={src}
-            alt=""
-            onError={() => setSourceIndex((index) => index + 1)}
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        ) : null}
-        <div
-          aria-hidden
-          className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/15 to-black/50"
-        />
-        <span className="absolute left-4 top-4 z-10 text-[10px] font-medium text-white/85 [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
-          {dateline}
-        </span>
-        {/* The title carries the editorial accent (accent-2). It derives from
-            the hue/chroma seeds at a fixed scrim-safe lightness instead of
-            reading --color-accent-2, whose light-mode L 0.45 would vanish
-            over the darkened artwork. */}
-        <h1
-          className="relative z-10 max-w-4xl text-balance text-center font-display text-[clamp(2.4rem,8cqi,4.75rem)] font-bold leading-[0.98] tracking-tight [text-shadow:0_2px_28px_rgba(0,0,0,0.55)]"
-          style={{ color: 'oklch(0.9 calc(var(--accent-2-chroma, 0.11) * 0.85) var(--accent-2-hue, 45))' }}
-        >
-          {title}
-        </h1>
-        {art.credit ? (
-          <span className="absolute bottom-2.5 right-4 z-10 text-[10px] text-white/75 [text-shadow:0_1px_8px_rgba(0,0,0,0.65)]">
-            {art.credit}
-            {art.source ? ` · ${art.source}` : ''}
+    <div
+      className={cn('brief-masthead', bleed ? 'brief-masthead--canvas' : 'brief-masthead--page')}
+      style={
+        {
+          ...briefFrameStyle(frame),
+          '--brief-art-ink': ink,
+          '--brief-ink-grain': 'url("/frames/ink-grain.svg")',
+        } as CSSProperties
+      }
+      data-brief-frame={frame.id}
+      data-art-style={displayed?.style ?? 'modern'}
+    >
+      <figure data-brief-art-frame className="brief-masthead__figure">
+        {/* The plate is the painting box alone. The moulding hangs off it, so
+            the wall label below never ends up inside the frame. */}
+        <div className="brief-masthead__plate">
+          <div className="brief-masthead__painting relative grid h-[250px] grid-rows-[1fr_auto_1fr] overflow-hidden bg-[var(--color-accent-soft)] p-4 @[680px]:h-[300px]">
+            {src ? (
+              // Museum-hosted art with ordered fallbacks; plain accent field when
+              // every source is down.
+              // biome-ignore lint/performance/noImgElement: arbitrary museum-hosted art URLs with client-side onerror fallback walking cannot go through next/image.
+              <img
+                key={src}
+                src={src}
+                alt=""
+                onError={() => setSourceIndex((index) => (index === sourceIndex ? index + 1 : index))}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : null}
+            <div aria-hidden className="brief-masthead__scrim absolute inset-0" />
+            <span className="absolute left-4 right-4 top-4 z-10 text-[10px] font-medium text-white/85 [text-shadow:0_1px_8px_rgba(0,0,0,0.6)]">
+              {dateline}
+            </span>
+            {/* Texture is clipped to the lettering; one semantic heading remains. */}
+            <div className="relative z-10 row-start-2 flex min-w-0 items-center justify-center">
+              <h1 className="brief-masthead__title max-w-4xl text-balance text-center font-display text-[clamp(2.4rem,8cqi,4.75rem)] font-bold leading-[0.98] tracking-tight">
+                <span className="brief-masthead__ink">{title}</span>
+              </h1>
+            </div>
+            <div className="relative z-10 row-start-3 flex min-w-0 justify-center self-start pt-3">
+              <TodayWeather variant="masthead" />
+            </div>
+            <div aria-hidden className="brief-masthead__rabbet" />
+          </div>
+          <div aria-hidden className="brief-masthead__moulding" />
+        </div>
+        {/* The wall label: the painting, then the frame, set to the right edge. */}
+        <figcaption className="brief-masthead__label">
+          <span>
+            {displayed?.credit}
+            {displayed?.source ? ` · ${displayed.source}` : ''}
           </span>
-        ) : null}
-      </div>
+          <span>{briefFrameCreditLine(frame)}</span>
+        </figcaption>
+      </figure>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { readFilePage } from '../files/library-client';
 import type { PrimaryView } from '../shared/types';
 
 export type SearchScope = 'all' | 'mail' | 'files' | 'calendar';
@@ -49,6 +50,18 @@ export const SEARCH_PAGES: SearchResult[] = [
     target: { kind: 'page', view: 'albatrosses' },
   },
   { id: 'page:mail', title: 'Mail', detail: 'Inbox and messages', target: { kind: 'page', view: 'mail' } },
+  {
+    id: 'page:chat',
+    title: 'Chat',
+    detail: 'Ask Albatross · beside your current page',
+    target: { kind: 'page', view: 'chat' },
+  },
+  {
+    id: 'page:notifications',
+    title: 'Notifications',
+    detail: 'Needs your attention · updates',
+    target: { kind: 'page', view: 'notifications' },
+  },
   {
     id: 'page:calendar',
     title: 'Calendar',
@@ -228,7 +241,7 @@ export async function searchCloudFiles(
   tool: SearchTool,
   signal?: AbortSignal,
 ): Promise<SearchGroup> {
-  const data = await tool<{ files: SearchCloudFile[]; errors?: unknown[] }>(
+  const data = await tool<{ files: SearchCloudFile[]; errors?: unknown[]; hasMore?: boolean }>(
     'cloud_file_search',
     { query, limit: 12 },
     signal,
@@ -248,9 +261,14 @@ export async function searchCloudFiles(
     throw new Error('File search returned an incomplete response. Please try again.');
   return {
     items: data.files.map(cloudFileResult).filter((item): item is SearchResult => item !== null),
-    warnings: data.errors?.length
-      ? ['Some connected drives could not be searched. Check their connections in Files.']
-      : [],
+    warnings: [
+      ...(data.errors?.length
+        ? ['Some connected drives could not be searched. Check their connections in Files.']
+        : []),
+      ...(data.hasMore
+        ? ['More matches are available. Refine your search or browse the drive in Files.']
+        : []),
+    ],
   };
 }
 
@@ -281,6 +299,60 @@ export function localFileResults(
         }),
       ),
   ].slice(0, 12);
+}
+
+/** Bounded metadata retrieval, with an explicit notice when a large library remains. */
+export async function searchFileLibrary(
+  query: string,
+  signal?: AbortSignal,
+  read = readFilePage,
+): Promise<SearchGroup> {
+  const results = await Promise.allSettled(
+    ['documents', 'uploads'].map(async (kind) => {
+      let cursor: string | null | undefined;
+      const items: SearchResult[] = [];
+      for (let page = 0; page < 4; page += 1) {
+        signal?.throwIfAborted();
+        const params = new URLSearchParams({ kind, search: query });
+        if (cursor) params.set('cursor', cursor);
+        const data = await read(`/api/files/library?${params}`, signal);
+        for (const file of data.items) {
+          const documentId = (file as { documentId?: string }).documentId;
+          const url = safeSearchUrl(file.webUrl);
+          if (!documentId && !url) continue;
+          items.push({
+            id: `${kind}:${file.id}`,
+            title: file.name,
+            detail: documentId ? 'Albatross document' : 'Uploaded file',
+            target: documentId ? { kind: 'document', documentId } : { kind: 'external', url: url! },
+            timestamp: file.modifiedAt,
+          });
+        }
+        cursor = data.nextCursor;
+        if (!cursor || items.length >= 12) break;
+      }
+      return { items, hasMore: Boolean(cursor) };
+    }),
+  );
+  signal?.throwIfAborted();
+  const items = [
+    ...new Map(
+      results
+        .flatMap((result) => (result.status === 'fulfilled' ? result.value.items : []))
+        .map((item) => [item.id, item]),
+    ).values(),
+  ];
+  return {
+    items: items.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)).slice(0, 12),
+    warnings: [
+      ...(results.some((result) => result.status === 'rejected')
+        ? ['Some library files could not be searched. Retry or open Files.']
+        : []),
+      ...(items.length > 12 || results.some((result) => result.status === 'fulfilled' && result.value.hasMore)
+        ? ['Showing a limited set of library matches. Open Files to continue through older files.']
+        : []),
+    ],
+  };
 }
 
 export function searchFilePath(target: Extract<SearchTarget, { kind: 'document' | 'google' }>) {

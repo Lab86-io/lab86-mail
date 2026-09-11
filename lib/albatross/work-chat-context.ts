@@ -1,3 +1,4 @@
+import { resolveShape, SHAPE_POLICY } from '@/lib/albatross/shape-policy';
 import { api, convexQuery } from '@/lib/hosted/convex';
 
 export interface WorkChatContextData {
@@ -8,6 +9,7 @@ export interface WorkChatContextData {
     status?: string;
     workState?: string | null;
     primaryAreaId?: string | null;
+    shape?: string | null;
   };
   plan?: {
     _id?: string;
@@ -79,6 +81,8 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
     line('Title', detail.work.title || detail.work.rawText, 400),
     line('Original outcome request', detail.work.rawText, 2_000),
     line('Work state', detail.work.workState || detail.work.status, 80),
+    line('Work shape', resolveShape(detail.work.shape)),
+    line('Shape policy', JSON.stringify(SHAPE_POLICY[resolveShape(detail.work.shape)])),
     line('Current plan id', plan?._id, 180),
     line('Current desired outcome', plan?.outcome, 1_200),
     line('Current plan summary', plan?.summary, 1_600),

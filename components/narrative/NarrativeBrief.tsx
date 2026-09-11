@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { NarrativeEntry } from '@/lib/narrative/core';
+import { NarrativeProse } from './NarrativeProse';
 import { TodayWorkspace } from './TodayWorkspace';
 
 /** Poll only for an active writer; focus and local corrections also invalidate reads. */
@@ -49,9 +50,7 @@ export function NarrativeBrief({ at, fallback }: { at: number; fallback: ReactNo
     );
   return (
     <div data-narrative-brief className="space-y-4">
-      <p className="font-serif text-[19px] leading-[1.7] tracking-[-0.015em] whitespace-pre-line">
-        {entry.text}
-      </p>
+      <NarrativeProse text={entry.text} />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
         <Link
           href={`/narrative?id=${encodeURIComponent(entry._id)}`}

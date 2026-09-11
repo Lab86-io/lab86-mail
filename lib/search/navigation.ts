@@ -51,6 +51,11 @@ export function navigateSearchTarget(
   >,
   navigate: (path: string) => void,
 ) {
+  if (target.kind === 'page' && target.view === 'chat') {
+    state.setPrimaryView('chat');
+    navigate('/?view=chat');
+    return;
+  }
   state.setSelectedThread(null);
   state.setCalendarSearchTarget(null);
   state.setSelectedWorkId(null);

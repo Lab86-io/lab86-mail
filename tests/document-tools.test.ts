@@ -33,6 +33,61 @@ afterEach(() => {
 });
 
 describe('document tools', () => {
+  test('explicit engine edits remain reviewable and never claim to have changed the saved workbook', async () => {
+    const current = record({
+      kind: 'sheet',
+      model: {
+        kind: 'sheet',
+        version: 2,
+        engine: 'o-spreadsheet',
+        engineVersion: '19.0.50',
+        workbook: {
+          version: 1,
+          sheets: [{ id: 'sheet-1', name: 'Budget', colNumber: 26, rowNumber: 100, cells: {} }],
+        },
+      },
+    });
+    const update = mock(async () => {
+      throw new Error('An engine proposal must not be applied server-side');
+    });
+    const suggestion = mock(async (_input: unknown) => ({ ok: true, suggestionId: 'review-1' }));
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      generateDocumentProposal: (async () => ({
+        title: 'Budget',
+        summary: 'Set the first cell',
+        model: {
+          kind: 'sheet-changes',
+          version: 1,
+          changes: [{ sheet: 'sheet-1', cell: 'A1', content: '42' }],
+        },
+      })) as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+
+    const result = await runTool(documentApplyInstruction.handler, {
+      documentId: current.documentId,
+      instruction: 'Set A1 to 42',
+      sourceContext: undefined,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      documentId: current.documentId,
+      revision: 2,
+      openPath: '/?view=files&document=document-1',
+    });
+    expect(result.summary).toContain('Not applied:');
+    expect(result.summary).toContain('review-1');
+    expect(suggestion.mock.calls[0][0]).toMatchObject({
+      userId: 'test_user_tools',
+      baseRevision: 2,
+      proposedModel: { kind: 'sheet-changes' },
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(current.currentRevision).toBe(2);
+  });
+
   test('creates a grounded private file, records undo, and optionally publishes it', async () => {
     const proposal = mock(async () => ({
       title: 'Generated memo',
@@ -222,11 +277,9 @@ describe('document tools', () => {
       ok: true as const,
       document: record({ title: 'Revised memo', currentRevision: 3 }),
     }));
+    const createSuggestion = mock(async (_input: unknown) => ({ ok: true, suggestionId: 'suggestion-1' }));
     __setDocumentToolDepsForTest({
-      createDocumentSuggestion: (async () => ({
-        ok: true,
-        suggestionId: 'suggestion-1',
-      })) as any,
+      createDocumentSuggestion: createSuggestion as any,
       generateDocumentProposal: proposal as any,
       getDocument: (async (_userId: string, documentId: string) =>
         documentId === 'missing' ? null : current) as any,
@@ -243,6 +296,7 @@ describe('document tools', () => {
       title: 'Revised memo',
       openPath: '/?view=files&document=document-1',
     });
+    expect(createSuggestion.mock.calls[0][0]).toMatchObject({ baseRevision: 2 });
     const applied = await runTool(documentApplyInstruction.handler, {
       documentId: 'document-1',
       instruction: 'Apply the clearer choice',
@@ -275,9 +329,69 @@ describe('document tools', () => {
       }),
     ).rejects.toThrow('file changed while Albatross was editing');
   });
+
+  test('does not claim a proposal exists if its file disappeared during generation', async () => {
+    const current = { ...record(), suggestions: [] };
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => current) as any,
+      generateDocumentProposal: (async () => ({
+        title: 'Updated file',
+        summary: 'Proposed changes',
+        model: current.model,
+      })) as any,
+      createDocumentSuggestion: (async () => ({ ok: false, suggestionId: 'unsaved' })) as any,
+    });
+    await expect(
+      runTool(documentSuggestChanges.handler, {
+        documentId: current.documentId,
+        instruction: 'Suggest a clearer introduction',
+      }),
+    ).rejects.toThrow('suggestion could not be saved');
+
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => current) as any,
+      generateDocumentProposal: (async () => ({
+        title: 'Updated sheet',
+        summary: 'Proposed cell changes',
+        model: {
+          kind: 'sheet-changes',
+          version: 1,
+          changes: [{ sheetId: 'sheet-1', cell: 'A1', content: '123' }],
+        },
+      })) as any,
+      createDocumentSuggestion: (async () => ({ ok: false, suggestionId: 'unsaved' })) as any,
+    });
+    await expect(
+      runTool(documentApplyInstruction.handler, {
+        documentId: current.documentId,
+        instruction: 'Update the forecast',
+      }),
+    ).rejects.toThrow('suggestion could not be saved');
+  });
 });
 
 describe('cloud file tools', () => {
+  test('exposes single-connection continuation without skipping a truncated provider page', async () => {
+    const browse = mock(async () => ({ items: [], nextCursor: 'next-page' }));
+    __setCloudFileToolDepsForTest({
+      listCloudFileConnections: (async () => [{ connectionId: 'drive', provider: 'google_drive' }]) as any,
+      browseCloudFiles: browse as any,
+    });
+    const result = await runTool(cloudFileSearch.handler, {
+      query: 'plan',
+      connectionId: 'drive',
+      cursor: 'previous',
+      limit: 12,
+    });
+    expect(result.nextCursor).toBe('next-page');
+    expect(result.hasMore).toBe(true);
+    expect(browse.mock.calls[0]).toEqual([
+      expect.objectContaining({ connectionId: 'drive', cursor: 'previous', pageSize: 12 }),
+    ]);
+    await expect(
+      runTool(cloudFileSearch.handler, { query: 'plan', cursor: 'previous', limit: 12 }),
+    ).rejects.toThrow('connectionId is required');
+  });
   test('searches every selected provider, tolerates one failure, and enforces connection identity', async () => {
     const browse = mock(async (input: any) => {
       if (input.connectionId === 'onedrive-1') throw new Error('provider unavailable');

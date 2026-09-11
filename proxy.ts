@@ -29,7 +29,7 @@ const passthroughProxy = (_req: NextRequest) => NextResponse.next();
 
 const protectedProxy = clerkMiddleware(
   async (auth, req) => {
-    if (!isPublicRoute(req)) {
+    if (!isPublicRoute(req) && !isOfficeServerRoute(req.nextUrl.pathname)) {
       await auth.protect({
         unauthenticatedUrl: new URL('/sign-in', req.url).toString(),
       });
@@ -101,6 +101,9 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   if (process.env.LAB86_MAIL_DISABLE_BASIC_AUTH === '1' && isBasicAuthBypassAllowed(req)) return false;
   if (!isStagingRuntime(req.headers.get('host'))) return false;
   if (pathname === '/api/healthz') return false;
+  // These exact endpoints authenticate expiring, document-bound capabilities
+  // (and callback JWTs) in their handlers. Other Office routes stay protected.
+  if (isOfficeServerRoute(pathname)) return false;
   const [authorizationScheme, bearerToken] = (req.headers.get('authorization') || '').split(/\s+/, 2);
   // Native clients authenticate API requests with a Clerk session token. Do
   // not challenge those requests for staging's browser-only Basic credential;
@@ -123,6 +126,10 @@ export function shouldRequireBasicAuth(req: Request, pathname: string) {
   // Internal cron callbacks authenticate via the internal secret, not basic auth.
   if (pathname.startsWith('/api/cron')) return false;
   return true;
+}
+
+export function isOfficeServerRoute(pathname: string) {
+  return /^\/api\/office\/[a-zA-Z0-9-]+\/(?:callback|content)$/u.test(pathname);
 }
 
 export function isBasicAuthBypassAllowed(req: Request) {

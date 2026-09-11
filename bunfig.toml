@@ -8,3 +8,8 @@ coveragePathIgnorePatterns = [
   "convex/_generated/**",
   "scripts/**",
 ]
+
+# Used only by the synthetic Bun HTML dev server; Next builds use their own config.
+[serve.static]
+plugins = ["./scripts/fixtures/preview-providers.mjs"]
+env = "disable"

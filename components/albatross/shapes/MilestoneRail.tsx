@@ -116,7 +116,7 @@ export function MilestoneRail({
               disabled={busy}
               onClick={() => onToggle(milestone.id)}
               className={cn(
-                'relative mt-[3px] flex size-3 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg)]',
+                'relative mt-[3px] flex size-3 shrink-0 items-center justify-center rounded-ui bg-[var(--color-bg)]',
                 'transition-[box-shadow,border-color] duration-[var(--duration-normal)]',
                 state === 'done'
                   ? 'border border-[var(--color-accent)]'

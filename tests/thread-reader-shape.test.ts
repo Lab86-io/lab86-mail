@@ -12,11 +12,11 @@ const shell = read('components/shell/AppShell.tsx');
 // two cards.
 describe('one mail surface', () => {
   test('the reader is the right half of the card, not a second card', () => {
-    expect(thread).toContain('sm:rounded-r-xl');
-    expect(thread).toContain('sm:border-l-0');
-    expect(inbox).toContain('sm:rounded-r-none');
-    expect(inbox).toContain('sm:border-r-0');
-    expect(shell).toContain('inset-y-2 border-y');
+    expect(shell).toContain('data-workspace-panel');
+    expect(thread).not.toContain('sm:rounded-r-');
+    expect(thread).not.toContain('sm:py-2');
+    expect(inbox).not.toContain('sm:p-2');
+    expect(shell).toContain('bottom-0 left-1/2 top-0');
   });
   test('the reader interior is flat — no nested surface rungs', () => {
     expect(thread).not.toContain('surface-float');
@@ -68,8 +68,8 @@ describe('the reader stands in one of two places', () => {
     expect(thread).toContain('shadow-[var(--shadow-pop)]');
   });
   test('only Mail splits; every other surface gets the sheet', () => {
-    expect(shell).toContain("readerSplit = readerVisible && visiblePrimaryView === 'mail'");
-    expect(shell).toContain('readerSheet = readerVisible && !readerSplit');
+    expect(shell).toContain("readerSplit = !isMobile && readerVisible && visiblePrimaryView === 'mail'");
+    expect(shell).toContain('readerSheet = !isMobile && readerVisible && !readerSplit');
     expect(shell).toContain('<ThreadView variant="sheet" />');
     // The split panel and separator must follow readerSplit, not readerVisible,
     // or a sheet surface would still tear its layout in half.

@@ -200,6 +200,73 @@ function eventResponse(id: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe('createCalendarEvent', () => {
+  test('creates Google Meet once with invited attendees and returns the actual provider link', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/events$/, () => {
+        const result: any = eventResponse('evt_meet');
+        result.data.conferencing = {
+          provider: 'Google Meet',
+          details: { url: 'https://meet.google.com/abc-defg-hij' },
+        };
+        return { json: result };
+      });
+      const result = await createCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        title: 'Planning',
+        startAt: START_AT,
+        endAt: END_AT,
+        conferencing: 'google_meet',
+        participants: [{ email: 'maya@example.test' }],
+      });
+      expect(result.conferenceUrl).toBe('https://meet.google.com/abc-defg-hij');
+      expect(h.nylasCalls).toHaveLength(1);
+      expect(h.nylasCalls[0].body.conferencing).toEqual({ provider: 'Google Meet', autocreate: {} });
+      expect(h.nylasCalls[0].url.searchParams.get('notify_participants')).toBe('true');
+      expect(
+        h.convexCalls.find((call) => call.path === 'calendarData:upsertEventBatch')?.args.events[0]
+          .conferencing.details.url,
+      ).toBe(result.conferenceUrl);
+    });
+  });
+
+  test('does not invent a pending Meet link or retry an already-created event', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/events$/, () => ({ json: eventResponse('evt_pending') }));
+      const result = await createCalendarEvent({
+        userId: 'user_1',
+        accountId: 'acct_1',
+        title: 'Planning',
+        startAt: START_AT,
+        endAt: END_AT,
+        conferencing: 'google_meet',
+      });
+      expect(result).toMatchObject({ eventId: 'evt_pending', conferencingPending: true });
+      expect(result.conferenceUrl).toBeUndefined();
+      expect(h.nylasCalls).toHaveLength(1);
+    });
+  });
+
+  test('rejects Meet on non-Google accounts before any provider write', async () => {
+    await withHarness(async (h) => {
+      setupBase(h);
+      h.onConvex('accounts:listConnectedAccounts', () => [{ ...account, provider: 'microsoft' }]);
+      await expect(
+        createCalendarEvent({
+          userId: 'user_1',
+          accountId: 'acct_1',
+          title: 'Planning',
+          startAt: START_AT,
+          endAt: END_AT,
+          conferencing: 'google_meet',
+        }),
+      ).rejects.toThrow('Google Meet requires a connected Google calendar');
+      expect(h.nylasCalls).toHaveLength(0);
+    });
+  });
+
   test('creates on the primary writable calendar and mirrors into Convex', async () => {
     await withHarness(async (h) => {
       setupBase(h);

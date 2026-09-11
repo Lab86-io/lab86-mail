@@ -139,6 +139,22 @@ describe('Today working surface', () => {
       render(<TodayWorkspace at={100} revision={1} />, key, { enabled: false, threads: [] }),
     ).not.toContain('data-today-workspace');
   });
+  test('ongoing shapes have a response handoff without a false completion action', () => {
+    for (const shape of ['practice', 'monitor', 'list'] as const) {
+      const html = render(
+        <WorkspaceThreadCard
+          at={1000}
+          stamp={'a'.repeat(64)}
+          thread={{ ...thread, work: { ...thread.work!, shape } }}
+        />,
+      );
+      expect(html).not.toContain('Mark work done');
+      expect(html).toContain('Respond &amp; act');
+    }
+    expect(render(<WorkspaceThreadCard at={1000} stamp={'a'.repeat(64)} thread={thread} />)).toContain(
+      'Mark work done',
+    );
+  });
   test('guided navigation is transient and does not execute work', () => {
     openWorkspaceWork('work', true);
     expect(useClientStore.getState()).toMatchObject({
@@ -172,4 +188,46 @@ describe('Today working surface', () => {
     expect(missing).toContain('Weather unavailable');
     expect(missing).not.toContain('0°');
   });
+  test('masthead weather includes current conditions and a truthful precipitation probability', () => {
+    const weather = {
+      location: 'Rochester',
+      unit: '°F',
+      current: { temp: 72, condition: 'Clear', high: 77, low: 58 },
+      source: 'Open-Meteo',
+      attributionURL: 'https://open-meteo.com/',
+    };
+    for (const chance of [0, 15, 100]) {
+      const html = render(<TodayWeather variant="masthead" />, ['brief', 'weather'], {
+        weather: { ...weather, daily: [{ precipChance: chance }] },
+      });
+      expect(html).toContain('data-brief-header-weather');
+      expect(html).toContain(`Precip. ${chance}%`);
+      expect(html).toContain('72');
+      expect(html).toContain('°F');
+      expect(html).toContain('High ');
+      expect(html).toContain('Low ');
+      expect(html).toContain('Rochester');
+      expect(html).toContain('https://open-meteo.com/');
+      expect(html).not.toContain('data-slot="weather-widget"');
+    }
+    for (const chance of [null, undefined, -1, 101]) {
+      const html = render(<TodayWeather variant="masthead" />, ['brief', 'weather'], {
+        weather: { ...weather, daily: [{ precipChance: chance }] },
+      });
+      expect(html).toContain('Precip. unavailable');
+      expect(html).not.toContain('Precip. 0%');
+    }
+    const missing = render(<TodayWeather variant="masthead" />, ['brief', 'weather'], { weather: null });
+    expect(missing).toContain('Weather unavailable');
+    expect(missing).toContain('Retry');
+    expect(missing).not.toContain('0°');
+  });
+});
+
+// Weather uses the place's time, including daylight-saving transitions.
+test('weather local time follows the forecast location, with safe fallback for invalid zones', async () => {
+  const { weatherLocalTime } = await import('../components/narrative/TodayWorkspace');
+  expect(weatherLocalTime(Date.parse('2026-09-10T16:00:00Z'), 'America/New_York')).toBe(0.5);
+  expect(weatherLocalTime(Date.parse('2026-01-10T17:00:00Z'), 'America/New_York')).toBe(0.5);
+  expect(weatherLocalTime(Date.now(), 'invalid/zone')).toBeUndefined();
 });

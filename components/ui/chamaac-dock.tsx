@@ -6,7 +6,7 @@
 // Albatross intents rail.
 //
 // What's kept — the component's signature look and behavior:
-// - The floating pill shell: rounded-[25px], 3px inner padding, hairline
+// - The floating pill shell: rounded-ui, 3px inner padding, hairline
 //   border, backdrop-blur-md over a translucent surface. Their bg is
 //   bg-white / dark:bg-black/50; here it's the same translucency built from
 //   theme vars so accent-hued themes and light/dark both work.
@@ -48,9 +48,9 @@ export function ChamaacDock({ className, children, ...props }: React.ComponentPr
     <div
       data-slot="chamaac-dock"
       className={cn(
-        // The source shell, verbatim shape: p-[3px] rounded-[25px] border
+        // The source shell, verbatim shape: p-[3px] rounded-ui border
         // backdrop-blur-md, translucent surface.
-        'relative flex flex-col items-center gap-[3px] rounded-[25px] border border-[var(--color-border)] bg-[color-mix(in_oklab,var(--color-bg-elevated)_78%,transparent)] p-[3px] shadow-[var(--shadow-soft)] backdrop-blur-md',
+        'relative flex flex-col items-center gap-[3px] rounded-ui border border-[var(--color-border)] bg-[color-mix(in_oklab,var(--color-bg-elevated)_78%,transparent)] p-[3px] shadow-[var(--shadow-soft)] backdrop-blur-md',
         className,
       )}
       {...props}
@@ -131,7 +131,7 @@ export function ChamaacDockTile({
         }}
         className={cn(
           // Chamaac's 0.2s color fade, as a CSS transition (see header).
-          'relative isolate flex shrink-0 items-center justify-center rounded-full outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+          'relative isolate flex shrink-0 items-center justify-center rounded-ui outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
           active
             ? 'bg-[var(--color-accent-soft)]'
             : highlighted

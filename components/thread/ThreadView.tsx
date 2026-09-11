@@ -88,17 +88,10 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
   // A sheet is a whole card over the page; a split half opens toward the seam
   // and lets the inbox half close the rectangle.
   const sheet = variant === 'sheet' && !threadFullscreen;
-  const shellOuter = cn(
-    'flex h-full flex-col',
-    !threadFullscreen && !sheet && 'bg-[var(--color-bg)] sm:py-2 sm:pr-2',
-    sheet && 'p-2',
-  );
+  const shellOuter = cn('flex h-full flex-col', sheet && 'p-2');
   const shellInner = cn(
-    'flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
-    !threadFullscreen &&
-      !sheet &&
-      'sm:rounded-r-xl sm:border sm:border-l-0 sm:border-[var(--color-border)] sm:shadow-[var(--shadow-soft)]',
-    sheet && 'rounded-xl border border-[var(--color-border)] shadow-[var(--shadow-pop)]',
+    'corner-smooth flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
+    sheet && 'rounded-[var(--radius-control)] border border-[var(--color-border)] shadow-[var(--shadow-pop)]',
   );
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
@@ -472,7 +465,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
-          'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
+          'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-[var(--radius-ui-corner)] border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
       <div className={cn('@container relative', shellInner)}>
@@ -645,7 +638,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                     `${data.subject}\n\nFrom ${shortFrom(lastMessage?.from)}. What I need to do about this: `,
                   )
                 }
-                className="flex h-8 items-center whitespace-nowrap rounded-full px-3 text-[12.5px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
+                className="flex h-8 items-center whitespace-nowrap rounded-ui px-3 text-[12.5px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-foreground)]"
               >
                 This is an Albatross
               </button>
@@ -1308,7 +1301,7 @@ function LinkedTaskChips({ threadId }: { threadId: string }) {
           key={card.cardId}
           type="button"
           onClick={() => setPrimaryView('tasks')}
-          className="inline-flex max-w-56 items-center gap-1 truncate rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          className="inline-flex max-w-56 items-center gap-1 truncate rounded-ui border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           title="Open the Tasks board"
         >
           <CheckCircle2 className={card.completedAt ? 'size-3 text-emerald-500' : 'size-3'} />

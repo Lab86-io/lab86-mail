@@ -99,7 +99,7 @@ describe('global search sources', () => {
     expect(calendarSearchWindow(normal, 'invalid')).toBe(normal);
   });
   test('page aliases, multiple words, case and empty queries', () => {
-    expect(searchPages('')).toHaveLength(9);
+    expect(searchPages('')).toHaveLength(11);
     expect(searchPages('narrative')[0].target).toEqual({ kind: 'narrative' });
     expect(searchPages('HOME')[0].target).toEqual({ kind: 'page', view: 'today' });
     expect(searchPages('calendar')[0].title).toBe('Calendar');

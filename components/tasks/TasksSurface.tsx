@@ -161,6 +161,39 @@ export function TasksSurface() {
     } catch {}
   };
   const [openCardRequest, setOpenCardRequest] = useState<OpenCardRequest | null>(null);
+  const pendingBoardId = useClientStore((state) => state.pendingOpenBoardId);
+  const pendingCardId = useClientStore((state) => state.pendingOpenCardId);
+  const setPendingBoardId = useClientStore((state) => state.setPendingOpenBoardId);
+  const setPendingCardId = useClientStore((state) => state.setPendingOpenCardId);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingBoardId && !pendingCardId) return;
+    let cancelled = false;
+    setNavigationError(null);
+    void (async () => {
+      let boardId = pendingBoardId;
+      if (!boardId && pendingCardId) {
+        const result = await callTool<{ card: { boardId: string } }>('tasks_get_card', {
+          cardId: pendingCardId,
+        });
+        boardId = result.card.boardId;
+      }
+      if (cancelled) return;
+      if (boardId) setSelectedBoardId(boardId);
+      setLens('board');
+      if (pendingCardId) setOpenCardRequest({ cardId: pendingCardId, nonce: Date.now() });
+      setPendingBoardId(null);
+      setPendingCardId(null);
+    })().catch((error) => {
+      if (cancelled) return;
+      setNavigationError(error instanceof Error ? error.message : 'Could not open this task.');
+      setPendingBoardId(null);
+      setPendingCardId(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingBoardId, pendingCardId, setPendingBoardId, setPendingCardId]);
   // BoardView portals its view/column/share controls up into this header slot
   // so they sit inline with the "Tasks" title instead of in a second toolbar row.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
@@ -257,7 +290,7 @@ export function TasksSurface() {
                 }}
                 title={board.owned ? 'Double-click or press F2 to rename' : undefined}
                 className={cn(
-                  'shrink-0 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
+                  'shrink-0 rounded-ui border px-3 py-1 text-[12.5px] transition-colors',
                   board.boardId === activeBoardId
                     ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                     : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
@@ -270,7 +303,7 @@ export function TasksSurface() {
             <button
               type="button"
               onClick={() => setNewBoardOpen(true)}
-              className="grid size-6 shrink-0 place-items-center rounded-full border border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              className="grid size-6 shrink-0 place-items-center rounded-ui border border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
               title="New board"
             >
               <Plus className="size-3.5" />
@@ -279,6 +312,11 @@ export function TasksSurface() {
           {/* BoardView portals its view/column/share controls in here. */}
           <div ref={setHeaderSlot} className="flex shrink-0 items-center gap-1.5" />
         </header>
+        {navigationError ? (
+          <p role="alert" className="px-4 py-2 text-[12px] text-[var(--color-danger)]">
+            {navigationError}
+          </p>
+        ) : null}
         {lens === 'projects' ? (
           <ProjectsLens
             onOpenTask={(boardId, cardId) => {
@@ -1660,7 +1698,7 @@ function CardPanel({
         role="dialog"
         aria-modal="true"
         aria-label={card.title}
-        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-2xl border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
+        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-[var(--radius-ui-corner)] border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
         initial={{ opacity: 0.3, x: 72 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 56 }}
@@ -2063,7 +2101,7 @@ function CardPanel({
                           setAssignees(on ? assignees.filter((a) => a !== email) : [...assignees, email])
                         }
                         className={cn(
-                          'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                          'inline-flex max-w-full items-center gap-1 rounded-ui border px-2 py-0.5 text-[11px] transition-colors',
                           on
                             ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
                             : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',

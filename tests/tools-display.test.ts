@@ -438,7 +438,7 @@ describe('display tool registration', () => {
       expect(SYSTEM_PROMPT).toContain(name);
     }
     expect(SYSTEM_PROMPT).toContain('Plan rule');
-    expect(SYSTEM_PROMPT).toContain('MUST use show_plan');
+    expect(SYSTEM_PROMPT).toContain('use show_plan (and show_progress for work you are actively performing)');
     expect(SYSTEM_PROMPT).toContain('companion tool-ui cards');
   });
 

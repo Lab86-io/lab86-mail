@@ -5,6 +5,13 @@ const pendingSearchFocus = new WeakSet<Window>();
 
 type KeyboardShortcutLike = Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>;
 
+/** A chat button is not editable, but still must not operate on hidden mail. */
+export function isAssistantKeyboardTarget(target: EventTarget | null): boolean {
+  return Boolean(
+    (target as { closest?: (selector: string) => unknown } | null)?.closest?.('[data-assistant-chat]'),
+  );
+}
+
 /**
  * Search is global, but it must never take a slash or Find shortcut away from
  * a control where the user is already typing or choosing a value.

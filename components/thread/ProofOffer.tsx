@@ -246,7 +246,7 @@ export function ProofOffer({
                       type="button"
                       disabled={busy}
                       onClick={() => void use(match, proof.id, proof.what)}
-                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                      className="rounded-ui border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
                     >
                       {proof.what}
                     </button>
@@ -256,7 +256,7 @@ export function ProofOffer({
                     type="button"
                     disabled={busy}
                     onClick={() => void use(match)}
-                    className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
+                    className="rounded-ui border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-text)]"
                   >
                     File it against this
                   </button>

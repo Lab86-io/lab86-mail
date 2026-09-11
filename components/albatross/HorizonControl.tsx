@@ -188,7 +188,7 @@ export function HorizonControl({
             disabled={saving}
             onClick={() => pick(option)}
             className={cn(
-              'relative z-10 h-7 rounded-full px-3 text-[11.5px] font-medium transition-colors',
+              'relative z-10 h-7 rounded-ui px-3 text-[11.5px] font-medium transition-colors',
               kind === option ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]',
             )}
           >

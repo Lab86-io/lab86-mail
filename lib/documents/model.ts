@@ -1,4 +1,25 @@
 import { z } from 'zod';
+import {
+  type DocumentImportSource,
+  isSheetChangeSet,
+  isSheetWorkbookModel,
+  projectWorkbookToSheetV1,
+  type SheetChangeSet,
+  type SheetWorkbookModel,
+  sheetChangeSetSchema,
+  sheetWorkbookModelSchema,
+  workbookText,
+} from './sheet-workbook';
+
+export {
+  type DocumentImportSource,
+  isSheetChangeSet,
+  isSheetWorkbookModel,
+  type SheetChangeSet,
+  type SheetWorkbookModel,
+  sheetChangeSetSchema,
+  sheetWorkbookModelSchema,
+};
 
 export const DOCUMENT_KINDS = ['doc', 'sheet', 'deck'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
@@ -14,12 +35,37 @@ const sourceRefSchema = z.object({
   url: z.string().max(2_000).optional(),
 });
 
-const docBlockSchema = z.object({
-  id: z.string().min(1).max(120),
-  type: z.enum(['paragraph', 'heading', 'bullet', 'numbered', 'quote']),
-  text: z.string().max(100_000),
-  level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+/**
+ * Optional inline formatting for a doc block. `text` stays the canonical
+ * plain-text value that native clients and tools read; `runs`, when present,
+ * must concatenate to exactly that text. Plain blocks omit `runs`.
+ */
+const docRunSchema = z.object({
+  text: z.string().min(1).max(100_000),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.boolean().optional(),
+  strike: z.boolean().optional(),
+  code: z.boolean().optional(),
 });
+
+const docBlockSchema = z
+  .object({
+    id: z.string().min(1).max(120),
+    type: z.enum(['paragraph', 'heading', 'bullet', 'numbered', 'quote']),
+    text: z.string().max(100_000),
+    level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    runs: z.array(docRunSchema).min(1).max(10_000).optional(),
+  })
+  .refine(
+    (block) => {
+      if (!block.runs) return true;
+      let length = 0;
+      for (const run of block.runs) length += run.text.length;
+      return length === block.text.length && block.runs.map((run) => run.text).join('') === block.text;
+    },
+    { message: 'Block runs must concatenate to exactly the block text.', path: ['runs'] },
+  );
 
 const sheetCellSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean()]).optional(),
@@ -81,19 +127,28 @@ export const deckModelSchema = z.object({
   slides: z.array(deckSlideSchema).min(1).max(500),
 });
 
-export const documentModelSchema = z.discriminatedUnion('kind', [
+// Two `sheet` variants share a discriminator, so this is a plain union; zod
+// tries each member in order and the version literal disambiguates them.
+export const documentModelSchema = z.union([
   docModelSchema,
   sheetModelSchema,
+  sheetWorkbookModelSchema,
   deckModelSchema,
 ]);
 
+/** What an AI suggestion may carry: a full model, or a change set for engine sheets. */
+export const suggestionPayloadSchema = z.union([documentModelSchema, sheetChangeSetSchema]);
+
 export type DocumentSourceRef = z.infer<typeof sourceRefSchema>;
+export type DocRun = z.infer<typeof docRunSchema>;
 export type DocBlock = z.infer<typeof docBlockSchema>;
 export type SheetCell = z.infer<typeof sheetCellSchema>;
 export type SheetTab = z.infer<typeof sheetTabSchema>;
+export type SheetGridModel = z.infer<typeof sheetModelSchema>;
 export type DeckElement = z.infer<typeof deckElementSchema>;
 export type DeckSlide = z.infer<typeof deckSlideSchema>;
 export type AlbatrossDocumentModel = z.infer<typeof documentModelSchema>;
+export type SuggestionPayload = z.infer<typeof suggestionPayloadSchema>;
 
 export interface GoogleDocumentLink {
   connectionId: string;
@@ -113,16 +168,18 @@ export interface AlbatrossDocumentRecord {
   currentRevision: number;
   sourceRefs: DocumentSourceRef[];
   google?: GoogleDocumentLink;
+  importSource?: DocumentImportSource;
   createdAt: number;
   updatedAt: number;
 }
 
 export interface DocumentSuggestion {
+  baseRevision?: number;
   suggestionId: string;
   documentId: string;
   title: string;
   description: string;
-  proposedModel: AlbatrossDocumentModel;
+  proposedModel: SuggestionPayload;
   sourceRefs: DocumentSourceRef[];
   status: 'proposed' | 'applied' | 'dismissed';
   createdAt: number;
@@ -192,9 +249,37 @@ export function parseDocumentModel(value: unknown, expectedKind?: DocumentKind):
   return model;
 }
 
+export function parseSuggestionPayload(value: unknown, expectedKind: DocumentKind): SuggestionPayload {
+  const payload = suggestionPayloadSchema.parse(value);
+  if (payload.kind === 'sheet-changes') {
+    if (expectedKind !== 'sheet')
+      throw new Error(`Expected a ${expectedKind} model, received sheet changes.`);
+    return payload;
+  }
+  if (payload.kind !== expectedKind) {
+    throw new Error(`Expected a ${expectedKind} model, received ${payload.kind}.`);
+  }
+  return payload;
+}
+
+/**
+ * Version 1 grid view of any sheet model. Engine workbooks are projected
+ * lossily (values and formulas only); use only where a grid is the contract.
+ */
+export function sheetGridModel(model: AlbatrossDocumentModel): SheetGridModel | null {
+  if (model.kind !== 'sheet') return null;
+  if (model.version === 1) return model;
+  return projectWorkbookToSheetV1(model, {
+    maxRows: MAX_SHEET_ROWS,
+    maxColumns: MAX_SHEET_COLUMNS,
+    maxCells: MAX_SHEET_CELLS,
+  });
+}
+
 export function documentModelText(model: AlbatrossDocumentModel): string {
   if (model.kind === 'doc') return model.blocks.map((block) => block.text).join('\n');
   if (model.kind === 'sheet') {
+    if (model.version === 2) return workbookText(model);
     return model.sheets
       .flatMap((sheet) => [
         sheet.name,

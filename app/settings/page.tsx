@@ -6,15 +6,13 @@
 // settings (mobbin.com/screens/ac45719a-952f-44c6-9bcc-ce8ce1580b36) — text-only
 // tab rails on the left, a single focused content pane on the right.
 
-import { UserButton } from '@clerk/nextjs';
+import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
   ArrowLeft,
-  Brain,
   CalendarDays,
   Check,
-  CreditCard,
   KeyRound,
   Loader2,
   MoreHorizontal,
@@ -27,23 +25,27 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { type ReactNode, Suspense, useEffect, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
-import {
-  type ModelOption,
-  normalizeOpenRouterFastModel,
-  normalizeOpenRouterPrimaryModel,
-  OPENROUTER_FAST_MODEL_OPTIONS,
-  OPENROUTER_PRIMARY_MODEL_OPTIONS,
-  type Provider,
-  setProviderForByok,
-} from '@/components/hosted/ai-options';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { AiSection } from '@/components/settings/AiSection';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
+import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DotGridGlow } from '@/components/ui/dot-grid-glow';
@@ -59,10 +61,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
-import { SETTINGS_TABS, type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
+import { settingsNavGroups } from '@/lib/albatross/settings-nav';
+import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
 import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
+import { cn } from '@/lib/utils';
 
 // useSearchParams needs a Suspense boundary for static generation.
 export default function SettingsPage() {
@@ -74,12 +78,30 @@ export default function SettingsPage() {
 }
 
 const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
+  appearance: () => (
+    <section>
+      <SectionHeading
+        title="Appearance"
+        blurb="Make Albatross yours. Changes apply immediately; your existing palette and preferences stay intact."
+      />
+      <ThemePanel inline />
+    </section>
+  ),
   mailboxes: () => <MailboxesSection />,
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
-  ai: () => <AiSection />,
+  ai: () => (
+    <AiSection
+      heading={
+        <SectionHeading
+          title="AI"
+          blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
+        />
+      }
+    />
+  ),
   narrative: () => <NarrativeSettings />,
   shortcuts: () => <ShortcutsSection />,
   advanced: () => <AdvancedSection />,
@@ -97,27 +119,23 @@ function AdvancedSection() {
       <SectionHeading
         title="Advanced"
         blurb="Optional surfaces. Albatross does not need any of these to work."
+        aside={boardEnabled ? 'Board on' : 'Nothing extra on'}
       />
-      <label className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
-        <input
-          type="checkbox"
-          checked={boardEnabled}
-          onChange={(event) => setBoardEnabled(event.target.checked)}
-          className="mt-0.5 size-4 accent-[var(--color-accent)]"
+      <SettingsCard>
+        <SettingsRow
+          id="board-surface"
+          label="Show the board"
+          description="A column board for the tasks behind your Albatrosses. Albatross keeps the plan either way; the board is a view, not a place you have to keep tidy."
+          control={<Switch id="board-surface" checked={boardEnabled} onCheckedChange={setBoardEnabled} />}
         />
-        <span>
-          <span className="block text-[13.5px] font-medium">Show the board</span>
-          <span className="mt-0.5 block text-[12.5px] text-[var(--color-text-muted)]">
-            A column board for the tasks behind your Albatrosses. Albatross keeps the plan either way — the
-            board is a view, not a place you have to keep tidy.
-          </span>
-        </span>
-      </label>
+      </SettingsCard>
+      <SettingsNote>Turning a surface off hides it from the rail. Nothing is deleted.</SettingsNote>
     </section>
   );
 }
 
 function SettingsPageBody() {
+  useApplyThemeExtras();
   const searchParams = useSearchParams();
   // Local state owns the active tab; the URL mirrors it (replaceState, no
   // navigation) so /settings?tab=areas deep-links and refresh keeps its place.
@@ -165,26 +183,47 @@ function SettingsPageBody() {
             Your mailboxes, your areas, and how Albatross behaves.
           </p>
         </header>
-        <div className="flex flex-col gap-6 md:grid md:grid-cols-[180px_minmax(0,1fr)] md:gap-10">
-          {/* Mobile: a horizontal scroller above the pane; md+: a sticky left rail. */}
+        <div className="flex flex-col gap-6 md:grid md:grid-cols-[210px_minmax(0,1fr)] md:gap-10">
+          {/* Mobile: a horizontal scroller above the pane; md+: a sticky left
+              rail in three groups, each tab with its one-line purpose. Text
+              only, per the Albatross rail contract. */}
           <nav
             aria-label="Settings sections"
-            className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:self-start md:overflow-visible md:px-0"
+            className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:gap-5 md:self-start md:overflow-visible md:px-0"
           >
-            {SETTINGS_TABS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => selectTab(item.id)}
-                aria-current={tab === item.id ? 'page' : undefined}
-                className={`shrink-0 rounded-lg px-3 py-1.5 text-left text-[13px] transition-colors md:w-full ${
-                  tab === item.id
-                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]'
-                }`}
-              >
-                {item.label}
-              </button>
+            {settingsNavGroups().map((group) => (
+              <div key={group.id} className="flex shrink-0 gap-1 md:flex-col md:gap-0.5">
+                <span className="hidden px-3 pb-1 text-[11px] font-medium text-[var(--color-text-faint)] md:block">
+                  {group.label}
+                </span>
+                {group.items.map((item) => {
+                  const active = tab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => selectTab(item.id)}
+                      aria-current={active ? 'page' : undefined}
+                      className={cn(
+                        'shrink-0 rounded-lg px-3 py-1.5 text-left text-[13px] transition-colors md:w-full md:py-2',
+                        active
+                          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
+                          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]',
+                      )}
+                    >
+                      <span className="block leading-tight">{item.label}</span>
+                      <span
+                        className={cn(
+                          'mt-0.5 hidden text-[11px] font-normal leading-snug md:block',
+                          active ? 'text-[var(--color-accent)]/75' : 'text-[var(--color-text-faint)]',
+                        )}
+                      >
+                        {item.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             ))}
           </nav>
           <div className="min-w-0">{TAB_SECTIONS[tab]()}</div>
@@ -194,16 +233,111 @@ function SettingsPageBody() {
   );
 }
 
-function SectionHeading({ title, blurb, badge }: { title: string; blurb: string; badge?: ReactNode }) {
+function SectionHeading({
+  title,
+  blurb,
+  badge,
+  aside,
+}: {
+  title: string;
+  blurb: string;
+  badge?: ReactNode;
+  /** A short state read-out on the right: counts, saved, on or off. */
+  aside?: ReactNode;
+}) {
   return (
-    <div className="mb-4">
-      <div className="flex items-center gap-2">
-        <h2 className="text-[16px] font-semibold tracking-tight">{title}</h2>
-        {badge}
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-1 border-b border-[var(--color-border)] pb-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[17px] font-semibold tracking-tight">{title}</h2>
+          {badge}
+        </div>
+        <p className="mt-0.5 max-w-xl text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+          {blurb}
+        </p>
       </div>
-      <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{blurb}</p>
+      {aside ? (
+        <span className="shrink-0 text-[11.5px] tabular-nums text-[var(--color-text-faint)]">{aside}</span>
+      ) : null}
     </div>
   );
+}
+
+// The shared shape of a settings group: one card, one row per choice, the
+// label and its consequence on the left, the control on the right.
+function SettingsCard({
+  children,
+  tone = 'default',
+  className,
+}: {
+  children: ReactNode;
+  tone?: 'default' | 'danger';
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'divide-y divide-[var(--color-border)] rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+        tone === 'danger' ? 'border-[var(--color-danger)]/30' : 'border-[var(--color-border)]',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SettingsRow({
+  id,
+  label,
+  description,
+  hint,
+  control,
+  disabled,
+}: {
+  id?: string;
+  label: ReactNode;
+  description?: ReactNode;
+  /** A live read-out under the description: a status, a warning, a result. */
+  hint?: ReactNode;
+  control?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3',
+        disabled && 'opacity-55',
+      )}
+    >
+      <div className="min-w-0 flex-1 basis-60">
+        {id ? (
+          <Label htmlFor={id} className="text-[13px] font-medium">
+            {label}
+          </Label>
+        ) : (
+          <p className="text-[13px] font-medium">{label}</p>
+        )}
+        {description ? (
+          <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>
+        ) : null}
+        {hint ? <div className="mt-1 text-[11px] text-[var(--color-text-faint)]">{hint}</div> : null}
+      </div>
+      {control ? <div className="flex shrink-0 items-center gap-2">{control}</div> : null}
+    </div>
+  );
+}
+
+function SettingsGroupTitle({ children }: { children: ReactNode }) {
+  return (
+    <h3 className="mb-2 mt-6 text-[12px] font-semibold text-[var(--color-text-muted)] first:mt-0">
+      {children}
+    </h3>
+  );
+}
+
+function SettingsNote({ children }: { children: ReactNode }) {
+  return <p className="mt-2.5 text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">{children}</p>;
 }
 
 // A small "Beta" pill for features that ship but aren't proven against real
@@ -224,26 +358,56 @@ function BetaBadge() {
 // ---------------------------------------------------------------------------
 
 function ShortcutsSection() {
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const rows = needle
+    ? SHORTCUTS.filter(
+        ([keys, label]) =>
+          label.toLowerCase().includes(needle) || keys.some((key) => key.toLowerCase().includes(needle)),
+      )
+    : SHORTCUTS;
   return (
     <section>
-      <SectionHeading title="Keyboard shortcuts" blurb="Everything is reachable without the mouse." />
-      <div className="grid grid-cols-1 gap-x-10 gap-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 text-[13px] shadow-[var(--shadow-soft)] sm:grid-cols-2">
-        {SHORTCUTS.map(([keys, label]) => (
-          <div key={label} className="flex items-center justify-between gap-3 py-0.5">
-            <span className="text-[var(--color-text-muted)]">{label}</span>
-            <span className="flex shrink-0 items-center gap-1">
-              {keys.map((k) => (
-                <kbd
-                  key={k}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--color-text)]"
-                >
-                  {k}
-                </kbd>
-              ))}
-            </span>
-          </div>
-        ))}
+      <SectionHeading
+        title="Keyboard shortcuts"
+        blurb="Everything is reachable without the mouse. Press ? anywhere to see this list."
+        aside={`${SHORTCUTS.length} shortcuts`}
+      />
+      <div className="relative mb-3 max-w-xs">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Find a shortcut"
+          aria-label="Find a shortcut"
+          className="h-8 pl-8 text-[12.5px]"
+        />
       </div>
+      <SettingsCard>
+        {rows.length ? (
+          <div className="grid grid-cols-1 gap-x-10 gap-y-1.5 p-4 text-[13px] sm:grid-cols-2">
+            {rows.map(([keys, label]) => (
+              <div key={label} className="flex items-center justify-between gap-3 py-0.5">
+                <span className="text-[var(--color-text-muted)]">{label}</span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {keys.map((k) => (
+                    <kbd
+                      key={k}
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--color-text)]"
+                    >
+                      {k}
+                    </kbd>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+            No shortcut matches “{query.trim()}”.
+          </p>
+        )}
+      </SettingsCard>
     </section>
   );
 }
@@ -269,29 +433,43 @@ function SendingSection() {
     onError: (err: any) => toast.error(err?.message || 'Could not save'),
   });
 
+  const choice = UNDO_SEND_CHOICES.find((option) => option.value === undoSendSeconds);
+
   return (
     <section>
-      <SectionHeading title="Sending" blurb="How long a sent email is held so you can change your mind." />
-      <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3">
-        <div>
-          <div className="text-[13px] font-medium">Undo send window</div>
-          <div className="text-[12px] text-[var(--color-text-muted)]">
-            Sends are held on the server for this long; an Undo toast lets you cancel.
-          </div>
-        </div>
-        <Select value={String(undoSendSeconds)} onValueChange={(value) => save.mutate(Number(value))}>
-          <SelectTrigger size="sm" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent align="end">
-            {UNDO_SEND_CHOICES.map((choice) => (
-              <SelectItem key={choice.value} value={String(choice.value)}>
-                {choice.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <SectionHeading
+        title="Sending"
+        blurb="How long a sent email is held so you can change your mind."
+        aside={save.isPending ? 'Saving…' : choice ? `Undo for ${choice.label.toLowerCase()}` : undefined}
+      />
+      <SettingsCard>
+        <SettingsRow
+          label="Undo send window"
+          description="Albatross holds each send on the server for this long. An Undo toast stays on screen until the window closes."
+          hint={
+            undoSendSeconds
+              ? `A message leaves ${choice ? choice.label.toLowerCase() : `${undoSendSeconds} seconds`} after you press Send.`
+              : 'Messages leave the moment you press Send.'
+          }
+          control={
+            <Select value={String(undoSendSeconds)} onValueChange={(value) => save.mutate(Number(value))}>
+              <SelectTrigger size="sm" className="w-36" aria-label="Undo send window">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {UNDO_SEND_CHOICES.map((option) => (
+                  <SelectItem key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+      </SettingsCard>
+      <SettingsNote>
+        The window applies to every mailbox. Scheduled sends and replies from the brief use the same hold.
+      </SettingsNote>
     </section>
   );
 }
@@ -303,6 +481,14 @@ function urlBase64ToUint8Array(value: string) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
+function clockLabel(value: string) {
+  const [hours, minutes] = value.split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return value;
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(2000, 0, 1, hours, minutes),
+  );
+}
+
 function NotificationsSection() {
   const { isAuthenticated } = useConvexAuth();
   const remote = useConvexQuery(api.albatrossNotifications.getPreferences, isAuthenticated ? {} : 'skip') as
@@ -310,28 +496,45 @@ function NotificationsSection() {
     | undefined;
   const savePreferences = useConvexMutation(api.albatrossNotifications.savePreferences);
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
+  // The last saved shape. Dirty means the form differs from it.
+  const [baseline, setBaseline] = useState<NotificationPreferences | null>(null);
   const [saving, setSaving] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const deviceTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
+  const timezones = useMemo(() => {
+    try {
+      const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+      return intl.supportedValuesOf?.('timeZone') ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
 
   useEffect(() => {
     if (remote && !prefs) {
-      setPrefs({
-        ...remote,
-        timezone: remote._id ? remote.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      });
+      const loaded = { ...remote, timezone: remote._id ? remote.timezone : deviceTimezone };
+      setPrefs(loaded);
+      setBaseline(loaded);
     }
-  }, [prefs, remote]);
+  }, [deviceTimezone, prefs, remote]);
 
   const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
     setPrefs((current) => (current ? { ...current, [key]: value } : current));
   };
+  const dirty = Boolean(
+    prefs &&
+      baseline &&
+      JSON.stringify(notificationPreferenceInput(prefs)) !==
+        JSON.stringify(notificationPreferenceInput(baseline)),
+  );
 
   const save = async () => {
     if (!prefs) return;
     setSaving(true);
     try {
       await savePreferences(notificationPreferenceInput(prefs));
+      setBaseline(prefs);
       toast.success('Notification preferences saved');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save notification preferences');
@@ -367,6 +570,7 @@ function NotificationsSection() {
       const next = { ...prefs, webPushEnabled: true };
       setPrefs(next);
       await savePreferences(notificationPreferenceInput(next));
+      setBaseline((current) => (current ? { ...current, webPushEnabled: true } : current));
       setPushMessage('Web Push is enabled on this browser.');
     } catch (error) {
       setPushMessage(error instanceof Error ? error.message : 'Could not enable Web Push.');
@@ -377,113 +581,167 @@ function NotificationsSection() {
 
   if (!prefs) return <p className="text-[12.5px] text-[var(--color-text-muted)]">Loading preferences…</p>;
 
+  const zoneOptions = timezones.includes(prefs.timezone) ? timezones : [prefs.timezone, ...timezones];
+
   return (
     <section>
       <SectionHeading
         title="Notifications"
-        blurb="Albatross asks instead of silently deciding what you finished. Your evening check-in defaults to 7:00 PM local time."
+        blurb="Albatross asks instead of silently deciding what you finished. It reaches you in the app first, and by email only when a check-in goes unanswered."
+        aside={dirty ? 'Unsaved changes' : 'Saved'}
       />
-      <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 shadow-[var(--shadow-soft)]">
-        <SettingToggle
+      <SettingsGroupTitle>Evening check-in</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow
+          id="checkin-enabled"
           label="Evening check-in"
           description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
-          checked={prefs.eveningCheckinEnabled}
-          onCheckedChange={(value) => update('eveningCheckinEnabled', value)}
+          control={
+            <Switch
+              id="checkin-enabled"
+              checked={prefs.eveningCheckinEnabled}
+              onCheckedChange={(value) => update('eveningCheckinEnabled', value)}
+            />
+          }
         />
-        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-          <div>
-            <p className="text-[13px] font-medium">Check-in time</p>
-            <p className="text-[11.5px] text-[var(--color-text-muted)]">Uses your selected timezone.</p>
-          </div>
-          <div className="flex items-center gap-2">
+        <SettingsRow
+          id="checkin-time"
+          label="Check-in time"
+          description={`Arrives at ${clockLabel(prefs.eveningCheckinLocalTime)} in ${prefs.timezone.replaceAll('_', ' ')}.`}
+          disabled={!prefs.eveningCheckinEnabled}
+          control={
             <Input
-              className="w-28"
+              id="checkin-time"
+              className="w-32"
               type="time"
               value={prefs.eveningCheckinLocalTime}
               onChange={(event) => update('eveningCheckinLocalTime', event.target.value)}
             />
-            <Input
-              className="w-52"
-              value={prefs.timezone}
-              onChange={(event) => update('timezone', event.target.value)}
-              aria-label="Timezone"
-            />
-          </div>
-        </div>
-        <SettingToggle
-          label="In-app notification center"
-          description="Show questions, check-ins, approvals, and updates together."
-          checked={prefs.inAppEnabled}
-          onCheckedChange={(value) => update('inAppEnabled', value)}
+          }
         />
-        <div className="flex items-center justify-between gap-4 py-3">
-          <div>
-            <p className="text-[13px] font-medium">Web Push</p>
-            <p className="text-[11.5px] text-[var(--color-text-muted)]">
-              Permission is requested only when you enable it here.
-            </p>
-            {pushMessage ? (
-              <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">{pushMessage}</p>
-            ) : null}
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={pushBusy}
-            onClick={() => void enablePush()}
-          >
-            {prefs.webPushEnabled ? 'Re-enable' : pushBusy ? 'Enabling…' : 'Enable'}
-          </Button>
-        </div>
-        <SettingToggle
-          label="Fallback email"
-          description={`Email only when the check-in is still unanswered after ${prefs.emailFallbackDelayMinutes} minutes.`}
-          checked={prefs.emailFallbackEnabled}
-          onCheckedChange={(value) => update('emailFallbackEnabled', value)}
+        <SettingsRow
+          id="checkin-timezone"
+          label="Timezone"
+          description="The check-in and the morning brief follow this zone."
+          hint={
+            prefs.timezone === deviceTimezone ? (
+              'Matches this device.'
+            ) : (
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-[var(--color-text)]"
+                onClick={() => update('timezone', deviceTimezone)}
+              >
+                Use this device’s zone ({deviceTimezone.replaceAll('_', ' ')})
+              </button>
+            )
+          }
+          control={
+            zoneOptions.length > 1 ? (
+              <Select value={prefs.timezone} onValueChange={(value) => update('timezone', value)}>
+                <SelectTrigger id="checkin-timezone" size="sm" className="w-60">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end" className="max-h-72">
+                  {zoneOptions.map((zone) => (
+                    <SelectItem key={zone} value={zone}>
+                      {zone.replaceAll('_', ' ')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                id="checkin-timezone"
+                className="w-60"
+                value={prefs.timezone}
+                onChange={(event) => update('timezone', event.target.value)}
+              />
+            )
+          }
         />
-        <div className="flex items-center justify-between gap-3 py-3">
-          <Label htmlFor="fallback-delay">Fallback delay</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="fallback-delay"
-              className="w-24"
-              type="number"
-              min={15}
-              max={1440}
-              value={prefs.emailFallbackDelayMinutes}
-              onChange={(event) => update('emailFallbackDelayMinutes', Number(event.target.value) || 90)}
-            />
-            <span className="text-[11.5px] text-[var(--color-text-muted)]">minutes</span>
-          </div>
-        </div>
-      </div>
-      <Button className="mt-4" disabled={saving} onClick={() => void save()}>
-        {saving ? 'Saving…' : 'Save notification preferences'}
-      </Button>
-    </section>
-  );
-}
+      </SettingsCard>
 
-function SettingToggle({
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-3">
-      <div>
-        <p className="text-[13px] font-medium">{label}</p>
-        <p className="text-[11.5px] text-[var(--color-text-muted)]">{description}</p>
+      <SettingsGroupTitle>Where you hear about it</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow
+          id="inapp-enabled"
+          label="In-app notification center"
+          description="Questions, check-ins, approvals, and updates together, behind the bell."
+          control={
+            <Switch
+              id="inapp-enabled"
+              checked={prefs.inAppEnabled}
+              onCheckedChange={(value) => update('inAppEnabled', value)}
+            />
+          }
+        />
+        <SettingsRow
+          label="Web Push"
+          description="Permission is requested only when you enable it here. Each browser is enabled on its own."
+          hint={pushMessage ?? (prefs.webPushEnabled ? 'Enabled on at least one browser.' : null)}
+          control={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={pushBusy}
+              onClick={() => void enablePush()}
+            >
+              {pushBusy ? 'Enabling…' : prefs.webPushEnabled ? 'Enable on this browser' : 'Enable'}
+            </Button>
+          }
+        />
+        <SettingsRow
+          id="fallback-enabled"
+          label="Fallback email"
+          description="Email only when the check-in is still unanswered."
+          control={
+            <Switch
+              id="fallback-enabled"
+              checked={prefs.emailFallbackEnabled}
+              onCheckedChange={(value) => update('emailFallbackEnabled', value)}
+            />
+          }
+        />
+        <SettingsRow
+          id="fallback-delay"
+          label="Fallback delay"
+          description="How long Albatross waits after the check-in before the email goes out."
+          disabled={!prefs.emailFallbackEnabled}
+          control={
+            <>
+              <Input
+                id="fallback-delay"
+                className="w-24"
+                type="number"
+                min={15}
+                max={1440}
+                step={15}
+                disabled={!prefs.emailFallbackEnabled}
+                value={prefs.emailFallbackDelayMinutes}
+                onChange={(event) => update('emailFallbackDelayMinutes', Number(event.target.value) || 90)}
+              />
+              <span className="text-[11.5px] text-[var(--color-text-muted)]">minutes</span>
+            </>
+          }
+        />
+      </SettingsCard>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button disabled={saving || !dirty} onClick={() => void save()}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </Button>
+        {dirty ? (
+          <Button variant="ghost" disabled={saving} onClick={() => baseline && setPrefs(baseline)}>
+            Discard
+          </Button>
+        ) : null}
+        <span className="text-[11.5px] text-[var(--color-text-faint)]">
+          {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
+        </span>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
+    </section>
   );
 }
 
@@ -556,7 +814,14 @@ function MailboxesSection() {
     <section>
       <SectionHeading
         title="Mailboxes"
-        blurb="Every connected account is downloaded into your private search index — that's what makes search instant."
+        blurb="Every connected account is downloaded into your private search index. That is what makes search instant."
+        aside={
+          accounts.length
+            ? `${accounts.length} ${accounts.length === 1 ? 'mailbox' : 'mailboxes'} · ${
+                accounts.filter((account) => syncByAccount.get(account.accountId)?.corpusReady).length
+              } indexed`
+            : 'No mailboxes yet'
+        }
       />
       <div className="space-y-2.5">
         {accounts.map((account) => (
@@ -880,6 +1145,11 @@ function ConnectionsSection() {
         title="Connections"
         badge={<BetaBadge />}
         blurb="Bring GitHub, Granola, Bitbucket, Atlassian/Jira, and Slack into your brief, Areas, and search."
+        aside={
+          connections.length
+            ? `${connections.length} connected · ${availableServers.length} available`
+            : `${availableServers.length} available`
+        }
       />
       <div className="space-y-2.5">
         {connections.map((connection) => (
@@ -1094,351 +1364,15 @@ function ConnectionsSection() {
 }
 
 // ---------------------------------------------------------------------------
-// AI
-// ---------------------------------------------------------------------------
-
-function AiSection() {
-  const qc = useQueryClient();
-  const [aiMode, setAiMode] = useState<'lab86' | 'byok'>('byok');
-  const [provider, setProvider] = useState<Provider>('openrouter');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
-  const [fastModel, setFastModel] = useState('');
-
-  const { data: ai } = useQuery({
-    queryKey: ['ai-settings'],
-    queryFn: async () => {
-      const data = await fetchJson('/api/ai/settings');
-      const requireOpenRouter = Boolean(data.requiresUserOpenRouterKey);
-      const nextMode = requireOpenRouter ? 'byok' : data.settings?.mode || 'lab86';
-      const computedProvider = (
-        nextMode === 'lab86' ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
-      ) as Provider;
-      setAiMode(nextMode);
-      setProvider(computedProvider);
-      setModel(
-        computedProvider === 'openrouter'
-          ? normalizeOpenRouterPrimaryModel(data.settings?.model)
-          : data.settings?.model || '',
-      );
-      setFastModel(
-        computedProvider === 'openrouter'
-          ? normalizeOpenRouterFastModel(data.settings?.fastModel)
-          : data.settings?.fastModel || '',
-      );
-      return data;
-    },
-  });
-  // Saving before the server settings hydrate would persist these defaults
-  // over the user's real configuration — gate every write on first load.
-  const aiLoaded = Boolean(ai);
-
-  const saveAi = useMutation({
-    mutationFn: async () => {
-      return postJson('/api/ai/settings', {
-        mode: aiMode,
-        provider: aiMode === 'lab86' ? 'openrouter' : provider,
-        model:
-          aiMode === 'lab86' || provider === 'openrouter'
-            ? normalizeOpenRouterPrimaryModel(model)
-            : undefined,
-        fastModel:
-          aiMode === 'lab86' || provider === 'openrouter'
-            ? normalizeOpenRouterFastModel(fastModel)
-            : undefined,
-        apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
-      });
-    },
-    onSuccess: () => {
-      setApiKey('');
-      toast.success('AI settings saved');
-      qc.invalidateQueries({ queryKey: ['ai-settings'] });
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not save AI settings'),
-  });
-
-  const deleteKey = useMutation({
-    // Delete the key that is actually stored, not whatever the selector
-    // currently points at.
-    mutationFn: async () => {
-      const storedProvider = ai?.key?.provider;
-      if (!storedProvider) throw new Error('No stored API key to remove.');
-      return fetch(`/api/ai/settings?provider=${encodeURIComponent(storedProvider)}`, {
-        method: 'DELETE',
-      }).then(check);
-    },
-    onSuccess: () => {
-      toast.success('API key removed');
-      qc.invalidateQueries({ queryKey: ['ai-settings'] });
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not remove key'),
-  });
-
-  const checkout = useMutation({
-    mutationFn: async () => postJson('/api/billing/checkout', {}),
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not start checkout'),
-  });
-  const portal = useMutation({
-    mutationFn: async () => postJson('/api/billing/portal', {}),
-    onSuccess: (data) => {
-      if (data.url) window.location.href = data.url;
-    },
-    onError: (err: any) => toast.error(err?.message || 'Could not open billing portal'),
-  });
-
-  const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
-  const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
-  const paidPlan = ai?.usage?.paidPlan;
-  const pricesPresent =
-    typeof paidPlan?.monthlyUsd === 'number' &&
-    typeof paidPlan?.annualUsd === 'number' &&
-    typeof paidPlan?.byokMonthlyUsd === 'number' &&
-    typeof paidPlan?.byokAnnualUsd === 'number';
-  const priceLine = pricesPresent
-    ? `Pro (hosted AI) is $${paidPlan.monthlyUsd}/mo or $${paidPlan.annualUsd}/yr · bring-your-own-key is $${paidPlan.byokMonthlyUsd}/mo or $${paidPlan.byokAnnualUsd}/yr.`
-    : 'Two plans: hosted AI, or bring your own key for less.';
-  const primaryOptions = (ai?.modelOptions?.openrouter?.primary ||
-    OPENROUTER_PRIMARY_MODEL_OPTIONS) as ModelOption[];
-  const fastOptions = (ai?.modelOptions?.openrouter?.fast || OPENROUTER_FAST_MODEL_OPTIONS) as ModelOption[];
-  const primaryModelDetail = primaryOptions.find((option) => option.id === model)?.detail;
-  const fastModelDetail = fastOptions.find((option) => option.id === fastModel)?.detail;
-  const showOpenRouterModels = aiMode === 'lab86' || provider === 'openrouter';
-
-  return (
-    <section>
-      <SectionHeading
-        title="AI"
-        blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
-      />
-      {!aiLoaded ? (
-        <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
-          <Ring className="size-3.5" /> Loading your AI configuration…
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid gap-2.5 sm:grid-cols-2">
-            <ModeCard
-              active={aiMode === 'lab86'}
-              disabled={requireOpenRouter}
-              title="Lab86 AI"
-              description="Included with Pro. Curated models, zero setup, budgeted for you."
-              icon={<Brain className="size-4" />}
-              onClick={() => setAiMode('lab86')}
-            />
-            <ModeCard
-              active={aiMode === 'byok'}
-              title="My own API key"
-              description="Bring an OpenRouter, OpenAI, or Anthropic key. You pay your provider directly."
-              icon={<KeyRound className="size-4" />}
-              onClick={() => setAiMode('byok')}
-            />
-          </div>
-
-          <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-soft)] sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Provider</Label>
-              {aiMode === 'lab86' ? (
-                <Input value="OpenRouter (Lab86 managed)" readOnly />
-              ) : (
-                <Select
-                  value={provider}
-                  onValueChange={(value) =>
-                    setProviderForByok(value as Provider, setProvider, setModel, setFastModel)
-                  }
-                  disabled={requireOpenRouter}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                    {!requireOpenRouter ? <SelectItem value="openai">OpenAI</SelectItem> : null}
-                    {!requireOpenRouter ? <SelectItem value="anthropic">Anthropic</SelectItem> : null}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Normal model</Label>
-              {showOpenRouterModels ? (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {primaryOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value="Provider default" readOnly />
-              )}
-              {showOpenRouterModels && primaryModelDetail ? (
-                <p className="text-[11px] text-[var(--color-text-muted)]">{primaryModelDetail}</p>
-              ) : null}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Fast model</Label>
-              {showOpenRouterModels ? (
-                <Select value={fastModel} onValueChange={setFastModel}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {fastOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value="Provider default" readOnly />
-              )}
-              {showOpenRouterModels && fastModelDetail ? (
-                <p className="text-[11px] text-[var(--color-text-muted)]">{fastModelDetail}</p>
-              ) : null}
-            </div>
-            {aiMode === 'lab86' ? (
-              <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label>API key</Label>
-                <div className="flex gap-2">
-                  <Input
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={ai?.key?.masked || 'Paste key to save or replace'}
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  {ai?.key ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      onClick={() => deleteKey.mutate()}
-                      disabled={deleteKey.isPending}
-                      title={`Remove stored ${ai.key.provider} key`}
-                      className="shrink-0 self-center text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            )}
-            <div className="sm:col-span-2">
-              <Button
-                type="button"
-                onClick={() => saveAi.mutate()}
-                disabled={!aiLoaded || saveAi.isPending}
-                className="w-full sm:w-auto"
-              >
-                {saveAi.isPending ? <Ring className="size-3" /> : <Check className="size-3.5" />}
-                Save AI settings
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-[12.5px] shadow-[var(--shadow-soft)]">
-            <span className="text-[var(--color-text-muted)]">
-              {subscriptionsDisabled
-                ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
-                : ai?.usage?.status === 'reduced_cost'
-                  ? 'AI is using reduced-cost routing for the rest of this billing period.'
-                  : ai?.usage?.status === 'exhausted'
-                    ? 'AI chat is paused for this billing period — core mail automation continues.'
-                    : priceLine}
-            </span>
-            {!subscriptionsDisabled ? (
-              <span className="ml-auto flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => checkout.mutate()}
-                  disabled={checkout.isPending}
-                >
-                  <CreditCard className="size-3.5" />
-                  Upgrade
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => portal.mutate()}
-                  disabled={portal.isPending}
-                >
-                  Manage
-                </Button>
-              </span>
-            ) : null}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ModeCard({
-  active,
-  disabled,
-  title,
-  description,
-  icon,
-  onClick,
-}: {
-  active: boolean;
-  disabled?: boolean;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`rounded-xl border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-        active
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] shadow-[var(--shadow-soft)]'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] hover:border-[var(--color-text-faint)]'
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span className={active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)]'}>
-          {icon}
-        </span>
-        <span className="text-[13.5px] font-semibold">{title}</span>
-        {active ? (
-          <Badge className="ml-auto bg-[var(--color-accent)] text-[10px] text-[var(--color-accent-foreground)]">
-            Active
-          </Badge>
-        ) : null}
-      </div>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">{description}</p>
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Account
 // ---------------------------------------------------------------------------
 
 function AccountSection() {
   const qc = useQueryClient();
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
+  const { user } = useUser();
+  const clerk = useClerk();
+  const [confirmText, setConfirmText] = useState('');
 
   const deleteAccount = useMutation({
     mutationFn: async () => check(await fetch('/api/account', { method: 'DELETE' })),
@@ -1451,37 +1385,107 @@ function AccountSection() {
   });
 
   if (!clerkEnabled) return null;
+  const email = user?.primaryEmailAddress?.emailAddress ?? null;
+  const name = user?.fullName || user?.firstName || null;
+  const since = user?.createdAt
+    ? new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(user.createdAt)
+    : null;
+  const confirmed = confirmText.trim().toLowerCase() === 'delete';
+
   return (
     <section>
-      <SectionHeading title="Account" blurb="Sign-in, sessions, and the big red button." />
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
-          <span className="text-[12.5px] text-[var(--color-text-muted)]">Signed in with Clerk</span>
-          <UserButton appearance={{ elements: { avatarBox: 'size-7' } }} />
-        </div>
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-bg-elevated)] px-4 py-3 shadow-[var(--shadow-soft)]">
-          <div className="min-w-0 text-[12px] text-[var(--color-text-muted)]">
-            <span className="font-medium text-[var(--color-text)]">Delete everything.</span> Mail grants, the
-            search index, AI settings, usage records, and your Lab86 account — gone for good.
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={deleteAccount.isPending}
-            onClick={() => {
-              const confirmed = window.confirm(
-                'Delete your Albatross account and all Lab86-hosted mail data? This cannot be undone.',
-              );
-              if (confirmed) deleteAccount.mutate();
-            }}
-            className="shrink-0 border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
-          >
-            {deleteAccount.isPending ? <Ring className="size-3" /> : <Trash2 className="size-3.5" />}
-            Delete
-          </Button>
-        </div>
-      </div>
+      <SectionHeading
+        title="Account"
+        blurb="Who is signed in, where the session lives, and the one action that cannot be undone."
+        aside={since ? `Member since ${since}` : undefined}
+      />
+      <SettingsGroupTitle>Signed in</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow
+          label={name || email || 'Your account'}
+          description={name && email ? email : 'Signed in with Clerk.'}
+          control={<UserButton appearance={{ elements: { avatarBox: 'size-8' } }} />}
+        />
+        <SettingsRow
+          label="Profile and security"
+          description="Name, email addresses, passkeys, and the devices signed in right now."
+          control={
+            <Button type="button" size="sm" variant="outline" onClick={() => clerk.openUserProfile()}>
+              Open profile
+            </Button>
+          }
+        />
+        <SettingsRow
+          label="Sign out"
+          description="Ends the session on this browser only. Your data stays where it is."
+          control={
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void clerk.signOut({ redirectUrl: '/sign-in' })}
+            >
+              Sign out
+            </Button>
+          }
+        />
+      </SettingsCard>
+
+      <SettingsGroupTitle>Delete</SettingsGroupTitle>
+      <SettingsCard tone="danger">
+        <SettingsRow
+          label="Delete everything"
+          description="Mail grants, the search index, AI settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          control={
+            <AlertDialog
+              onOpenChange={(open) => {
+                if (!open) setConfirmText('');
+              }}
+            >
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={deleteAccount.isPending}
+                  className="shrink-0 border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
+                >
+                  {deleteAccount.isPending ? <Ring className="size-3" /> : null}
+                  Delete account
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete your Albatross account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes every mailbox grant, the search index, your settings, and usage records from
+                    Lab86. It cannot be undone. Type{' '}
+                    <span className="font-mono font-medium text-[var(--color-text)]">delete</span> to confirm.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Input
+                  value={confirmText}
+                  onChange={(event) => setConfirmText(event.target.value)}
+                  placeholder="delete"
+                  aria-label="Type delete to confirm"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Keep my account</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={!confirmed || deleteAccount.isPending}
+                    onClick={() => deleteAccount.mutate()}
+                    className="bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger)]/90"
+                  >
+                    Delete everything
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          }
+        />
+      </SettingsCard>
     </section>
   );
 }

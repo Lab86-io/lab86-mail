@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -28,7 +28,6 @@ import {
 import {
   type ChangeEvent,
   type DragEvent,
-  type ReactNode,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -41,6 +40,8 @@ import {
   GoogleDocumentEditor,
   type GoogleEditorSource,
 } from '@/components/files/DocumentEditor';
+import { FileLocationPicker } from '@/components/files/FileLocationPicker';
+import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { AppleLogo, GoogleLogo, MicrosoftLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
@@ -53,6 +54,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import type { AlbatrossDocumentRecord, DocumentKind } from '@/lib/documents/model';
+import { importXlsxWorkbook, loadSpreadsheetEngine } from '@/lib/documents/odoo-spreadsheet-engine';
+import { ODOO_SPREADSHEET_ENGINE } from '@/lib/documents/sheet-workbook';
+import { fileMatchesType, mergeFilePages, readFilePage } from '@/lib/files/library-client';
 import type { CloudFileItem, CloudFileProvider } from '@/lib/files/providers';
 import { cn } from '@/lib/utils';
 
@@ -79,26 +83,6 @@ interface StatusResponse {
   icloud: { mode: 'device_folder'; detail: string };
 }
 
-interface AlbatrossUpload {
-  id: string;
-  name: string;
-  mimeType?: string;
-  size: number;
-  createdAt: number;
-  url?: string | null;
-}
-
-interface BrowseResponse {
-  ok: boolean;
-  items: CloudFileItem[];
-  nextCursor?: string;
-}
-
-interface CloudBrowseResult {
-  items: CloudFileItem[];
-  failures: Array<{ connection: string; message: string }>;
-}
-
 interface Location {
   kind: 'all' | 'albatross' | 'icloud' | 'connection';
   id: string;
@@ -119,6 +103,7 @@ interface ICloudItem extends CloudFileItem {
 interface DocumentFileItem extends CloudFileItem {
   documentId?: string;
   documentKind?: DocumentKind;
+  officeDocumentId?: string;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -181,26 +166,6 @@ function fileIcon(item: CloudFileItem) {
   return File;
 }
 
-function documentAsFileItem(document: AlbatrossDocumentRecord): DocumentFileItem {
-  return {
-    id: document.documentId,
-    documentId: document.documentId,
-    documentKind: document.kind,
-    name: document.title,
-    provider: 'albatross',
-    mimeType:
-      document.kind === 'doc'
-        ? 'application/x-albatross-document'
-        : document.kind === 'sheet'
-          ? 'application/x-albatross-spreadsheet'
-          : 'application/x-albatross-presentation',
-    modifiedAt: document.updatedAt,
-    owner: document.google ? 'Albatross · Google Drive' : 'Albatross',
-    webUrl: document.google?.webUrl,
-    isFolder: false,
-  };
-}
-
 function formatBytes(size?: number) {
   if (size === undefined) return '—';
   if (size < 1_024) return `${size} B`;
@@ -212,12 +177,11 @@ function formatBytes(size?: number) {
 }
 
 function formatDate(value?: number) {
-  if (!value) return '—';
+  if (!value || !Number.isFinite(new Date(value).getTime())) return '—';
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
-    year: new Date(value).getUTCFullYear() === new Date().getUTCFullYear() ? undefined : 'numeric',
-    timeZone: 'UTC',
+    year: new Date(value).getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
   }).format(value);
 }
 
@@ -231,27 +195,18 @@ function sortItems(items: CloudFileItem[]) {
   });
 }
 
-function uploadAsFileItem(upload: AlbatrossUpload): CloudFileItem {
-  return {
-    id: upload.id,
-    name: upload.name,
-    provider: 'albatross',
-    mimeType: upload.mimeType,
-    size: upload.size,
-    modifiedAt: upload.createdAt,
-    webUrl: upload.url || undefined,
-    isFolder: false,
-  };
-}
-
 export function FilesSurface() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const officeInputRef = useRef<HTMLInputElement>(null);
+  const xlsxInputRef = useRef<HTMLInputElement>(null);
   const fallbackFolderInputRef = useRef<HTMLInputElement>(null);
   const pendingFolderRef = useRef<CloudFileItem | null>(null);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [locationId, setLocationId] = useState('all');
   const [layout, setLayout] = useState<'list' | 'grid'>('list');
+  const [sort, setSort] = useState('name');
+  const [fileType, setFileType] = useState('all');
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search.trim());
   const [folderStack, setFolderStack] = useState<FolderCrumb[]>([{ name: 'Files' }]);
@@ -260,6 +215,7 @@ export function FilesSurface() {
   const [icloudBusy, setIcloudBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [openDocumentId, setOpenDocumentId] = useState<string | null>(null);
+  const [openOfficeId, setOpenOfficeId] = useState<string | null>(null);
   const [openGoogleFile, setOpenGoogleFile] = useState<GoogleEditorSource | null>(null);
 
   const statusQuery = useQuery({
@@ -267,21 +223,50 @@ export function FilesSurface() {
     queryFn: () => fetchJson<StatusResponse>('/api/files/status'),
     staleTime: 30_000,
   });
-  const uploadsQuery = useQuery({
-    queryKey: ['albatross-files'],
-    queryFn: () => fetchJson<{ ok: true; files: AlbatrossUpload[] }>('/api/agent/uploads'),
-    staleTime: 15_000,
+  const officeQuery = useQuery({
+    queryKey: ['office-files'],
+    queryFn: () =>
+      fetchJson<{
+        enabled: boolean;
+        files: Array<{
+          documentId: string;
+          title: string;
+          extension: 'docx' | 'xlsx' | 'pptx';
+          updatedAt: number;
+        }>;
+      }>('/api/office'),
+    staleTime: 30_000,
   });
-  const documentsQuery = useQuery({
-    queryKey: ['documents'],
-    queryFn: () => fetchJson<{ ok: true; documents: AlbatrossDocumentRecord[] }>('/api/documents?limit=500'),
-    staleTime: 10_000,
+  useEffect(() => {
+    if (connectionsOpen) void statusQuery.refetch();
+  }, [connectionsOpen, statusQuery.refetch]);
+  const libraryQuery = useInfiniteQuery({
+    queryKey: ['file-library', deferredSearch],
+    initialPageParam: { documents: null, uploads: null } as Record<string, string | null>,
+    queryFn: async ({ pageParam, signal }) => {
+      const pages = await Promise.all(
+        Object.entries(pageParam).map(async ([kind, cursor]) => {
+          const params = new URLSearchParams({ kind, search: deferredSearch });
+          if (cursor) params.set('cursor', cursor);
+          return { kind, ...(await readFilePage(`/api/files/library?${params}`, signal)) };
+        }),
+      );
+      return {
+        items: pages.flatMap((page) => page.items),
+        cursors: Object.fromEntries(
+          pages.filter((page) => page.nextCursor).map((page) => [page.kind, page.nextCursor!]),
+        ),
+      };
+    },
+    getNextPageParam: (page) => (Object.keys(page.cursors).length ? page.cursors : undefined),
+    staleTime: 15_000,
   });
 
   useEffect(() => {
     const readOpenFile = () => {
       const params = new URLSearchParams(window.location.search);
       setOpenDocumentId(params.get('document'));
+      setOpenOfficeId(params.get('office'));
       const connectionId = params.get('connection');
       const fileId = params.get('file');
       const mimeType = params.get('mime');
@@ -304,14 +289,28 @@ export function FilesSurface() {
   }, []);
 
   const openDocument = (documentId: string) => {
+    setOpenOfficeId(null);
     pushDocumentDeepLink(documentId);
     setOpenGoogleFile(null);
     setOpenDocumentId(documentId);
   };
 
+  const openOfficeDocument = (documentId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['document', 'provider', 'connection', 'file', 'mime']) params.delete(key);
+    params.set('view', 'files');
+    params.set('office', documentId);
+    window.history.pushState(null, '', `${window.location.pathname}?${params}`);
+    setOpenOfficeId(documentId);
+    setOpenDocumentId(null);
+    setOpenGoogleFile(null);
+  };
+
   const openGoogleDocument = (source: GoogleEditorSource) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'files');
+    params.delete('office');
+    setOpenOfficeId(null);
     params.delete('document');
     params.set('provider', 'google_drive');
     params.set('connection', source.connectionId);
@@ -325,6 +324,8 @@ export function FilesSurface() {
   const closeDocument = () => {
     const params = new URLSearchParams(window.location.search);
     params.delete('document');
+    params.delete('office');
+    setOpenOfficeId(null);
     params.delete('provider');
     params.delete('connection');
     params.delete('file');
@@ -333,7 +334,8 @@ export function FilesSurface() {
     window.history.pushState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
     setOpenDocumentId(null);
     setOpenGoogleFile(null);
-    void documentsQuery.refetch();
+    void libraryQuery.refetch();
+    void officeQuery.refetch();
   };
 
   useEffect(() => {
@@ -381,7 +383,7 @@ export function FilesSurface() {
     setSearch('');
   }, [location.id, locationRootName]);
 
-  const cloudQuery = useQuery({
+  const cloudQuery = useInfiniteQuery({
     queryKey: [
       'cloud-files',
       location.kind === 'connection' ? location.id : 'all',
@@ -390,64 +392,99 @@ export function FilesSurface() {
       connections.map((connection) => connection.connectionId).join(','),
     ],
     enabled: location.kind === 'connection' || (location.kind === 'all' && connections.length > 0),
-    queryFn: async () => {
+    initialPageParam: null as Record<string, string | null> | null,
+    queryFn: async ({ pageParam, signal }) => {
       const targets = location.kind === 'connection' ? [location.connection!] : connections;
       const pages = await Promise.all(
-        targets.map(async (connection) => {
-          const params = new URLSearchParams({
-            connectionId: connection.connectionId,
-          });
-          if (location.kind === 'connection' && currentFolder?.id) {
-            params.set('folderId', currentFolder.id);
-          }
-          if (deferredSearch) params.set('q', deferredSearch);
-          try {
-            const page = await fetchJson<BrowseResponse>(`/api/files/browse?${params}`);
-            return { page, failure: null };
-          } catch (error) {
-            if (location.kind === 'connection') throw error;
-            return {
-              page: { ok: false, items: [] } as BrowseResponse,
-              failure: {
-                connection:
-                  connection.accountEmail || connection.displayName || providerLabel(connection.provider),
-                message: error instanceof Error ? error.message : 'Drive unavailable',
-              },
-            };
-          }
-        }),
+        targets
+          .filter((connection) => !pageParam || connection.connectionId in pageParam)
+          .map(async (connection) => {
+            const params = new URLSearchParams({
+              connectionId: connection.connectionId,
+            });
+            if (location.kind === 'connection' && currentFolder?.id) {
+              params.set('folderId', currentFolder.id);
+            }
+            if (deferredSearch) params.set('q', deferredSearch);
+            if (pageParam?.[connection.connectionId])
+              params.set('cursor', pageParam[connection.connectionId]!);
+            try {
+              const page = await readFilePage(`/api/files/browse?${params}`, signal);
+              return { page, id: connection.connectionId, failure: null };
+            } catch (error) {
+              if (signal.aborted) throw error;
+              if (location.kind === 'connection') throw error;
+              return {
+                page: { items: [], nextCursor: pageParam?.[connection.connectionId] || null },
+                id: connection.connectionId,
+                failure: {
+                  connection:
+                    connection.accountEmail || connection.displayName || providerLabel(connection.provider),
+                  message: error instanceof Error ? error.message : 'Drive unavailable',
+                },
+              };
+            }
+          }),
       );
       return {
         items: pages.flatMap(({ page }) => page.items),
         failures: pages.flatMap(({ failure }) => (failure ? [failure] : [])),
-      } satisfies CloudBrowseResult;
+        cursors: Object.fromEntries(
+          pages
+            .filter(({ page, failure }) => page.nextCursor || failure)
+            .map(({ page, id }) => [id, page.nextCursor || null]),
+        ),
+      };
     },
+    getNextPageParam: (page) => (Object.keys(page.cursors).length ? page.cursors : undefined),
+    retry: false,
   });
-
-  const uploadItems = useMemo(
-    () => (uploadsQuery.data?.files || []).map(uploadAsFileItem),
-    [uploadsQuery.data],
+  const cloudItems = useMemo(() => mergeFilePages(cloudQuery.data?.pages), [cloudQuery.data]);
+  const cloudFailures = cloudQuery.data?.pages.at(-1)?.failures || [];
+  const localItems = useMemo(
+    () => [
+      ...mergeFilePages(libraryQuery.data?.pages),
+      ...(officeQuery.data?.files || [])
+        .filter((file) => file.title.toLowerCase().includes(deferredSearch.toLowerCase()))
+        .map(
+          (file): DocumentFileItem => ({
+            id: `office:${file.documentId}`,
+            officeDocumentId: file.documentId,
+            name: file.title,
+            provider: 'albatross',
+            isFolder: false,
+            modifiedAt: file.updatedAt,
+            mimeType:
+              file.extension === 'docx'
+                ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                : file.extension === 'xlsx'
+                  ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                  : 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            webUrl: `/api/office/${file.documentId}/content`,
+          }),
+        ),
+    ],
+    [libraryQuery.data, officeQuery.data, deferredSearch],
   );
-  const documentItems = useMemo(
-    () => (documentsQuery.data?.documents || []).map(documentAsFileItem),
-    [documentsQuery.data],
-  );
-  const localItems = useMemo(() => [...documentItems, ...uploadItems], [documentItems, uploadItems]);
   const visibleItems = useMemo(() => {
+    const deviceItems = icloudItems.filter((item) =>
+      item.name.toLowerCase().includes(deferredSearch.toLowerCase()),
+    );
     let items: CloudFileItem[];
     if (location.kind === 'albatross') items = localItems;
-    else if (location.kind === 'icloud') items = icloudItems;
+    else if (location.kind === 'icloud') items = deviceItems;
     else if (location.kind === 'connection') {
-      items = cloudQuery.data?.items || [];
+      items = cloudItems;
     } else {
-      items = [...localItems, ...(cloudQuery.data?.items || []), ...icloudItems];
+      items = [...localItems, ...cloudItems, ...deviceItems];
     }
-    if (deferredSearch && location.kind !== 'connection') {
-      const needle = deferredSearch.toLowerCase();
-      items = items.filter((item) => item.name.toLowerCase().includes(needle));
-    }
-    return sortItems(items);
-  }, [cloudQuery.data?.items, deferredSearch, icloudItems, localItems, location.kind]);
+    const filtered = sortItems(items.filter((item) => fileMatchesType(item, fileType)));
+    return sort === 'modified'
+      ? filtered.sort(
+          (a, b) => Number(b.isFolder) - Number(a.isFolder) || (b.modifiedAt || 0) - (a.modifiedAt || 0),
+        )
+      : filtered;
+  }, [cloudItems, deferredSearch, icloudItems, localItems, location.kind, fileType, sort]);
 
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => {
@@ -461,8 +498,9 @@ export function FilesSurface() {
     onSuccess: async () => {
       toast.success('Added to Albatross');
       setLocationId('albatross');
+      await queryClient.invalidateQueries({ queryKey: ['albatross-files'] });
       await queryClient.invalidateQueries({
-        queryKey: ['albatross-files'],
+        queryKey: ['file-library'],
       });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -477,7 +515,66 @@ export function FilesSurface() {
       }),
     onSuccess: async ({ document }) => {
       await queryClient.invalidateQueries({ queryKey: ['documents'] });
+      await queryClient.invalidateQueries({ queryKey: ['file-library'] });
       setLocationId('albatross');
+      openDocument(document.documentId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const importOfficeMutation = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.set('file', file);
+      return fetchJson<{ document: { documentId: string } }>('/api/office', { method: 'POST', body: form });
+    },
+    onSuccess: async ({ document }) => {
+      await officeQuery.refetch();
+      openOfficeDocument(document.documentId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Excel comes in through the spreadsheet engine in the browser (its reader
+  // needs a DOM parser); the server stores the untouched bytes alongside the
+  // engine snapshot so the original is always downloadable.
+  const importXlsxMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const loaded = await loadSpreadsheetEngine();
+      const imported = await importXlsxWorkbook(loaded, file);
+      const form = new FormData();
+      form.set('file', file);
+      form.set('title', file.name.replace(/\.xlsx$/iu, ''));
+      form.set('warnings', JSON.stringify(imported.warnings));
+      form.set(
+        'model',
+        JSON.stringify({
+          kind: 'sheet',
+          version: 2,
+          engine: ODOO_SPREADSHEET_ENGINE,
+          engineVersion: loaded.engine.__info__.version,
+          workbook: imported.workbook,
+        }),
+      );
+      const result = await fetchJson<{ ok: true; document: AlbatrossDocumentRecord }>(
+        '/api/documents/import',
+        {
+          method: 'POST',
+          body: form,
+        },
+      );
+      return { document: result.document, warnings: imported.warnings };
+    },
+    onSuccess: async ({ document, warnings }) => {
+      await queryClient.invalidateQueries({ queryKey: ['file-library'] });
+      setLocationId('albatross');
+      if (warnings.length) {
+        toast.warning(`Imported with ${warnings.length} ${warnings.length === 1 ? 'note' : 'notes'}`, {
+          description: 'Open the import notes in the editor before relying on affected cells.',
+        });
+      } else {
+        toast.success('Workbook imported');
+      }
       openDocument(document.documentId);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -596,6 +693,11 @@ export function FilesSurface() {
       return;
     }
     const documentId = (item as DocumentFileItem).documentId;
+    const officeDocumentId = (item as DocumentFileItem).officeDocumentId;
+    if (officeDocumentId) {
+      openOfficeDocument(officeDocumentId);
+      return;
+    }
     if (documentId) {
       openDocument(documentId);
       return;
@@ -637,28 +739,48 @@ export function FilesSurface() {
   };
 
   const loading =
-    uploadsQuery.isLoading ||
-    documentsQuery.isLoading ||
+    ((location.kind === 'all' || location.kind === 'albatross') && libraryQuery.isLoading) ||
     statusQuery.isLoading ||
     cloudQuery.isFetching ||
     icloudBusy;
   const loadError =
     statusQuery.error ||
-    uploadsQuery.error ||
-    documentsQuery.error ||
+    ((location.kind === 'all' || location.kind === 'albatross') && libraryQuery.error) ||
     (location.kind === 'connection' ? cloudQuery.error : null);
+  const hasMore = Boolean(
+    ((location.kind === 'all' || location.kind === 'albatross') && libraryQuery.hasNextPage) ||
+      ((location.kind === 'all' || location.kind === 'connection') && cloudQuery.hasNextPage),
+  );
+  const retryFiles = () => {
+    void statusQuery.refetch();
+    if (location.kind === 'all' || location.kind === 'albatross') void libraryQuery.refetch();
+    if (location.kind === 'connection' || (location.kind === 'all' && connections.length))
+      void cloudQuery.refetch();
+  };
 
+  // Editors are keyed by file identity: a deep link or history navigation
+  // that swaps the open file must never reuse an instance whose drafts and
+  // in-flight saves belong to the previous file. The editors retain and flush
+  // their outgoing edits on unmount (see useOutgoingEdits).
+  if (openOfficeId)
+    return <OfficeEditor key={openOfficeId} documentId={openOfficeId} onClose={closeDocument} />;
   if (openDocumentId) {
-    return <DocumentEditor documentId={openDocumentId} onClose={closeDocument} />;
+    return <DocumentEditor key={openDocumentId} documentId={openDocumentId} onClose={closeDocument} />;
   }
   if (openGoogleFile) {
-    return <GoogleDocumentEditor source={openGoogleFile} onClose={closeDocument} />;
+    return (
+      <GoogleDocumentEditor
+        key={`${openGoogleFile.connectionId}:${openGoogleFile.fileId}:${openGoogleFile.mimeType}`}
+        source={openGoogleFile}
+        onClose={closeDocument}
+      />
+    );
   }
 
   return (
     <section
       aria-label="Files"
-      className="relative flex h-full min-h-0 flex-col bg-[var(--color-bg)]"
+      className="@container/files relative flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-content)]"
       onDragEnter={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -669,6 +791,30 @@ export function FilesSurface() {
       }}
       onDrop={onDrop}
     >
+      <input
+        ref={officeInputRef}
+        type="file"
+        accept=".docx,.xlsx,.pptx"
+        className="hidden"
+        aria-label="Import Office working copy"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) importOfficeMutation.mutate(file);
+        }}
+      />
+      <input
+        ref={xlsxInputRef}
+        type="file"
+        accept=".xlsx"
+        className="hidden"
+        aria-label="Import Excel workbook"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) importXlsxMutation.mutate(file);
+        }}
+      />
       <input
         ref={fileInputRef}
         type="file"
@@ -688,25 +834,38 @@ export function FilesSurface() {
         {...({ webkitdirectory: '' } as any)}
       />
 
-      <header className="flex min-h-14 items-center gap-3 border-b border-[var(--color-border)] px-4">
+      {/* Two bars. The header names the surface and holds search and the two
+          verbs; the toolbar below holds where you are and how the list reads. */}
+      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] p-3 @min-[680px]/files:grid-cols-[auto_minmax(160px,1fr)_auto_auto] @min-[680px]/files:px-4">
         <div className="min-w-0">
           <h1 className="text-[15px] font-semibold tracking-tight">Files</h1>
-          <p className="hidden text-[11px] text-[var(--color-text-faint)] sm:block">
-            One place for the work behind your work
+          <p className="hidden truncate text-[11.5px] text-[var(--color-text-muted)] @min-[680px]/files:block">
+            {deferredSearch
+              ? 'Library names, plus drive names and content, account-wide'
+              : location.kind === 'all'
+                ? 'Your library and every connected drive'
+                : `Files in ${location.label}`}
           </p>
         </div>
-        <label className="relative ml-auto hidden w-full max-w-md sm:block">
+        <label className="relative col-span-3 row-start-2 block min-w-0 @min-[680px]/files:col-span-1 @min-[680px]/files:col-start-2 @min-[680px]/files:row-start-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input
+            aria-label="Search files"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={`Search ${location.label}`}
-            className="h-8 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] pl-8 pr-3 text-[12.5px] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent-soft)]"
+            className="control-field h-8 w-full pl-8 pr-3 text-[12.5px]"
           />
         </label>
-        <Button type="button" variant="outline" size="sm" onClick={() => setConnectionsOpen(true)}>
+        <Button
+          type="button"
+          aria-label="Manage drives"
+          variant="outline"
+          size="sm"
+          onClick={() => setConnectionsOpen(true)}
+        >
           <Cloud className="size-3.5" />
-          <span className="hidden sm:inline">Drives</span>
+          <span className="hidden @min-[480px]/files:inline">Drives</span>
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -721,11 +880,25 @@ export function FilesSurface() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {officeQuery.data?.enabled ? (
+              <DropdownMenuItem
+                disabled={importOfficeMutation.isPending}
+                onSelect={() => officeInputRef.current?.click()}
+              >
+                <Upload className="size-3.5" /> Import Office working copy
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('doc')}>
               <FileText className="size-3.5" /> Document
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('sheet')}>
               <FileSpreadsheet className="size-3.5" /> Spreadsheet
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={importXlsxMutation.isPending}
+              onSelect={() => xlsxInputRef.current?.click()}
+            >
+              <Upload className="size-3.5" /> Import Excel workbook
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('deck')}>
               <FilePresentation className="size-3.5" /> Presentation
@@ -737,226 +910,249 @@ export function FilesSurface() {
         </DropdownMenu>
       </header>
 
-      <div className="border-b border-[var(--color-border)] px-3 py-2 sm:hidden">
-        <label className="relative block">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={`Search ${location.label}`}
-            className="h-8 w-full rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] pl-8 pr-3 text-[12.5px] outline-none"
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+          <FileLocationPicker
+            locations={locations.map((item) => ({
+              id: item.id,
+              label: item.label,
+              needsAttention: item.connection?.status === 'error',
+            }))}
+            value={locationId}
+            onChange={(id) => {
+              setSearch('');
+              if (id === 'icloud' && !icloudStack.length) void chooseICloudFolder();
+              else setLocationId(id);
+            }}
+            onManage={() => setConnectionsOpen(true)}
           />
-        </label>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col sm:grid sm:grid-cols-[210px_minmax(0,1fr)]">
-        <nav className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)]/55 p-2 sm:min-h-0 sm:overflow-y-auto sm:border-b-0 sm:border-r">
-          <div className="flex gap-1 overflow-x-auto sm:block sm:space-y-0.5">
-            <LocationButton
-              active={locationId === 'all'}
-              icon={<FolderOpen className="size-4" />}
-              label="All files"
-              onClick={() => setLocationId('all')}
-            />
-            <LocationButton
-              active={locationId === 'albatross'}
-              icon={<HardDrive className="size-4" />}
-              label="Albatross"
-              count={localItems.length}
-              onClick={() => setLocationId('albatross')}
-            />
+          {location.kind === 'connection' && folderStack.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Back one folder"
+              onClick={() => {
+                setSearch('');
+                setFolderStack((current) => current.slice(0, -1));
+              }}
+            >
+              <ArrowLeft className="size-3.5" />
+            </Button>
+          ) : location.kind === 'icloud' && icloudStack.length > 1 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Back one folder"
+              onClick={() => {
+                const next = icloudStack.slice(0, -1);
+                const parent = next.at(-1);
+                if (parent?.handle) {
+                  void loadICloudDirectory(parent.handle, next);
+                }
+              }}
+            >
+              <ArrowLeft className="size-3.5" />
+            </Button>
+          ) : null}
+          <nav
+            className={cn(
+              'min-w-0 max-w-full flex-1 items-center overflow-hidden text-[12.5px]',
+              (location.kind === 'connection' && folderStack.length > 1) ||
+                (location.kind === 'icloud' && icloudStack.length > 1)
+                ? 'flex'
+                : 'hidden',
+            )}
+            aria-label="Folder path"
+          >
+            {(location.kind === 'connection'
+              ? folderStack
+              : location.kind === 'icloud' && icloudStack.length
+                ? icloudStack.map((item) => ({ id: item.name, name: item.name }))
+                : [{ id: location.id, name: location.label }]
+            ).map((crumb, index, list) => (
+              <span key={crumb.id || crumb.name} className="flex min-w-0 items-center">
+                {index ? (
+                  <ChevronRight className="mx-0.5 size-3 shrink-0 text-[var(--color-text-faint)]" />
+                ) : null}
+                <button
+                  type="button"
+                  disabled={index === list.length - 1}
+                  onClick={() => {
+                    setSearch('');
+                    if (location.kind === 'connection')
+                      setFolderStack((current) => current.slice(0, index + 1));
+                    else if (location.kind === 'icloud') {
+                      const next = icloudStack.slice(0, index + 1);
+                      if (next.at(-1)?.handle) void loadICloudDirectory(next.at(-1)!.handle, next);
+                    }
+                  }}
+                  className={cn(
+                    'truncate',
+                    index === list.length - 1
+                      ? 'font-medium text-[var(--color-text)]'
+                      : 'text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {crumb.name}
+                </button>
+              </span>
+            ))}
+          </nav>
+          <span className="ml-1 hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
+            {visibleItems.length}
+            {hasMore ? '+' : ''} {visibleItems.length === 1 ? 'item' : 'items'}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <select
+              aria-label="File type"
+              value={fileType}
+              onChange={(event) => setFileType(event.target.value)}
+              className="control-field h-8 px-2 text-base sm:text-[12px]"
+            >
+              <option value="all">All types</option>
+              <option value="documents">Documents</option>
+              <option value="pdf">PDFs</option>
+              <option value="images">Images</option>
+              <option value="folders">Folders</option>
+            </select>
+            <select
+              aria-label="Sort files"
+              value={sort}
+              onChange={(event) => setSort(event.target.value)}
+              className="control-field h-8 px-2 text-base sm:text-[12px]"
+            >
+              <option value="name">By name</option>
+              <option value="modified">Recently modified</option>
+            </select>
           </div>
-          <div className="mt-3 hidden sm:block">
-            <div className="mb-1 flex items-center justify-between px-2">
-              <span className="text-[10px] font-medium text-[var(--color-text-faint)]">Locations</span>
+          <div className="flex items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5">
+            <button
+              type="button"
+              aria-label="List view"
+              aria-pressed={layout === 'list'}
+              onClick={() => setLayout('list')}
+              className={cn(
+                'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
+                layout === 'list' &&
+                  'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
+              )}
+            >
+              <List className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Grid view"
+              aria-pressed={layout === 'grid'}
+              onClick={() => setLayout('grid')}
+              className={cn(
+                'grid size-9 place-items-center rounded text-[var(--color-text-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:size-7',
+                layout === 'grid' &&
+                  'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
+              )}
+            >
+              <Grid2X2 className="size-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {location.kind === 'all' && cloudFailures.length ? (
+          <div
+            role="status"
+            className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-2 text-xs text-[var(--color-text)]"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <details className="min-w-0 flex-1">
+              <summary className="cursor-pointer">
+                {cloudFailures.length} {cloudFailures.length === 1 ? 'drive needs' : 'drives need'} attention.
+                Your other files are still available.
+              </summary>
+              <ul className="mt-2 space-y-1 break-words text-[var(--color-text-muted)]">
+                {cloudFailures.map((failure) => (
+                  <li key={failure.connection}>
+                    {failure.connection} — {failure.message}
+                  </li>
+                ))}
+              </ul>
               <button
                 type="button"
-                aria-label="Manage drives"
-                className="rounded p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)]"
+                className="mt-2 min-h-9 font-medium underline underline-offset-2"
                 onClick={() => setConnectionsOpen(true)}
               >
-                <Settings2 className="size-3.5" />
+                Manage connections
               </button>
-            </div>
-            <div className="space-y-0.5">
-              {connections.map((connection) => (
-                <LocationButton
-                  key={connection.connectionId}
-                  active={locationId === connection.connectionId}
-                  icon={<ProviderMark provider={connection.provider} className="size-4" />}
-                  label={
-                    connection.accountEmail || connection.displayName || providerLabel(connection.provider)
-                  }
-                  alert={connection.status === 'error'}
-                  onClick={() => setLocationId(connection.connectionId)}
-                />
-              ))}
-              <LocationButton
-                active={locationId === 'icloud'}
-                icon={<AppleLogo className="size-4" />}
-                label={icloudStack.length ? icloudStack[0].name : 'iCloud Drive'}
-                onClick={() => {
-                  if (icloudStack.length) setLocationId('icloud');
-                  else void chooseICloudFolder();
-                }}
-              />
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setConnectionsOpen(true)}
-            className="mt-4 hidden w-full items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-2.5 py-2 text-left text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)] sm:flex"
-          >
-            <Plus className="size-3.5" />
-            Add a drive
-          </button>
-        </nav>
-
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-12 items-center gap-2 border-b border-[var(--color-border)] px-3 sm:px-4">
-            {location.kind === 'connection' && folderStack.length > 1 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Back one folder"
-                onClick={() => setFolderStack((current) => current.slice(0, -1))}
-              >
-                <ArrowLeft className="size-3.5" />
-              </Button>
-            ) : location.kind === 'icloud' && icloudStack.length > 1 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Back one folder"
-                onClick={() => {
-                  const next = icloudStack.slice(0, -1);
-                  const parent = next.at(-1);
-                  if (parent?.handle) {
-                    void loadICloudDirectory(parent.handle, next);
-                  }
-                }}
-              >
-                <ArrowLeft className="size-3.5" />
-              </Button>
-            ) : null}
-            <div className="flex min-w-0 items-center text-[12.5px]">
-              {(location.kind === 'connection'
-                ? folderStack
-                : location.kind === 'icloud' && icloudStack.length
-                  ? icloudStack.map((item) => ({ id: item.name, name: item.name }))
-                  : [{ id: location.id, name: location.label }]
-              ).map((crumb, index, list) => (
-                <span key={crumb.id || crumb.name} className="flex min-w-0 items-center">
-                  {index ? (
-                    <ChevronRight className="mx-0.5 size-3 shrink-0 text-[var(--color-text-faint)]" />
-                  ) : null}
-                  <span
-                    className={cn(
-                      'truncate',
-                      index === list.length - 1
-                        ? 'font-medium text-[var(--color-text)]'
-                        : 'text-[var(--color-text-muted)]',
-                    )}
-                  >
-                    {crumb.name}
-                  </span>
-                </span>
-              ))}
-            </div>
-            <span className="ml-1 hidden text-[11px] tabular-nums text-[var(--color-text-faint)] sm:inline">
-              {visibleItems.length} {visibleItems.length === 1 ? 'item' : 'items'}
-            </span>
-            <div className="ml-auto flex items-center rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] p-0.5">
-              <button
-                type="button"
-                aria-label="List view"
-                aria-pressed={layout === 'list'}
-                onClick={() => setLayout('list')}
-                className={cn(
-                  'grid size-6 place-items-center rounded text-[var(--color-text-muted)]',
-                  layout === 'list' &&
-                    'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
-                )}
-              >
-                <List className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Grid view"
-                aria-pressed={layout === 'grid'}
-                onClick={() => setLayout('grid')}
-                className={cn(
-                  'grid size-6 place-items-center rounded text-[var(--color-text-muted)]',
-                  layout === 'grid' &&
-                    'bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-control)]',
-                )}
-              >
-                <Grid2X2 className="size-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {location.kind === 'all' && cloudQuery.data?.failures.length ? (
-            <div
-              role="status"
-              className="flex items-start gap-2 border-b border-amber-300/60 bg-amber-50 px-4 py-2 text-[11.5px] text-amber-950"
+            </details>
+            <button
+              type="button"
+              className="shrink-0 font-medium underline underline-offset-2"
+              onClick={() => void cloudQuery.refetch()}
             >
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1">
-                Some drives could not refresh:{' '}
-                {cloudQuery.data.failures
-                  .map((failure) => `${failure.connection} — ${failure.message}`)
-                  .join('; ')}
-              </span>
-              <button
-                type="button"
-                className="shrink-0 font-medium underline underline-offset-2"
-                onClick={() => void cloudQuery.refetch()}
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        {loadError && visibleItems.length ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-text-muted)]"
+          >
+            <span className="min-w-0 flex-1">Some files could not refresh. Showing available files.</span>
+            <button type="button" onClick={retryFiles} className="min-h-9 underline underline-offset-2">
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        <div className="relative min-h-0 flex-1 overflow-y-auto">
+          {loadError && !visibleItems.length ? (
+            <ErrorState message={(loadError as Error).message} onRetry={retryFiles} />
+          ) : (loading || search.trim() !== deferredSearch) && !visibleItems.length ? (
+            <div className="grid h-full place-items-center">
+              <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <Ring className="size-4" />
+                Loading files…
+              </div>
+            </div>
+          ) : visibleItems.length ? (
+            layout === 'list' ? (
+              <FileList items={visibleItems} showLocation={location.kind === 'all'} onOpen={openItem} />
+            ) : (
+              <FileGrid items={visibleItems} onOpen={openItem} />
+            )
+          ) : (
+            <EmptyFiles
+              location={location}
+              hasConnections={connections.length > 0}
+              searching={Boolean(deferredSearch) || fileType !== 'all'}
+              hasMore={hasMore}
+              onUpload={() => fileInputRef.current?.click()}
+              onConnect={() => setConnectionsOpen(true)}
+              onChooseICloud={() => void chooseICloudFolder()}
+            />
+          )}
+          {hasMore ? (
+            <div className="border-t border-[var(--color-border)] p-4 text-center">
+              <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                More sources remain to check. Sorting and type filters apply to loaded files.
+              </p>
+              <Button
+                variant="outline"
+                disabled={libraryQuery.isFetching || cloudQuery.isFetching}
+                onClick={() => {
+                  if ((location.kind === 'all' || location.kind === 'albatross') && libraryQuery.hasNextPage)
+                    void libraryQuery.fetchNextPage();
+                  if ((location.kind === 'all' || location.kind === 'connection') && cloudQuery.hasNextPage)
+                    void cloudQuery.fetchNextPage();
+                }}
               >
-                Retry
-              </button>
+                {libraryQuery.isFetching || cloudQuery.isFetching ? 'Loading…' : 'Load more files'}
+              </Button>
             </div>
           ) : null}
-
-          <div className="relative min-h-0 flex-1 overflow-y-auto">
-            {loadError ? (
-              <ErrorState
-                message={(loadError as Error).message}
-                onRetry={() => {
-                  void statusQuery.refetch();
-                  void uploadsQuery.refetch();
-                  void documentsQuery.refetch();
-                  void cloudQuery.refetch();
-                }}
-              />
-            ) : loading && !visibleItems.length ? (
-              <div className="grid h-full place-items-center">
-                <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                  <Ring className="size-4" />
-                  Loading files…
-                </div>
-              </div>
-            ) : visibleItems.length ? (
-              layout === 'list' ? (
-                <FileList items={visibleItems} showLocation={location.kind === 'all'} onOpen={openItem} />
-              ) : (
-                <FileGrid items={visibleItems} onOpen={openItem} />
-              )
-            ) : (
-              <EmptyFiles
-                location={location}
-                hasConnections={connections.length > 0}
-                searching={Boolean(deferredSearch)}
-                onUpload={() => fileInputRef.current?.click()}
-                onConnect={() => setConnectionsOpen(true)}
-                onChooseICloud={() => void chooseICloudFolder()}
-              />
-            )}
-          </div>
-        </main>
-      </div>
+        </div>
+      </main>
 
       {dragging ? (
         <div
@@ -988,46 +1184,6 @@ export function FilesSurface() {
   );
 }
 
-function LocationButton({
-  active,
-  icon,
-  label,
-  count,
-  alert,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  count?: number;
-  alert?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex h-8 shrink-0 items-center gap-2 rounded-md px-2.5 text-[12px] transition-colors sm:w-full',
-        active
-          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control)] hover:text-[var(--color-text)]',
-      )}
-    >
-      {icon}
-      <span className="max-w-36 truncate">{label}</span>
-      {alert ? (
-        <span
-          className="ml-auto size-1.5 rounded-full bg-[var(--color-danger)]"
-          title="Connection needs attention"
-        />
-      ) : count ? (
-        <span className="ml-auto text-[10px] tabular-nums text-[var(--color-text-faint)]">{count}</span>
-      ) : null}
-    </button>
-  );
-}
-
 function FileList({
   items,
   showLocation,
@@ -1038,19 +1194,19 @@ function FileList({
   onOpen: (item: CloudFileItem) => void;
 }) {
   return (
-    <div className="min-w-[560px]">
+    <div className="min-w-0" data-file-list>
       <div
         className={cn(
-          'sticky top-0 z-10 grid h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 px-4 text-[10px] font-medium text-[var(--color-text-faint)] backdrop-blur',
+          'sticky top-0 z-10 hidden h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-content)]/95 px-4 text-[10px] font-medium text-[var(--color-text-faint)] backdrop-blur md:grid',
           showLocation
-            ? 'grid-cols-[minmax(240px,1fr)_150px_110px_76px_28px]'
-            : 'grid-cols-[minmax(240px,1fr)_140px_110px_28px]',
+            ? 'grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_120px_90px_70px_28px]'
+            : 'grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_90px_100px_28px]',
         )}
       >
         <span>Name</span>
-        {showLocation ? <span>Location</span> : null}
+        {showLocation ? <span className="hidden lg:block">Location</span> : null}
         <span>Modified</span>
-        <span>{showLocation ? 'Size' : 'Owner'}</span>
+        <span className="hidden lg:block">{showLocation ? 'Size' : 'Owner / size'}</span>
         <span />
       </div>
       {items.map((item) => {
@@ -1059,21 +1215,22 @@ function FileList({
           <div
             key={`${item.provider}:${item.connectionId || ''}:${item.id}`}
             className={cn(
-              'group grid min-h-11 w-full items-center gap-3 border-b border-[var(--color-border)]/70 px-4 text-left transition-colors hover:bg-[var(--color-bg-muted)]',
+              'group grid min-h-14 w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-3 border-b border-[var(--color-border)]/70 px-4 text-left transition-colors hover:bg-[var(--color-bg-muted)] focus-within:bg-[var(--color-bg-muted)] md:min-h-11',
               showLocation
-                ? 'grid-cols-[minmax(240px,1fr)_150px_110px_76px_28px]'
-                : 'grid-cols-[minmax(240px,1fr)_140px_110px_28px]',
+                ? 'md:grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_120px_90px_70px_28px]'
+                : 'md:grid-cols-[minmax(0,1fr)_90px_28px] lg:grid-cols-[minmax(0,1fr)_90px_100px_28px]',
             )}
           >
             <button
               type="button"
+              title={item.name}
               onClick={() => void onOpen(item)}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 void onOpen(item);
               }}
-              className="flex min-w-0 items-center gap-2.5 text-left"
+              className="flex min-h-11 min-w-0 items-center gap-2.5 rounded text-left focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
             >
               <span
                 className={cn(
@@ -1087,21 +1244,21 @@ function FileList({
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-[12.5px] font-medium">{item.name}</span>
-                <span className="block truncate text-[10.5px] text-[var(--color-text-faint)] sm:hidden">
-                  {providerLabel(item.provider)}
+                <span className="block truncate text-[11px] text-[var(--color-text-muted)] md:hidden">
+                  {providerLabel(item.provider)} · {formatDate(item.modifiedAt)}
                 </span>
               </span>
             </button>
             {showLocation ? (
-              <span className="flex min-w-0 items-center gap-1.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
+              <span className="hidden min-w-0 items-center gap-1.5 truncate text-[11.5px] text-[var(--color-text-muted)] lg:flex">
                 <ProviderMark provider={item.provider} className="size-3.5" />
                 <span className="truncate">{providerLabel(item.provider)}</span>
               </span>
             ) : null}
-            <span className="text-[11.5px] text-[var(--color-text-muted)]">
+            <span className="hidden text-[11.5px] text-[var(--color-text-muted)] md:block">
               {formatDate(item.modifiedAt)}
             </span>
-            <span className="truncate text-[11.5px] text-[var(--color-text-muted)]">
+            <span className="hidden truncate text-[11.5px] text-[var(--color-text-muted)] lg:block">
               {showLocation
                 ? item.isFolder
                   ? '—'
@@ -1117,6 +1274,7 @@ function FileList({
 }
 
 function FileGrid({ items, onOpen }: { items: CloudFileItem[]; onOpen: (item: CloudFileItem) => void }) {
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
   return (
     <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-[repeat(auto-fill,minmax(150px,1fr))]">
       {items.map((item) => {
@@ -1124,6 +1282,7 @@ function FileGrid({ items, onOpen }: { items: CloudFileItem[]; onOpen: (item: Cl
         return (
           <button
             type="button"
+            title={item.name}
             key={`${item.provider}:${item.connectionId || ''}:${item.id}`}
             onClick={() => void onOpen(item)}
             onKeyDown={(event) => {
@@ -1131,16 +1290,17 @@ function FileGrid({ items, onOpen }: { items: CloudFileItem[]; onOpen: (item: Cl
               event.preventDefault();
               void onOpen(item);
             }}
-            className="group min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5 text-left shadow-[var(--shadow-soft)] transition-[border-color,transform,background-color] hover:-translate-y-0.5 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)]"
+            className="group min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-2.5 text-left transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
           >
             <span className="relative grid aspect-[1.45] place-items-center overflow-hidden rounded-lg bg-[var(--color-bg-subtle)]">
-              {item.thumbnailUrl ? (
+              {item.thumbnailUrl && !failedThumbnails.has(item.thumbnailUrl) ? (
                 // biome-ignore lint/performance/noImgElement: provider thumbnail URLs are remote and short-lived.
                 <img
                   src={item.thumbnailUrl}
                   alt=""
                   className="size-full object-cover"
                   referrerPolicy="no-referrer"
+                  onError={() => setFailedThumbnails((current) => new Set(current).add(item.thumbnailUrl!))}
                 />
               ) : (
                 <Icon
@@ -1177,7 +1337,7 @@ function FileActions({ item, onOpen }: { item: CloudFileItem; onOpen: (item: Clo
           aria-label={`Actions for ${item.name}`}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
-          className="grid size-7 place-items-center rounded-md text-[var(--color-text-faint)] opacity-100 transition-opacity hover:bg-[var(--color-control)] hover:text-[var(--color-text)] focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+          className="grid size-11 place-items-center rounded-md text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-control)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] md:size-7"
         >
           <MoreHorizontal className="size-4" />
         </button>
@@ -1202,6 +1362,7 @@ function EmptyFiles({
   location,
   hasConnections,
   searching,
+  hasMore,
   onUpload,
   onConnect,
   onChooseICloud,
@@ -1209,18 +1370,23 @@ function EmptyFiles({
   location: Location;
   hasConnections: boolean;
   searching: boolean;
+  hasMore: boolean;
   onUpload: () => void;
   onConnect: () => void;
   onChooseICloud: () => void;
 }) {
-  if (searching) {
+  if (searching || hasMore) {
     return (
-      <div className="grid h-full place-items-center px-6 text-center">
+      <div className={cn('grid min-h-48 place-items-center px-6 py-10 text-center', !hasMore && 'h-full')}>
         <div>
           <Search className="mx-auto size-6 text-[var(--color-text-faint)]" />
-          <h2 className="mt-3 text-[13.5px] font-medium">No files found</h2>
+          <h2 className="mt-3 text-[13.5px] font-medium">
+            {hasMore ? 'No matches in the files checked so far' : 'No files found'}
+          </h2>
           <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
-            Try a shorter name or search a different location.
+            {hasMore
+              ? 'Load more to keep looking through this location.'
+              : 'Try a shorter name, another type, or a different location.'}
           </p>
         </div>
       </div>
@@ -1315,11 +1481,11 @@ function DriveConnectionsDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="max-h-[85dvh] gap-0 overflow-y-auto p-0 sm:max-w-xl">
         <DialogHeader className="border-b border-[var(--color-border)] px-5 py-4">
           <DialogTitle className="text-[15px]">File locations</DialogTitle>
           <DialogDescription className="text-[11.5px]">
-            Browse connected drives and edit Google Docs, Sheets, and Slides inline.
+            Browse connected drives. Edit supported documents or open the original for full fidelity.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 p-3">
@@ -1392,7 +1558,7 @@ function ProviderConnectionRow({
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] font-medium">{provider.label}</span>
             {connections.length ? (
-              <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-emerald-700 dark:text-emerald-300">
+              <span className="rounded-ui bg-emerald-500/10 px-1.5 py-0.5 text-[9.5px] font-medium text-emerald-700 dark:text-emerald-300">
                 Connected
               </span>
             ) : null}
@@ -1403,7 +1569,7 @@ function ProviderConnectionRow({
           {connections.map((connection) => (
             <div
               key={connection.connectionId}
-              className="mt-2 flex items-center gap-2 rounded-lg bg-[var(--color-bg-subtle)] px-2.5 py-2"
+              className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-bg-subtle)] px-2.5 py-2"
             >
               <span
                 className={cn(
@@ -1440,7 +1606,11 @@ function ProviderConnectionRow({
               href={`/api/files/oauth/start?provider=${provider.id}&redirectTo=${encodeURIComponent('/?view=files')}`}
             >
               <Plus className="size-3.5" />
-              {connections.length ? 'Add' : 'Connect'}
+              {connections.some((connection) => connection.status === 'error')
+                ? 'Reconnect'
+                : connections.length
+                  ? 'Add'
+                  : 'Connect'}
             </a>
           ) : (
             <>

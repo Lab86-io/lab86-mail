@@ -48,11 +48,6 @@ export const OPENROUTER_PRIMARY_MODEL_OPTIONS: ModelOption[] = [
     label: 'Qwen3 Coder',
     detail: 'Useful for technical email, code, and structured agent tasks.',
   },
-  {
-    id: 'openai/gpt-5.1-chat',
-    label: 'GPT-5.1 Chat',
-    detail: 'Fast conversational OpenAI model for mail workflows.',
-  },
 ];
 
 export const OPENROUTER_FAST_MODEL_OPTIONS: ModelOption[] = [
@@ -96,7 +91,7 @@ export const OPENROUTER_FAST_MODEL_OPTIONS: ModelOption[] = [
 const primaryIds = new Set(OPENROUTER_PRIMARY_MODEL_OPTIONS.map((option) => option.id));
 const fastIds = new Set(OPENROUTER_FAST_MODEL_OPTIONS.map((option) => option.id));
 
-function isOpenRouterModelId(value?: string | null) {
+export function isOpenRouterModelId(value?: string | null) {
   return Boolean(value && /^[~a-z0-9][a-z0-9._~/-]*(?::[a-z0-9._-]+)?$/i.test(value) && value.includes('/'));
 }
 
@@ -182,11 +177,17 @@ function pinDefaults(options: ModelOption[], fallback: ModelOption[]): ModelOpti
   return [...pinned, ...rest];
 }
 
-export async function loadOpenRouterModelOptions(): Promise<{
-  primary: ModelOption[];
-  fast: ModelOption[];
+export type OpenRouterCatalogFetch = {
+  data: any[];
   live: boolean;
-}> {
+};
+
+/**
+ * Raw OpenRouter model list, cached for an hour by Next's fetch cache. Every
+ * consumer (the option lists for iOS, the structured catalog) reads this one
+ * fetch. A failure returns an empty list with `live: false`.
+ */
+export async function fetchOpenRouterCatalog(): Promise<OpenRouterCatalogFetch> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OPENROUTER_MODEL_FETCH_TIMEOUT_MS);
   try {
@@ -197,20 +198,40 @@ export async function loadOpenRouterModelOptions(): Promise<{
     } as RequestInit);
     if (!response.ok) throw new Error(`OpenRouter model catalog returned ${response.status}`);
     const json = (await response.json()) as { data?: any[] };
-    const all = (json.data || []).map(optionFromOpenRouterModel).filter(Boolean) as ModelOption[];
-    const fast = all.filter((option) => /(?:nano|mini|flash|haiku|lite|small|speed|fast)/i.test(option.id));
-    return {
-      primary: pinDefaults(all, OPENROUTER_PRIMARY_MODEL_OPTIONS),
-      fast: pinDefaults(fast.length ? fast : all, OPENROUTER_FAST_MODEL_OPTIONS),
-      live: true,
-    };
+    return { data: Array.isArray(json.data) ? json.data : [], live: true };
   } catch {
+    return { data: [], live: false };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** The iOS-facing option lists derived from a raw catalog fetch. */
+export function openRouterModelOptionsFrom(fetched: OpenRouterCatalogFetch): {
+  primary: ModelOption[];
+  fast: ModelOption[];
+  live: boolean;
+} {
+  if (!fetched.live) {
     return {
       primary: OPENROUTER_PRIMARY_MODEL_OPTIONS,
       fast: OPENROUTER_FAST_MODEL_OPTIONS,
       live: false,
     };
-  } finally {
-    clearTimeout(timeout);
   }
+  const all = fetched.data.map(optionFromOpenRouterModel).filter(Boolean) as ModelOption[];
+  const fast = all.filter((option) => /(?:nano|mini|flash|haiku|lite|small|speed|fast)/i.test(option.id));
+  return {
+    primary: pinDefaults(all, OPENROUTER_PRIMARY_MODEL_OPTIONS),
+    fast: pinDefaults(fast.length ? fast : all, OPENROUTER_FAST_MODEL_OPTIONS),
+    live: true,
+  };
+}
+
+export async function loadOpenRouterModelOptions(): Promise<{
+  primary: ModelOption[];
+  fast: ModelOption[];
+  live: boolean;
+}> {
+  return openRouterModelOptionsFrom(await fetchOpenRouterCatalog());
 }

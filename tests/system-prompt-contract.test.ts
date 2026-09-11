@@ -33,4 +33,30 @@ describe('agent system prompt contract', () => {
     expect(prompt).toContain('Never use emoji');
     expect(prompt).toContain('never dramatize');
   });
+
+  test('the tool guidance asks for parallel calls and evidence, not a two-search cap', () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain('call them in the SAME step so they run in parallel');
+    expect(prompt).toContain('Work the problem with tools until you can answer with evidence');
+    expect(prompt).toContain('write one short sentence about what you are doing');
+    expect(prompt).not.toContain('Use as few tools as possible');
+    expect(prompt).not.toContain('two searches is usually the maximum');
+    expect(prompt).not.toContain('Lean toward asking');
+  });
+
+  test('asking is reserved for answers that change the action', () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain('Ask when the answer changes what you would do');
+    expect(prompt).toContain('Do not ask about anything you can look up with a tool');
+    expect(prompt).toContain('Research first, ask second');
+  });
+
+  test('new email drafts stay in chat instead of automatically opening the composer', () => {
+    const prompt = buildSystemPrompt();
+    expect(prompt).toContain('When asked to draft or compose a new email → call show_message_draft');
+    expect(prompt).toContain('Drafting is not sending');
+    expect(prompt).toContain('Do not call ui_open_compose or ui_close_bar after showing the draft');
+    expect(prompt).toContain('Showing the card never sends mail or navigates away on its own');
+    expect(prompt).not.toContain('When asked to compose a new email → call ui_open_compose');
+  });
 });

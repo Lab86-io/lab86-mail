@@ -547,7 +547,7 @@ function StepContent({
               size="default"
               onClick={onBack}
               disabled={isTransitioning}
-              className="gap-1 rounded-full text-muted-foreground"
+              className="gap-1 rounded-ui text-muted-foreground"
             >
               <ChevronLeft className="size-4" />
               Back
@@ -560,7 +560,7 @@ function StepContent({
             size="default"
             onClick={onNext}
             disabled={!canProceed || isTransitioning}
-            className="rounded-full"
+            className="rounded-ui"
           >
             {isLastStep ? "Complete" : "Next"}
           </Button>

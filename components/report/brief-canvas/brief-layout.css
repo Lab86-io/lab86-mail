@@ -1,0 +1,143 @@
+/* One compact inset owns the artwork and every following region.
+ *
+ * The daily artwork hangs in a real picture frame. The painting box lines up
+ * with the text margin, and the moulding sits outside that margin, on the
+ * wall. So the text inset is the moulding width plus a little wall, and the
+ * canvas gutter is the rest of the wall. `cqi` reads the brief's own width,
+ * so the frame narrows with the pane. */
+.brief-canvas {
+  --brief-gutter: 12px;
+  --brief-frame-width: clamp(20px, 4.5cqi, 46px);
+  --brief-text-inset: calc(var(--brief-frame-width) + 4px);
+  padding: var(--brief-gutter);
+}
+.brief-canvas--embedded {
+  padding-block: 4px;
+}
+.daily-brief-layout {
+  min-width: 0;
+  /* Retain the 12px reading inset above and below; the sides follow the frame. */
+  padding: 12px var(--brief-text-inset, 12px);
+}
+
+/* Today hangs the same plate above its own content, so it shares the inset. */
+.brief-wall {
+  --brief-frame-width: clamp(20px, 4.5cqi, 46px);
+  --brief-text-inset: calc(var(--brief-frame-width) + 4px);
+}
+
+/* The masthead. --frame-w is the moulding width on screen for the chosen
+ * frame; heavy carved frames scale it up a little, slim ones down. */
+.brief-masthead {
+  --frame-w: calc(var(--brief-frame-width, clamp(20px, 4.5cqi, 46px)) * var(--brief-frame-scale, 1));
+  position: relative;
+  min-width: 0;
+}
+.brief-masthead--canvas {
+  margin: calc(var(--frame-w) + 8px) var(--brief-text-inset, 12px) 18px;
+}
+.brief-masthead--page {
+  max-width: calc(64rem + 2 * var(--brief-text-inset, 20px));
+  margin: calc(var(--frame-w) + 12px) auto 14px;
+  padding-inline: var(--brief-text-inset, 20px);
+}
+.brief-masthead__figure {
+  margin: 0;
+  min-width: 0;
+}
+.brief-masthead__plate {
+  position: relative;
+}
+.brief-masthead__painting {
+  position: relative;
+  /* The canvas sits a hair below the frame, so the lip throws a thin shadow. */
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5);
+}
+.brief-masthead__scrim {
+  /* Worst-case background is #666 on a pure-white painting. The palette's
+     ink is checked against this, including its darkest texture flecks. */
+  background: rgb(0 0 0 / 0.6);
+}
+.brief-masthead__title {
+  color: var(--brief-art-ink, #fff5e5);
+  filter: drop-shadow(0 2px 12px rgb(0 0 0 / 0.45));
+}
+@supports (background-clip: text) {
+  .brief-masthead__ink {
+    background-color: var(--brief-art-ink, #fff5e5);
+    /* Fine ink grain, no animation, no duplicate text and no filter on the art. */
+    background-image: var(--brief-ink-grain);
+    background-size: 160px 160px;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+}
+@media (prefers-contrast: more) {
+  .brief-masthead__ink {
+    background: none;
+    color: white;
+  }
+  .brief-masthead__scrim {
+    background: rgb(0 0 0 / 0.72);
+  }
+}
+@media (forced-colors: active) {
+  .brief-masthead__ink {
+    background: none;
+    color: CanvasText;
+  }
+  .brief-masthead__title {
+    filter: none;
+  }
+  .brief-masthead__painting {
+    background: Canvas;
+  }
+  .brief-masthead__painting > img,
+  .brief-masthead__scrim {
+    display: none;
+  }
+}
+.brief-masthead__rabbet {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.45),
+    inset 0 2px 26px rgb(0 0 0 / 0.36);
+}
+/* The moulding overlaps the painting by 3px, the way a rabbet covers the
+ * canvas edge, so no paper shows between the two. */
+.brief-masthead__moulding {
+  position: absolute;
+  inset: calc(3px - var(--frame-w));
+  z-index: 20;
+  pointer-events: none;
+  border: var(--frame-w) solid transparent;
+  border-image-source: var(--brief-frame-src);
+  border-image-slice: var(--brief-frame-slice);
+  border-image-width: var(--frame-w);
+  border-image-repeat: round;
+  filter: drop-shadow(0 12px 18px rgb(0 0 0 / 0.3)) drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
+}
+.dark .brief-masthead__moulding {
+  filter: drop-shadow(0 14px 22px rgb(0 0 0 / 0.55)) drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
+}
+/* The wall label sits clear below the moulding and its shadow, set to the
+ * right edge of the painting like a museum card: the painting, then the frame. */
+.brief-masthead__label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  margin-top: calc(var(--frame-w) + 22px);
+  text-align: right;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--color-text-faint);
+}
+.brief-masthead__label > span {
+  min-width: 0;
+  max-width: 100%;
+}

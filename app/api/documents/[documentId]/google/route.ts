@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { GoogleDocumentConflictError, publishDocumentToGoogle } from '@/lib/documents/google';
+import { GoogleDocumentFidelityError } from '@/lib/documents/google-fidelity';
 import { getDocument } from '@/lib/documents/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -45,6 +46,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ docume
       return NextResponse.json(
         { ok: false, error: error.message, code: 'GOOGLE_VERSION_CONFLICT' },
         { status: 409 },
+      );
+    }
+    if (error instanceof GoogleDocumentFidelityError) {
+      return NextResponse.json(
+        { ok: false, error: error.message, code: 'GOOGLE_FIDELITY_UNSUPPORTED' },
+        { status: 422 },
       );
     }
     console.error('[document-google]', error);

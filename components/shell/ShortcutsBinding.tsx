@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
-import { isEditableSearchTarget } from '@/lib/mail/search/focus-contract';
+import { isAssistantKeyboardTarget, isEditableSearchTarget } from '@/lib/mail/search/focus-contract';
 
 export function ShortcutsBinding() {
   // Thread shortcuts (archive/trash/triage/summary) act on the open thread, so
@@ -35,6 +35,13 @@ export function ShortcutsBinding() {
       // The global dialog owns search keys and dismissal. Never let a focused
       // source filter/action leak mail shortcuts to the page behind it.
       if (paletteOpen) return;
+      if (
+        isAssistantKeyboardTarget(e.target) ||
+        document.querySelector('[data-assistant-workspace][data-open="true"][data-layout="full"]')
+      ) {
+        pendingG = 0;
+        return;
+      }
       if (isEditableSearchTarget(e.target)) return;
       // Let browser/OS editing shortcuts work everywhere: copy, paste, select
       // all, undo/redo, save, find, open link in new tab, etc. The single-key

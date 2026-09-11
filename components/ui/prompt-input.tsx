@@ -81,7 +81,7 @@ function PromptInput({
         <div
           onClick={handleClick}
           className={cn(
-            'border-input bg-background cursor-text rounded-3xl border p-2 shadow-xs',
+            'control-field cursor-text rounded-ui p-2 has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-[var(--color-accent)]',
             disabled && 'cursor-not-allowed opacity-60',
             className,
           )}
@@ -134,6 +134,7 @@ function PromptInputTextarea({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent?.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSubmit?.();
@@ -148,7 +149,7 @@ function PromptInputTextarea({
       onChange={handleChange}
       onKeyDown={handleKeyDown}
       className={cn(
-        'min-h-[44px] w-full resize-none border-none bg-[var(--color-transparent)] text-[var(--color-text)] shadow-none outline-none placeholder:text-[var(--color-text-muted)] focus-visible:ring-0 focus-visible:ring-offset-0',
+        'min-h-[44px] w-full resize-none border-none bg-[var(--color-transparent)] text-[var(--color-text)] shadow-none outline-none placeholder:text-[var(--color-text-muted)] focus-visible:ring-0 focus-visible:outline-none focus-visible:ring-offset-0',
         className,
       )}
       rows={1}

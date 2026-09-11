@@ -95,8 +95,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 colorPrimary: 'var(--color-accent)',
               },
               elements: {
-                avatarBox: 'bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
-                userButtonAvatarBox: 'bg-[var(--color-avatar-bg)] shadow-[var(--shadow-control)]',
+                avatarBox: 'bg-[var(--color-avatar-bg)]',
+                userButtonAvatarBox: 'bg-[var(--color-avatar-bg)]',
                 userButtonTrigger:
                   'rounded-md focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]',
               },

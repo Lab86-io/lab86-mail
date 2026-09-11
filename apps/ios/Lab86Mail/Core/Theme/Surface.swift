@@ -142,14 +142,24 @@ private struct SurfaceCardModifier: ViewModifier {
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
+        content.modifier(ThemedSurfaceCardModifier(theme: environment.theme, cornerRadius: cornerRadius))
+    }
+}
+
+private struct ThemedSurfaceCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let theme: ThemeStore
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
         content
             .background(
-                environment.theme.elevatedColor,
+                theme.elevatedColor,
                 in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+                    .strokeBorder(theme.hairlineColor, lineWidth: 1)
             }
             .shadow(
                 color: .black.opacity(colorScheme == .dark ? 0 : 0.05),
@@ -165,6 +175,10 @@ private struct SurfaceCardModifier: ViewModifier {
 extension View {
     func surfaceCard(cornerRadius: CGFloat = 18) -> some View {
         modifier(SurfaceCardModifier(cornerRadius: cornerRadius))
+    }
+
+    func surfaceCard(theme: ThemeStore, cornerRadius: CGFloat = 18) -> some View {
+        modifier(ThemedSurfaceCardModifier(theme: theme, cornerRadius: cornerRadius))
     }
 }
 

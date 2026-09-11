@@ -1,11 +1,12 @@
 'use client';
 
+import { Check, CircleAlert, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { type CalendarSyncError, syncStatusLine } from '@/lib/calendar/sync-copy';
 import { cn } from '@/lib/utils';
 
-// One muted sentence in the calendar header: "Synced 4 minutes ago". The
-// sentence is the resync control. Click or Enter posts a manual resync.
-
+/** Quiet inline status; the same control can request a fresh sync. */
 export function SyncStatus({
   lastSyncedAt,
   syncing,
@@ -23,24 +24,41 @@ export function SyncStatus({
   onResync: () => void;
   className?: string;
 }) {
-  const line = syncStatusLine({ lastSyncedAt, nowMs, syncing, error });
-  const failed = error?.kind === 'failed';
+  const active = syncing || busy;
+  const line =
+    !active && !error && lastSyncedAt === null
+      ? 'Waiting for the first calendar sync'
+      : syncStatusLine({ lastSyncedAt, nowMs, syncing: active, error });
+  const label = active ? line : `${line} · Sync now`;
+  const Icon = active ? Loader2 : error ? CircleAlert : Check;
   return (
-    <button
-      type="button"
-      data-sync-status
-      data-state={failed ? 'failed' : error ? 'limited' : syncing ? 'syncing' : 'idle'}
-      onClick={onResync}
-      disabled={busy}
-      aria-live="polite"
-      title="Sync now"
-      className={cn(
-        'rounded-sm text-[12px] leading-5 transition-colors duration-150 hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-default',
-        failed ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-muted)]',
-        className,
-      )}
-    >
-      {line}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          data-sync-status
+          data-state={active ? 'syncing' : error?.kind === 'failed' ? 'failed' : error ? 'limited' : 'idle'}
+          onClick={() => {
+            if (!active) onResync();
+          }}
+          aria-disabled={active}
+          aria-label={label}
+          title={label}
+          className={cn(
+            error
+              ? 'text-[var(--color-danger)]'
+              : lastSyncedAt
+                ? 'text-[var(--color-accent)]'
+                : 'text-[var(--color-text-faint)]',
+            className,
+          )}
+        >
+          <Icon aria-hidden className={cn('size-4', active && 'animate-spin motion-reduce:animate-none')} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

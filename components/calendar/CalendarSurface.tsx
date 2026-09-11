@@ -1,8 +1,6 @@
 'use client';
 
 import { useMutation as useConvexMutation, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown } from 'lucide-react';
-import { useReducedMotion } from 'motion/react';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarSearchSelection } from '@/components/calendar/CalendarSearchSelection';
@@ -11,9 +9,9 @@ import { type CalendarPersistence, CalendarProvider } from '@/components/calenda
 import { CalendarHeader } from '@/components/calendar/engine/calendar-header';
 import { DndProvider } from '@/components/calendar/engine/dnd-context';
 import type { IEvent, IUser } from '@/components/calendar/engine/interfaces';
-import { SyncLine } from '@/components/calendar/SyncLine';
 import { SyncStatus } from '@/components/calendar/SyncStatus';
 import { usePullToResync } from '@/components/calendar/usePullToResync';
+import { Button } from '@/components/ui/button';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
@@ -47,7 +45,6 @@ const WINDOW_FUTURE_MS = 366 * 86_400_000;
 export function CalendarSurface() {
   const searchTarget = useClientStore((s) => s.calendarSearchTarget);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const reduceMotion = useReducedMotion() ?? false;
   // Stable bounds: recomputing per render would resubscribe the live query.
   const [normalWindow] = useState(() => ({
     startAt: Date.now() - WINDOW_PAST_MS,
@@ -304,11 +301,10 @@ export function CalendarSurface() {
   if (nothingSynced && !searchTarget) {
     return (
       <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
-        <SyncLine active={sync.active} reduceMotion={reduceMotion} />
         <SurfaceHeader status={syncStatus} />
         <div className="grid flex-1 place-items-center px-6">
           <div className="flex max-w-md flex-col items-center gap-3 text-center">
-            <span className="grid size-12 place-items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
+            <span className="grid size-12 place-items-center rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text-muted)] shadow-[var(--shadow-soft)]">
               <CalendarDaysIcon size={22} />
             </span>
             <p className="font-display text-[16px] font-semibold text-[var(--color-text)]">
@@ -327,7 +323,6 @@ export function CalendarSurface() {
 
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
-      <SyncLine active={sync.active} reduceMotion={reduceMotion} />
       {unauthorized.length ? (
         <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
           <span>Missing calendar access:</span>
@@ -335,7 +330,7 @@ export function CalendarSurface() {
             <a
               key={state.accountId}
               href={`/api/nylas/connect?provider=${state.provider}&redirectTo=/`}
-              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 text-[11.5px] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              className="inline-flex items-center gap-1 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 text-[11.5px] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
               title={state.error || 'Reconnect to grant calendar access'}
             >
               {state.email || state.accountId.slice(0, 8)}
@@ -356,8 +351,8 @@ export function CalendarSurface() {
         >
           <CalendarSearchSelection />
           <DndProvider>
-            <CalendarHeader status={syncStatus} />
-            <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} />
+            <CalendarHeader />
+            <CalendarColorBar calendars={calendars} colorByCalendar={colorByCalendar} status={syncStatus} />
             {/* Pull on touch: the body offsets with resistance and springs
                 back. A pull past the threshold posts a resync. */}
             <div
@@ -375,97 +370,64 @@ export function CalendarSurface() {
   );
 }
 
-// Calendars collapse behind one popover — a stack of colour dots plus a count —
-// instead of wrapping a dozen always-visible chips across two rows. Inside,
-// each calendar exposes its ten-swatch picker; colours persist (colorIndex).
-function CalendarColorBar({
+// The calendar row exposes names as space allows and keeps sync at its trailing edge.
+export function CalendarColorBar({
   calendars,
   colorByCalendar,
+  status,
 }: {
   calendars: any[];
   colorByCalendar: Map<string, string>;
+  status?: ReactNode;
 }) {
   const setCalendarColor = useConvexMutation((api as any).calendarData.setCalendarColor);
-  const [editing, setEditing] = useState<string | null>(null);
   const visible = calendars.filter((cal) => !cal.hidden);
-  if (!visible.length) return null;
   return (
-    <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5">
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
-            title="Calendars & colours"
-          >
-            <span className="flex -space-x-1">
-              {visible.slice(0, 6).map((cal) => (
-                <span
-                  key={cal._id}
-                  className="size-2.5 rounded-full ring-1 ring-[var(--color-bg)]"
-                  style={{ backgroundColor: colorByCalendar.get(cal.providerCalendarId) }}
-                />
-              ))}
-            </span>
-            <span className="font-medium text-[var(--color-text)]">
-              {visible.length} calendar{visible.length === 1 ? '' : 's'}
-            </span>
-            <ChevronDown className="size-3 opacity-60" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-72 p-1.5" align="start">
-          <div className="max-h-[60vh] space-y-0.5 overflow-y-auto">
-            {visible.map((cal) => {
-              const open = editing === cal._id;
-              const current = colorByCalendar.get(cal.providerCalendarId);
-              return (
-                <div key={cal._id} className="rounded-md px-2 py-1.5 hover:bg-[var(--color-bg-subtle)]">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: current }} />
-                      <span className="truncate text-[12.5px] text-[var(--color-text)]">{cal.name}</span>
-                    </span>
+    <div
+      data-calendar-color-bar
+      className="flex min-w-0 items-center gap-2 border-b border-[var(--color-border)] px-2 py-1"
+    >
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        {visible.map((cal) => {
+          const current = colorByCalendar.get(cal.providerCalendarId);
+          return (
+            <Popover key={cal._id}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="min-w-0 max-w-full justify-start px-2 text-[11.5px] font-normal"
+                  aria-label={`Change colour for ${cal.name}`}
+                >
+                  <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: current }} />
+                  <span className="truncate">{cal.name}</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-3" align="start">
+                <p className="mb-2 truncate text-xs font-medium">{cal.name}</p>
+                <fieldset className="flex flex-wrap gap-2" aria-label={`Colours for ${cal.name}`}>
+                  {TABLEAU10.map((hex, index) => (
                     <button
+                      key={hex}
                       type="button"
-                      title="Change colour"
-                      onClick={() => setEditing(open ? null : cal._id)}
-                      className="size-5 shrink-0 rounded-full ring-1 ring-[var(--color-border)] transition-transform hover:scale-110"
-                      style={{ backgroundColor: current }}
-                    >
-                      <span className="sr-only">Change colour for {cal.name}</span>
-                    </button>
-                  </div>
-                  {open ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1.5 pl-[18px]">
-                      {TABLEAU10.map((hex, index) => (
-                        <button
-                          key={hex}
-                          type="button"
-                          title={hex}
-                          onClick={() => {
-                            setEditing(null);
-                            void setCalendarColor({ calendarId: cal._id, colorIndex: index }).catch(
-                              (err: any) => toast.error(err?.message || 'Could not set colour'),
-                            );
-                          }}
-                          className={
-                            current === hex
-                              ? 'size-6 rounded-full ring-2 ring-[var(--color-text)] ring-offset-1'
-                              : 'size-6 rounded-full transition-transform hover:scale-110'
-                          }
-                          style={{ backgroundColor: hex }}
-                        >
-                          <span className="sr-only">{hex}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </PopoverContent>
-      </Popover>
+                      aria-label={hex}
+                      aria-pressed={current === hex}
+                      onClick={() =>
+                        void setCalendarColor({ calendarId: cal._id, colorIndex: index }).catch((err: any) =>
+                          toast.error(err?.message || 'Could not set colour'),
+                        )
+                      }
+                      className="size-7 rounded-ui ring-offset-2 aria-pressed:ring-2 aria-pressed:ring-[var(--color-text)]"
+                      style={{ backgroundColor: hex }}
+                    />
+                  ))}
+                </fieldset>
+              </PopoverContent>
+            </Popover>
+          );
+        })}
+      </div>
+      <div className="shrink-0">{status}</div>
     </div>
   );
 }

@@ -634,7 +634,7 @@ function SliderRow({
                       ? gap > 0
                         ? "rounded-full"
                         : "rounded-t-full"
-                      : "rounded-t-sm",
+                      : "rounded-t-[var(--radius-ui-corner)]",
                     isDragging ? "w-2" : isActive ? "w-1.5" : "w-px",
                     resolvedHandleClassName ?? "bg-primary",
                   )}
@@ -652,7 +652,7 @@ function SliderRow({
                       ? gap > 0
                         ? "rounded-full"
                         : "rounded-b-full"
-                      : "rounded-b-sm",
+                      : "rounded-b-[var(--radius-ui-corner)]",
                     isDragging ? "w-2" : isActive ? "w-1.5" : "w-px",
                     resolvedHandleClassName ?? "bg-primary",
                   )}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { paginateDocBlocks } from '../components/files/DocumentEditor';
+import { docModelToEditorJson, editorJsonToDocModel } from '../components/files/editors/doc-rich-text';
 
 function source(relativePath: string) {
   return readFileSync(path.join(process.cwd(), relativePath), 'utf8');
@@ -13,7 +13,10 @@ describe('provider-faithful file editing contracts', () => {
     const route = source('app/api/files/google/editor/route.ts');
 
     expect(files).toContain('openGoogleDocument({');
-    expect(files).toContain('<GoogleDocumentEditor source={openGoogleFile}');
+    expect(files).toMatch(/<GoogleDocumentEditor\s+[\s\S]*?source=\{openGoogleFile\}/u);
+    expect(files).toMatch(
+      /key=\{`[^`]+openGoogleFile\.connectionId[^`]+openGoogleFile\.fileId[^`]+openGoogleFile\.mimeType/u,
+    );
     expect(files).not.toContain(
       "fetchJson<{ ok: true; document: AlbatrossDocumentRecord }>('/api/files/google/import'",
     );
@@ -24,26 +27,32 @@ describe('provider-faithful file editing contracts', () => {
 
   test('renders wrapped document content at its full intrinsic height', () => {
     const web = source('components/files/DocumentEditor.tsx');
+    const richEditor = source('components/files/editors/RichDocumentEditor.tsx');
+    const richStyles = source('components/files/editors/document-editors.css');
     const ios = source('apps/ios/Lab86Mail/Features/Files/DocumentEditorView.swift');
 
-    expect(web).toContain("import TextareaAutosize from 'react-textarea-autosize'");
-    expect(web).toContain('<TextareaAutosize');
+    expect(web).toContain('<RichDocumentEditor');
+    expect(richEditor).toContain('<EditorContent editor={editor}');
+    expect(richStyles).toContain('white-space: pre-wrap');
+    expect(richStyles).toContain('overflow-wrap: anywhere');
+    expect(richEditor).toContain('doc-canvas-scroller min-w-0 flex-1 overflow-y-auto');
+    expect(richEditor).toContain('setEditable(!readOnly, false)');
     expect(web).not.toContain("rows={Math.max(1, block.text.split('\\n').length)}");
     expect(ios).toContain('GrowingTextEditor(');
     expect(ios).toContain('view.isScrollEnabled = false');
     expect(ios).toContain('sizeThatFits(');
   });
 
-  test('lays long documents out as multiple editable pages without dropping blocks', () => {
+  test('retains every long document block in the continuous rich-text canvas model', () => {
     const blocks = Array.from({ length: 24 }, (_, index) => ({
       id: `block-${index}`,
       type: 'paragraph' as const,
       text: `Paragraph ${index} ${'content '.repeat(24)}`,
     }));
-    const pages = paginateDocBlocks(blocks, { charactersPerLine: 40, linesPerPage: 20 });
-
-    expect(pages.length).toBeGreaterThan(1);
-    expect(pages.flat().map(({ block }) => block.id)).toEqual(blocks.map((block) => block.id));
+    const rendered = docModelToEditorJson({ kind: 'doc', version: 1, blocks });
+    const recovered = editorJsonToDocModel(rendered);
+    expect(rendered.content).toHaveLength(blocks.length);
+    expect(recovered.blocks).toEqual(blocks);
   });
 
   test('opens iCloud and Files-provider documents in place on iOS', () => {

@@ -101,7 +101,7 @@ export function MailNav() {
               type="button"
               onClick={() => setSmartCategory(category.id)}
               className={cn(
-                'shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-[12.5px] transition-colors',
+                'shrink-0 whitespace-nowrap corner-smooth rounded-[var(--radius-control)] px-3 py-1 text-[12.5px] transition-colors',
                 active
                   ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                   : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',
@@ -123,7 +123,7 @@ export function MailNav() {
           <button
             type="button"
             className={cn(
-              'flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-[12.5px] transition-colors',
+              'flex shrink-0 items-center gap-1 corner-smooth rounded-[var(--radius-control)] px-3 py-1 text-[12.5px] transition-colors',
               activeFolder
                 ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                 : 'text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]',

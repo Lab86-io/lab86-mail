@@ -183,6 +183,7 @@ final class NavigationModel {
     var sheet: SheetDestination?
     var pendingCapture: String?
     var pendingMailSearch: String?
+    var pendingCalendarDay: Date?
     // Chrome-free surfaces (the area brief hides its navigation bar) raise
     // this to ask the compact shell to reveal the source list; the shell
     // consumes and resets it.

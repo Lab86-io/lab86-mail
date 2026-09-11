@@ -743,7 +743,7 @@ function ReportArtifact({
       scrolling={autoHeight ? 'no' : undefined}
       style={autoHeight ? { height: artifactHeight ?? DEFAULT_ARTIFACT_FRAME_HEIGHT } : undefined}
       className={cn(
-        'w-full border-0 bg-[var(--color-bg)] transition-opacity duration-300',
+        'w-full border-0 bg-[var(--color-content)] transition-opacity duration-300',
         autoHeight ? 'block overflow-hidden' : 'h-full',
         artifactReady ? 'opacity-100' : 'opacity-0',
       )}
@@ -1081,7 +1081,7 @@ export function DailyReport({
       {/* Floating toolbar for the letter and the artifact view — fades until
           hovered. Embedded, the same controls read as the section rule above. */}
       {!embedded && (displayArtifact || showsLetter) ? (
-        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
+        <div className="group absolute right-4 top-4 z-20 flex items-center gap-1 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg)]/70 px-1.5 py-1 opacity-40 shadow-[var(--shadow-soft)] backdrop-blur transition-opacity hover:opacity-100 focus-within:opacity-100">
           {history.length > 1 ? (
             <Select
               value={selectedId ?? 'latest'}
@@ -1091,7 +1091,7 @@ export function DailyReport({
                 size="sm"
                 aria-label="Browse past editions"
                 title="Browse past editions"
-                className="h-7 max-w-[150px] rounded-full border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
+                className="h-7 max-w-[150px] rounded-ui border-0 bg-transparent text-[11px] text-[var(--color-text-muted)] shadow-none hover:text-[var(--color-text)]"
               >
                 <SelectValue placeholder="Latest" />
               </SelectTrigger>
@@ -1110,7 +1110,7 @@ export function DailyReport({
             onClick={() => setPrimaryView('mail')}
             aria-label="Open inbox"
             title="Inbox"
-            className="grid size-7 place-items-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
+            className="grid size-7 place-items-center rounded-ui text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
             <Inbox className="size-3.5" />
           </button>
@@ -1120,7 +1120,7 @@ export function DailyReport({
             onClick={() => generate.mutate()}
             aria-label="Write a new brief"
             title="Write a new brief"
-            className="grid size-7 place-items-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
+            className="grid size-7 place-items-center rounded-ui bg-[var(--color-accent)] text-[var(--color-accent-foreground)] disabled:opacity-60"
           >
             {busy ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
           </button>

@@ -291,7 +291,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
         'absolute inset-y-0 z-20 hidden w-6 transition-all ease-linear group-data-[side=left]:-right-3 group-data-[side=right]:left-0 sm:flex',
         'cursor-pointer',
         "before:absolute before:inset-y-0 before:left-1/2 before:w-6 before:-translate-x-1/2 before:content-['']",
-        'after:absolute after:inset-y-1/4 after:left-1/2 after:h-8 after:w-1 after:-translate-x-1/2 after:rounded-full after:bg-sidebar-border/50 after:transition-all',
+        'after:absolute after:inset-y-1/4 after:left-1/2 after:h-8 after:w-1 after:-translate-x-1/2 after:rounded-ui after:bg-sidebar-border/50 after:transition-all',
         'hover:after:bg-sidebar-border hover:after:h-12',
         'in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize',
         '[[data-side=left][data-state=collapsed]_&]:cursor-pointer',
@@ -483,7 +483,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:delay-150 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>span]:transition-none group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 group-data-[collapsible=icon]:[&>span]:delay-0 [&>svg]:size-4 [&>svg]:shrink-0',
+  'corner-smooth peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-[var(--radius-control)] p-2 text-left text-sm ring-sidebar-ring outline-none transition-[width,height,padding,color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-has-data-[sidebar=menu-action]/menu-item:pr-8 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground [&>span:last-child]:truncate [&>span]:max-w-[12rem] [&>span]:transition-[max-width,opacity,transform] [&>span]:duration-200 [&>span]:delay-150 [&>span]:ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:[&>span]:transition-none group-data-[collapsible=icon]:[&>span]:max-w-0 group-data-[collapsible=icon]:[&>span]:translate-x-1 group-data-[collapsible=icon]:[&>span]:opacity-0 group-data-[collapsible=icon]:[&>span]:delay-0 [&>svg]:size-4 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
@@ -528,6 +528,7 @@ function SidebarMenuButton({
   if (dock && !asChild && state === 'collapsed' && !isMobile) {
     return (
       <DockTile
+        glow={false}
         data-slot="sidebar-menu-button"
         data-sidebar="menu-button"
         data-size={size}
@@ -558,19 +559,8 @@ function SidebarMenuButton({
           // win via their own classes.
           'rounded-lg hover:bg-[var(--color-bg-elevated)]',
           className,
-          // After the caller's classes on purpose — these adapt the expanded
-          // row identity (passed in one className for both modes) to the
-          // dock:
-          // - overflow-visible: the hover glow halos past the tile edge
-          //   (callers set overflow-hidden for the expanded truncate).
-          // - Selected shows as the animated shine border hugging the tile,
-          //   not the expanded row's accent wash — one indicator per tile.
-          'overflow-visible data-[active=true]:bg-transparent data-[active=true]:shadow-none dark:data-[active=true]:bg-transparent dark:data-[active=true]:shadow-none',
-          // The shine border marks the SELECTED tile only: Compose mounts a
-          // permanent decorative shine for its expanded CTA row, so inactive
-          // tiles hide theirs and the active row's shine is the one moving
-          // highlight in the dock.
-          '[&[data-active=false]_[data-slot=shine-border]]:hidden',
+          // The flat selected fill is identical in expanded and icon modes.
+          'justify-center gap-0 p-0! overflow-visible data-[active=true]:shadow-none',
         )}
         {...props}
       />

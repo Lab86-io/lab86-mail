@@ -6,10 +6,6 @@ import UniformTypeIdentifiers
 // user turns in quiet raised bubbles, assistant turns as plain document text,
 // and a single floating glass composer detached from the bottom edge.
 struct AssistantChatView: View {
-    // Copilot-style reveal: the library fades each appended word in as deltas
-    // arrive, so streaming reads as continuous writing instead of chunk swaps.
-    private static let markdownConfig = MarkdownRenderConfig(shouldAnimateText: true)
-
     @Environment(AppEnvironment.self) private var environment
     @Bindable var model: AssistantChatModel
     @State private var draft = ""
@@ -84,11 +80,11 @@ struct AssistantChatView: View {
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-                if let error = model.errorMessage {
+                if model.errorMessage != nil || model.canContinue {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                        if let error = model.errorMessage {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
                         HStack {
                             if model.canRetry {
                                 Button("Retry", action: model.retryLastTurn)
@@ -121,27 +117,44 @@ struct AssistantChatView: View {
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(message.parts) { part in
-                    switch part {
-                    case .text(_, let text):
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            // Full GFM rendering (tables, lists, code blocks)
-                            // built for streaming LLM output.
-                            MarkdownView(text: text, config: Self.markdownConfig)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    case .card(_, let card):
-                        AssistantToolCardView(card: card)
+                ForEach(AssistantWorkLog.group(parts: message.parts)) { block in
+                    switch block {
+                    case .text(let id, let text):
+                        RevealedMarkdownView(
+                            text: text,
+                            isLive: model.isStreaming && message.id == model.messages.last?.id
+                                && !message.endedTextIDs.contains(id)
+                        )
+                    case .reasoning(let reasoning):
+                        AssistantReasoningLine(reasoning: reasoning)
+                    case .workLog(_, let rows):
+                        AssistantWorkLogView(
+                            rows: rows,
+                            turnFinished: !model.isStreaming || message.id != model.messages.last?.id,
+                            sessionID: model.sessionID
+                        )
+                    case .card(_, let card, _):
+                        AssistantToolCardView(card: card, sessionID: model.sessionID)
                     case .approval(let approval):
                         AssistantApprovalCard(approval: approval) { approved in
                             model.answerApproval(approval.id, approved: approved)
                         }
+                        .disabled(model.isStreaming)
+                    case .question(let question):
+                        AssistantQuestionCard(question: question) { output in
+                            model.answerQuestion(question.id, output: output)
+                        }
+                        .disabled(model.isStreaming)
                     }
                 }
-                if let activity = message.toolActivity {
-                    activityRow(activity)
-                } else if model.isStreaming, message.id == model.messages.last?.id, message.parts.isEmpty {
-                    activityRow("Thinking")
+                if !message.sources.isEmpty {
+                    AssistantSourcesLine(sources: message.sources)
+                }
+                if model.isStreaming, message.id == model.messages.last?.id, message.parts.isEmpty {
+                    HStack(spacing: 8) {
+                        RevealDot()
+                        Text("Working").font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 if holdThisApplies(to: message) {
                     HoldThisButton(
@@ -176,22 +189,6 @@ struct AssistantChatView: View {
             return candidate.text
         }
         return ""
-    }
-
-    private func activityRow(_ label: String) -> some View {
-        HStack(spacing: 8) {
-            // Typing-indicator dots: the variable-color symbol effect cycles
-            // the ellipsis glyphs, which reads as "composing" rather than the
-            // generic busy spinner.
-            Image(systemName: "ellipsis")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(environment.theme.accentColor)
-                .symbolEffect(.variableColor.iterative.dimInactiveLayers.nonReversing)
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
     }
 
     // Zero state: a display-face greeting and a quiet vertical list of
@@ -301,9 +298,8 @@ struct AssistantChatView: View {
                 .onSubmit(submitDraft)
                 .onChange(of: draft) { _, next in model.updateDraft(next) }
                 .onKeyPress(.tab) {
-                    guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        return .ignored
-                    }
+                    // Tab flips the route even before any text, so a person
+                    // can choose Hold first and then write.
                     model.flipRoute()
                     return .handled
                 }
@@ -311,7 +307,7 @@ struct AssistantChatView: View {
                 RouteChip(
                     route: model.route,
                     isPinned: model.routePinned,
-                    isEnabled: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    isEnabled: true,
                     onFlip: model.flipRoute
                 )
 
@@ -395,6 +391,8 @@ struct AssistantChatView: View {
         model.send(draft, attachments: pendingFiles)
         draft = ""
         pendingFiles = []
+        // The pin belonged to that message; the next one starts on Ask.
+        model.clearRoute()
     }
 
     private func importFiles(_ urls: [URL]) {

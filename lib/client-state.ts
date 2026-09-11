@@ -2,10 +2,13 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { BriefResponseRequest } from '@/lib/brief/response';
 import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { CalendarSearchTarget } from './search/global-search';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
+import type { AssistantDocumentContext } from './shell/assistant-context';
+import { pageNavigationAssistantState } from './shell/assistant-navigation';
 
 export interface ComposePrefill {
   to?: string;
@@ -57,6 +60,9 @@ export interface ClientState {
   // never persisted.
   pendingOpenIntentId: string | null;
   pendingOpenWorkId: string | null;
+  /** A task card or board to open once the Tasks surface mounts (shape card actions). */
+  pendingOpenCardId: string | null;
+  pendingOpenBoardId: string | null;
   searchDraft: string;
   nlSearchIntent: string | null;
   translatedQuery: string | null;
@@ -91,6 +97,16 @@ export interface ClientState {
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
+  assistantPresentation: 'corner' | 'split' | 'full';
+  assistantDocument: AssistantDocumentContext | null;
+  assistantBriefRequest: BriefResponseRequest | null;
+  assistantBriefContext: Pick<BriefResponseRequest, 'title' | 'reference'> | null;
+  queueBriefResponse: (request: BriefResponseRequest) => boolean;
+  claimBriefResponse: (id: string) => BriefResponseRequest | null;
+  clearBriefResponse: () => void;
+  assistantInvitation: string | null;
+  setAssistantInvitation: (phrase: string | null) => void;
+  setAssistantDocument: (document: AssistantDocumentContext | null) => void;
   chatScopeKind: 'global' | 'area' | 'work';
   chatScopeAreaId: string | null;
   chatScopeWorkId: string | null;
@@ -147,6 +163,8 @@ export interface ClientState {
   setGuidedWorkId: (workId: string | null) => void;
   setPendingOpenIntentId: (intentId: string | null) => void;
   setPendingOpenWorkId: (workId: string | null) => void;
+  setPendingOpenCardId: (cardId: string | null) => void;
+  setPendingOpenBoardId: (boardId: string | null) => void;
   setSearchDraft: (draft: string) => void;
   setTranslatedSearch: (
     intent: string | null,
@@ -180,6 +198,7 @@ export interface ClientState {
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
+  setAssistantPresentation: (presentation: 'corner' | 'split' | 'full') => void;
   setChatScope: (scope: {
     kind: 'global' | 'area' | 'work';
     areaId?: string | null;
@@ -314,7 +333,7 @@ export function persistedClientState(s: ClientState) {
 
 export const useClientStore = create<ClientState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       account: '',
       accountFilter: [],
       primaryView: 'today',
@@ -327,6 +346,8 @@ export const useClientStore = create<ClientState>()(
       guidedWorkId: null,
       pendingOpenIntentId: null,
       pendingOpenWorkId: null,
+      pendingOpenCardId: null,
+      pendingOpenBoardId: null,
       searchDraft: '',
       nlSearchIntent: null,
       translatedQuery: null,
@@ -348,6 +369,28 @@ export const useClientStore = create<ClientState>()(
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
+      assistantPresentation: 'corner',
+      assistantDocument: null,
+      assistantBriefRequest: null,
+      assistantBriefContext: null,
+      queueBriefResponse: (request) => {
+        if (get().assistantBriefRequest || !request.response.trim()) return false;
+        set({ assistantBriefRequest: request, aiBarOpen: true, assistantPresentation: 'split' });
+        return true;
+      },
+      claimBriefResponse: (id) => {
+        const request = get().assistantBriefRequest;
+        if (!request || request.id !== id) return null;
+        set({
+          assistantBriefRequest: null,
+          assistantBriefContext: { title: request.title, reference: request.reference },
+        });
+        return request;
+      },
+      clearBriefResponse: () => set({ assistantBriefRequest: null, assistantBriefContext: null }),
+      assistantInvitation: null,
+      setAssistantInvitation: (assistantInvitation) => set({ assistantInvitation }),
+      setAssistantDocument: (assistantDocument) => set({ assistantDocument }),
       chatScopeKind: 'global',
       chatScopeAreaId: null,
       chatScopeWorkId: null,
@@ -374,12 +417,23 @@ export const useClientStore = create<ClientState>()(
       setAccount: (account) => set({ account }),
       setAccountFilter: (accountIds) => set({ accountFilter: accountIds }),
       setPrimaryView: (primaryView) =>
-        set({ primaryView, ...(primaryView !== 'calendar' ? { calendarSearchTarget: null } : {}) }),
+        // Chat is a workspace around the current page, not a replacement for
+        // it. Its route must leave the underlying selection and filters alone.
+        set((state) =>
+          primaryView === 'chat'
+            ? { aiBarOpen: true, assistantPresentation: 'full', assistantInvitation: null }
+            : {
+                primaryView,
+                ...pageNavigationAssistantState(state),
+                ...(primaryView !== 'calendar' ? { calendarSearchTarget: null } : {}),
+              },
+        ),
       setThreadAccount: (threadAccount) => set({ threadAccount }),
       setPrimaryAccount: (primaryAccount) => set({ primaryAccount }),
       setQuery: (query) =>
-        set({
+        set((state) => ({
           primaryView: 'mail',
+          ...pageNavigationAssistantState(state),
           calendarSearchTarget: null,
           query,
           smartCategory: null,
@@ -388,10 +442,11 @@ export const useClientStore = create<ClientState>()(
           translatedQuery: null,
           queryError: null,
           querySource: query === DEFAULT_QUERY ? 'default' : 'typed',
-        }),
+        })),
       setSmartCategory: (smartCategory) =>
-        set({
+        set((state) => ({
           primaryView: 'mail',
+          ...pageNavigationAssistantState(state),
           calendarSearchTarget: null,
           smartCategory,
           query: DEFAULT_QUERY,
@@ -400,7 +455,7 @@ export const useClientStore = create<ClientState>()(
           translatedQuery: null,
           queryError: null,
           querySource: smartCategory ? 'category' : 'typed',
-        }),
+        })),
       setSelectedAreaId: (selectedAreaId) => set({ selectedAreaId }),
       setSelectedWorkId: (selectedWorkId) =>
         set((state) => ({
@@ -410,6 +465,8 @@ export const useClientStore = create<ClientState>()(
       setGuidedWorkId: (guidedWorkId) => set({ guidedWorkId }),
       setPendingOpenIntentId: (pendingOpenIntentId) => set({ pendingOpenIntentId }),
       setPendingOpenWorkId: (pendingOpenWorkId) => set({ pendingOpenWorkId }),
+      setPendingOpenCardId: (pendingOpenCardId) => set({ pendingOpenCardId }),
+      setPendingOpenBoardId: (pendingOpenBoardId) => set({ pendingOpenBoardId }),
       setSearchDraft: (searchDraft) => set({ searchDraft }),
       setTranslatedSearch: (nlSearchIntent, translatedQuery, querySource) =>
         set({ nlSearchIntent, translatedQuery, querySource, queryError: null }),
@@ -459,8 +516,10 @@ export const useClientStore = create<ClientState>()(
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
+      setAssistantPresentation: (assistantPresentation) => set({ assistantPresentation, aiBarOpen: true }),
       setChatScope: ({ kind, areaId, workId, label }) =>
         set({
+          assistantBriefContext: null,
           chatScopeKind: kind,
           chatScopeAreaId: areaId || null,
           chatScopeWorkId: workId || null,
