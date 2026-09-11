@@ -100,10 +100,10 @@ function prepareAgentMessages(input: UIMessage[]): {
     return compactOldMessage(message);
   });
 
-  while (
-    JSON.stringify(prepared).length > MAX_MODEL_MESSAGE_BYTES &&
-    prepared.length > FULL_RECENT_MESSAGES
-  ) {
+  // Size each message once; drop from the front until the transcript fits.
+  let totalBytes = JSON.stringify(prepared).length;
+  while (totalBytes > MAX_MODEL_MESSAGE_BYTES && prepared.length > FULL_RECENT_MESSAGES) {
+    totalBytes -= JSON.stringify(prepared[0]).length + 1;
     prepared = prepared.slice(1);
     omitted += 1;
   }
@@ -156,51 +156,56 @@ export async function POST(req: NextRequest) {
   }
   try {
     const user = await requireCurrentUser();
-    await enforceUserRateLimit({
-      userId: user.userId,
-      key: 'agent',
-      limit: 60,
-      windowMs: 60_000,
-    });
     const prepared = prepareAgentMessages(body.messages);
     const compactionNote =
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
         : '';
-    const areaDiscoveryContext = body.areaDiscovery
-      ? await readAreaDiscoveryContext({
-          userId: user.userId,
-          areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
-        })
-          .then((result) => result.systemContext)
-          .catch((error) => {
-            console.warn('[agent-route] area discovery context failed', errorForLog(error));
-            return '';
-          })
-      : '';
     const contextAttachments = normalizeContextAttachments(body.contextAttachments);
-    const attachedContexts = await Promise.all(
-      contextAttachments.map((attachment) =>
-        readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
-          (result) => result.systemContext,
-        ),
-      ),
-    );
-    const modelMessages = sanitizeToolPairs(await convertToModelMessages(prepared.messages));
     const narrativeTopics = [
       ...contextAttachments.map((item) => `work:${item.id}`),
-      ...(areaDiscoveryContext && body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
+      ...(body.areaDiscovery?.mode === 'area' && body.areaDiscovery.areaId
         ? [`area:${body.areaDiscovery.areaId}`]
         : []),
     ];
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
-    const memoryId = latestUser
-      ? await withDeadline(
-          captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
-          3000,
-          'Narrative turn capture',
-        ).catch(() => null)
-      : null;
+    // Every pre-flight read is independent of the others, so they run together:
+    // the model call waits for the slowest one, not for the sum.
+    const [areaDiscoveryContext, attachedContexts, modelMessages, memoryId] = await Promise.all([
+      enforceUserRateLimit({
+        userId: user.userId,
+        key: 'agent',
+        limit: 60,
+        windowMs: 60_000,
+      }).then(() =>
+        body.areaDiscovery
+          ? readAreaDiscoveryContext({
+              userId: user.userId,
+              areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+            })
+              .then((result) => result.systemContext)
+              .catch((error) => {
+                console.warn('[agent-route] area discovery context failed', errorForLog(error));
+                return '';
+              })
+          : '',
+      ),
+      Promise.all(
+        contextAttachments.map((attachment) =>
+          readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
+            (result) => result.systemContext,
+          ),
+        ),
+      ),
+      convertToModelMessages(prepared.messages).then(sanitizeToolPairs),
+      latestUser
+        ? withDeadline(
+            captureNarrativeTurn(user.userId, latestUser.id, messageText(latestUser), narrativeTopics),
+            3000,
+            'Narrative turn capture',
+          ).catch(() => null)
+        : Promise.resolve(null),
+    ]);
     const stream = await runAgent({
       messages: modelMessages,
       extraSystem:
@@ -232,17 +237,18 @@ export async function POST(req: NextRequest) {
     const workAttachments = contextAttachments.filter((attachment) => attachment.kind === 'work');
     if (workAttachments.length === 1) {
       const workId = workAttachments[0].id;
-      after(() =>
-        reconcileWorkTurn({
+      after(async () => {
+        const steps = await stream.steps;
+        await reconcileWorkTurn({
           userId: user.userId,
           userEmail: user.email,
           userName: user.name,
           workId,
           timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
-          steps: Array.isArray(stream.result?.steps) ? stream.result.steps : [],
+          steps: Array.isArray(steps) ? steps : [],
           uiMessages: prepared.messages,
-        }).then(() => undefined),
-      );
+        });
+      });
     }
     return stream.toUIMessageStreamResponse();
   } catch (err: any) {

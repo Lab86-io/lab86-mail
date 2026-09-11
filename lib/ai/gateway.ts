@@ -20,6 +20,16 @@ type AiProvider = 'openrouter' | 'openai' | 'anthropic';
 type AiSource = 'lab86' | 'byok';
 type AiSpeed = 'fast' | 'primary' | 'nano' | 'classify';
 
+// Reasoning effort for the interactive agent. The agent drives ~170 tools over
+// up to 20 steps, so every step pays the reasoning budget; 'low' keeps the turn
+// responsive while the tools carry the heavy lifting. Override per deployment.
+const AGENT_REASONING_EFFORT = (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low') as
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high';
+
 // Progressive output ceilings, sized to the job. An UNSET cap makes the
 // provider assume the model's max (65536) and OpenRouter reserves credits for
 // that worst case — 402-ing valid requests. These keep each feature bounded
@@ -400,6 +410,59 @@ export async function generateObjectForCurrentUser<T>(
     }
   });
 }
+
+/**
+ * The runtime chain for a streamed agent turn: the resolved primary first, then
+ * the cross-provider fallbacks (when the feature has failover). The streaming
+ * loop walks this list and moves to the next entry only when the previous one
+ * failed before it produced any content.
+ */
+export async function resolveAgentRuntimes(input: {
+  userId?: string | null;
+  speed?: AiSpeed;
+  feature: string;
+}): Promise<ResolvedAiRuntime[]> {
+  const runtime = await resolveAiRuntime(input);
+  return [runtime, ...agentFallbackRuntimes(runtime, input.feature)];
+}
+
+/** Whether a failed runtime may hand the turn to the next entry in the chain. */
+export function canFailOverAgentRuntime(err: any, feature: string, runtime: ResolvedAiRuntime) {
+  return isAgentFallbackEligible(err, feature, runtime);
+}
+
+export async function recordAgentUsage(
+  runtime: ResolvedAiRuntime,
+  feature: string,
+  usage: any,
+  ok: boolean,
+  error?: string,
+) {
+  await recordUsage(runtime, feature, usage, ok, error).catch(() => undefined);
+}
+
+export function maxOutputTokensForFeature(feature: string, explicit?: number) {
+  return capForFeature(feature, explicit, DEFAULT_STREAM_MAX_TOKENS);
+}
+
+/**
+ * Provider options for one agent step: low reasoning effort and parallel tool
+ * calls on OpenAI-compatible runtimes, plus a stable prompt-cache key so the
+ * ~30k-token tool block and system prompt hit the provider cache on every step.
+ * Anthropic runtimes get no options here (they ignore OpenAI keys).
+ */
+export function agentProviderOptions(runtime: ResolvedAiRuntime, promptCacheKey?: string) {
+  if (runtime.provider !== 'openai' && runtime.provider !== 'openrouter') return undefined;
+  return {
+    openai: {
+      reasoningEffort: AGENT_REASONING_EFFORT,
+      parallelToolCalls: true,
+      ...(promptCacheKey ? { promptCacheKey } : {}),
+    },
+  };
+}
+
+export type { ResolvedAiRuntime };
 
 function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): ResolvedAiRuntime[] {
   if (!FAILOVER_FEATURES.has(feature) || runtime.source !== 'lab86') return [];

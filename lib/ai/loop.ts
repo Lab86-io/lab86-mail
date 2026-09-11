@@ -4,6 +4,7 @@ import {
   createUIMessageStreamResponse,
   type ModelMessage,
   stepCountIs,
+  streamText,
 } from 'ai';
 import { z } from 'zod';
 import { narrativePrompt } from '../narrative/service';
@@ -12,7 +13,14 @@ import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
-import { generateTextForCurrentUser, hasPlatformAi } from './gateway';
+import {
+  agentProviderOptions,
+  canFailOverAgentRuntime,
+  hasPlatformAi,
+  maxOutputTokensForFeature,
+  recordAgentUsage,
+  resolveAgentRuntimes,
+} from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
 
@@ -489,127 +497,153 @@ function providerFailureResult(error: any) {
   };
 }
 
-function writeTextPart(writer: UiStreamWriter, id: string, text: string, providerMetadata?: any) {
-  if (!text) return;
-  writer.write({ type: 'text-start', id, providerMetadata });
-  writer.write({ type: 'text-delta', id, delta: text, providerMetadata });
-  writer.write({ type: 'text-end', id, providerMetadata });
+type UiChunk = { type: string; [key: string]: any };
+
+/** Chunk types that mean the model produced something the user can see. */
+const CONTENT_CHUNK_TYPES = new Set([
+  'text-delta',
+  'reasoning-delta',
+  'tool-input-start',
+  'tool-input-delta',
+  'tool-input-available',
+  'tool-input-error',
+  'tool-output-available',
+  'tool-output-error',
+  'tool-approval-request',
+  'source-url',
+  'source-document',
+  'file',
+]);
+
+export interface ForwardAgentStreamResult {
+  /** True once at least one content chunk reached the client. */
+  forwarded: boolean;
+  /** The provider error captured by the stream, if any. */
+  error: unknown;
 }
 
-function writeToolCallPart(writer: UiStreamWriter, part: any) {
-  const base = {
-    toolCallId: part.toolCallId,
-    toolName: part.toolName,
-    input: part.input,
-    providerExecuted: part.providerExecuted,
-    providerMetadata: part.providerMetadata,
-    toolMetadata: part.toolMetadata,
-    dynamic: part.dynamic,
-    title: part.title,
-  };
-  if (part.invalid || part.error) {
-    writer.write({
-      type: 'tool-input-error',
-      ...base,
-      errorText: errorText(part.error || 'Invalid tool call'),
+/**
+ * Forward one runtime's UI message stream to the client writer.
+ *
+ * Chunks are held back until the first content chunk, so a runtime that fails
+ * before it says anything leaves no trace and the caller can try the next
+ * runtime. Once content has been forwarded the stream is committed: later
+ * errors are written through so the client can show them and offer Continue.
+ */
+export async function forwardAgentStream(
+  writer: UiStreamWriter,
+  chunks: AsyncIterable<UiChunk>,
+  readError: () => unknown = () => undefined,
+): Promise<ForwardAgentStreamResult> {
+  const pending: UiChunk[] = [];
+  let forwarded = false;
+  for await (const chunk of chunks) {
+    if (chunk.type === 'error') {
+      if (!forwarded) return { forwarded: false, error: readError() ?? new Error(chunk.errorText) };
+      writer.write(chunk as any);
+      continue;
+    }
+    if (!forwarded && CONTENT_CHUNK_TYPES.has(chunk.type)) {
+      forwarded = true;
+      for (const held of pending) writer.write(held as any);
+      pending.length = 0;
+    }
+    if (forwarded) writer.write(chunk as any);
+    else pending.push(chunk);
+  }
+  return { forwarded, error: readError() };
+}
+
+function writeTextOnly(writer: UiStreamWriter, id: string, text: string) {
+  writer.write({ type: 'start-step' });
+  writer.write({ type: 'text-start', id });
+  writer.write({ type: 'text-delta', id, delta: text });
+  writer.write({ type: 'text-end', id });
+  writer.write({ type: 'finish-step' });
+}
+
+interface AgentStreamOptions {
+  userId?: string | null;
+  system: string;
+  messages: ModelMessage[];
+  tools: Record<string, any>;
+  signal?: AbortSignal;
+}
+
+/**
+ * Run the agent turn as a live stream. Walks the runtime chain: a runtime that
+ * fails (or finishes empty) before any content was forwarded is dropped and
+ * the next one starts. Resolves with the completed steps for post-turn work.
+ */
+async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptions): Promise<any[]> {
+  const feature = 'agent';
+  const runtimes = await resolveAgentRuntimes({ userId: options.userId, speed: 'primary', feature });
+  const promptCacheKey = options.userId ? `agent:${options.userId}` : undefined;
+  let lastError: unknown;
+
+  for (let index = 0; index < runtimes.length; index += 1) {
+    const runtime = runtimes[index];
+    let streamError: unknown;
+    const result = streamText({
+      model: runtime.model,
+      system: options.system,
+      messages: options.messages,
+      tools: options.tools,
+      abortSignal: options.signal,
+      // Multi-step flows (fetch a file → store → attach → send) need headroom
+      // beyond the old 6-step cap.
+      stopWhen: stepCountIs(20),
+      // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
+      // that OpenRouter 402s on); leaves room for reasoning + a reply.
+      maxOutputTokens: maxOutputTokensForFeature(feature),
+      providerOptions: agentProviderOptions(runtime, promptCacheKey),
+      onError: ({ error }) => {
+        streamError = streamError ?? error;
+      },
     });
-    return;
-  }
-  writer.write({ type: 'tool-input-available', ...base });
-}
-
-function writeToolResultPart(writer: UiStreamWriter, part: any) {
-  writer.write({
-    type: 'tool-output-available',
-    toolCallId: part.toolCallId,
-    output: part.output,
-    providerExecuted: part.providerExecuted,
-    providerMetadata: part.providerMetadata,
-    toolMetadata: part.toolMetadata,
-    dynamic: part.dynamic,
-    preliminary: part.preliminary,
-  });
-}
-
-export function writeDelayedAgentResult(writer: UiStreamWriter, result: any) {
-  writer.write({ type: 'start' });
-  const steps = Array.isArray(result.steps) && result.steps.length ? result.steps : [result];
-  let emittedText = false;
-
-  for (const step of steps) {
-    writer.write({ type: 'start-step' });
-    const content = Array.isArray(step.content) ? step.content : [];
-
-    content.forEach((part: any, index: number) => {
-      if (part?.type === 'text') {
-        emittedText = emittedText || Boolean(part.text);
-        writeTextPart(
-          writer,
-          `text-${step.stepNumber ?? 0}-${index}`,
-          part.text || '',
-          part.providerMetadata,
-        );
-        return;
-      }
-      if (part?.type === 'tool-call') {
-        writeToolCallPart(writer, part);
-        return;
-      }
-      if (part?.type === 'tool-result') {
-        writeToolResultPart(writer, part);
-        return;
-      }
-      if (part?.type === 'tool-error') {
-        writer.write({
-          type: 'tool-output-error',
-          toolCallId: part.toolCallId,
-          errorText: errorText(part.error),
-          providerExecuted: part.providerExecuted,
-          providerMetadata: part.providerMetadata,
-          toolMetadata: part.toolMetadata,
-          dynamic: part.dynamic,
-        });
-        return;
-      }
-      if (part?.type === 'tool-approval-request') {
-        if (part.toolCall) writeToolCallPart(writer, part.toolCall);
-        writer.write({
-          type: 'tool-approval-request',
-          approvalId: part.approvalId,
-          toolCallId: part.toolCall?.toolCallId,
-        });
-        return;
-      }
-      if (part?.type === 'source' && part.sourceType === 'url') {
-        writer.write({
-          type: 'source-url',
-          sourceId: part.id,
-          url: part.url,
-          title: part.title,
-          providerMetadata: part.providerMetadata,
-        });
-        return;
-      }
-      if (part?.type === 'file' && part.file?.url && part.file?.mediaType) {
-        writer.write({
-          type: 'file',
-          url: part.file.url,
-          mediaType: part.file.mediaType,
-          providerMetadata: part.providerMetadata,
-        });
-      }
+    const uiStream = result.toUIMessageStream({
+      sendStart: false,
+      sendFinish: false,
+      sendReasoning: true,
+      sendSources: true,
+      onError: (error) => {
+        streamError = streamError ?? error;
+        return errorText(error);
+      },
     });
+    const outcome = await forwardAgentStream(writer, uiStream as AsyncIterable<UiChunk>, () => streamError);
+    const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
+    const usage = await Promise.resolve(result.totalUsage).catch(() => undefined);
+    const finishReason = await Promise.resolve(result.finishReason).catch(() => 'error');
 
-    writer.write({ type: 'finish-step' });
+    if (outcome.forwarded) {
+      await recordAgentUsage(
+        runtime,
+        feature,
+        usage,
+        !outcome.error,
+        outcome.error ? errorText(outcome.error) : undefined,
+      );
+      return steps;
+    }
+
+    lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
+    await recordAgentUsage(runtime, feature, usage, false, errorText(lastError));
+    if (options.signal?.aborted || isAuthError(lastError)) throw lastError;
+    const hasNext = index < runtimes.length - 1;
+    const eligible = outcome.error ? canFailOverAgentRuntime(outcome.error, feature, runtime) : true;
+    if (hasNext && eligible) {
+      console.warn('[agent] runtime produced nothing; trying fallback', {
+        provider: runtime.provider,
+        model: runtime.modelName,
+        fallback: runtimes[index + 1]?.modelName,
+        error: errorText(lastError),
+      });
+      continue;
+    }
+    throw lastError;
   }
-
-  if (!emittedText && result.text) {
-    writer.write({ type: 'start-step' });
-    writeTextPart(writer, 'text-final', result.text);
-    writer.write({ type: 'finish-step' });
-  }
-
-  writer.write({ type: 'finish', finishReason: result.finishReason });
+  throw lastError ?? new Error('No agent runtime available');
 }
 
 export interface AgentRunOpts {
@@ -625,6 +659,23 @@ export interface AgentRunOpts {
   signal?: AbortSignal;
 }
 
+export interface AgentRun {
+  /** Completed generation steps, resolved when the stream finishes (empty on failure). */
+  steps: Promise<any[]>;
+  toUIMessageStreamResponse(): Response;
+}
+
+/** Wall-clock grounding, rounded to the minute so the prompt prefix stays cacheable across steps. */
+export function agentTimeContext(timezone: string, now = new Date()): string {
+  const rounded = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+  const localNow = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    dateStyle: 'full',
+    timeStyle: 'short',
+  }).format(rounded);
+  return `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
+}
+
 export async function runAgent({
   messages,
   extraSystem,
@@ -634,82 +685,76 @@ export async function runAgent({
   userTimezone,
   narrativeTopics,
   signal,
-}: AgentRunOpts) {
+}: AgentRunOpts): Promise<AgentRun> {
   if (!hasPlatformAi() && !userId) {
     throw new Error(
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
+  const requestContext = { userId, userEmail, userName, agent: 'ai' as const };
   // Memories are injected at conversation start so remembered facts and
   // preferences are ALWAYS in play — the recall tool remains for ad-hoc
-  // lookups, but the agent never starts blind.
-  const memories = userId
-    ? await runWithAiRequestContext({ userId, userEmail, userName, agent: 'ai' }, () =>
-        listMemories().catch(() => []),
-      ).then((rows) => rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })))
-    : [];
-  const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
-  // Wall-clock grounding: without this the model guesses UTC and "2:30"
-  // lands hours off on the user's real calendar.
-  const timezone = userTimezone || 'UTC';
-  const localNow = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    dateStyle: 'full',
-    timeStyle: 'long',
-  }).format(new Date());
-  const timeContext = `The user's timezone is ${timezone}. The current time there is ${localNow}. When passing ISO timestamps to tools, either include the correct UTC offset for that timezone or pass a naive timestamp (no Z, no offset) — naive timestamps are interpreted in the user's timezone. Never append Z to a local wall-clock time.`;
+  // lookups, but the agent never starts blind. Memories and narrative context
+  // are independent reads, so they run together.
   const memoryQuery = narrativeQueryFromMessages(messages);
-  const narrative = await boundedAgentNarrativeContext(
-    userId,
-    memoryQuery,
-    narrativePrompt,
-    narrativeTopics,
-    signal,
-  );
+  const [memories, narrative] = await Promise.all([
+    userId
+      ? runWithAiRequestContext(requestContext, () => listMemories().catch(() => [])).then((rows) =>
+          rows.slice(0, 30).map((row) => ({ email: row.email, notes: row.notes })),
+        )
+      : Promise.resolve([]),
+    boundedAgentNarrativeContext(userId, memoryQuery, narrativePrompt, narrativeTopics, signal),
+  ]);
   signal?.throwIfAborted();
-  const system = `${base}\n\n${timeContext}${narrative ? `\n\n${narrative}` : ''}${extraSystem ? `\n\n${extraSystem}` : ''}`;
+  const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
+  const timezone = userTimezone || 'UTC';
+  // Static instructions first, per-turn context last: providers cache the
+  // shared prefix, so the parts that change every turn sit at the end.
+  const system = [base, extraSystem, narrative, agentTimeContext(timezone)].filter(Boolean).join('\n\n');
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = newOperationBatchId();
-  let result: any;
-  try {
-    result = await generateTextForCurrentUser({
-      userId,
-      userEmail,
-      userName,
-      feature: 'agent',
-      // The interactive agent uses the PRIMARY (big) model — it reasons over many
-      // tools and multi-step plans; the fast model was both weaker and the source
-      // of intermittent empty completions.
-      speed: 'primary',
-      abortSignal: signal,
-      system,
-      messages,
-      tools: liftToolsForAgent(operationBatchId, timezone),
-      // Multi-step flows (fetch a file → store → attach → send) need headroom
-      // beyond the old 6-step cap.
-      stopWhen: stepCountIs(20),
-    });
-  } catch (err: any) {
-    // Auth errors get a clear "fix your key" message instead of being masked as
-    // a transient failure or thrown as an opaque provider string.
-    if (isAuthError(err)) {
-      console.warn('[agent] auth error; returning key-fix guidance', safeAuthErrorText(err));
-      result = authFailureResult(err);
-    } else if (isRecoverableAgentProviderError(err)) {
-      console.warn('[agent] provider failed after retries; returning text fallback', errorText(err));
-      result = providerFailureResult(err);
-    } else {
-      throw err;
-    }
-  }
+  const tools = liftToolsForAgent(operationBatchId, timezone);
+
+  let resolveSteps: (steps: any[]) => void = () => undefined;
+  const steps = new Promise<any[]>((resolve) => {
+    resolveSteps = resolve;
+  });
+
   return {
-    /** The completed generation (steps, text) — the run finishes before streaming starts. */
-    result,
+    steps,
     toUIMessageStreamResponse() {
       return createUIMessageStreamResponse({
         stream: createUIMessageStream({
-          execute: ({ writer }) => writeDelayedAgentResult(writer, result),
+          execute: async ({ writer }) => {
+            writer.write({ type: 'start' });
+            let completed: any[] = [];
+            try {
+              completed = await runWithAiRequestContext(requestContext, () =>
+                streamAgentTurn(writer, { userId, system, messages, tools, signal }),
+              );
+              writer.write({ type: 'finish', finishReason: 'stop' });
+            } catch (err: any) {
+              // Auth errors get a clear "fix your key" message instead of being
+              // masked as a transient failure or thrown as an opaque provider string.
+              if (isAuthError(err)) {
+                console.warn('[agent] auth error; returning key-fix guidance', safeAuthErrorText(err));
+                writeTextOnly(writer, 'text-auth', authFailureResult(err).text);
+                writer.write({ type: 'finish', finishReason: 'stop' });
+              } else if (isRecoverableAgentProviderError(err)) {
+                console.warn(
+                  '[agent] provider failed after retries; returning text fallback',
+                  errorText(err),
+                );
+                writeTextOnly(writer, 'text-provider', providerFailureResult(err).text);
+                writer.write({ type: 'finish', finishReason: 'stop' });
+              } else {
+                throw err;
+              }
+            } finally {
+              resolveSteps(completed);
+            }
+          },
           onError: (error) => {
             console.error('[agent]', error);
             return errorText(error);

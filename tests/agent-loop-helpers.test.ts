@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  agentTimeContext,
   boundedAgentNarrativeContext,
   errorText,
+  forwardAgentStream,
   isAuthError,
   isRecoverableAgentProviderError,
   narrativeQueryFromContent,
   narrativeQueryFromMessages,
   safeAuthErrorText,
-  writeDelayedAgentResult,
 } from '../lib/ai/loop';
 
 test('bounded agent narrative context preserves identity and falls back on retrieval failure', async () => {
@@ -111,83 +112,112 @@ describe('provider error classification', () => {
   });
 });
 
-describe('writeDelayedAgentResult (completed-run stream replay)', () => {
-  function replay(result: any) {
-    const chunks: any[] = [];
-    writeDelayedAgentResult({ write: (chunk: any) => chunks.push(chunk) } as any, result);
-    return chunks;
+describe('forwardAgentStream (live runtime stream → client)', () => {
+  async function* chunks(list: any[]) {
+    for (const chunk of list) yield chunk;
+  }
+  function writer() {
+    const written: any[] = [];
+    return { written, writer: { write: (chunk: any) => written.push(chunk) } as any };
   }
 
-  test('replays text, tool calls, and tool results in stream order', () => {
-    const chunks = replay({
-      finishReason: 'stop',
-      steps: [
-        {
-          stepNumber: 0,
-          content: [
-            { type: 'text', text: 'Searching.' },
-            { type: 'tool-call', toolCallId: 'c1', toolName: 'search_threads', input: { query: 'x' } },
-            { type: 'tool-result', toolCallId: 'c1', output: { threads: [] } },
-          ],
-        },
-      ],
-    });
-    const types = chunks.map((chunk) => chunk.type);
-    expect(types[0]).toBe('start');
-    expect(types).toContain('text-start');
-    expect(types).toContain('tool-input-available');
-    expect(types).toContain('tool-output-available');
-    expect(types[types.length - 1]).toBe('finish');
-    expect(chunks[chunks.length - 1].finishReason).toBe('stop');
+  test('forwards text, tool input streaming, and tool output in order', async () => {
+    const { written, writer: w } = writer();
+    const outcome = await forwardAgentStream(
+      w,
+      chunks([
+        { type: 'start-step' },
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'Search' },
+        { type: 'text-delta', id: 't1', delta: 'ing.' },
+        { type: 'text-end', id: 't1' },
+        { type: 'tool-input-start', toolCallId: 'c1', toolName: 'search_threads' },
+        { type: 'tool-input-delta', toolCallId: 'c1', inputTextDelta: '{"query":"x"}' },
+        { type: 'tool-input-available', toolCallId: 'c1', toolName: 'search_threads', input: { query: 'x' } },
+        { type: 'tool-output-available', toolCallId: 'c1', output: { threads: [] } },
+        { type: 'finish-step' },
+      ]),
+    );
+    expect(outcome.forwarded).toBe(true);
+    expect(outcome.error).toBeUndefined();
+    expect(written.map((chunk) => chunk.type)).toEqual([
+      'start-step',
+      'text-start',
+      'text-delta',
+      'text-delta',
+      'text-end',
+      'tool-input-start',
+      'tool-input-delta',
+      'tool-input-available',
+      'tool-output-available',
+      'finish-step',
+    ]);
   });
 
-  test('surfaces tool errors and invalid calls as error chunks', () => {
-    const chunks = replay({
-      steps: [
-        {
-          content: [
-            { type: 'tool-call', toolCallId: 'c1', toolName: 'star', input: {}, invalid: true },
-            { type: 'tool-call', toolCallId: 'c2', toolName: 'star', input: {} },
-            { type: 'tool-error', toolCallId: 'c2', error: new Error('nope') },
-          ],
-        },
-      ],
-      finishReason: 'stop',
-    });
-    expect(chunks.filter((chunk) => chunk.type === 'tool-input-error')).toHaveLength(1);
-    const outputError = chunks.find((chunk) => chunk.type === 'tool-output-error');
-    expect(outputError?.errorText).toBe('nope');
+  test('a runtime that errors before any content leaves no trace, so the caller can fail over', async () => {
+    const { written, writer: w } = writer();
+    const boom = Object.assign(new Error('Provider returned error'), { statusCode: 502 });
+    const outcome = await forwardAgentStream(
+      w,
+      chunks([{ type: 'start-step' }, { type: 'error', errorText: 'Provider returned error' }]),
+      () => boom,
+    );
+    expect(outcome.forwarded).toBe(false);
+    expect(outcome.error).toBe(boom);
+    expect(written).toEqual([]);
   });
 
-  test('falls back to result.text when no step emitted text', () => {
-    const chunks = replay({
-      text: 'Final answer.',
-      finishReason: 'stop',
-      steps: [{ content: [] }],
-    });
-    const delta = chunks.find((chunk) => chunk.type === 'text-delta');
-    expect(delta?.delta).toBe('Final answer.');
+  test('an error after content is written through so the client can show it', async () => {
+    const { written, writer: w } = writer();
+    const outcome = await forwardAgentStream(
+      w,
+      chunks([
+        { type: 'start-step' },
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'Half' },
+        { type: 'error', errorText: 'stream failed' },
+      ]),
+      () => new Error('stream failed'),
+    );
+    expect(outcome.forwarded).toBe(true);
+    expect(errorText(outcome.error)).toBe('stream failed');
+    expect(written.map((chunk) => chunk.type)).toEqual(['start-step', 'text-start', 'text-delta', 'error']);
   });
 
-  test('replays sources, files, and approval requests', () => {
-    const chunks = replay({
-      finishReason: 'stop',
-      steps: [
-        {
-          content: [
-            { type: 'source', sourceType: 'url', id: 's1', url: 'https://example.test', title: 'Example' },
-            { type: 'file', file: { url: 'https://example.test/a.png', mediaType: 'image/png' } },
-            {
-              type: 'tool-approval-request',
-              approvalId: 'ap1',
-              toolCall: { toolCallId: 'c9', toolName: 'send_message', input: {} },
-            },
-          ],
-        },
-      ],
-    });
-    expect(chunks.find((chunk) => chunk.type === 'source-url')?.url).toBe('https://example.test');
-    expect(chunks.find((chunk) => chunk.type === 'file')?.mediaType).toBe('image/png');
-    expect(chunks.find((chunk) => chunk.type === 'tool-approval-request')?.approvalId).toBe('ap1');
+  test('an empty completion is reported as not forwarded without an error', async () => {
+    const { written, writer: w } = writer();
+    const outcome = await forwardAgentStream(w, chunks([{ type: 'start-step' }, { type: 'finish-step' }]));
+    expect(outcome.forwarded).toBe(false);
+    expect(outcome.error).toBeUndefined();
+    expect(written).toEqual([]);
+  });
+
+  test('reasoning deltas count as content', async () => {
+    const { written, writer: w } = writer();
+    const outcome = await forwardAgentStream(
+      w,
+      chunks([
+        { type: 'reasoning-start', id: 'r1' },
+        { type: 'reasoning-delta', id: 'r1', delta: 'Consider' },
+        { type: 'reasoning-end', id: 'r1' },
+      ]),
+    );
+    expect(outcome.forwarded).toBe(true);
+    expect(written.map((chunk) => chunk.type)).toEqual([
+      'reasoning-start',
+      'reasoning-delta',
+      'reasoning-end',
+    ]);
+  });
+});
+
+describe('agentTimeContext', () => {
+  test('rounds to the minute so the prompt prefix is stable within a step burst', () => {
+    const a = agentTimeContext('America/New_York', new Date('2026-09-11T14:05:07Z'));
+    const b = agentTimeContext('America/New_York', new Date('2026-09-11T14:05:52Z'));
+    expect(a).toBe(b);
+    expect(a).toContain("The user's timezone is America/New_York.");
+    expect(a).toContain('Never append Z to a local wall-clock time.');
+    expect(a).not.toMatch(/:\d\d:\d\d/);
   });
 });
