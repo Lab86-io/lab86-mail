@@ -5,6 +5,7 @@ import {
   type UIMessage,
 } from 'ai';
 import { after, type NextRequest } from 'next/server';
+import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
@@ -160,6 +161,12 @@ export async function POST(req: NextRequest) {
   }
   try {
     const user = await requireCurrentUser();
+    await enforceUserRateLimit({
+      userId: user.userId,
+      key: 'agent',
+      limit: 60,
+      windowMs: 60_000,
+    });
     const prepared = prepareAgentMessages(body.messages);
     const compactionNote =
       prepared.omitted || prepared.compacted
@@ -187,24 +194,17 @@ export async function POST(req: NextRequest) {
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
     const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
-      enforceUserRateLimit({
-        userId: user.userId,
-        key: 'agent',
-        limit: 60,
-        windowMs: 60_000,
-      }).then(() =>
-        !briefContext && body.areaDiscovery
-          ? readAreaDiscoveryContext({
-              userId: user.userId,
-              areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+      !briefContext && body.areaDiscovery
+        ? readAreaDiscoveryContext({
+            userId: user.userId,
+            areaId: body.areaDiscovery.mode === 'area' ? body.areaDiscovery.areaId : undefined,
+          })
+            .then((result) => result.systemContext)
+            .catch((error) => {
+              console.warn('[agent-route] area discovery context failed', errorForLog(error));
+              return '';
             })
-              .then((result) => result.systemContext)
-              .catch((error) => {
-                console.warn('[agent-route] area discovery context failed', errorForLog(error));
-                return '';
-              })
-          : '',
-      ),
+        : '',
       Promise.all(
         contextAttachments.map((attachment) =>
           readWorkChatContext({ userId: user.userId, workId: attachment.id }).then(
@@ -212,7 +212,9 @@ export async function POST(req: NextRequest) {
           ),
         ),
       ),
-      convertToModelMessages(prepared.messages).then(sanitizeToolPairs),
+      hydrateChatAttachments(user.userId, prepared.messages, req.signal)
+        .then(convertToModelMessages)
+        .then(sanitizeToolPairs),
     ]);
     const stream = await runAgent({
       messages: modelMessages,

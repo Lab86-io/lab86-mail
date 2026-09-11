@@ -7,6 +7,7 @@ import {
   getOfficeSession,
   listOfficeFiles,
   type OfficeFile,
+  publicOfficeFile,
   requireOffice,
   saveOfficeVersion,
   startOfficeSession,
@@ -157,4 +158,22 @@ test('a failed or incomplete session commit never exposes an editor configuratio
     __setOfficeServiceDepsForTest({ convexMutation: (async () => result) as any });
     await expect(startOfficeSession('owner', document())).rejects.toThrow('file changed');
   }
+});
+
+test('public Office metadata redacts provider credentials and locks consistently', () => {
+  const original = document();
+  const result = publicOfficeFile({
+    ...original,
+    wopiLock: { value: 'private-lock', sessionId: 'private-session', expiresAt: 100 },
+    google: {
+      connectionId: 'private-connection',
+      fileId: 'google-id',
+      session: 'encrypted-token',
+      syncedRevision: 2,
+      pendingSave: { session: 'private-recovery-token', revision: 2, providerVersion: '3' },
+    },
+  });
+  expect(result).not.toHaveProperty('wopiLock');
+  expect(result.google).toEqual({ fileId: 'google-id', syncedRevision: 2 });
+  expect(publicOfficeFile(original)).not.toHaveProperty('google');
 });

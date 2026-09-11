@@ -21,3 +21,20 @@ test('optional context timeout releases a stalled caller with its empty fallback
   );
   expect(loop).toContain("'Agent narrative context'");
 });
+
+test('agent rate limiting completes before any context or attachment preflight starts', () => {
+  const agent = readFileSync('app/api/agent/route.ts', 'utf8');
+  const handler = agent.slice(agent.indexOf('export async function POST'));
+  const gate = handler.indexOf('await enforceUserRateLimit(');
+  expect(gate).toBeGreaterThan(handler.indexOf('await requireCurrentUser()'));
+  for (const read of [
+    'readBriefResponseContext(',
+    'readAreaDiscoveryContext(',
+    'readWorkChatContext(',
+    'hydrateChatAttachments(',
+  ]) {
+    expect(handler.indexOf(read)).toBeGreaterThan(gate);
+  }
+  expect(handler.indexOf('await Promise.all(')).toBeGreaterThan(gate);
+  expect(handler).toContain('hydrateChatAttachments(user.userId, prepared.messages, req.signal)');
+});

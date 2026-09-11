@@ -770,6 +770,7 @@ export function FilesSurface() {
   if (openGoogleFile) {
     return (
       <GoogleDocumentEditor
+        officeEnabled={officeQuery.data?.enabled === true}
         key={`${openGoogleFile.connectionId}:${openGoogleFile.fileId}:${openGoogleFile.mimeType}`}
         source={openGoogleFile}
         onClose={closeDocument}

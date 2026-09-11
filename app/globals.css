@@ -402,8 +402,11 @@
        dot-grid, and shadows actually register — on true black, overlay textures
        are mathematically invisible (2·0·blend = 0). Raising --surface-tint lifts
        and tints every surface further toward the accent hue, Arc-style. */
+    /* Compress the high end: depth > 1 must not turn raised dark surfaces
+       light enough to swallow muted text, borders, or controls. */
+    --dark-depth-spread: calc(min(1, var(--depth-spread)) + max(0, var(--depth-spread) - 1) * 0.35);
     --color-bg: oklch(
-      calc(0.145 + var(--surface-tint) * 0.14) calc(0.006 + var(--surface-tint) * 0.04) var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.08) calc(0.006 + var(--surface-tint) * 0.04) var(--bg-hue)
     );
     /* Depth ladder, dark direction: elevation lightens (industry-standard
        dark elevation), the well dips below the paper. Every rung carries the
@@ -411,34 +414,36 @@
        monotonic at ANY tint; spread 1 + tint 0 reproduces the legacy
        constants. */
     --color-bg-elevated: oklch(
-      calc(0.145 + var(--surface-tint) * 0.14 + 0.075 * var(--depth-spread)) calc(var(--surface-tint) * 0.032)
-        var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.08 + 0.075 * var(--dark-depth-spread))
+        calc(var(--surface-tint) * 0.032) var(--bg-hue)
     );
     --color-surface-float: oklch(
-      calc(0.145 + var(--surface-tint) * 0.14 + 0.13 * var(--depth-spread)) calc(var(--surface-tint) * 0.03)
-        var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.08 + 0.13 * var(--dark-depth-spread))
+        calc(var(--surface-tint) * 0.03) var(--bg-hue)
     );
     --color-surface-well: oklch(
-      max(0.09, calc(0.145 + var(--surface-tint) * 0.14 - 0.024 * var(--depth-spread)))
+      max(0.09, calc(0.145 + var(--surface-tint) * 0.08 - 0.024 * var(--dark-depth-spread)))
         calc(0.005 + var(--surface-tint) * 0.036) var(--bg-hue)
     );
     --color-bg-subtle: oklch(
-      calc(0.145 + var(--surface-tint) * 0.14 + 0.033 * var(--depth-spread)) calc(var(--surface-tint) * 0.034)
-        var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.08 + 0.033 * var(--dark-depth-spread))
+        calc(var(--surface-tint) * 0.034) var(--bg-hue)
     );
     --color-bg-muted: oklch(
-      calc(0.145 + var(--surface-tint) * 0.14 + 0.125 * var(--depth-spread)) calc(var(--surface-tint) * 0.03)
-        var(--bg-hue)
+      calc(0.145 + var(--surface-tint) * 0.08 + 0.125 * var(--dark-depth-spread))
+        calc(var(--surface-tint) * 0.03) var(--bg-hue)
     );
     --color-border: oklch(
-      calc(0.25 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.03) var(--bg-hue)
+      calc(0.31 + var(--surface-tint) * 0.08 + 0.06 * (var(--dark-depth-spread) - 1))
+        calc(var(--surface-tint) * 0.03) var(--bg-hue)
     );
     --color-border-strong: oklch(
-      calc(0.335 + var(--surface-tint) * 0.022) calc(var(--surface-tint) * 0.028) var(--bg-hue)
+      calc(0.39 + var(--surface-tint) * 0.08 + 0.06 * (var(--dark-depth-spread) - 1))
+        calc(var(--surface-tint) * 0.028) var(--bg-hue)
     );
     --color-text: #ededed;
-    --color-text-muted: #9a9a9a;
-    --color-text-faint: #5e5e5e;
+    --color-text-muted: #b8b8b8;
+    --color-text-faint: #a3a3a3;
     /* Selected/active pop: the same user hue, lifted for dark surfaces. */
     --color-selected: oklch(0.73 calc(var(--accent-chroma) * 0.78) var(--accent-hue));
     --color-selected-soft: oklch(0.73 calc(var(--accent-chroma) * 0.7) var(--accent-hue) / 0.14);

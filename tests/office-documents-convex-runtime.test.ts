@@ -299,3 +299,292 @@ describe('binary Office working copies', () => {
     ).toMatchObject({ lastRevision: 2 });
   });
 });
+
+describe('Collabora locks and Google save state', () => {
+  test('locks are exclusive, expire, bind writes to the editor, and protect Google sync state', async () => {
+    const t = convexTest(schema, modules);
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['original'])));
+    await t.mutation(office.create, {
+      ...auth,
+      documentId: 'wopi',
+      title: 'File.docx',
+      extension: 'docx',
+      storageId,
+      size: 8,
+      sha256: 'original',
+      google: {
+        connectionId: 'connection',
+        fileId: 'google-file',
+        session: 'initial-token',
+        syncedRevision: 1,
+      },
+    });
+    for (const sessionId of ['a', 'b'])
+      await t.mutation(office.startSession, {
+        ...auth,
+        documentId: 'wopi',
+        sessionId,
+        key: sessionId,
+        expectedRevision: 1,
+      });
+    const lock = (sessionId: string, operation: string, value: string) =>
+      t.mutation(office.wopiLock, { ...auth, documentId: 'wopi', sessionId, operation, value });
+    expect(await lock('a', 'LOCK', 'first')).toEqual({ ok: true, value: 'first' });
+    expect(await lock('b', 'LOCK', 'second')).toEqual({ ok: false, value: 'first' });
+    expect(await lock('b', 'REFRESH_LOCK', 'first')).toEqual({ ok: true, value: 'first' });
+    expect(await lock('a', 'REFRESH_LOCK', 'first')).toEqual({ ok: true, value: 'first' });
+    const changed = await t.run((ctx) => ctx.storage.store(new Blob(['change'])));
+    const save = {
+      ...auth,
+      documentId: 'wopi',
+      sessionId: 'a',
+      key: 'a',
+      expectedRevision: 1,
+      storageId: changed,
+      size: 6,
+      sha256: 'change',
+    };
+    expect(await t.mutation(office.saveVersion, { ...save, wopiLock: 'wrong' })).toMatchObject({
+      ok: false,
+      code: 'LOCK_CONFLICT',
+    });
+    expect(
+      await t.mutation(office.saveVersion, { ...save, wopiLock: 'first', saveRequestId: 'verified-save' }),
+    ).toMatchObject({
+      ok: true,
+      revision: 2,
+    });
+    expect(
+      await t.mutation(office.linkGoogle, {
+        ...auth,
+        documentId: 'wopi',
+        expectedSession: 'stale',
+        session: 'new-token',
+        syncedRevision: 2,
+      }),
+    ).toEqual({ ok: false });
+    expect(
+      await t.mutation(office.linkGoogle, {
+        ...auth,
+        documentId: 'wopi',
+        expectedSession: 'initial-token',
+        session: 'new-token',
+        syncedRevision: 2,
+      }),
+    ).toEqual({ ok: true });
+    expect((await t.query(office.get, { ...auth, documentId: 'wopi' })).lastWopiSave).toEqual({
+      id: 'verified-save',
+      revision: 2,
+    });
+    await t.run(async (ctx) => {
+      const document = await ctx.db.query('officeDocuments').first();
+      await ctx.db.patch(document!._id, { wopiLock: { value: 'first', sessionId: 'a', expiresAt: 1 } });
+    });
+    expect(await lock('b', 'LOCK', 'second')).toEqual({ ok: true, value: 'second' });
+    expect(await lock('b', 'UNLOCK', 'second')).toEqual({ ok: true, value: '' });
+  });
+});
+
+test('two authorized sessions share a document lock and alternate saves without stale-session conflicts', async () => {
+  const t = convexTest(schema, modules);
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['original'])));
+  await t.mutation(office.create, {
+    ...auth,
+    documentId: 'shared',
+    title: 'Shared.docx',
+    extension: 'docx',
+    storageId,
+    size: 8,
+    sha256: 'original',
+  });
+  for (const sessionId of ['a', 'b'])
+    await t.mutation(office.startSession, {
+      ...auth,
+      documentId: 'shared',
+      sessionId,
+      key: sessionId,
+      expectedRevision: 1,
+    });
+  expect(
+    await t.mutation(office.wopiLock, {
+      ...auth,
+      documentId: 'shared',
+      sessionId: 'a',
+      operation: 'LOCK',
+      value: 'document-lock',
+    }),
+  ).toMatchObject({ ok: true });
+  for (const [index, sessionId] of ['a', 'b', 'a'].entries()) {
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob([`edit-${index}`])));
+    expect(
+      await t.mutation(office.saveVersion, {
+        ...auth,
+        documentId: 'shared',
+        sessionId,
+        key: sessionId,
+        expectedRevision: index + 1,
+        wopiLock: 'document-lock',
+        storageId,
+        size: 6,
+        sha256: `hash-${index}`,
+      }),
+    ).toMatchObject({ ok: true, revision: index + 2 });
+  }
+  expect(
+    await t.mutation(office.wopiLock, {
+      ...auth,
+      userId: 'stranger',
+      documentId: 'shared',
+      sessionId: 'b',
+      operation: 'UNLOCK',
+      value: 'document-lock',
+    }),
+  ).toMatchObject({ ok: false });
+  expect(
+    await t.mutation(office.wopiLock, {
+      ...auth,
+      documentId: 'shared',
+      sessionId: 'b',
+      operation: 'UNLOCK',
+      value: 'document-lock',
+    }),
+  ).toEqual({ ok: true, value: '' });
+});
+
+test('Google refresh keeps one identity, preserves history, refuses concurrent edits, and revokes stale editors', async () => {
+  const t = convexTest(schema, modules);
+  const store = () => t.run((ctx) => ctx.storage.store(new Blob(['synthetic'])));
+  await t.mutation(office.create, {
+    ...auth,
+    documentId: 'google-stable',
+    title: 'Original.docx',
+    extension: 'docx',
+    storageId: await store(),
+    size: 9,
+    sha256: 'original',
+    google: {
+      connectionId: 'connection',
+      fileId: 'provider-file',
+      session: 'old-session',
+      syncedRevision: 1,
+    },
+  });
+  expect(
+    (await t.query(office.findGoogle, { ...auth, connectionId: 'connection', fileId: 'provider-file' }))
+      .documentId,
+  ).toBe('google-stable');
+  expect(
+    await t.query(office.findGoogle, {
+      ...auth,
+      userId: 'stranger',
+      connectionId: 'connection',
+      fileId: 'provider-file',
+    }),
+  ).toBeNull();
+  await t.mutation(office.startSession, {
+    ...auth,
+    documentId: 'google-stable',
+    sessionId: 'old-editor',
+    key: 'old-editor',
+    expectedRevision: 1,
+  });
+  const refresh = {
+    ...auth,
+    documentId: 'google-stable',
+    expectedRevision: 1,
+    expectedSession: 'old-session',
+    session: 'new-session',
+    sha256: 'changed',
+    size: 9,
+    title: 'Updated.docx',
+    extension: 'docx',
+  };
+  const rejected = await store();
+  expect(
+    await t.mutation(office.refreshGoogle, { ...refresh, expectedSession: 'wrong', storageId: rejected }),
+  ).toEqual({ ok: false });
+  expect(await t.run((ctx) => ctx.storage.get(rejected))).toBeNull();
+  await t.mutation(office.wopiLock, {
+    ...auth,
+    documentId: 'google-stable',
+    sessionId: 'old-editor',
+    operation: 'LOCK',
+    value: 'active',
+  });
+  expect(await t.mutation(office.refreshGoogle, { ...refresh, storageId: await store() })).toEqual({
+    ok: false,
+  });
+  await t.mutation(office.wopiLock, {
+    ...auth,
+    documentId: 'google-stable',
+    sessionId: 'old-editor',
+    operation: 'UNLOCK',
+    value: 'active',
+  });
+  expect(await t.mutation(office.refreshGoogle, { ...refresh, storageId: await store() })).toEqual({
+    ok: true,
+    revision: 2,
+  });
+  const current = await t.query(office.get, { ...auth, documentId: 'google-stable' });
+  expect(current.google).toMatchObject({ session: 'new-session', syncedRevision: 2 });
+  expect(current.versions).toHaveLength(2);
+  expect(
+    await t.query(office.getSession, { ...auth, documentId: 'google-stable', sessionId: 'old-editor' }),
+  ).toBeNull();
+  expect(await t.mutation(office.refreshGoogle, { ...refresh, storageId: await store() })).toEqual({
+    ok: false,
+  });
+  await t.run(async (ctx) => {
+    const doc = await ctx.db.query('officeDocuments').first();
+    await ctx.db.patch(doc!._id, { currentRevision: 3 });
+  });
+  expect(
+    await t.mutation(office.refreshGoogle, {
+      ...refresh,
+      expectedRevision: 3,
+      expectedSession: 'new-session',
+      storageId: await store(),
+    }),
+  ).toEqual({ ok: false });
+});
+
+test('Google session CAS conflicts retain the completed provider version durably until reconciled', async () => {
+  const t = convexTest(schema, modules);
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['synthetic'])));
+  await t.mutation(office.create, {
+    ...auth,
+    documentId: 'pending',
+    title: 'Pending.docx',
+    extension: 'docx',
+    storageId,
+    size: 9,
+    sha256: 'original',
+    google: {
+      connectionId: 'connection',
+      fileId: 'provider-file',
+      session: 'concurrent-refresh',
+      syncedRevision: 1,
+    },
+  });
+  const receipt = {
+    ...auth,
+    documentId: 'pending',
+    expectedSession: 'before-refresh',
+    session: 'saved-token',
+    syncedRevision: 1,
+    providerVersion: '2',
+  };
+  expect(await t.mutation(office.linkGoogle, receipt)).toEqual({ ok: false });
+  let current = await t.query(office.get, { ...auth, documentId: 'pending' });
+  expect(current.google.session).toBe('concurrent-refresh');
+  expect(current.google.pendingSave).toEqual({ session: 'saved-token', revision: 1, providerVersion: '2' });
+  await t.mutation(office.linkGoogle, { ...receipt, providerVersion: '1', session: 'older-write' });
+  current = await t.query(office.get, { ...auth, documentId: 'pending' });
+  expect(current.google.pendingSave.session).toBe('saved-token');
+  expect(await t.mutation(office.linkGoogle, { ...receipt, expectedSession: 'concurrent-refresh' })).toEqual({
+    ok: true,
+  });
+  current = await t.query(office.get, { ...auth, documentId: 'pending' });
+  expect(current.google.session).toBe('saved-token');
+  expect(current.google.pendingSave).toBeUndefined();
+});

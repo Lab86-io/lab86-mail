@@ -4,11 +4,13 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, History, Loader2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { CollaboraFrame, type CollaboraHandle, type CollaboraSession } from './CollaboraFrame';
 
 interface OfficeMetadata {
   title: string;
   currentRevision: number;
   versions: Array<{ revision: number; recovery: boolean; createdAt: number }>;
+  google?: { fileId: string; syncedRevision: number };
 }
 interface OfficeInstance {
   destroyEditor: () => void;
@@ -55,6 +57,10 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
   const [changed, setChanged] = useState(false);
   const [history, setHistory] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [collabora, setCollabora] = useState<CollaboraSession | null>(null);
+  const [saving, setSaving] = useState(false);
+  const collaboraRef = useRef<CollaboraHandle>(null);
+  const savingRef = useRef(false);
   const initialRevision = useRef<number | null>(null);
   const file = useQuery({
     queryKey: ['office-document', documentId],
@@ -72,7 +78,7 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
 
   const close = () => {
     if (
-      changed &&
+      (changed || saving) &&
       !window.confirm(
         'The editor may still be saving. Stay here to save, or leave and check Versions for the saved copy. Leave editor?',
       )
@@ -97,6 +103,10 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         const session = await response.json();
         if (!response.ok) throw new Error(session.error || 'Office could not start.');
         if (disposed) return;
+        if (session.provider === 'collabora') {
+          setCollabora(session);
+          return;
+        }
         await loadOffice(session.serverUrl);
         if (disposed) return;
         const api = (window as OfficeWindow).DocsAPI;
@@ -126,14 +136,39 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
   }, [documentId, id, retry]);
 
   useEffect(() => {
-    if (!changed) return;
+    if (!changed && !saving) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [changed]);
+  }, [changed, saving]);
+
+  const save = async () => {
+    if (!collaboraRef.current || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const saveId = await collaboraRef.current.save();
+      if (file.data?.google) {
+        const response = await fetch(`/api/office/${documentId}/google`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ saveId }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Google could not save your edits.');
+      }
+      await file.refetch();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Save failed.');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
 
   return (
     <section
@@ -151,6 +186,12 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
             {changed ? ' · editor may have newer changes' : ''}
           </p>
         </div>
+        {collabora ? (
+          <Button size="sm" disabled={!ready || saving} onClick={() => void save()}>
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
+          </Button>
+        ) : null}
         <Button asChild variant="outline" size="icon-sm">
           <a aria-label="Download saved Office copy" href={`/api/office/${documentId}/content`}>
             <Download className="size-4" />
@@ -167,8 +208,11 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         </Button>
       </header>
       <div className="border-b border-[var(--color-border)] px-4 py-2 text-[11px] text-[var(--color-text-muted)]">
-        Private working copy. Your uploaded original is retained as revision 1; edits do not write back to a
-        connected drive.
+        {file.data?.google
+          ? file.data.google.syncedRevision < file.data.currentRevision
+            ? 'Edits saved in Albatross. Click Save to Google to update the original.'
+            : 'Google working copy. Click Save to Google when your edits are ready.'
+          : 'Private working copy. Your original is retained in Versions.'}
       </div>
       {error || file.error ? (
         <div
@@ -192,7 +236,17 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
       ) : null}
       <div className="relative flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">
-          <div id={id} className="h-full" />
+          {collabora ? (
+            <CollaboraFrame
+              ref={collaboraRef}
+              session={collabora}
+              onReady={setReady}
+              onModified={setChanged}
+              onError={setError}
+            />
+          ) : (
+            <div id={id} className="h-full" />
+          )}
           {!ready && !error ? (
             <div
               role="status"

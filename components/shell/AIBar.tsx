@@ -5,7 +5,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChatTransport, DefaultChatTransport, type UIMessage } from 'ai';
 import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
 import { HitlPart } from '@/components/ai-elements/hitl-parts';
@@ -34,12 +44,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { HistoryIcon } from '@/components/ui/history';
 import { Markdown } from '@/components/ui/markdown';
-import { Message, MessageContent } from '@/components/ui/message';
+import { Message } from '@/components/ui/message';
 import { PlusIcon } from '@/components/ui/plus';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
 import { ScrollButton } from '@/components/ui/scroll-button';
+import {
+  CHAT_FILE_ACCEPT,
+  chatUploadPath,
+  isChatAttachmentUrl,
+  validateChatFiles,
+} from '@/lib/ai/chat-attachments';
 import { routeEmailPreviewThread } from '@/lib/ai/email-preview-routing';
 import { type HoldCard, holdText, kickAdvance } from '@/lib/albatross/capture-client';
 import {
@@ -71,20 +87,19 @@ interface StagedChatUpload {
   size: number;
 }
 
-// DataTransfer is the only sanctioned way to construct a FileList.
-function createFileList(files: File[]): FileList {
-  const dt = new DataTransfer();
-  for (const file of files) dt.items.add(file);
-  return dt.files;
-}
-
 async function stageChatFiles(files: File[]): Promise<StagedChatUpload[]> {
   const form = new FormData();
   for (const file of files) form.append('files', file, file.name);
   const response = await fetch('/api/agent/uploads', { method: 'POST', body: form });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data?.ok) throw new Error(data?.error || 'Could not upload files for the assistant.');
-  return data.uploads || [];
+  if (
+    !Array.isArray(data.uploads) ||
+    data.uploads.length !== files.length ||
+    data.uploads.some((file: StagedChatUpload) => !file.uploadId)
+  )
+    throw new Error('The upload was incomplete. Try again.');
+  return data.uploads;
 }
 
 function newChatId() {
@@ -214,6 +229,31 @@ export function AssistantChat({
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sendingFilesRef = useRef(false);
+  const pendingFilesRef = useRef(pendingFiles);
+  useLayoutEffect(() => {
+    pendingFilesRef.current = pendingFiles;
+  }, [pendingFiles]);
+  const addFiles = (picked: File[]) => {
+    const next = [...pendingFilesRef.current];
+    for (const file of picked) {
+      if (
+        !next.some(
+          (item) =>
+            item.name === file.name && item.size === file.size && item.lastModified === file.lastModified,
+        )
+      )
+        next.push(file);
+    }
+    const error = validateChatFiles(next);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    pendingFilesRef.current = next;
+    setPendingFiles(next);
+  };
+
   const inputWrapRef = useRef<HTMLDivElement>(null);
 
   // The browser's IANA timezone rides along so the agent (and calendar
@@ -581,7 +621,13 @@ export function AssistantChat({
   const send = async (text: string) => {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
-    if ((!trimmed && !filesForTurn.length) || busy) return false;
+    if ((!trimmed && !filesForTurn.length) || busy || sendingFilesRef.current) return false;
+    const validationError = validateChatFiles(filesForTurn);
+    if (validationError) {
+      toast.error(validationError);
+      return false;
+    }
+    sendingFilesRef.current = true;
     sessionLoadGenerationRef.current += 1;
     emptyRetryCount.current = 0; // fresh turn — reset empty-completion retries
 
@@ -592,6 +638,7 @@ export function AssistantChat({
         stagedUploads = await stageChatFiles(filesForTurn);
       } catch (err: any) {
         toast.error(err?.message || 'Could not upload files for the assistant');
+        sendingFilesRef.current = false;
         setUploadingFiles(false);
         return false;
       }
@@ -634,9 +681,15 @@ export function AssistantChat({
           ),
         ].join('\n')
       : '';
-    const files = filesForTurn.length ? createFileList(filesForTurn) : undefined;
+    const files = stagedUploads.map((file) => ({
+      type: 'file' as const,
+      filename: file.name,
+      mediaType: file.contentType || 'application/octet-stream',
+      url: chatUploadPath(file.uploadId),
+    }));
+    pendingFilesRef.current = [];
     setPendingFiles([]);
-    sendMessage(
+    void sendMessage(
       { text: trimmed || 'Use the attached file(s).', ...(files ? { files } : {}) } as any,
       {
         body: {
@@ -647,7 +700,11 @@ export function AssistantChat({
               : undefined,
         },
       } as any,
-    );
+    )
+      .catch(() => toast.error('The message could not be sent. Your attachments remain in the conversation.'))
+      .finally(() => {
+        sendingFilesRef.current = false;
+      });
     return true;
   };
 
@@ -714,7 +771,26 @@ export function AssistantChat({
   const staggerFloor = prevMessageCountRef.current;
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <section
+      className="flex h-full min-h-0 min-w-0 flex-col"
+      aria-label="Chat with attachments"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length) {
+          event.preventDefault();
+          if (!busy) addFiles(Array.from(event.dataTransfer.files));
+        }
+      }}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData.files);
+        if (files.length) {
+          event.preventDefault();
+          if (!busy) addFiles(files);
+        }
+      }}
+    >
       <header
         data-assistant-header
         className="rounded-ui mx-3 mb-1 mt-3 flex shrink-0 items-center justify-between gap-2 border border-[color-mix(in_oklab,var(--color-border)_55%,transparent)] bg-[var(--color-content)] px-2 py-1.5 shadow-[0_2px_10px_rgb(15_23_42/0.025)]"
@@ -1001,7 +1077,11 @@ export function AssistantChat({
                       {file.name}
                       <button
                         type="button"
-                        onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                        onClick={() => {
+                          const next = pendingFilesRef.current.filter((_, i) => i !== index);
+                          pendingFilesRef.current = next;
+                          setPendingFiles(next);
+                        }}
                         aria-label={`Remove ${file.name}`}
                         title={`Remove ${file.name}`}
                         className="hover:text-[var(--color-danger)]"
@@ -1029,13 +1109,13 @@ export function AssistantChat({
               </Button>
               <input
                 ref={fileInputRef}
+                accept={CHAT_FILE_ACCEPT}
                 type="file"
                 multiple
-                accept="image/*,application/pdf,text/plain,text/csv"
                 className="hidden"
                 onChange={(event) => {
                   const picked = Array.from(event.target.files || []);
-                  if (picked.length) setPendingFiles((prev) => [...prev, ...picked].slice(0, 5));
+                  if (picked.length) addFiles(picked);
                   event.target.value = '';
                 }}
               />
@@ -1043,7 +1123,7 @@ export function AssistantChat({
           }
         />
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1122,15 +1202,38 @@ export const MessageView = memo(
       const text = userTextFromMessage(message);
       return (
         <Message className="justify-end">
-          <MessageContent className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
-            {text || '(empty)'}
-          </MessageContent>
+          <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
+            {text ? <p>{text}</p> : null}
+            {(message.parts || [])
+              .filter((part: any) => part.type === 'file' && isChatAttachmentUrl(part.url))
+              .map((part: any) => (
+                <a
+                  key={part.url}
+                  href={part.url}
+                  download={part.url.startsWith('data:') ? part.filename || 'Attachment' : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] p-2 text-xs"
+                >
+                  {part.mediaType?.startsWith('image/') ? (
+                    <img
+                      src={part.url}
+                      alt={part.filename || 'Attached image'}
+                      className="size-12 rounded object-cover"
+                    />
+                  ) : (
+                    <Paperclip className="size-4" />
+                  )}
+                  <span className="break-all">{part.filename || 'Attachment'}</span>
+                </a>
+              ))}
+          </div>
         </Message>
       );
     }
     const replyText = streaming ? '' : replyTextFromMessage(message);
     return (
-      <Message className="justify-start">
+      <Message className="justify-start" data-message-role="assistant">
         <div className="flex w-full min-w-0 flex-col gap-2">
           <Thought parts={message.parts || []} streaming={streaming} />
           {groupMessageParts(message.parts || []).map((segment) =>

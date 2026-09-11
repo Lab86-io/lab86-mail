@@ -12,7 +12,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('http://127.0.0.1:18847/');
+  await page.goto(process.env.ALBATROSS_PREVIEW_URL || 'http://127.0.0.1:18847/');
   await page.locator('[data-mail-thread-row]').first().waitFor();
   await page.evaluate(() => document.fonts.ready);
   const launcher = page.getByRole('button', { name: 'Ask Albatross or get this off my mind' });
@@ -144,7 +144,12 @@ try {
   // same dynamic tool shape persisted by the native chat; no live AI or mail.
   await textarea.fill('Draft a synthetic note');
   await textarea.press('Control+Enter');
-  await chat.getByText('The draft stays here.', { exact: true }).waitFor();
+  // Streaming rendering may buffer the final word. Accept either complete
+  // rendered form here; require the full sentence after finishAgent() below.
+  await chat
+    .locator('[data-message-role="assistant"]')
+    .getByText(/^The draft stays(?: here\.)?$/)
+    .waitFor();
   await chat.getByRole('button', { name: 'Show current page' }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(

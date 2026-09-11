@@ -12,6 +12,7 @@ import {
 import {
   createOfficeFile,
   listOfficeFiles,
+  publicOfficeFile,
   requireOffice,
   storeOfficeBytes,
 } from '@/lib/documents/office-service';
@@ -26,7 +27,8 @@ export async function GET() {
     const user = await requireCurrentUser();
     const enabled = Boolean(officeConfiguration());
     await enforceUserRateLimit({ userId: user.userId, key: 'office-list', limit: 120, windowMs: 60_000 });
-    return NextResponse.json({ ok: true, enabled, files: await listOfficeFiles(user.userId) });
+    const files = (await listOfficeFiles(user.userId)).map(publicOfficeFile);
+    return NextResponse.json({ ok: true, enabled, files });
   } catch (error) {
     return officeFailure(error);
   }

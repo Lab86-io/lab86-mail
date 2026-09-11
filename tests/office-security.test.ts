@@ -48,6 +48,16 @@ describe('Office pilot security boundary', () => {
     expect(officeConfiguration({ ...env, OFFICE_LICENSE_ACCEPTED: 'false' })).toBeNull();
     expect(officeConfiguration({ ...env, OFFICE_JWT_SECRET: 'weak' })).toBeNull();
     expect(officeConfiguration(env)?.server).toBe('https://office.example.test');
+    expect(
+      officeConfiguration({
+        ...env,
+        OFFICE_DOCUMENT_SERVER_URL: 'https://OFFICE.example.test:443/',
+        OFFICE_EDITOR_PROVIDER: ' Collabora ',
+      }),
+    ).toMatchObject({ server: 'https://office.example.test', provider: 'collabora' });
+    expect(() => officeConfiguration({ ...env, OFFICE_EDITOR_PROVIDER: 'typo' })).toThrow(
+      'OFFICE_EDITOR_PROVIDER',
+    );
     expect(officeConfiguration({ ...env, OFFICE_EDITOR_ENABLED: 'false' }, true)?.server).toBe(
       'https://office.example.test',
     );
