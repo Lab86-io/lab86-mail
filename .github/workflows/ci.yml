@@ -66,8 +66,14 @@ jobs:
       - name: Install LCOV HTML report tools
         if: github.event_name == 'pull_request'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y lcov
+          # apt hits the Ubuntu archive directly and flakes on network; lcov's
+          # only job here is genhtml for the coverage artifact, so retry a few
+          # times before giving up rather than failing a green PR.
+          for attempt in 1 2 3 4; do
+            sudo apt-get update && sudo apt-get install -y lcov && break
+            if [ "$attempt" -lt 4 ]; then sleep $((attempt * 30)); fi
+          done
+          command -v genhtml
 
       - name: HTML coverage report
         if: github.event_name == 'pull_request'
