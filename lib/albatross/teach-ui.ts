@@ -763,6 +763,25 @@ function failureDetail(result: unknown, errorText: string | undefined): string {
 // The one activity sentence for a tool call, in every chat surface.
 // `state` accepts the raw AI SDK part state ('input-streaming',
 // 'input-available', 'output-available', 'output-error').
+/**
+ * The three sentences for one tool call. The server ships these with each
+ * tool shape so native clients read the same grammar the web renders.
+ */
+export function toolSentences(
+  toolName: string,
+  args: unknown,
+  result?: unknown,
+): { running: string; done: string; failed: string } {
+  const name = str(toolName) || 'tool';
+  try {
+    const builder = TOOL_SENTENCES[name];
+    return builder ? builder(asRecord(args), asRecord(result)) : genericSentences(name, asRecord(result));
+  } catch {
+    // Grammar must never take the chat down over garbage args/output.
+    return genericSentences(name, {});
+  }
+}
+
 export function toolActivityLine(
   toolName: string,
   args: unknown,
@@ -771,17 +790,7 @@ export function toolActivityLine(
   errorText?: string,
 ): ToolActivity {
   const normalized = toolActivityState(state, result);
-  const name = str(toolName) || 'tool';
-  let sentences: ToolSentences;
-  try {
-    const builder = TOOL_SENTENCES[name];
-    sentences = builder
-      ? builder(asRecord(args), asRecord(result))
-      : genericSentences(name, asRecord(result));
-  } catch {
-    // Grammar must never take the chat down over garbage args/output.
-    sentences = genericSentences(name, {});
-  }
+  const sentences = toolSentences(toolName, args, result);
   if (normalized === 'running') return { state: 'running', text: `${sentences.running}…` };
   if (normalized === 'done') return { state: 'done', text: sentences.done };
   const detail = failureDetail(result, errorText);

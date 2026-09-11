@@ -23,6 +23,7 @@ import {
 } from './gateway';
 import { newOperationBatchId } from './operations';
 import { buildSystemPrompt } from './system-prompt';
+import { resolveToolShape, type ToolShape } from './tool-shapes';
 
 /** Search text only, never attachment bytes or opaque tool/image payloads. */
 export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
@@ -534,15 +535,12 @@ export async function forwardAgentStream(
   writer: UiStreamWriter,
   chunks: AsyncIterable<UiChunk>,
   readError: () => unknown = () => undefined,
+  resolveShape: ShapeResolver = resolveToolShape,
 ): Promise<ForwardAgentStreamResult> {
   const pending: UiChunk[] = [];
+  const calls = new Map<string, { toolName: string; input?: unknown }>();
   let forwarded = false;
-  for await (const chunk of chunks) {
-    if (chunk.type === 'error') {
-      if (!forwarded) return { forwarded: false, error: readError() ?? new Error(chunk.errorText) };
-      writer.write(chunk as any);
-      continue;
-    }
+  const emit = (chunk: UiChunk) => {
     if (!forwarded && CONTENT_CHUNK_TYPES.has(chunk.type)) {
       forwarded = true;
       for (const held of pending) writer.write(held as any);
@@ -550,9 +548,39 @@ export async function forwardAgentStream(
     }
     if (forwarded) writer.write(chunk as any);
     else pending.push(chunk);
+  };
+  for await (const chunk of chunks) {
+    if (chunk.type === 'error') {
+      if (!forwarded) return { forwarded: false, error: readError() ?? new Error(chunk.errorText) };
+      writer.write(chunk as any);
+      continue;
+    }
+    if (chunk.type === 'tool-input-start' && chunk.toolCallId && chunk.toolName) {
+      calls.set(chunk.toolCallId, { toolName: chunk.toolName });
+    } else if (chunk.type === 'tool-input-available' && chunk.toolCallId && chunk.toolName) {
+      calls.set(chunk.toolCallId, { toolName: chunk.toolName, input: chunk.input });
+    }
+    emit(chunk);
+    // Every tool result carries a display shape beside it, so web and native
+    // render the same card from the same data without re-deriving it.
+    if (chunk.type === 'tool-output-available' && chunk.toolCallId) {
+      const call = calls.get(chunk.toolCallId);
+      if (!call) continue;
+      let shape: ToolShape | null = null;
+      try {
+        shape = resolveShape(call.toolName, call.input, chunk.output);
+      } catch (error) {
+        console.warn('[agent] shape resolution failed', { tool: call.toolName, error: errorText(error) });
+      }
+      if (shape) {
+        emit({ type: 'data-tool-shape', id: chunk.toolCallId, data: shape });
+      }
+    }
   }
   return { forwarded, error: readError() };
 }
+
+export type ShapeResolver = (toolName: string, input: unknown, output: unknown) => ToolShape | null;
 
 function writeTextOnly(writer: UiStreamWriter, id: string, text: string) {
   writer.write({ type: 'start-step' });
