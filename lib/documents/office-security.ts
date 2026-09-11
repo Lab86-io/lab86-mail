@@ -18,13 +18,18 @@ export class OfficeError extends Error {
 }
 
 export function officeConfiguration(env: NodeJS.ProcessEnv = process.env, existingSession = false) {
-  if (!existingSession && (env.OFFICE_EDITOR_ENABLED !== 'true' || env.OFFICE_LICENSE_ACCEPTED !== 'true'))
+  const provider = env.OFFICE_EDITOR_PROVIDER === 'collabora' ? 'collabora' : 'onlyoffice';
+  if (
+    !existingSession &&
+    (env.OFFICE_EDITOR_ENABLED !== 'true' ||
+      (provider === 'onlyoffice' && env.OFFICE_LICENSE_ACCEPTED !== 'true'))
+  )
     return null;
   const secret = env.OFFICE_JWT_SECRET || '';
   if (secret.length < 32 || !env.OFFICE_DOCUMENT_SERVER_URL || !env.OFFICE_APP_ORIGIN) return null;
   const server = configuredOrigin(env.OFFICE_DOCUMENT_SERVER_URL, env.NODE_ENV);
   const app = configuredOrigin(env.OFFICE_APP_ORIGIN, env.NODE_ENV);
-  return { server, app, secret };
+  return { server, app, secret, provider };
 }
 
 function configuredOrigin(value: string, mode: string | undefined) {

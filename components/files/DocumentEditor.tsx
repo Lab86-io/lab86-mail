@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { PresentationEditor } from '@/components/files/editors/PresentationEditor';
 import { RichDocumentEditor } from '@/components/files/editors/RichDocumentEditor';
 import { OdooSpreadsheetEditor } from '@/components/files/OdooSpreadsheetEditor';
+import { OfficeEditor } from '@/components/files/OfficeEditor';
 import { useDocumentPanel, useNarrowDocumentWorkspace } from '@/components/files/useDocumentPanel';
 import { useOutgoingEdits } from '@/components/files/useOutgoingEdits';
 import { Button } from '@/components/ui/button';
@@ -817,6 +818,64 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
 }
 
 export function GoogleDocumentEditor({
+  source,
+  onClose,
+  officeEnabled = false,
+}: {
+  source: GoogleEditorSource;
+  onClose: () => void;
+  officeEnabled?: boolean;
+}) {
+  return officeEnabled ? (
+    <GoogleOfficeDocumentEditor source={source} onClose={onClose} />
+  ) : (
+    <SemanticGoogleDocumentEditor source={source} onClose={onClose} />
+  );
+}
+
+function GoogleOfficeDocumentEditor({
+  source,
+  onClose,
+}: {
+  source: GoogleEditorSource;
+  onClose: () => void;
+}) {
+  const copy = useQuery({
+    queryKey: ['google-office-copy', source.connectionId, source.fileId],
+    queryFn: () =>
+      fetchJson<{ documentId: string }>('/api/files/google/office', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: source.connectionId, fileId: source.fileId }),
+      }),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+  if (copy.data)
+    return <OfficeEditor key={copy.data.documentId} documentId={copy.data.documentId} onClose={onClose} />;
+  return (
+    <section className="grid h-full place-items-center p-6" aria-label="Opening Google document">
+      <div className="space-y-3 text-center text-sm">
+        <p role={copy.error ? 'alert' : 'status'}>
+          {copy.error ? copy.error.message : 'Opening an editable copy from Google Drive…'}
+        </p>
+        {copy.error ? (
+          <Button variant="outline" onClick={() => void copy.refetch()}>
+            Try again
+          </Button>
+        ) : (
+          <Loader2 className="mx-auto size-5 animate-spin" />
+        )}
+        <Button variant="ghost" onClick={onClose}>
+          Back to Files
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function SemanticGoogleDocumentEditor({
   source,
   onClose,
 }: {

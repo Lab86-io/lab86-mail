@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { chatFileType, validateChatFiles } from '@/lib/ai/chat-attachments';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -71,6 +72,8 @@ export async function POST(req: Request) {
   }
 
   const files = form.getAll('files').filter((value): value is File => value instanceof File);
+  const validationError = validateChatFiles(files);
+  if (validationError) return NextResponse.json({ ok: false, error: validationError }, { status: 400 });
   if (!files.length) return NextResponse.json({ ok: false, error: 'files required' }, { status: 400 });
   if (files.length > MAX_FILES) {
     return NextResponse.json(
@@ -98,7 +101,7 @@ export async function POST(req: Request) {
     const uploads = [];
     for (const file of files) {
       const name = sanitizeFilename(file.name || 'attachment');
-      const contentType = file.type || 'application/octet-stream';
+      const contentType = chatFileType(file)!;
       const uploadUrl = await convexMutation<string>(agentUploadsApi.generateUploadUrl, {
         userId: user.userId,
       });

@@ -11,7 +11,11 @@ export async function GET(_request: Request, context: { params: Promise<{ docume
     const { documentId } = await context.params;
     const file = await getOfficeFile(user.userId, documentId);
     if (!file) return NextResponse.json({ ok: false, error: 'File not found.' }, { status: 404 });
-    const { version: _version, ...document } = file;
+    const { version: _version, wopiLock: _lock, google, ...rest } = file;
+    const document = {
+      ...rest,
+      ...(google ? { google: { fileId: google.fileId, syncedRevision: google.syncedRevision } } : {}),
+    };
     return NextResponse.json({ ok: true, document });
   } catch (error) {
     return officeFailure(error);

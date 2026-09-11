@@ -26,16 +26,16 @@ export interface OfficeFile {
   currentRevision: number;
   createdAt: number;
   updatedAt: number;
+  google?: { connectionId: string; fileId: string; session: string; syncedRevision: number };
+  lastWopiSave?: { id: string; revision: number };
+  wopiLock?: { value: string; sessionId: string; expiresAt: number };
   versions: Array<{ revision: number; recovery: boolean; createdAt: number; size: number }>;
   version: { revision: number; url: string | null; size: number; sha256: string } | null;
 }
 export function requireOffice(existingSession = false) {
   const configuration = officeConfiguration(process.env, existingSession);
   if (!configuration)
-    throw new OfficeError(
-      'Office editing is not enabled. A licensed document server must be configured first.',
-      503,
-    );
+    throw new OfficeError('Office editing is not enabled. A document server must be configured first.', 503);
   return configuration;
 }
 export const listOfficeFiles = (userId: string) =>
@@ -66,14 +66,19 @@ export async function storeOfficeBytes(userId: string, bytes: Uint8Array, extens
 }
 
 export const createOfficeFile = (input: {
+  documentId?: string;
   userId: string;
   title: string;
   extension: OfficeExtension;
   storageId: string;
   size: number;
   sha256: string;
+  google?: OfficeFile['google'];
 }) =>
-  dependencies.convexMutation<OfficeFile>(office.create, { ...input, documentId: dependencies.randomUUID() });
+  dependencies.convexMutation<OfficeFile>(office.create, {
+    ...input,
+    documentId: input.documentId || dependencies.randomUUID(),
+  });
 export const saveOfficeVersion = (input: {
   userId: string;
   documentId: string;
@@ -83,8 +88,13 @@ export const saveOfficeVersion = (input: {
   storageId: string;
   size: number;
   sha256: string;
+  wopiLock?: string;
+  saveRequestId?: string;
 }) =>
-  dependencies.convexMutation<{ ok: boolean; code?: string; revision?: number }>(office.saveVersion, input);
+  dependencies.convexMutation<{ ok: boolean; code?: string; revision?: number; updatedAt?: number }>(
+    office.saveVersion,
+    input,
+  );
 
 export async function startOfficeSession(userId: string, document: OfficeFile) {
   const configuration = requireOffice();

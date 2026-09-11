@@ -398,7 +398,7 @@ export async function generateObjectForCurrentUser<T>(
     userId,
     model: _ignored,
     maxOutputTokens,
-    reasoningEffort = 'none',
+    reasoningEffort,
     providerOptions,
     narrativeModel,
     ...rest
@@ -416,7 +416,16 @@ export async function generateObjectForCurrentUser<T>(
         providerOptions:
           providerOptions ??
           (runtime.provider === 'openai' || runtime.provider === 'openrouter'
-            ? { openai: { reasoningEffort, strictJsonSchema: true } }
+            ? {
+                openai: {
+                  strictJsonSchema: true,
+                  ...(reasoningEffort
+                    ? { reasoningEffort }
+                    : speed === 'classify' && /gpt-5\.6-luna/.test(runtime.modelName)
+                      ? { reasoningEffort: 'none' }
+                      : {}),
+                },
+              }
             : undefined),
       });
       await recordStructuredUsage(runtime, feature, result.usage, true);
