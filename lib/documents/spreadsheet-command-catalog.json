@@ -1111,12 +1111,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T2": {
@@ -1142,12 +1137,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T3": {
@@ -1166,12 +1156,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T5": {
@@ -1190,12 +1175,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "left",
-        "right",
-        "top",
-        "bottom"
-      ],
+      "required": ["left", "right", "top", "bottom"],
       "additionalProperties": false
     },
     "T4": {
@@ -1214,11 +1194,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T6": {
@@ -1237,11 +1213,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T7": {
@@ -1283,15 +1255,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "base",
-        "quantity",
-        "position",
-        "sheetId",
-        "sheetName"
-      ],
+      "required": ["type", "dimension", "base", "quantity", "position", "sheetId", "sheetName"],
       "additionalProperties": false
     },
     "T8": {
@@ -1323,13 +1287,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "elements",
-        "sheetId",
-        "dimension",
-        "sheetName"
-      ],
+      "required": ["type", "elements", "sheetId", "dimension", "sheetName"],
       "additionalProperties": false
     },
     "T9": {
@@ -1368,13 +1326,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "elements",
-        "size",
-        "sheetId",
-        "dimension"
-      ],
+      "required": ["type", "elements", "size", "sheetId", "dimension"],
       "additionalProperties": false
     },
     "T10": {
@@ -1403,12 +1355,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "elements",
-        "sheetId",
-        "dimension"
-      ],
+      "required": ["type", "elements", "sheetId", "dimension"],
       "additionalProperties": false
     },
     "T11": {
@@ -1437,12 +1384,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "elements",
-        "sheetId",
-        "dimension"
-      ],
+      "required": ["type", "elements", "sheetId", "dimension"],
       "additionalProperties": false
     },
     "T12": {
@@ -1465,11 +1407,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "areGridLinesVisible",
-        "sheetId"
-      ],
+      "required": ["type", "areGridLinesVisible", "sheetId"],
       "additionalProperties": false
     },
     "T13": {
@@ -1486,11 +1424,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "quantity",
-        "sheetId"
-      ],
+      "required": ["type", "quantity", "sheetId"],
       "additionalProperties": false
     },
     "T14": {
@@ -1507,11 +1441,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "quantity",
-        "sheetId"
-      ],
+      "required": ["type", "quantity", "sheetId"],
       "additionalProperties": false
     },
     "T15": {
@@ -1524,10 +1454,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T16": {
@@ -1540,10 +1467,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T17": {
@@ -1556,10 +1480,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T18": {
@@ -1588,11 +1509,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T19": {
@@ -1611,11 +1528,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T20": {
@@ -1648,12 +1561,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "position",
-        "name",
-        "sheetId"
-      ],
+      "required": ["type", "position", "name", "sheetId"],
       "additionalProperties": false
     },
     "T21": {
@@ -1669,11 +1577,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "sheetName"
-      ],
+      "required": ["type", "sheetId", "sheetName"],
       "additionalProperties": false
     },
     "T22": {
@@ -1692,12 +1596,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetIdTo",
-        "sheetNameTo",
-        "sheetId"
-      ],
+      "required": ["type", "sheetIdTo", "sheetNameTo", "sheetId"],
       "additionalProperties": false
     },
     "T23": {
@@ -1713,11 +1612,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "delta",
-        "sheetId"
-      ],
+      "required": ["type", "delta", "sheetId"],
       "additionalProperties": false
     },
     "T24": {
@@ -1736,12 +1631,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "newName",
-        "oldName",
-        "sheetId"
-      ],
+      "required": ["type", "newName", "oldName", "sheetId"],
       "additionalProperties": false
     },
     "T25": {
@@ -1761,10 +1651,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T26": {
@@ -1777,10 +1664,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T27": {
@@ -1793,10 +1677,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetId"
-      ],
+      "required": ["type", "sheetId"],
       "additionalProperties": false
     },
     "T28": {
@@ -1827,15 +1708,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "targetSheetId",
-        "sheetId",
-        "col",
-        "row",
-        "target",
-        "sheetName"
-      ],
+      "required": ["type", "targetSheetId", "sheetId", "col", "row", "target", "sheetName"],
       "additionalProperties": false
     },
     "T31": {
@@ -1903,12 +1776,7 @@
           "$ref": "#/$defs/T1"
         }
       },
-      "required": [
-        "type",
-        "operator",
-        "values",
-        "style"
-      ],
+      "required": ["type", "operator", "values", "style"],
       "additionalProperties": false
     },
     "T33": {
@@ -1944,10 +1812,7 @@
           ]
         }
       },
-      "required": [
-        "color",
-        "type"
-      ],
+      "required": ["color", "type"],
       "additionalProperties": false
     },
     "T34": {
@@ -1976,11 +1841,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "color",
-        "type",
-        "value"
-      ],
+      "required": ["color", "type", "value"],
       "additionalProperties": false
     },
     "T32": {
@@ -2003,11 +1864,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "minimum",
-        "maximum"
-      ],
+      "required": ["type", "minimum", "maximum"],
       "additionalProperties": false
     },
     "T36": {
@@ -2023,11 +1880,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "upper",
-        "middle",
-        "lower"
-      ],
+      "required": ["upper", "middle", "lower"],
       "additionalProperties": false
     },
     "T37": {
@@ -2063,11 +1916,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "operator",
-        "value"
-      ],
+      "required": ["type", "operator", "value"],
       "additionalProperties": false
     },
     "T35": {
@@ -2086,12 +1935,7 @@
           "$ref": "#/$defs/T37"
         }
       },
-      "required": [
-        "type",
-        "icons",
-        "upperInflectionPoint",
-        "lowerInflectionPoint"
-      ],
+      "required": ["type", "icons", "upperInflectionPoint", "lowerInflectionPoint"],
       "additionalProperties": false
     },
     "T38": {
@@ -2111,10 +1955,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "color"
-      ],
+      "required": ["type", "color"],
       "additionalProperties": false
     },
     "T30": {
@@ -2150,10 +1991,7 @@
           ]
         }
       },
-      "required": [
-        "id",
-        "rule"
-      ],
+      "required": ["id", "rule"],
       "additionalProperties": false
     },
     "T40": {
@@ -2191,10 +2029,7 @@
           "description": "The hasHeader flag is used to determine if the zone has a header (eg. A2:A or C3:3).\n\nThe main issue is that the zone A1:A and A:A have different behavior. The \"correct\" way to handle this would be to\nallow the top/left to be undefined, but this make typing and using unbounded zones VERY annoying. So we use this\nboolean instead."
         }
       },
-      "required": [
-        "top",
-        "left"
-      ],
+      "required": ["top", "left"],
       "additionalProperties": false
     },
     "T39": {
@@ -2214,10 +2049,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "_zone",
-        "_sheetId"
-      ],
+      "required": ["_zone", "_sheetId"],
       "additionalProperties": false
     },
     "T29": {
@@ -2239,12 +2071,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "cf",
-        "sheetId",
-        "ranges"
-      ],
+      "required": ["type", "cf", "sheetId", "ranges"],
       "additionalProperties": false
     },
     "T41": {
@@ -2260,11 +2087,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "id",
-        "sheetId"
-      ],
+      "required": ["type", "id", "sheetId"],
       "additionalProperties": false
     },
     "T42": {
@@ -2283,12 +2106,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "cfId",
-        "delta",
-        "sheetId"
-      ],
+      "required": ["type", "cfId", "delta", "sheetId"],
       "additionalProperties": false
     },
     "T44": {
@@ -2301,10 +2119,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "x",
-        "y"
-      ],
+      "required": ["x", "y"],
       "additionalProperties": false
     },
     "T45": {
@@ -2317,10 +2132,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "width",
-        "height"
-      ],
+      "required": ["width", "height"],
       "additionalProperties": false
     },
     "T43": {
@@ -2351,16 +2163,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "tag",
-        "figureId",
-        "offset",
-        "size",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "tag", "figureId", "offset", "size", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T46": {
@@ -2376,11 +2179,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "sheetId"
-      ],
+      "required": ["type", "figureId", "sheetId"],
       "additionalProperties": false
     },
     "T47": {
@@ -2430,13 +2229,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "figureId", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T50": {
@@ -2456,10 +2249,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "chartId"
-      ],
+      "required": ["type", "chartId"],
       "additionalProperties": false
     },
     "T51": {
@@ -2476,9 +2266,7 @@
           ]
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T52": {
@@ -2586,9 +2374,7 @@
           ]
         }
       },
-      "required": [
-        "items"
-      ],
+      "required": ["items"],
       "additionalProperties": false
     },
     "T48": {
@@ -2619,16 +2405,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "definition",
-        "figureId",
-        "offset",
-        "size",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "definition", "figureId", "offset", "size", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T53": {
@@ -2647,12 +2424,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "definition",
-        "sheetId"
-      ],
+      "required": ["type", "figureId", "definition", "sheetId"],
       "additionalProperties": false
     },
     "T54": {
@@ -2685,11 +2457,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T55": {
@@ -2708,11 +2476,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T57": {
@@ -2779,9 +2543,7 @@
           ]
         }
       },
-      "required": [
-        "position"
-      ],
+      "required": ["position"],
       "additionalProperties": false
     },
     "T56": {
@@ -2803,12 +2565,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "border",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "border", "sheetId", "target"],
       "additionalProperties": false
     },
     "T60": {
@@ -2837,10 +2594,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "style",
-        "color"
-      ],
+      "required": ["style", "color"],
       "additionalProperties": false
     },
     "T59": {
@@ -2901,12 +2655,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T61": {
@@ -2932,11 +2681,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T65": {
@@ -3028,9 +2773,7 @@
           ]
         }
       },
-      "required": [
-        "dataRange"
-      ],
+      "required": ["dataRange"],
       "additionalProperties": false
     },
     "T67": {
@@ -3356,13 +3099,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T69": {
@@ -3491,14 +3228,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "stacked",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T70": {
@@ -3578,13 +3308,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "title",
-        "baselineMode",
-        "baselineColorUp",
-        "baselineColorDown"
-      ],
+      "required": ["type", "title", "baselineMode", "baselineColorUp", "baselineColorDown"],
       "additionalProperties": false
     },
     "T73": {
@@ -3600,11 +3324,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "lowerColor",
-        "middleColor",
-        "upperColor"
-      ],
+      "required": ["lowerColor", "middleColor", "upperColor"],
       "additionalProperties": false
     },
     "T74": {
@@ -3634,11 +3354,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "value",
-        "operator"
-      ],
+      "required": ["type", "value", "operator"],
       "additionalProperties": false
     },
     "T72": {
@@ -3660,13 +3376,7 @@
           "$ref": "#/$defs/T74"
         }
       },
-      "required": [
-        "colors",
-        "rangeMin",
-        "rangeMax",
-        "lowerInflectionPoint",
-        "upperInflectionPoint"
-      ],
+      "required": ["colors", "rangeMin", "rangeMax", "lowerInflectionPoint", "upperInflectionPoint"],
       "additionalProperties": false
     },
     "T71": {
@@ -3706,11 +3416,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "title",
-        "sectionRule"
-      ],
+      "required": ["type", "title", "sectionRule"],
       "additionalProperties": false
     },
     "T75": {
@@ -3839,14 +3545,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "labelsAsText",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "labelsAsText", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T77": {
@@ -3894,9 +3593,7 @@
           ]
         }
       },
-      "required": [
-        "dataRange"
-      ],
+      "required": ["dataRange"],
       "additionalProperties": false
     },
     "T76": {
@@ -4015,13 +3712,7 @@
           ]
         }
       },
-      "required": [
-        "dataSets",
-        "type",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["dataSets", "type", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T78": {
@@ -4319,14 +4010,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "stacked",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T80": {
@@ -4455,14 +4139,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "stacked",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T82": {
@@ -4482,10 +4159,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "minColor",
-        "maxColor"
-      ],
+      "required": ["minColor", "maxColor"],
       "additionalProperties": false
     },
     "T81": {
@@ -4605,13 +4279,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T83": {
@@ -4744,13 +4412,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T85": {
@@ -4947,13 +4609,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T87": {
@@ -4986,11 +4642,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "colors",
-        "useValueBasedGradient"
-      ],
+      "required": ["type", "colors", "useValueBasedGradient"],
       "additionalProperties": false
     },
     "T88": {
@@ -5013,11 +4665,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "minColor",
-        "maxColor"
-      ],
+      "required": ["type", "minColor", "maxColor"],
       "additionalProperties": false
     },
     "T86": {
@@ -5143,13 +4791,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "dataSets",
-        "dataSetsHaveTitle",
-        "title",
-        "legendPosition"
-      ],
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T62": {
@@ -5242,13 +4884,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "chartId",
-        "definition",
-        "sheetId",
-        "figureId"
-      ],
+      "required": ["type", "chartId", "definition", "sheetId", "figureId"],
       "additionalProperties": false
     },
     "T89": {
@@ -5313,13 +4949,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "chartId",
-        "definition",
-        "sheetId"
-      ],
+      "required": ["type", "figureId", "chartId", "definition", "sheetId"],
       "additionalProperties": false
     },
     "T90": {
@@ -5335,11 +4965,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "chartId",
-        "sheetId"
-      ],
+      "required": ["type", "chartId", "sheetId"],
       "additionalProperties": false
     },
     "T92": {
@@ -5359,10 +4985,7 @@
           ]
         }
       },
-      "required": [
-        "path",
-        "size"
-      ],
+      "required": ["path", "size"],
       "additionalProperties": false
     },
     "T91": {
@@ -5393,16 +5016,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "definition",
-        "figureId",
-        "offset",
-        "size",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "definition", "figureId", "offset", "size", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T94": {
@@ -5529,13 +5143,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "config",
-        "tableType",
-        "ranges"
-      ],
+      "required": ["type", "sheetId", "config", "tableType", "ranges"],
       "additionalProperties": false
     },
     "T95": {
@@ -5554,11 +5162,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T97": {
@@ -5692,11 +5296,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "zone",
-        "sheetId"
-      ],
+      "required": ["type", "zone", "sheetId"],
       "additionalProperties": false
     },
     "T98": {
@@ -5749,13 +5349,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "tableStyleId",
-        "tableStyleName",
-        "templateName",
-        "primaryColor"
-      ],
+      "required": ["type", "tableStyleId", "tableStyleName", "templateName", "primaryColor"],
       "additionalProperties": false
     },
     "T99": {
@@ -5768,10 +5362,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "tableStyleId"
-      ],
+      "required": ["type", "tableStyleId"],
       "additionalProperties": false
     },
     "T100": {
@@ -5800,13 +5391,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "start",
-        "end",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "start", "end", "sheetId"],
       "additionalProperties": false
     },
     "T101": {
@@ -5835,13 +5420,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "start",
-        "end",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "start", "end", "sheetId"],
       "additionalProperties": false
     },
     "T102": {
@@ -5870,13 +5449,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "start",
-        "end",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "start", "end", "sheetId"],
       "additionalProperties": false
     },
     "T103": {
@@ -5905,13 +5478,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "start",
-        "end",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "start", "end", "sheetId"],
       "additionalProperties": false
     },
     "T104": {
@@ -5934,11 +5501,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "sheetId"],
       "additionalProperties": false
     },
     "T105": {
@@ -5961,11 +5524,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "sheetId"
-      ],
+      "required": ["type", "dimension", "sheetId"],
       "additionalProperties": false
     },
     "T106": {
@@ -5991,12 +5550,7 @@
           "$ref": "#/$defs/T5"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "sheetId",
-        "zone"
-      ],
+      "required": ["type", "dimension", "sheetId", "zone"],
       "additionalProperties": false
     },
     "T107": {
@@ -6022,12 +5576,7 @@
           "$ref": "#/$defs/T5"
         }
       },
-      "required": [
-        "type",
-        "dimension",
-        "sheetId",
-        "zone"
-      ],
+      "required": ["type", "dimension", "sheetId", "zone"],
       "additionalProperties": false
     },
     "T110": {
@@ -6043,10 +5592,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T111": {
@@ -6062,10 +5608,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T112": {
@@ -6081,10 +5624,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T113": {
@@ -6100,10 +5640,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T114": {
@@ -6119,10 +5656,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T115": {
@@ -6138,10 +5672,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T116": {
@@ -6182,11 +5713,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "dateValue",
-        "values"
-      ],
+      "required": ["type", "dateValue", "values"],
       "additionalProperties": false
     },
     "T117": {
@@ -6227,11 +5754,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "dateValue",
-        "values"
-      ],
+      "required": ["type", "dateValue", "values"],
       "additionalProperties": false
     },
     "T118": {
@@ -6272,11 +5795,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "dateValue",
-        "values"
-      ],
+      "required": ["type", "dateValue", "values"],
       "additionalProperties": false
     },
     "T119": {
@@ -6317,11 +5836,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "dateValue",
-        "values"
-      ],
+      "required": ["type", "dateValue", "values"],
       "additionalProperties": false
     },
     "T120": {
@@ -6362,11 +5877,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "dateValue",
-        "values"
-      ],
+      "required": ["type", "dateValue", "values"],
       "additionalProperties": false
     },
     "T121": {
@@ -6382,10 +5893,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T122": {
@@ -6401,10 +5909,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T123": {
@@ -6420,10 +5925,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T124": {
@@ -6439,10 +5941,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T125": {
@@ -6458,10 +5957,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T126": {
@@ -6477,10 +5973,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T127": {
@@ -6496,10 +5989,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T128": {
@@ -6515,10 +6005,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T129": {
@@ -6534,10 +6021,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T130": {
@@ -6553,10 +6037,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T131": {
@@ -6572,10 +6053,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T133": {
@@ -6623,11 +6101,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "values",
-        "displayStyle"
-      ],
+      "required": ["type", "values", "displayStyle"],
       "additionalProperties": false
     },
     "T134": {
@@ -6663,11 +6137,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "values",
-        "displayStyle"
-      ],
+      "required": ["type", "values", "displayStyle"],
       "additionalProperties": false
     },
     "T135": {
@@ -6683,10 +6153,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "values"
-      ],
+      "required": ["type", "values"],
       "additionalProperties": false
     },
     "T109": {
@@ -6785,10 +6252,7 @@
           ]
         }
       },
-      "required": [
-        "id",
-        "criterion"
-      ],
+      "required": ["id", "criterion"],
       "additionalProperties": false
     },
     "T108": {
@@ -6810,12 +6274,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "rule",
-        "sheetId",
-        "ranges"
-      ],
+      "required": ["type", "rule", "sheetId", "ranges"],
       "additionalProperties": false
     },
     "T136": {
@@ -6831,11 +6290,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "id",
-        "sheetId"
-      ],
+      "required": ["type", "id", "sheetId"],
       "additionalProperties": false
     },
     "T138": {
@@ -6891,10 +6346,7 @@
           "$ref": "#/$defs/T138"
         }
       },
-      "required": [
-        "type",
-        "locale"
-      ],
+      "required": ["type", "locale"],
       "additionalProperties": false
     },
     "T141": {
@@ -6907,10 +6359,7 @@
           "$ref": "#/$defs/T5"
         }
       },
-      "required": [
-        "sheetId",
-        "zone"
-      ],
+      "required": ["sheetId", "zone"],
       "additionalProperties": false
     },
     "T143": {
@@ -6952,10 +6401,7 @@
           ]
         }
       },
-      "required": [
-        "name",
-        "values"
-      ],
+      "required": ["name", "values"],
       "additionalProperties": false
     },
     "T142": {
@@ -7009,9 +6455,7 @@
           ]
         }
       },
-      "required": [
-        "fieldName"
-      ],
+      "required": ["fieldName"],
       "additionalProperties": false
     },
     "T145": {
@@ -7024,10 +6468,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "sheetId",
-        "formula"
-      ],
+      "required": ["sheetId", "formula"],
       "additionalProperties": false
     },
     "T146": {
@@ -7106,9 +6547,7 @@
           ]
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T144": {
@@ -7163,11 +6602,7 @@
           ]
         }
       },
-      "required": [
-        "id",
-        "fieldName",
-        "aggregator"
-      ],
+      "required": ["id", "fieldName", "aggregator"],
       "additionalProperties": false
     },
     "T148": {
@@ -7199,11 +6634,7 @@
           ]
         }
       },
-      "required": [
-        "field",
-        "type",
-        "value"
-      ],
+      "required": ["field", "type", "value"],
       "additionalProperties": false
     },
     "T147": {
@@ -7229,11 +6660,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "order",
-        "domain",
-        "measure"
-      ],
+      "required": ["order", "domain", "measure"],
       "additionalProperties": false
     },
     "T149": {
@@ -7258,10 +6685,7 @@
           }
         }
       },
-      "required": [
-        "COL",
-        "ROW"
-      ],
+      "required": ["COL", "ROW"],
       "additionalProperties": false
     },
     "T151": {
@@ -7280,11 +6704,7 @@
           }
         }
       },
-      "required": [
-        "parentField",
-        "name",
-        "groups"
-      ],
+      "required": ["parentField", "name", "groups"],
       "additionalProperties": false
     },
     "T150": {
@@ -7361,13 +6781,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "columns",
-        "rows",
-        "measures",
-        "name"
-      ],
+      "required": ["type", "columns", "rows", "measures", "name"],
       "additionalProperties": false
     },
     "T152": {
@@ -7429,13 +6843,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "columns",
-        "rows",
-        "measures",
-        "name"
-      ],
+      "required": ["type", "columns", "rows", "measures", "name"],
       "additionalProperties": false
     },
     "T139": {
@@ -7458,11 +6866,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "pivot"
-      ],
+      "required": ["type", "pivotId", "pivot"],
       "additionalProperties": false
     },
     "T153": {
@@ -7485,11 +6889,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "pivot"
-      ],
+      "required": ["type", "pivotId", "pivot"],
       "additionalProperties": false
     },
     "T156": {
@@ -7530,12 +6930,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "fields",
-        "values",
-        "width",
-        "offset"
-      ],
+      "required": ["fields", "values", "width", "offset"],
       "additionalProperties": false
     },
     "T157": {
@@ -7573,11 +6968,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "fields",
-        "values",
-        "indent"
-      ],
+      "required": ["fields", "values", "indent"],
       "additionalProperties": false
     },
     "T158": {
@@ -7624,11 +7015,7 @@
           ]
         }
       },
-      "required": [
-        "cols",
-        "rows",
-        "measures"
-      ],
+      "required": ["cols", "rows", "measures"],
       "additionalProperties": false
     },
     "T154": {
@@ -7653,14 +7040,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "table",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "pivotId", "table", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T159": {
@@ -7676,11 +7056,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "name"
-      ],
+      "required": ["type", "pivotId", "name"],
       "additionalProperties": false
     },
     "T160": {
@@ -7693,10 +7069,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "pivotId"
-      ],
+      "required": ["type", "pivotId"],
       "additionalProperties": false
     },
     "T161": {
@@ -7719,11 +7092,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "newPivotId"
-      ],
+      "required": ["type", "pivotId", "newPivotId"],
       "additionalProperties": false
     },
     "T162": {
@@ -7733,9 +7102,7 @@
           "const": "COPY"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T163": {
@@ -7745,9 +7112,7 @@
           "const": "CUT"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T164": {
@@ -7773,10 +7138,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "target"
-      ],
+      "required": ["type", "target"],
       "additionalProperties": false
     },
     "T165": {
@@ -7786,9 +7148,7 @@
           "const": "COPY_PASTE_CELLS_ABOVE"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T166": {
@@ -7798,9 +7158,7 @@
           "const": "COPY_PASTE_CELLS_ON_LEFT"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T167": {
@@ -7826,10 +7184,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "target"
-      ],
+      "required": ["type", "target"],
       "additionalProperties": false
     },
     "T168": {
@@ -7882,13 +7237,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "originCol",
-        "originRow",
-        "col",
-        "row"
-      ],
+      "required": ["type", "originCol", "originRow", "col", "row"],
       "additionalProperties": false
     },
     "T169": {
@@ -7907,11 +7256,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "cols"
-      ],
+      "required": ["type", "sheetId", "cols"],
       "additionalProperties": false
     },
     "T170": {
@@ -7930,11 +7275,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "rows"
-      ],
+      "required": ["type", "sheetId", "rows"],
       "additionalProperties": false
     },
     "T171": {
@@ -7979,15 +7320,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "base",
-        "elements",
-        "position",
-        "sheetId",
-        "dimension",
-        "sheetName"
-      ],
+      "required": ["type", "base", "elements", "position", "sheetId", "dimension", "sheetName"],
       "additionalProperties": false
     },
     "T172": {
@@ -8003,11 +7336,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "sheetIdFrom",
-        "sheetIdTo"
-      ],
+      "required": ["type", "sheetIdFrom", "sheetIdTo"],
       "additionalProperties": false
     },
     "T173": {
@@ -8017,9 +7346,7 @@
           "const": "AUTOFILL"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T174": {
@@ -8035,11 +7362,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "col",
-        "row"
-      ],
+      "required": ["type", "col", "row"],
       "additionalProperties": false
     },
     "T175": {
@@ -8074,12 +7397,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T176": {
@@ -8099,10 +7417,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "show"
-      ],
+      "required": ["type", "show"],
       "additionalProperties": false
     },
     "T177": {
@@ -8112,9 +7427,7 @@
           "const": "AUTOFILL_AUTO"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T181": {
@@ -8133,12 +7446,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "left",
-        "right",
-        "top",
-        "bottom"
-      ],
+      "required": ["left", "right", "top", "bottom"],
       "additionalProperties": false
     },
     "T182": {
@@ -8176,10 +7484,7 @@
           "description": "The hasHeader flag is used to determine if the zone has a header (eg. A2:A or C3:3).\n\nThe main issue is that the zone A1:A and A:A have different behavior. The \"correct\" way to handle this would be to\nallow the top/left to be undefined, but this make typing and using unbounded zones VERY annoying. So we use this\nboolean instead."
         }
       },
-      "required": [
-        "top",
-        "left"
-      ],
+      "required": ["top", "left"],
       "additionalProperties": false
     },
     "T183": {
@@ -8206,10 +7511,7 @@
           ]
         }
       },
-      "required": [
-        "colFixed",
-        "rowFixed"
-      ],
+      "required": ["colFixed", "rowFixed"],
       "additionalProperties": false
     },
     "T180": {
@@ -8258,13 +7560,7 @@
           "description": "the sheet on which the range is defined"
         }
       },
-      "required": [
-        "zone",
-        "unboundedZone",
-        "parts",
-        "prefixSheet",
-        "sheetId"
-      ],
+      "required": ["zone", "unboundedZone", "parts", "prefixSheet", "sheetId"],
       "additionalProperties": false
     },
     "T179": {
@@ -8321,12 +7617,7 @@
           ]
         }
       },
-      "required": [
-        "matchCase",
-        "exactMatch",
-        "searchFormulas",
-        "searchScope"
-      ],
+      "required": ["matchCase", "exactMatch", "searchFormulas", "searchScope"],
       "additionalProperties": false
     },
     "T184": {
@@ -8342,11 +7633,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "col",
-        "row",
-        "sheetId"
-      ],
+      "required": ["col", "row", "sheetId"],
       "additionalProperties": false
     },
     "T178": {
@@ -8371,13 +7658,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "searchString",
-        "replaceWith",
-        "searchOptions",
-        "matches"
-      ],
+      "required": ["type", "searchString", "replaceWith", "searchOptions", "matches"],
       "additionalProperties": false
     },
     "T186": {
@@ -8445,14 +7726,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "col",
-        "row",
-        "zone",
-        "sortDirection"
-      ],
+      "required": ["type", "sheetId", "col", "row", "zone", "sortDirection"],
       "additionalProperties": false
     },
     "T187": {
@@ -8481,12 +7755,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "step",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "step", "sheetId", "target"],
       "additionalProperties": false
     },
     "T188": {
@@ -8508,12 +7777,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "format",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "format", "sheetId", "target"],
       "additionalProperties": false
     },
     "T189": {
@@ -8523,9 +7787,7 @@
           "const": "SUM_SELECTION"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T190": {
@@ -8548,11 +7810,7 @@
           "$ref": "#/$defs/T5"
         }
       },
-      "required": [
-        "type",
-        "shiftDimension",
-        "zone"
-      ],
+      "required": ["type", "shiftDimension", "zone"],
       "additionalProperties": false
     },
     "T191": {
@@ -8575,11 +7833,7 @@
           "$ref": "#/$defs/T5"
         }
       },
-      "required": [
-        "type",
-        "shiftDimension",
-        "zone"
-      ],
+      "required": ["type", "shiftDimension", "zone"],
       "additionalProperties": false
     },
     "T192": {
@@ -8589,9 +7843,7 @@
           "const": "SHIFT_VIEWPORT_DOWN"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T193": {
@@ -8601,9 +7853,7 @@
           "const": "SHIFT_VIEWPORT_UP"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T194": {
@@ -8619,11 +7869,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "col",
-        "row"
-      ],
+      "required": ["type", "col", "row"],
       "additionalProperties": false
     },
     "T195": {
@@ -8633,9 +7879,7 @@
           "const": "ACTIVATE_NEXT_SHEET"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T196": {
@@ -8645,9 +7889,7 @@
           "const": "ACTIVATE_PREVIOUS_SHEET"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T198": {
@@ -8663,10 +7905,7 @@
           }
         }
       },
-      "required": [
-        "filterType",
-        "hiddenValues"
-      ],
+      "required": ["filterType", "hiddenValues"],
       "additionalProperties": false
     },
     "T199": {
@@ -8801,11 +8040,7 @@
           ]
         }
       },
-      "required": [
-        "filterType",
-        "type",
-        "values"
-      ],
+      "required": ["filterType", "type", "values"],
       "additionalProperties": false
     },
     "T197": {
@@ -8834,13 +8069,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "value",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "value", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T200": {
@@ -8873,11 +8102,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "separator",
-        "addNewColumns"
-      ],
+      "required": ["type", "separator", "addNewColumns"],
       "additionalProperties": false
     },
     "T201": {
@@ -8903,11 +8128,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "columns",
-        "hasHeader"
-      ],
+      "required": ["type", "columns", "hasHeader"],
       "additionalProperties": false
     },
     "T202": {
@@ -8917,9 +8138,7 @@
           "const": "TRIM_WHITESPACE"
         }
       },
-      "required": [
-        "type"
-      ],
+      "required": ["type"],
       "additionalProperties": false
     },
     "T203": {
@@ -8951,12 +8170,7 @@
           ]
         }
       },
-      "required": [
-        "type",
-        "zone",
-        "sheetId",
-        "newTableRange"
-      ],
+      "required": ["type", "zone", "sheetId", "newTableRange"],
       "additionalProperties": false
     },
     "T204": {
@@ -8969,10 +8183,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "id"
-      ],
+      "required": ["type", "id"],
       "additionalProperties": false
     },
     "T205": {
@@ -8988,11 +8199,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "newSheetId"
-      ],
+      "required": ["type", "pivotId", "newSheetId"],
       "additionalProperties": false
     },
     "T206": {
@@ -9011,12 +8218,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "newPivotId",
-        "newSheetId"
-      ],
+      "required": ["type", "pivotId", "newPivotId", "newSheetId"],
       "additionalProperties": false
     },
     "T207": {
@@ -9051,15 +8253,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "table",
-        "pivotMode",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "pivotId", "table", "pivotMode", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T208": {
@@ -9081,13 +8275,7 @@
           "type": "number"
         }
       },
-      "required": [
-        "type",
-        "pivotId",
-        "sheetId",
-        "col",
-        "row"
-      ],
+      "required": ["type", "pivotId", "sheetId", "col", "row"],
       "additionalProperties": false
     },
     "T209": {
@@ -9106,11 +8294,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T210": {
@@ -9129,11 +8313,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T211": {
@@ -9152,11 +8332,7 @@
           }
         }
       },
-      "required": [
-        "type",
-        "sheetId",
-        "target"
-      ],
+      "required": ["type", "sheetId", "target"],
       "additionalProperties": false
     },
     "T212": {
@@ -9172,11 +8348,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "sheetId"
-      ],
+      "required": ["type", "figureId", "sheetId"],
       "additionalProperties": false
     },
     "T213": {
@@ -9195,12 +8367,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "carouselFigureId",
-        "chartFigureId",
-        "sheetId"
-      ],
+      "required": ["type", "carouselFigureId", "chartFigureId", "sheetId"],
       "additionalProperties": false
     },
     "T214": {
@@ -9226,12 +8393,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "figureId",
-        "item",
-        "sheetId"
-      ],
+      "required": ["type", "figureId", "item", "sheetId"],
       "additionalProperties": false
     },
     "T215": {
@@ -9250,12 +8412,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "type",
-        "carouselId",
-        "chartId",
-        "sheetId"
-      ],
+      "required": ["type", "carouselId", "chartId", "sheetId"],
       "additionalProperties": false
     }
   }

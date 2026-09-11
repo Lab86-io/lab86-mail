@@ -123,7 +123,9 @@ try {
     functions,
     $defs: definitions,
   };
-  writeFileSync('lib/documents/spreadsheet-command-catalog.json', `${JSON.stringify(output, null, 2)}\n`);
+  const catalogPath = 'lib/documents/spreadsheet-command-catalog.json';
+  writeFileSync(catalogPath, `${JSON.stringify(output, null, 2)}\n`);
+  execFileSync('node_modules/.bin/biome', ['format', '--write', catalogPath]);
   console.log(
     `Generated ${Object.keys(commands).length} commands, ${Object.keys(definitions).length} definitions.`,
   );
