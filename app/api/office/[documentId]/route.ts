@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireCurrentUser } from '@/lib/auth/current-user';
 import { officeFailure } from '@/lib/documents/office-http';
-import { getOfficeFile } from '@/lib/documents/office-service';
+import { getOfficeFile, publicOfficeFile } from '@/lib/documents/office-service';
 import { enforceUserRateLimit } from '@/lib/rate-limit';
 export const dynamic = 'force-dynamic';
 export async function GET(_request: Request, context: { params: Promise<{ documentId: string }> }) {
@@ -11,11 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ docume
     const { documentId } = await context.params;
     const file = await getOfficeFile(user.userId, documentId);
     if (!file) return NextResponse.json({ ok: false, error: 'File not found.' }, { status: 404 });
-    const { version: _version, wopiLock: _lock, google, ...rest } = file;
-    const document = {
-      ...rest,
-      ...(google ? { google: { fileId: google.fileId, syncedRevision: google.syncedRevision } } : {}),
-    };
+    const { version: _version, ...document } = publicOfficeFile(file);
     return NextResponse.json({ ok: true, document });
   } catch (error) {
     return officeFailure(error);

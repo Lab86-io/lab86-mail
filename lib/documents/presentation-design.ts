@@ -160,7 +160,16 @@ Build a narrative: an evocative cover, evidence and outcomes, then a clear takea
 Respect the requested slide count. Write short headlines, concise labels, and supporting details that fit their bounds. Put source attribution, nuances, exact dates/timezones, and fuller explanation in speaker notes. Each slide must contain actual content, never placeholders or a restatement of the user's request. Only attribute events to a date when source timestamps in the user's timezone support it.`;
 
 /** Honor an explicit slide count even when a provider returns a valid but incomplete outline. */
-export function requestedPresentationSlideCount(instruction: string): number | undefined {
+export interface PresentationSlideConstraints {
+  min: number;
+  max: number;
+  exact?: number;
+}
+
+/** Interpret bounded requests without turning their endpoints into exact counts. */
+export function requestedPresentationSlideConstraints(
+  instruction: string,
+): PresentationSlideConstraints | undefined {
   const words = [
     'one',
     'two',
@@ -175,13 +184,43 @@ export function requestedPresentationSlideCount(instruction: string): number | u
     'eleven',
     'twelve',
   ];
-  const matches = [
-    ...instruction
-      .toLowerCase()
-      .matchAll(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[ -]+slides?\b/g),
-  ];
-  const raw = matches.at(-1)?.[1];
-  if (!raw) return undefined;
-  const count = Number(raw) || words.indexOf(raw) + 1;
-  return count >= 1 && count <= 30 ? count : undefined;
+  const number = '(\\d{1,2}|' + words.join('|') + ')';
+  const pattern = new RegExp(
+    '\\b(?:(up to|at most|no more than|at least|no fewer than|more than|less than|fewer than|exactly|between)\\s+)?' +
+      number +
+      '(?:\\s*(?:[-–—]|to|and)\\s*' +
+      number +
+      ')?[ -]+slides?\\b',
+    'g',
+  );
+  const matches = [...instruction.toLowerCase().matchAll(pattern)];
+  if (!matches.length) return undefined;
+  let min = 1,
+    max = 30;
+  for (const match of matches) {
+    const value = (raw: string) => Number(raw) || words.indexOf(raw) + 1;
+    const count = value(match[2]);
+    if (count < 1 || count > 30) continue;
+    if (match[3]) {
+      min = count;
+      max = value(match[3]);
+    } else if (['up to', 'at most', 'no more than'].includes(match[1])) max = count;
+    else if (['at least', 'no fewer than'].includes(match[1])) min = count;
+    else if (match[1] === 'more than') min = count + 1;
+    else if (['less than', 'fewer than'].includes(match[1])) max = count - 1;
+    else {
+      min = count;
+      max = count;
+    }
+  }
+  return { min, max, ...(min === max ? { exact: min } : {}) };
+}
+
+export function requestedPresentationSlideCount(instruction: string) {
+  return requestedPresentationSlideConstraints(instruction)?.exact;
+}
+
+export function presentationSlideCountMatches(instruction: string, count: number) {
+  const constraint = requestedPresentationSlideConstraints(instruction);
+  return !constraint || (count >= constraint.min && count <= constraint.max);
 }

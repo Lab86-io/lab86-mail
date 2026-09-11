@@ -4,6 +4,7 @@ import { CollaboraFrame, type CollaboraHandle } from '../../components/files/Col
 
 function App() {
   const ref = useRef<CollaboraHandle>(null);
+  const [closed, setClosed] = useState(false);
   const [ready, setReady] = useState(false);
   const [changed, setChanged] = useState(false);
   const [error, setError] = useState('');
@@ -26,16 +27,21 @@ function App() {
         >
           Save
         </button>
+        <button type="button" onClick={() => setClosed(true)}>
+          Close editor
+        </button>
         <span id="saved">{saved ? 'Saved' : ''}</span>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <CollaboraFrame
-          ref={ref}
-          session={(window as any).__session}
-          onReady={setReady}
-          onModified={setChanged}
-          onError={setError}
-        />
+        {!closed && (
+          <CollaboraFrame
+            ref={ref}
+            session={(window as any).__session}
+            onReady={setReady}
+            onModified={setChanged}
+            onError={setError}
+          />
+        )}
       </div>
     </main>
   );

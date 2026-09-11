@@ -81,6 +81,8 @@ export const CollaboraFrame = forwardRef<
   }));
   useEffect(() => {
     mounted.current = true;
+    let acceptsHostMessages = false;
+    const editorWindow = frame.current?.contentWindow;
     const receive = (event: MessageEvent) => {
       if (event.origin !== session.serverUrl || event.source !== frame.current?.contentWindow) return;
       let message: any;
@@ -90,6 +92,7 @@ export const CollaboraFrame = forwardRef<
         return;
       }
       if (message?.MessageId === 'App_LoadingStatus') {
+        acceptsHostMessages = true;
         post('Host_PostmessageReady');
         if (message.Values?.Status === 'Document_Loaded') onReady(true);
       }
@@ -110,6 +113,11 @@ export const CollaboraFrame = forwardRef<
     window.addEventListener('message', receive);
     form.current?.submit();
     return () => {
+      if (acceptsHostMessages)
+        editorWindow?.postMessage(
+          JSON.stringify({ MessageId: 'Close_Session', SendTime: Date.now(), Values: {} }),
+          session.serverUrl,
+        );
       mounted.current = false;
       window.removeEventListener('message', receive);
       if (pending.current) {

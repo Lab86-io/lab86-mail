@@ -130,3 +130,57 @@ describe('Collabora integration boundaries', () => {
     await expect(wopiContext(request(capability()), file.documentId)).rejects.toThrow('not found');
   });
 });
+
+test('PutFile accepts the shared lock across sessions and returns the current lock on save races', async () => {
+  const { POST } = await import('../app/api/office/wopi/[documentId]/contents/route');
+  const { __setOfficeServiceDepsForTest } = await import('../lib/documents/office-service');
+  const { exportDocument } = await import('../lib/documents/export');
+  const { createDefaultDocumentModel } = await import('../lib/documents/model');
+  const bytes = (
+    await exportDocument({
+      documentId: 'fixture',
+      title: 'Fixture',
+      kind: 'doc',
+      model: createDefaultDocumentModel('doc'),
+      currentRevision: 1,
+      sourceRefs: [],
+      createdAt: 1,
+      updatedAt: 1,
+    })
+  ).bytes;
+  const expiresAt = Date.now() + 60000;
+  setup({
+    getOfficeFile: async () => ({
+      ...file,
+      wopiLock: { value: 'shared-lock', sessionId: 'different-editor', expiresAt },
+    }),
+  });
+  let mutations = 0;
+  const makeRequest = () =>
+    new Request(`https://app.test/api/office/wopi/${file.documentId}/contents?access_token=${capability()}`, {
+      method: 'POST',
+      headers: { 'x-wopi-lock': 'shared-lock' },
+      body: new Uint8Array(bytes),
+    });
+  try {
+    __setOfficeServiceDepsForTest({
+      convexMutation: (async () =>
+        ++mutations % 2 ? 'https://storage.test/upload' : { ok: false, code: 'LOCK_CONFLICT' }) as any,
+      fetch: async () => Response.json({ storageId: 'uploaded' }),
+      convexQuery: (async () => ({ ...file, wopiLock: { value: 'new-lock', expiresAt } })) as any,
+    });
+    const conflict = await POST(makeRequest(), { params: Promise.resolve({ documentId: file.documentId }) });
+    expect(conflict.status).toBe(409);
+    expect(conflict.headers.get('x-wopi-lock')).toBe('new-lock');
+    __setOfficeServiceDepsForTest({
+      convexMutation: (async () =>
+        ++mutations % 2 ? 'https://storage.test/upload' : { ok: true, revision: 4, updatedAt: 1000 }) as any,
+      fetch: async () => Response.json({ storageId: 'uploaded' }),
+    });
+    const success = await POST(makeRequest(), { params: Promise.resolve({ documentId: file.documentId }) });
+    expect(success.status).toBe(200);
+    expect(await success.json()).toEqual({ LastModifiedTime: '1970-01-01T00:00:01.000Z' });
+  } finally {
+    __setOfficeServiceDepsForTest();
+  }
+});

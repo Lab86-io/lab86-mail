@@ -93,7 +93,7 @@ describe('document AI proposal service', () => {
         instruction: 'Expand to 6 slides',
         current,
       }),
-    ).rejects.toThrow('instead of the requested 6');
+    ).rejects.toThrow('outside the requested count constraints');
   });
 
   test('a generated summary cannot claim an unchanged model was edited', async () => {

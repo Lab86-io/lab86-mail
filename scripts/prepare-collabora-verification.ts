@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { startCollaboraSession } from '../lib/documents/collabora';
 import { exportDocument } from '../lib/documents/export';
 import { createDefaultDocumentModel } from '../lib/documents/model';
@@ -34,4 +34,7 @@ for (const kind of ['doc', 'sheet', 'deck'] as const) {
   files.push({ kind, documentId: created.documentId, session });
   console.log(`${kind.toUpperCase()}: synthetic working copy and signed editor session created.`);
 }
-writeFileSync('/tmp/chat-doc-collabora-sessions.json', JSON.stringify({ userId, files }), { mode: 0o600 });
+const path = '/tmp/chat-doc-collabora-sessions.json';
+rmSync(path, { force: true });
+writeFileSync(path, JSON.stringify({ userId, files }), { mode: 0o600, flag: 'wx' });
+chmodSync(path, 0o600);

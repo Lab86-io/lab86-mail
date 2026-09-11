@@ -1793,6 +1793,9 @@ export default defineSchema({
         fileId: v.string(),
         session: v.string(),
         syncedRevision: v.number(),
+        pendingSave: v.optional(
+          v.object({ session: v.string(), revision: v.number(), providerVersion: v.string() }),
+        ),
       }),
     ),
     lastWopiSave: v.optional(v.object({ id: v.string(), revision: v.number() })),

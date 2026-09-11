@@ -3,12 +3,11 @@ import { officeFailure } from '@/lib/documents/office-http';
 import {
   OFFICE_MAX_BYTES,
   OFFICE_MIME,
-  OfficeError,
   readOfficeRequest,
   readOfficeResponse,
   validateOfficeArchive,
 } from '@/lib/documents/office-security';
-import { saveOfficeVersion, storeOfficeBytes } from '@/lib/documents/office-service';
+import { getOfficeFile, saveOfficeVersion, storeOfficeBytes } from '@/lib/documents/office-service';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 type Context = { params: Promise<{ documentId: string }> };
@@ -37,12 +36,7 @@ export async function POST(request: Request, context: Context) {
     const { documentId } = await context.params;
     const { file, session, sessionId, userId } = await wopiContext(request, documentId);
     const lock = request.headers.get('x-wopi-lock') || '';
-    if (
-      !lock ||
-      file.wopiLock?.value !== lock ||
-      file.wopiLock?.sessionId !== sessionId ||
-      file.wopiLock.expiresAt <= Date.now()
-    )
+    if (!lock || file.wopiLock?.value !== lock || file.wopiLock.expiresAt <= Date.now())
       return new Response(null, { status: 409, headers: { 'X-WOPI-Lock': file.wopiLock?.value || '' } });
     const requestId = request.headers.get('x-cool-wopi-extendeddata') || '';
     const saveRequestId = /^[a-zA-Z0-9-]{1,80}$/.test(requestId) ? requestId : undefined;
@@ -62,9 +56,21 @@ export async function POST(request: Request, context: Context) {
       wopiLock: lock,
       saveRequestId,
     });
-    if (!saved.ok) throw new OfficeError('The working copy changed. This save could not replace it.', 409);
+    if (!saved.ok) {
+      const current = await getOfficeFile(userId, documentId);
+      return Response.json(
+        { ok: false, error: 'The working copy changed. This save could not replace it.' },
+        {
+          status: 409,
+          headers: {
+            'X-WOPI-Lock':
+              current?.wopiLock && current.wopiLock.expiresAt > Date.now() ? current.wopiLock.value : '',
+          },
+        },
+      );
+    }
     return Response.json(
-      { LastModifiedTime: new Date(saved.updatedAt!).toISOString() },
+      { LastModifiedTime: new Date(saved.updatedAt).toISOString() },
       { headers: { 'X-WOPI-ItemVersion': String(saved.revision) } },
     );
   } catch (error) {

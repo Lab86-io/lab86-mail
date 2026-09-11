@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
           ),
         ),
       ),
-      hydrateChatAttachments(user.userId, prepared.messages)
+      hydrateChatAttachments(user.userId, prepared.messages, req.signal)
         .then(convertToModelMessages)
         .then(sanitizeToolPairs),
     ]);

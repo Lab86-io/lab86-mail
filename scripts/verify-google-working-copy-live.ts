@@ -67,30 +67,21 @@ for (const kind of ['doc', 'sheet', 'deck'] as const) {
     });
     const zip = await JSZip.loadAsync(copy.bytes);
     const marker = `ALBATROSS-SAVE-${crypto.randomUUID()}`;
-    const entry =
-      kind === 'doc'
-        ? 'word/document.xml'
-        : kind === 'sheet'
-          ? 'xl/worksheets/sheet1.xml'
-          : 'ppt/slides/slide1.xml';
-    let xml = await zip.file(entry)!.async('string');
-    if (kind === 'doc') xml = xml.replace('</w:body>', `<w:p><w:r><w:t>${marker}</w:t></w:r></w:p></w:body>`);
-    if (kind === 'sheet')
-      xml = xml
-        .replace(/<sheetData(?:\s[^>]*)?\/>/, '<sheetData></sheetData>')
-        .replace(
-          '</sheetData>',
-          `<row r="20"><c r="A20" t="inlineStr"><is><t>${marker}</t></is></c></row></sheetData>`,
-        );
-    if (kind === 'deck') xml = xml.replace(/<a:t>[^<]*<\/a:t>/, `<a:t>${marker}</a:t>`);
-    if (!xml.includes(marker)) throw new Error('Fixture mutation did not insert marker.');
-    zip.file(entry, xml);
-    let edited = await zip.generateAsync({ type: 'uint8array' });
+    let edited: Uint8Array;
     if (kind === 'sheet') {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(Buffer.from(copy.bytes) as any);
       workbook.worksheets[0].getCell('A20').value = marker;
       edited = new Uint8Array(await workbook.xlsx.writeBuffer());
+    } else {
+      const entry = kind === 'doc' ? 'word/document.xml' : 'ppt/slides/slide1.xml';
+      let xml = await zip.file(entry)!.async('string');
+      if (kind === 'doc')
+        xml = xml.replace('</w:body>', `<w:p><w:r><w:t>${marker}</w:t></w:r></w:p></w:body>`);
+      else xml = xml.replace(/<a:t>[^<]*<\/a:t>/, `<a:t>${marker}</a:t>`);
+      if (!xml.includes(marker)) throw new Error('Fixture mutation did not insert marker.');
+      zip.file(entry, xml);
+      edited = await zip.generateAsync({ type: 'uint8array' });
     }
     const saved = await saveGoogleWorkingCopy({
       userId: connection.userId,
@@ -138,7 +129,6 @@ for (const kind of ['doc', 'sheet', 'deck'] as const) {
     if (!cleanup.ok) {
       console.error(`Synthetic file cleanup failed (${cleanup.status}).`);
       process.exitCode = 1;
-    }
-    console.log(`${kind.toUpperCase()}: synthetic file moved to Trash.`);
+    } else console.log(`${kind.toUpperCase()}: synthetic file moved to Trash.`);
   }
 }

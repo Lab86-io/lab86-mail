@@ -197,7 +197,6 @@ export const saveVersion = mutation({
       args.wopiLock !== undefined &&
       (!document.wopiLock ||
         document.wopiLock.value !== args.wopiLock ||
-        document.wopiLock.sessionId !== args.sessionId ||
         document.wopiLock.expiresAt <= now())
     )
       return { ok: false, code: 'LOCK_CONFLICT' };
@@ -239,7 +238,7 @@ export const saveVersion = mutation({
     // while its transfer was in flight, even when both hashes are first-seen.
     const recovery =
       (Boolean(existing) && args.wopiLock === undefined) ||
-      document.currentRevision !== session.lastRevision ||
+      (args.wopiLock === undefined && document.currentRevision !== session.lastRevision) ||
       document.currentRevision !== args.expectedRevision;
     const createdAt = now();
     await ctx.db.insert('officeVersions', {
@@ -300,8 +299,7 @@ export const wopiLock = mutation({
       return { ok: false, value: '' };
     const lock = document.wopiLock && document.wopiLock.expiresAt > now() ? document.wopiLock : undefined;
     if (args.operation === 'GET_LOCK') return { ok: true, value: lock?.value || '' };
-    if (lock && (lock.sessionId !== args.sessionId || lock.value !== (args.oldValue ?? args.value)))
-      return { ok: false, value: lock.value };
+    if (lock && lock.value !== (args.oldValue ?? args.value)) return { ok: false, value: lock.value };
     if (!lock && args.operation !== 'LOCK') return { ok: false, value: '' };
     if (args.operation === 'UNLOCK') await ctx.db.patch(document._id, { wopiLock: undefined });
     else
@@ -319,14 +317,125 @@ export const linkGoogle = mutation({
     expectedSession: v.string(),
     session: v.string(),
     syncedRevision: v.number(),
+    providerVersion: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const document = await owned(ctx, args.userId, args.documentId);
-    if (!document?.google || document.google.session !== args.expectedSession) return { ok: false };
+    if (!document?.google) return { ok: false };
+    const validVersion = args.providerVersion && /^\d+$/.test(args.providerVersion);
+    if (document.google.session !== args.expectedSession) {
+      // A completed Google write must remain recoverable even if every CAS retry races.
+      const pending = document.google.pendingSave;
+      if (validVersion && (!pending || BigInt(args.providerVersion!) >= BigInt(pending.providerVersion)))
+        await ctx.db.patch(document._id, {
+          google: {
+            ...document.google,
+            pendingSave: {
+              session: args.session,
+              revision: args.syncedRevision,
+              providerVersion: args.providerVersion!,
+            },
+          },
+        });
+      return { ok: false };
+    }
+    const pending = document.google.pendingSave;
+    const clearPending =
+      pending && validVersion && BigInt(args.providerVersion!) >= BigInt(pending.providerVersion);
     await ctx.db.patch(document._id, {
-      google: { ...document.google, session: args.session, syncedRevision: args.syncedRevision },
+      google: {
+        ...document.google,
+        session: args.session,
+        syncedRevision: args.syncedRevision,
+        ...(clearPending ? { pendingSave: undefined } : {}),
+      },
     });
     return { ok: true };
+  },
+});
+
+/** Find a pre-existing Google working copy, including older etag-derived IDs. */
+export const findGoogle = query({
+  args: { ...owner, connectionId: v.string(), fileId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return ctx.db
+      .query('officeDocuments')
+      .withIndex('by_user_updated', (q) => q.eq('userId', args.userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('google.connectionId'), args.connectionId),
+          q.eq(q.field('google.fileId'), args.fileId),
+        ),
+      )
+      .order('desc')
+      .first();
+  },
+});
+
+/** Import provider changes atomically only over a clean, unlocked working copy. */
+export const refreshGoogle = mutation({
+  args: {
+    ...owner,
+    documentId: v.string(),
+    expectedSession: v.string(),
+    expectedRevision: v.number(),
+    session: v.string(),
+    storageId: v.id('_storage'),
+    sha256: v.string(),
+    size: v.number(),
+    title: v.string(),
+    extension: v.union(v.literal('docx'), v.literal('xlsx'), v.literal('pptx')),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await owned(ctx, args.userId, args.documentId);
+    if (
+      !document?.google ||
+      document.google.session !== args.expectedSession ||
+      document.currentRevision !== args.expectedRevision ||
+      document.google.syncedRevision !== document.currentRevision ||
+      (document.wopiLock && document.wopiLock.expiresAt > now())
+    ) {
+      await ctx.storage.delete(args.storageId);
+      return { ok: false };
+    }
+    const latest = await ctx.db
+      .query('officeVersions')
+      .withIndex('by_user_document_revision', (q) =>
+        q.eq('userId', args.userId).eq('documentId', args.documentId),
+      )
+      .order('desc')
+      .first();
+    const revision = (latest?.revision ?? document.currentRevision) + 1;
+    const createdAt = now();
+    await ctx.db.insert('officeVersions', {
+      userId: args.userId,
+      documentId: args.documentId,
+      revision,
+      storageId: args.storageId,
+      sha256: args.sha256,
+      size: args.size,
+      recovery: false,
+      createdAt,
+    });
+    await ctx.db.patch(document._id, {
+      currentRevision: revision,
+      title: args.title,
+      extension: args.extension,
+      updatedAt: createdAt,
+      google: { ...document.google, session: args.session, syncedRevision: revision, pendingSave: undefined },
+      lastWopiSave: undefined,
+      wopiLock: undefined,
+    });
+    // Invalidate stale editors before they can reacquire a lock over the refreshed content.
+    const sessions = await ctx.db
+      .query('officeSessions')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .filter((q) => q.eq(q.field('documentId'), args.documentId))
+      .collect();
+    for (const session of sessions) await ctx.db.delete(session._id);
+    return { ok: true, revision };
   },
 });

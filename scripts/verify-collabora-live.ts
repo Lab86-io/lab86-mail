@@ -93,7 +93,9 @@ try {
       const record = await getOfficeFile(fixture.userId, file.documentId);
       if (!record?.version?.url || record.currentRevision < 2)
         throw new Error('Editor save did not create a durable revision');
-      const zip = await JSZip.loadAsync(await (await fetch(record.version.url)).arrayBuffer());
+      const zip = await JSZip.loadAsync(
+        await (await fetch(record.version.url, { signal: AbortSignal.timeout(45_000) })).arrayBuffer(),
+      );
       const text = (
         await Promise.all(
           Object.values(zip.files)
@@ -112,13 +114,31 @@ try {
         `${file.kind}: edited in browser, saved through WOPI, verified revision ${record.currentRevision} from storage.`,
       );
       await page.screenshot({ path: `/tmp/chat-doc-${file.kind}-saved.png` });
+      await page.getByRole('button', { name: 'Close editor', exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector('iframe[title="Document editor"]'));
+      const deadline = Date.now() + 15000;
+      while ((await getOfficeFile(fixture.userId, file.documentId))?.wopiLock && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      if ((await getOfficeFile(fixture.userId, file.documentId))?.wopiLock)
+        throw new Error('Closing the editor did not release the document lock');
+      console.log(`${file.kind}: closing the editor released its document lock.`);
     } catch (error) {
-      console.log('Editor state:', await page.locator('#state').textContent());
+      console.log(
+        'Editor state:',
+        await page
+          .locator('#state')
+          .textContent({ timeout: 5000 })
+          .catch(() => '<unavailable>'),
+      );
       console.log('Browser errors:', failures);
       for (const frame of page.frames())
         if (frame.url().startsWith(file.session.serverUrl))
-          writeFileSync(`/tmp/chat-doc-${file.kind}-editor-dom.txt`, await frame.locator('body').innerText());
-      await page.screenshot({ path: `/tmp/chat-doc-${file.kind}-failed.png` });
+          await frame
+            .locator('body')
+            .innerText({ timeout: 5000 })
+            .then((body) => writeFileSync(`/tmp/chat-doc-${file.kind}-editor-dom.txt`, body))
+            .catch(() => {});
+      await page.screenshot({ path: `/tmp/chat-doc-${file.kind}-failed.png`, timeout: 5000 }).catch(() => {});
       throw error;
     } finally {
       await page.close();

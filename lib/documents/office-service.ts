@@ -26,11 +26,24 @@ export interface OfficeFile {
   currentRevision: number;
   createdAt: number;
   updatedAt: number;
-  google?: { connectionId: string; fileId: string; session: string; syncedRevision: number };
+  google?: {
+    connectionId: string;
+    fileId: string;
+    session: string;
+    syncedRevision: number;
+    pendingSave?: { session: string; revision: number; providerVersion: string };
+  };
   lastWopiSave?: { id: string; revision: number };
   wopiLock?: { value: string; sessionId: string; expiresAt: number };
   versions: Array<{ revision: number; recovery: boolean; createdAt: number; size: number }>;
   version: { revision: number; url: string | null; size: number; sha256: string } | null;
+}
+/** Public Office metadata excludes provider capabilities and internal locks. */
+export function publicOfficeFile({ google, wopiLock: _lock, ...file }: OfficeFile) {
+  return {
+    ...file,
+    ...(google ? { google: { fileId: google.fileId, syncedRevision: google.syncedRevision } } : {}),
+  };
 }
 export function requireOffice(existingSession = false) {
   const configuration = officeConfiguration(process.env, existingSession);
@@ -91,10 +104,10 @@ export const saveOfficeVersion = (input: {
   wopiLock?: string;
   saveRequestId?: string;
 }) =>
-  dependencies.convexMutation<{ ok: boolean; code?: string; revision?: number; updatedAt?: number }>(
-    office.saveVersion,
-    input,
-  );
+  dependencies.convexMutation<
+    | { ok: true; revision: number; updatedAt: number }
+    | { ok: false; code?: string; revision?: number; updatedAt?: number }
+  >(office.saveVersion, input);
 
 export async function startOfficeSession(userId: string, document: OfficeFile) {
   const configuration = requireOffice();

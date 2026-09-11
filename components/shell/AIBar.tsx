@@ -5,7 +5,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChatTransport, DefaultChatTransport, type UIMessage } from 'ai';
 import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
 import { HitlPart } from '@/components/ai-elements/hitl-parts';
@@ -221,7 +231,9 @@ export function AssistantChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sendingFilesRef = useRef(false);
   const pendingFilesRef = useRef(pendingFiles);
-  pendingFilesRef.current = pendingFiles;
+  useLayoutEffect(() => {
+    pendingFilesRef.current = pendingFiles;
+  }, [pendingFiles]);
   const addFiles = (picked: File[]) => {
     const next = [...pendingFilesRef.current];
     for (const file of picked) {
@@ -675,6 +687,7 @@ export function AssistantChat({
       mediaType: file.contentType || 'application/octet-stream',
       url: chatUploadPath(file.uploadId),
     }));
+    pendingFilesRef.current = [];
     setPendingFiles([]);
     void sendMessage(
       { text: trimmed || 'Use the attached file(s).', ...(files ? { files } : {}) } as any,
@@ -1064,7 +1077,11 @@ export function AssistantChat({
                       {file.name}
                       <button
                         type="button"
-                        onClick={() => setPendingFiles(pendingFiles.filter((_, i) => i !== index))}
+                        onClick={() => {
+                          const next = pendingFilesRef.current.filter((_, i) => i !== index);
+                          pendingFilesRef.current = next;
+                          setPendingFiles(next);
+                        }}
                         aria-label={`Remove ${file.name}`}
                         title={`Remove ${file.name}`}
                         className="hover:text-[var(--color-danger)]"
@@ -1216,7 +1233,7 @@ export const MessageView = memo(
     }
     const replyText = streaming ? '' : replyTextFromMessage(message);
     return (
-      <Message className="justify-start">
+      <Message className="justify-start" data-message-role="assistant">
         <div className="flex w-full min-w-0 flex-col gap-2">
           <Thought parts={message.parts || []} streaming={streaming} />
           {groupMessageParts(message.parts || []).map((segment) =>

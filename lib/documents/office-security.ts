@@ -18,7 +18,9 @@ export class OfficeError extends Error {
 }
 
 export function officeConfiguration(env: NodeJS.ProcessEnv = process.env, existingSession = false) {
-  const provider = env.OFFICE_EDITOR_PROVIDER === 'collabora' ? 'collabora' : 'onlyoffice';
+  const provider = (env.OFFICE_EDITOR_PROVIDER ?? 'onlyoffice').trim().toLowerCase();
+  if (provider !== 'collabora' && provider !== 'onlyoffice')
+    throw new OfficeError('OFFICE_EDITOR_PROVIDER must be collabora or onlyoffice.', 503);
   if (
     !existingSession &&
     (env.OFFICE_EDITOR_ENABLED !== 'true' ||

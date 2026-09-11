@@ -15,7 +15,7 @@ import {
   composePresentation,
   PRESENTATION_DESIGN_GUIDANCE,
   presentationBriefSchema,
-  requestedPresentationSlideCount,
+  presentationSlideCountMatches,
 } from './presentation-design';
 import { MAX_SHEET_CHANGES, sheetChangeSchema, workbookText } from './sheet-workbook';
 
@@ -145,10 +145,9 @@ export async function generateDocumentProposal(input: {
     });
     try {
       const brief = presentationBriefSchema.parse(object);
-      const count = requestedPresentationSlideCount(input.instruction);
-      if (count && brief.slides.length !== count)
+      if (!presentationSlideCountMatches(input.instruction, brief.slides.length))
         throw new DocumentGenerationError(
-          `The generator returned ${brief.slides.length} slides instead of the requested ${count}. No incomplete deck was saved.`,
+          `The generator returned ${brief.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
         );
       return { title: brief.title, summary: brief.summary, model: composePresentation(brief) };
     } catch (error) {
@@ -187,10 +186,9 @@ Preserve accurate supplied facts, never invent citations or claim provider-side 
   try {
     const parsed = schema.parse(object);
     if (parsed.model.kind === 'deck') {
-      const count = requestedPresentationSlideCount(input.instruction);
-      if (count && parsed.model.slides.length !== count)
+      if (!presentationSlideCountMatches(input.instruction, parsed.model.slides.length))
         throw new DocumentGenerationError(
-          `The generator returned ${parsed.model.slides.length} slides instead of the requested ${count}. No incomplete deck was saved.`,
+          `The generator returned ${parsed.model.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
         );
     }
     if (
