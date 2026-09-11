@@ -234,6 +234,20 @@ describe('grounded structured output', () => {
   const activeAreaIds = new Set(['area_cardhunt']);
   const factsById = new Map([['fact_cardhunt_domain', fact()]]);
 
+  test('emits a strict-safe JSON schema: every property is required', () => {
+    // OpenAI strict response_format rejects any object property missing from
+    // `required` (zod .default()/.optional() create that shape) with a 400,
+    // which silently stalls every classification call.
+    const { z } = require('zod/v4');
+    const jsonSchema = z.toJSONSchema(areaModelVerdictSchema, {
+      target: 'draft-7',
+      io: 'input',
+    });
+    const assignmentItems = (jsonSchema.properties.assignments as any).items;
+    expect(assignmentItems.required).toEqual(expect.arrayContaining(Object.keys(assignmentItems.properties)));
+    expect(assignmentItems.required).toContain('factIds');
+  });
+
   test('accepts an active Area only when its evidence occurs in the email', () => {
     const verdict = areaModelVerdictSchema.parse({
       assignments: [
