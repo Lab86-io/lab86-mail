@@ -4,8 +4,24 @@ import { AGENT_TOOL_NAMES, liftToolsForAgent } from '../lib/ai/loop';
 import { documentEditsSchema, prepareDocumentEdits } from '../lib/documents/edits';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
 import { TOOLS } from '../lib/tools';
-import { __setDocumentToolDepsForTest, documentEdit, documentExport } from '../lib/tools/documents';
+import {
+  __setDocumentToolDepsForTest,
+  documentEdit,
+  documentExport,
+  spreadsheetCapabilitiesTool,
+} from '../lib/tools/documents';
 import { toolContext, withToolContext } from './tools/harness';
+
+test('the spreadsheet capability tool supplies exact chart command schemas before editing', async () => {
+  const catalog = await spreadsheetCapabilitiesTool.handler(
+    spreadsheetCapabilitiesTool.input.parse({}),
+    toolContext(),
+  );
+  expect(catalog.commands).toContain('CREATE_CHART');
+  const chart = await spreadsheetCapabilitiesTool.handler({ commands: ['CREATE_CHART'] }, toolContext());
+  expect(Object.keys(chart.schemas)).toEqual(['CREATE_CHART']);
+  expect(Object.keys(chart.$defs).length).toBeGreaterThan(0);
+});
 
 const doc = () => ({
   kind: 'doc' as const,

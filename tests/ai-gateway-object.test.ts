@@ -1,8 +1,30 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { __setObjectGenerationDepsForTest, generateObjectForCurrentUser } from '../lib/ai/gateway';
+import {
+  __setObjectGenerationDepsForTest,
+  agentProviderOptions,
+  generateObjectForCurrentUser,
+} from '../lib/ai/gateway';
 
 describe('structured AI gateway', () => {
   afterEach(() => __setObjectGenerationDepsForTest());
+
+  test('agent cache and reasoning options follow the provider transport', () => {
+    const direct = agentProviderOptions({ provider: 'openai' } as any, 'agent:owner');
+    expect(direct?.openai).toMatchObject({
+      reasoningEffort: process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low',
+      reasoningSummary: 'auto',
+      parallelToolCalls: true,
+      promptCacheKey: 'agent:owner',
+    });
+    expect(agentProviderOptions({ provider: 'openai' } as any)?.openai).not.toHaveProperty('promptCacheKey');
+    expect(agentProviderOptions({ provider: 'openrouter' } as any, 'agent:owner')).toEqual({
+      openai: {
+        reasoningEffort: process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low',
+        parallelToolCalls: true,
+      },
+    });
+    expect(agentProviderOptions({ provider: 'anthropic' } as any, 'agent:owner')).toBeUndefined();
+  });
 
   test('uses the resolved model, feature cap, and default strict provider options', async () => {
     const requests: any[] = [];

@@ -410,7 +410,7 @@ describe('sparse classifier orchestration', () => {
         {
           areaId: 'area_cardhunt',
           evidence: ['CardHunt production deploy'],
-          factIds: [],
+          factIds: ['fact_cardhunt_domain'],
           reason: 'Explicitly concerns CardHunt production.',
         },
       ],
@@ -421,6 +421,9 @@ describe('sparse classifier orchestration', () => {
       areaId: 'area_cardhunt',
       status: 'candidate',
       confirmationRefs: [],
+      sourceRefs: expect.arrayContaining([
+        expect.objectContaining({ kind: 'areaFact', id: 'fact_cardhunt_domain' }),
+      ]),
     });
   });
 

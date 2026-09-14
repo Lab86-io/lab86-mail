@@ -244,7 +244,9 @@ describe('Today workspace composition and trust boundary', () => {
     const deps = harness();
     const initial = await deps.snapshot();
     deps.snapshot.mockResolvedValueOnce(initial).mockResolvedValueOnce(null);
-    await expect(loadNarrativeWorkspace('owner', now, true, undefined, deps)).rejects.toMatchObject({
+    await expect(
+      loadNarrativeWorkspace('owner', now, true, new AbortController().signal, deps),
+    ).rejects.toMatchObject({
       status: 409,
     });
     expect(deps.record).not.toHaveBeenCalled();

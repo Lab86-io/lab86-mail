@@ -144,7 +144,7 @@ The live deck was not restyled by this code change. After staging rollout, run t
 
 ## Final local validation
 
-- Full suite: 3,909 tests passed across 401 files, both normally and with coverage. Two additional checkpoint tests were then added; the 12-test incident suite passes with execution-checkpoint line coverage of 95.51%.
+- Full suite with coverage: 3,917 tests passed across 402 files. Execution-checkpoint line coverage is 95.51%. Real SDK stream tests cover recovery after invalid deck geometry, fatal interruption after partial content without replay, safe fallback before content, and cancellation before generation. Changed-file coverage meets or exceeds the CI baseline without changing its thresholds.
 - TypeScript passed. Production `next build` passed, including its TypeScript and static-page stages.
 - Biome passes over all tracked files plus new patch files, with one existing image-element warning. The literal `bun run lint` command is blocked by a pre-existing nested root config at `.claude/worktrees/chat-agentic-pass/biome.json`; the explicit-file run checks the actual repository without modifying that other worktree.
 - Convex code generation/bundle analysis passed and generated API bindings are included. The codegen operation did not activate a deployment.

@@ -300,15 +300,27 @@ describe('interrupted deck execution', () => {
   test('restyles all six slides without generating geometry or losing content', () => {
     const base = createDefaultDocumentModel('deck', 'deck');
     if (base.kind !== 'deck') throw new Error('deck required');
+    base.slides[0].elements.push({
+      id: 'accent',
+      type: 'shape',
+      x: 5,
+      y: 5,
+      width: 80,
+      height: 2,
+      fill: '#000000',
+    });
     base.slides = Array.from({ length: 6 }, (_, i) => ({
       ...structuredClone(base.slides[0]),
       id: `slide-${i}`,
     }));
     base.activeSlideId = 'slide-0';
-    const styled: any = prepareDocumentEdits(base, [{ op: 'deck_restyle', theme: 'dark' }]);
+    const styled: any = prepareDocumentEdits(base, [
+      { op: 'deck_restyle', theme: 'dark', accent: '#a78bfa' },
+    ]);
     expect(styled.slides).toHaveLength(6);
     for (let i = 0; i < 6; i++) {
       expect(styled.slides[i].background).toBe('#111827');
+      expect(styled.slides[i].elements.find((e: any) => e.id === 'accent').fill).toBe('#a78bfa');
       expect(styled.slides[i].elements.map((e: any) => [e.id, e.text, e.x, e.y, e.width, e.height])).toEqual(
         base.slides[i].elements.map((e) => [e.id, e.text, e.x, e.y, e.width, e.height]),
       );
