@@ -1,6 +1,7 @@
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
 import { areaBrandingFromFacts } from './area-home';
+import { isTerminalWork } from './work-lifecycle';
 
 export {
   mergeDuplicateTaskHandoffs,
@@ -93,6 +94,7 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   areas?: any[];
   checkins?: any[];
   intentWork?: any[];
+  workStates?: Array<{ id: string; workState?: string; status?: string }>;
 }
 
 interface LoadLiveAlbatrossDailyReportInput {
@@ -193,6 +195,7 @@ function alignmentWorkFromRows(
 ): AlbatrossDailyAlignment | undefined {
   if (!alignment) return alignment;
   const rows = intentWork
+    .filter((row) => !isTerminalWork(row))
     .filter((row) => !row.checkinLocalDate || String(row.checkinLocalDate) === alignment.localDate)
     .slice(0, 8)
     .map((row) => ({
@@ -272,7 +275,9 @@ export function buildAlbatrossDailyReportContext(
   }
 
   const activeIntents = intents
-    .filter((intent) => intent.likelyAreaId && includedAreaIds.has(intent.likelyAreaId))
+    .filter(
+      (intent) => !isTerminalWork(intent) && intent.likelyAreaId && includedAreaIds.has(intent.likelyAreaId),
+    )
     .map((intent) => ({
       id: intent.id,
       text: intent.rawInput,
@@ -337,8 +342,9 @@ export function buildAlbatrossDailyReportContext(
 export function buildAlbatrossDailyReportContextFromLive(
   input: BuildAlbatrossDailyReportFromLiveInput = {},
 ): AlbatrossDailyReportContext {
+  const closedIds = new Set((input.workStates || []).filter(isTerminalWork).map((row) => row.id));
   const projects = input.projects ?? [];
-  const approvals = input.approvals ?? [];
+  const approvals = (input.approvals ?? []).filter((row) => !closedIds.has(row.intentId));
   const applications = input.applications ?? [];
   const sprints = input.sprints ?? [];
   const areaRows = input.areas ?? [];
@@ -370,6 +376,7 @@ export function buildAlbatrossDailyReportContextFromLive(
 
   const activeIntentIds = new Set<string>();
   const activeIntents = applications
+    .filter((application) => !closedIds.has(application.intentId))
     .filter((application) => application.status === 'queued' || application.status === 'partially_applied')
     .filter((application) => {
       if (!application.intentId || activeIntentIds.has(application.intentId)) return false;
@@ -520,6 +527,7 @@ export async function loadLiveAlbatrossDailyReportContext(
       now,
       isFirstOpenOfMonth: input.isFirstOpenOfMonth,
       projects: live?.projects,
+      workStates: live?.workStates,
       approvals: live?.approvals,
       applications: live?.applications,
       sprints: live?.sprints,

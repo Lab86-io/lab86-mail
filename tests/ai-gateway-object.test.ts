@@ -45,9 +45,10 @@ describe('structured AI gateway', () => {
     expect(requests[0]).toMatchObject({
       model: 'resolved-model',
       maxOutputTokens: 1200,
-      providerOptions: { openai: { reasoningEffort: 'none', strictJsonSchema: true } },
+      providerOptions: { openai: { strictJsonSchema: true } },
     });
     expect(requests[0].narrativeModel).toBeUndefined();
+    expect(requests[0].providerOptions.openai.reasoningEffort).toBeUndefined();
     expect(usage[0][0]).toBe(runtime);
     expect(usage[0].slice(1)).toEqual(['albatross_area_route', { inputTokens: 10, outputTokens: 2 }, true]);
   });

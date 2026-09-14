@@ -414,40 +414,42 @@ function BriefLeaf({
         <section className={cn('space-y-3', nodeClass(node))}>
           <h3 className="font-display text-lg font-semibold">{node.title}</h3>
           <ol className="space-y-1">
-            {node.items.map((item, index) => (
-              <li
-                key={`${item.ref ? briefRefKey(item.ref) : item.label}:${item.at ?? ''}`}
-                className="grid grid-cols-[18px_1fr] gap-2 py-2"
-              >
-                <div className="flex flex-col items-center">
-                  <Clock3 className="size-3.5 text-[var(--color-accent-2)]" />
-                  {index < node.items.length - 1 ? (
-                    <span className="mt-1 w-px flex-1 bg-[var(--color-border)]" />
-                  ) : null}
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-medium">
-                    <span>{item.label}</span>
-                    {item.at ? (
-                      <time className="text-xs font-normal text-[var(--color-text-muted)]">
-                        {formatBriefTime(item.at)}
-                      </time>
+            {node.items
+              .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
+              .map((item, index) => (
+                <li
+                  key={`${item.ref ? briefRefKey(item.ref) : item.label}:${item.at ?? ''}`}
+                  className="grid grid-cols-[18px_1fr] gap-2 py-2"
+                >
+                  <div className="flex flex-col items-center">
+                    <Clock3 className="size-3.5 text-[var(--color-accent-2)]" />
+                    {index < node.items.length - 1 ? (
+                      <span className="mt-1 w-px flex-1 bg-[var(--color-border)]" />
                     ) : null}
                   </div>
-                  {item.detail ? (
-                    <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
-                      {item.detail}
-                    </p>
-                  ) : null}
-                  <BriefActions
-                    actions={item.actions}
-                    sourceRef={item.ref}
-                    compact
-                    onAction={(action, payload) => context.onAction(action, payload, item.ref)}
-                  />
-                </div>
-              </li>
-            ))}
+                  <div>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-medium">
+                      <span>{item.label}</span>
+                      {item.at ? (
+                        <time className="text-xs font-normal text-[var(--color-text-muted)]">
+                          {formatBriefTime(item.at)}
+                        </time>
+                      ) : null}
+                    </div>
+                    {item.detail ? (
+                      <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
+                        {item.detail}
+                      </p>
+                    ) : null}
+                    <BriefActions
+                      actions={item.actions}
+                      sourceRef={item.ref}
+                      compact
+                      onAction={(action, payload) => context.onAction(action, payload, item.ref)}
+                    />
+                  </div>
+                </li>
+              ))}
           </ol>
         </section>
       );
@@ -456,42 +458,48 @@ function BriefLeaf({
         <section className={cn('space-y-3', nodeClass(node))}>
           <h3 className="font-display text-lg font-semibold">{node.title}</h3>
           <div className="divide-y divide-[var(--color-border)]">
-            {node.items.map((item) => {
-              const refKey = item.ref ? briefRefKey(item.ref) : '';
-              // Precedence: the user's optimistic click, then the live record
-              // this item is bound to, then the state at composition time.
-              const checked =
-                context.completedRefs.get(refKey) ??
-                (refKey ? context.entities.get(refKey)?.completed : undefined) ??
-                item.checked;
-              return (
-                <div
-                  key={`${refKey || item.label}:${item.action?.action ?? ''}:${item.detail ?? ''}`}
-                  className="flex items-start gap-2.5 py-2.5"
-                >
-                  <button
-                    type="button"
-                    aria-label={checked ? `Reopen ${item.label}` : `Complete ${item.label}`}
-                    disabled={!item.action}
-                    onClick={() =>
-                      item.action &&
-                      context.onAction(item.action, { ...item.action.payload, completed: !checked }, item.ref)
-                    }
-                    className="mt-0.5 text-[var(--color-accent)] disabled:text-[var(--color-text-faint)]"
+            {node.items
+              .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
+              .map((item) => {
+                const refKey = item.ref ? briefRefKey(item.ref) : '';
+                // Precedence: the user's optimistic click, then the live record
+                // this item is bound to, then the state at composition time.
+                const checked =
+                  context.completedRefs.get(refKey) ??
+                  (refKey ? context.entities.get(refKey)?.completed : undefined) ??
+                  item.checked;
+                return (
+                  <div
+                    key={`${refKey || item.label}:${item.action?.action ?? ''}:${item.detail ?? ''}`}
+                    className="flex items-start gap-2.5 py-2.5"
                   >
-                    {checked ? <CircleCheck className="size-4" /> : <Circle className="size-4" />}
-                  </button>
-                  <div className="min-w-0">
-                    <p className={cn('text-sm font-medium', checked && 'line-through opacity-60')}>
-                      {item.label}
-                    </p>
-                    {item.detail ? (
-                      <p className="text-xs text-[var(--color-text-muted)]">{item.detail}</p>
-                    ) : null}
+                    <button
+                      type="button"
+                      aria-label={checked ? `Reopen ${item.label}` : `Complete ${item.label}`}
+                      disabled={!item.action}
+                      onClick={() =>
+                        item.action &&
+                        context.onAction(
+                          item.action,
+                          { ...item.action.payload, completed: !checked },
+                          item.ref,
+                        )
+                      }
+                      className="mt-0.5 text-[var(--color-accent)] disabled:text-[var(--color-text-faint)]"
+                    >
+                      {checked ? <CircleCheck className="size-4" /> : <Circle className="size-4" />}
+                    </button>
+                    <div className="min-w-0">
+                      <p className={cn('text-sm font-medium', checked && 'line-through opacity-60')}>
+                        {item.label}
+                      </p>
+                      {item.detail ? (
+                        <p className="text-xs text-[var(--color-text-muted)]">{item.detail}</p>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </section>
       );
@@ -630,35 +638,41 @@ function BriefPlan({
         id={node.id ?? `brief-plan-${node.title}`}
         title={node.title}
         description={node.description}
-        todos={node.items.map((item) => ({
-          id: item.id,
-          label: item.label,
-          description: item.description,
-          status: item.status,
-        }))}
+        todos={node.items
+          .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
+          .map((item) => ({
+            id: item.id,
+            label: item.label,
+            description: item.description,
+            status: item.status,
+          }))}
         maxVisibleTodos={8}
         className="max-w-none"
       />
       {node.items.some((item) => item.action) ? (
         <div className="divide-y divide-[var(--color-border)]">
-          {node.items.flatMap((item) =>
-            item.action ? (
-              <div
-                key={`${item.id}:${item.action.action}`}
-                className="flex items-center justify-between gap-3 py-2"
-              >
-                <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">{item.label}</span>
-                <BriefActions
-                  actions={[item.action]}
-                  sourceRef={item.ref}
-                  compact
-                  onAction={(action, payload) => context.onAction(action, payload, item.ref)}
-                />
-              </div>
-            ) : (
-              []
-            ),
-          )}
+          {node.items
+            .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
+            .flatMap((item) =>
+              item.action ? (
+                <div
+                  key={`${item.id}:${item.action.action}`}
+                  className="flex items-center justify-between gap-3 py-2"
+                >
+                  <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">
+                    {item.label}
+                  </span>
+                  <BriefActions
+                    actions={[item.action]}
+                    sourceRef={item.ref}
+                    compact
+                    onAction={(action, payload) => context.onAction(action, payload, item.ref)}
+                  />
+                </div>
+              ) : (
+                []
+              ),
+            )}
         </div>
       ) : null}
       <BriefActions

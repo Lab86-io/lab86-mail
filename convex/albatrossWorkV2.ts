@@ -30,11 +30,11 @@ import {
   stepNeedsCheck,
   stepVerification,
 } from '../lib/albatross/step-verification';
+import { isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
-import { recordCompletionEvent } from './albatrossWork';
 import { completeCardForWork } from './boards';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import { scheduleNarrativeSource } from './narrative';
@@ -43,6 +43,7 @@ import {
   albatrossMetricValidator,
   albatrossWorkShapeValidator as workShapeValidator,
 } from './schema';
+import { completeWorkInMutation, restoreWorkArtifacts } from './workCompletion';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -155,46 +156,6 @@ export const beginCapture = mutation({
  * tasks were checked, and capture-to-done time. This is the raw material for
  * the future progress page; it is stored on every finish, rendered nowhere yet.
  */
-async function recordWorkCompletion(ctx: MutationCtx, work: Doc<'albatrossIntents'>, ts: number) {
-  let tasksTotal: number | undefined;
-  let tasksCompleted: number | undefined;
-  if (work.primaryProjectId) {
-    // Bounded read: a metrics record is not worth an unbounded scan of a
-    // link-heavy project. 400 links comfortably covers 200 task links.
-    const links = await ctx.db
-      .query('albatrossProjectLinks')
-      .withIndex('by_user_project', (q) =>
-        q.eq('userId', work.userId).eq('projectId', work.primaryProjectId!),
-      )
-      .take(400);
-    const taskLinks = links.filter((link) => link.artifactKind === 'task').slice(0, 200);
-    if (taskLinks.length) {
-      const cards = await Promise.all(
-        taskLinks.map(async (link) => {
-          const cardId = ctx.db.normalizeId('cards', link.artifactId);
-          const card = cardId ? await ctx.db.get(cardId) : null;
-          return card && card.userId === work.userId ? card : null;
-        }),
-      );
-      const present = cards.filter((card) => card !== null);
-      tasksTotal = present.length;
-      tasksCompleted = present.filter((card) => card!.completedAt).length;
-    }
-  }
-  await recordCompletionEvent(ctx, {
-    userId: work.userId,
-    artifactKind: 'intent',
-    artifactId: String(work._id),
-    completedAt: ts,
-    areaId: work.areaId,
-    intentId: String(work._id),
-    projectId: work.primaryProjectId,
-    shape: work.shape,
-    tasksTotal,
-    tasksCompleted,
-    msToComplete: Math.max(0, ts - (work.createdAt ?? work._creationTime)),
-  });
-}
 
 export const updateWorkState = mutation({
   args: {
@@ -213,16 +174,16 @@ export const updateWorkState = mutation({
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
+    if (args.state === 'done') return completeWorkInMutation(ctx, work, ts);
+    if (args.state === 'active' && isTerminalWork(work)) await restoreWorkArtifacts(ctx, work, ts);
     await ctx.db.patch(args.workId, {
       workState: args.state,
       status:
-        args.state === 'done'
-          ? 'done'
-          : args.state === 'archived'
-            ? 'archived'
-            : work.status === 'done' || work.status === 'archived'
-              ? 'ready'
-              : work.status,
+        args.state === 'archived'
+          ? 'archived'
+          : work.status === 'done' || work.status === 'archived'
+            ? 'ready'
+            : work.status,
       // Picking released work back up clears the release, exactly like
       // reopenWork — a revived albatross must not keep a release reason.
       ...(args.state === 'active' && work.workState === 'released'
@@ -236,11 +197,86 @@ export const updateWorkState = mutation({
         : {}),
       ...userTouch(ts),
     });
-    // The user's check is the completion. Record it once, on the transition.
-    if (args.state === 'done' && work.workState !== 'done') {
-      await recordWorkCompletion(ctx, work, ts);
-    }
+    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(work._id));
     return { previousState: work.workState || 'active', state: args.state };
+  },
+});
+
+export const completeWork = mutation({
+  args: { ...callerArgs, workId: v.id('albatrossIntents'), claim: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const work = await requireWork(ctx, args.workId, userId);
+    const claim = bounded(args.claim, 2_000);
+    if (!claim) throw new Error('A completion statement is required.');
+    const ts = now();
+    const dedupeKey = `user-completion:${String(work._id)}`;
+    const existing = await ctx.db
+      .query('albatrossEvidence')
+      .withIndex('by_user_dedupe', (q) => q.eq('userId', userId).eq('dedupeKey', dedupeKey))
+      .first();
+    if (!existing || workLifecycle(work) !== 'done') {
+      const evidence = {
+        userId,
+        targetKind: 'work' as const,
+        targetId: String(work._id),
+        sourceKind: 'chat' as const,
+        sourceId: dedupeKey,
+        title: 'Completion confirmed by you',
+        claim,
+        summary: claim,
+        trust: 'confirmed' as const,
+        confidence: 1,
+        weight: 1,
+        dedupeKey,
+        occurredAt: ts,
+        searchText: claim,
+        updatedAt: ts,
+      };
+      if (existing) await ctx.db.patch(existing._id, evidence);
+      else await ctx.db.insert('albatrossEvidence', { ...evidence, createdAt: ts });
+      await ctx.db.patch(work._id, { lastEvidenceAt: ts });
+    }
+    const result = await completeWorkInMutation(
+      ctx,
+      { ...work, lastEvidenceAt: !existing || workLifecycle(work) !== 'done' ? ts : work.lastEvidenceAt },
+      ts,
+    );
+    return { ...result, title: work.title || work.rawText };
+  },
+});
+
+/** Small live overlay for stored web briefs; no generated prose or history is rewritten. */
+export const inactiveBriefRefs = query({
+  args: { ...callerArgs, refs: v.array(v.object({ kind: v.string(), id: v.string() })) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const inactive: string[] = [];
+    for (const ref of args.refs.slice(0, 100)) {
+      if (ref.kind === 'work') {
+        const id = ctx.db.normalizeId('albatrossIntents', ref.id);
+        const work = id ? await ctx.db.get(id) : null;
+        if (work?.userId === userId && isTerminalWork(work)) inactive.push(ref.id);
+        const projectId = ctx.db.normalizeId('albatrossProjects', ref.id);
+        const project = projectId ? await ctx.db.get(projectId) : null;
+        if (project?.userId === userId && project.status !== 'active') inactive.push(ref.id);
+      } else if (ref.kind === 'task' || ref.kind === 'card') {
+        const id = ctx.db.normalizeId('cards', ref.id);
+        const card = id ? await ctx.db.get(id) : null;
+        if (card?.userId !== userId) continue;
+        if (card.completedAt || card.retiredAt) {
+          inactive.push(ref.id);
+          continue;
+        }
+        const workId =
+          typeof card.source?.intentId === 'string'
+            ? ctx.db.normalizeId('albatrossIntents', card.source.intentId)
+            : null;
+        const work = workId ? await ctx.db.get(workId) : null;
+        if (work?.userId === userId && isTerminalWork(work)) inactive.push(ref.id);
+      }
+    }
+    return inactive;
   },
 });
 
@@ -311,7 +347,7 @@ export const reopenWork = mutation({
   args: { ...callerArgs, workId: v.id('albatrossIntents') },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
+    const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
     await ctx.db.patch(args.workId, {
       workState: 'active',
@@ -322,6 +358,7 @@ export const reopenWork = mutation({
       reviewAt: undefined,
       ...userTouch(ts),
     });
+    await restoreWorkArtifacts(ctx, work, ts);
     return { reopenedAt: ts };
   },
 });
@@ -1114,17 +1151,7 @@ export const attachProof = mutation({
       mayCloseAutomatically(updatedContract, evidence) &&
       !evidence.some((item) => item.trust === 'rejected')
     ) {
-      await ctx.db.patch(args.workId, {
-        workState: 'done',
-        status: 'done',
-        agentState: 'idle',
-        updatedAt: ts,
-      });
-      await recordWorkCompletion(
-        ctx,
-        { ...work, workState: 'done', status: 'done', agentState: 'idle', updatedAt: ts },
-        ts,
-      );
+      await completeWorkInMutation(ctx, { ...work, lastEvidenceAt: ts }, ts);
     }
     return evidenceId;
   },
@@ -1345,7 +1372,8 @@ export const setAgentState = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
+    const work = await requireWork(ctx, args.workId, userId);
+    if (isTerminalWork(work)) return;
     const ts = now();
     await ctx.db.patch(args.workId, {
       agentState: args.agentState,
@@ -1393,7 +1421,8 @@ export const upsertQuestion = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
+    const work = await requireWork(ctx, args.workId, userId);
+    if (isTerminalWork(work)) return;
     const dedupeKey = questionDedupeKey({
       workId: String(args.workId),
       kind: args.kind,
@@ -1546,14 +1575,8 @@ export const answerQuestion = mutation({
           : entry,
       );
       if (!shouldAdvanceWorkAfterAnswer(question.kind, answer)) {
-        await ctx.db.patch(question.workId, {
-          workState: 'done',
-          status: 'done',
-          agentState: 'idle',
-          questions: legacyQuestions,
-          ...userTouch(ts),
-        });
-        if (work.workState !== 'done') await recordWorkCompletion(ctx, work, ts);
+        await ctx.db.patch(question.workId, { questions: legacyQuestions });
+        await completeWorkInMutation(ctx, work, ts);
       } else {
         shouldAdvance = true;
         await ctx.db.patch(question.workId, {

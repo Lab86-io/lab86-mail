@@ -53,8 +53,10 @@ export function BriefCanvas({
   footer,
   embedded = false,
   noiseCount,
+  hideInactive = false,
 }: {
   value: unknown;
+  hideInactive?: boolean;
   composing?: boolean;
   onChanged?: () => void;
   masthead?: boolean;
@@ -83,6 +85,32 @@ export function BriefCanvas({
   // editions keep the editorial grid.
   const letterKind = useMemo(() => briefLetterKind(document), [document]);
   const refs = useMemo(() => collectBriefRefs(document), [document]);
+  const actionableRefs = useMemo(
+    () => refs.filter((ref) => ['work', 'task', 'card'].includes(ref.kind)),
+    [refs],
+  );
+  const inactive = useQuery({
+    queryKey: ['brief-v2', 'inactive', actionableRefs.map((ref) => `${ref.kind}:${ref.id}`).join('|')],
+    enabled: hideInactive && actionableRefs.length > 0,
+    refetchInterval: 5_000,
+    queryFn: async () => {
+      const batches = Array.from({ length: Math.ceil(actionableRefs.length / 100) }, (_, index) =>
+        actionableRefs.slice(index * 100, (index + 1) * 100),
+      );
+      const results = await Promise.all(
+        batches.map(async (refs) => {
+          const response = await fetch('/api/brief/state', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ refs: refs.map(({ kind, id }) => ({ kind, id })) }),
+          });
+          if (!response.ok) throw new Error('Could not refresh brief state.');
+          return (await response.json()).inactive as string[];
+        }),
+      );
+      return results.flat();
+    },
+  });
   const [hiddenRefs, setHiddenRefs] = useState<Set<string>>(() => new Set());
   const [completedRefs, setCompletedRefs] = useState<Map<string, boolean>>(() => new Map());
   const [canvasReview, setCanvasReview] = useState<BriefActionV2 | null>(null);
@@ -266,7 +294,12 @@ export function BriefCanvas({
 
   const context: BriefNodeContext = {
     entities,
-    hiddenRefs,
+    hiddenRefs: new Set([
+      ...hiddenRefs,
+      ...(hideInactive
+        ? actionableRefs.filter((ref) => inactive.data?.includes(ref.id)).map(briefRefKey)
+        : []),
+    ]),
     completedRefs,
     onAction: runAction,
     onCanvasAction: (actionName, payload) => {

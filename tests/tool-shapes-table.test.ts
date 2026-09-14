@@ -249,6 +249,12 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     'work',
   ],
   [
+    'albatross_complete_work',
+    { workId: 'w1', claim: 'The repair is done.' },
+    { ok: true, workId: 'w1', state: 'done', summary: 'Finished' },
+    'receipt',
+  ],
+  [
     'albatross_record_progress',
     { workId: 'w1', claim: 'Done step 1' },
     { ok: true, workId: 'w1', claim: 'Done step 1', summary: 'Recorded' },

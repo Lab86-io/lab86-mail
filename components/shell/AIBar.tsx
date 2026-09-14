@@ -258,10 +258,16 @@ export function AssistantChat({
 
   // The browser's IANA timezone rides along so the agent (and calendar
   // tools) interpret wall-clock times like "2:30" in the user's zone.
+  const activeRunId = useRef<string | null>(null);
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          activeRunId.current = response.headers.get('x-agent-run-id');
+          return response;
+        },
         body: () => ({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           briefResponse: useClientStore.getState().assistantBriefContext?.reference,
@@ -291,6 +297,12 @@ export function AssistantChat({
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
   const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
     transport: previewTransport ?? transport,
+    onFinish: () => {
+      void qc.invalidateQueries({ queryKey: ['brief-v2', 'inactive'] });
+    },
+    onError: (cause) => {
+      console.warn('[agent-client-error]', { runId: activeRunId.current, error: cause.message });
+    },
     // Auto-continue ONLY after the user answers a human-in-the-loop tool call
     // (ask_user, ask_approval, ask_parameters, ask_preferences,
     // ask_question_flow). The built-in
@@ -998,13 +1010,17 @@ export function AssistantChat({
             ) : null}
             {error ? (
               <div className="space-y-1.5 rounded-md border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 px-2.5 py-1.5 text-[11px] text-[var(--color-danger)]">
-                <div>{error.message}</div>
+                <div>
+                  {/network|fetch|connection|terminated/i.test(error.message)
+                    ? 'Connection interrupted. Continue checks saved work before proceeding.'
+                    : error.message}
+                </div>
                 {/* Long conversations can hit a limit mid-turn; let the user
                     pick up where it stopped (the server windows the transcript,
                     so the retry fits). */}
                 <button
                   type="button"
-                  onClick={() => regenerate()}
+                  onClick={() => sendMessage(undefined, { body: { continuation: true } })}
                   className="rounded border border-[var(--color-danger)]/40 px-2 py-0.5 font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/15"
                 >
                   Continue

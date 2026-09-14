@@ -14,6 +14,7 @@ import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
+import { executeCheckpointedTool, toolExecutionKey } from './execution';
 import {
   agentProviderOptions,
   canFailOverAgentRuntime,
@@ -167,6 +168,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'albatross_list_sprints',
   'albatross_preview_undo_unresolved',
   'albatross_get_work_context',
+  'albatross_complete_work',
   'albatross_record_progress',
   'albatross_replan_work',
   'albatross_split_work',
@@ -300,14 +302,15 @@ export function stripPatterns<T>(value: T): T {
 
 export function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
   const lifted: Record<string, any> = {};
+  const rejectedInputs = new Set<string>();
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     lifted[name] = aiTool({
-      description: t.description + (t.mutating ? ' (mutating — surfaces a confirmation in the UI)' : ''),
+      description: t.description,
       inputSchema: modelInputSchema(t.input),
       execute: async (args: unknown) => {
         const context = getAiRequestContext();
-        const result = await withToolTimeout(
+        const invoke = (key?: string) =>
           invokeTool(t, args ?? {}, {
             agent: 'ai',
             userId: context.userId,
@@ -315,10 +318,43 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
             userName: context.userName,
             operationBatchId,
             userTimezone,
-          }),
-          name,
-        );
-        return result;
+            runId: context.runId,
+            toolExecutionKey: key,
+          });
+        // Parse before claiming: malformed arguments must never create an uncertain write.
+        const parsed = t.input.safeParse(args ?? {});
+        if (!parsed.success) {
+          const key = toolExecutionKey(name, args);
+          if (rejectedInputs.has(key))
+            throw new Error(
+              `The same ${name} arguments were already rejected. Correct the reported fields before retrying; no operation ran.`,
+            );
+          rejectedInputs.add(key);
+          return invoke(); // registry emits repairable, audited field feedback
+        }
+        const pending =
+          context.runId && context.userId && t.mutating
+            ? executeCheckpointedTool(
+                {
+                  userId: context.userId,
+                  runId: context.runId,
+                  name,
+                  args: parsed.data,
+                  mutating: t.mutating,
+                },
+                (key) => invoke(key),
+              )
+            : invoke();
+        try {
+          return await withToolTimeout(pending, name);
+        } catch (error) {
+          console.warn('[agent-tool-error]', {
+            runId: context.runId,
+            tool: name,
+            error: safeAuthErrorText(error),
+          });
+          throw error;
+        }
       },
     });
   }
@@ -522,7 +558,7 @@ export function isAuthError(error: any): boolean {
 
 function authFailureResult(error: any) {
   const text =
-    'Your AI provider rejected the API key (auth error). Open Settings → AI and re-enter a valid OpenRouter, OpenAI, or Anthropic key — then retry. Nothing was changed.';
+    'Your AI provider rejected the API key (auth error). Open Settings → AI and re-enter a valid OpenRouter, OpenAI, or Anthropic key — then continue.';
   console.error(`[ai] auth failure: ${safeAuthErrorText(error)}`);
   return {
     text,
@@ -591,6 +627,7 @@ export async function forwardAgentStream(
   const pending: UiChunk[] = [];
   const calls = new Map<string, { toolName: string; input?: unknown }>();
   let forwarded = false;
+  let forwardedError: unknown;
   const emit = (chunk: UiChunk) => {
     if (!forwarded && CONTENT_CHUNK_TYPES.has(chunk.type)) {
       forwarded = true;
@@ -602,6 +639,7 @@ export async function forwardAgentStream(
   };
   for await (const chunk of chunks) {
     if (chunk.type === 'error') {
+      forwardedError = readError() ?? new Error(chunk.errorText);
       if (!forwarded) return { forwarded: false, error: readError() ?? new Error(chunk.errorText) };
       writer.write(chunk as any);
       continue;
@@ -628,7 +666,7 @@ export async function forwardAgentStream(
       }
     }
   }
-  return { forwarded, error: readError() };
+  return { forwarded, error: readError() ?? forwardedError };
 }
 
 export type ShapeResolver = (toolName: string, input: unknown, output: unknown) => ToolShape | null;
@@ -642,6 +680,7 @@ function writeTextOnly(writer: UiStreamWriter, id: string, text: string) {
 }
 
 interface AgentStreamOptions {
+  runId?: string;
   userId?: string | null;
   system: string;
   messages: ModelMessage[];
@@ -668,7 +707,10 @@ export function activeToolsForStep(
  * fails (or finishes empty) before any content was forwarded is dropped and
  * the next one starts. Resolves with the completed steps for post-turn work.
  */
-async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptions): Promise<any[]> {
+async function streamAgentTurn(
+  writer: UiStreamWriter,
+  options: AgentStreamOptions,
+): Promise<{ steps: any[]; failed: boolean }> {
   const feature = 'agent';
   const runtimes = await resolveAgentRuntimes({ userId: options.userId, speed: 'primary', feature });
   const promptCacheKey = options.userId ? `agent:${options.userId}` : undefined;
@@ -695,7 +737,13 @@ async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptio
       maxOutputTokens: maxOutputTokensForFeature(feature),
       providerOptions: agentProviderOptions(runtime, promptCacheKey),
       onError: ({ error }) => {
-        streamError = streamError ?? error;
+        streamError = error;
+        console.error('[agent-stream]', {
+          runId: options.runId,
+          provider: runtime.provider,
+          model: runtime.modelName,
+          error: safeAuthErrorText(error),
+        });
       },
     });
     const uiStream = result.toUIMessageStream({
@@ -703,10 +751,8 @@ async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptio
       sendFinish: false,
       sendReasoning: true,
       sendSources: true,
-      onError: (error) => {
-        streamError = streamError ?? error;
-        return errorText(error);
-      },
+      // This formatter also runs for recoverable tool errors. Only streamText.onError owns fatal state.
+      onError: (error) => safeAuthErrorText(error),
     });
     const outcome = await forwardAgentStream(writer, uiStream as AsyncIterable<UiChunk>, () => streamError);
     const steps = await Promise.resolve(result.steps).catch(() => [] as any[]);
@@ -721,7 +767,15 @@ async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptio
         !outcome.error,
         outcome.error ? errorText(outcome.error) : undefined,
       );
-      return steps;
+      console.info('[agent-run-finish]', {
+        runId: options.runId,
+        provider: runtime.provider,
+        model: runtime.modelName,
+        finishReason,
+        aborted: !!options.signal?.aborted,
+        error: outcome.error ? safeAuthErrorText(outcome.error) : undefined,
+      });
+      return { steps, failed: !!outcome.error || !!options.signal?.aborted };
     }
 
     lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
@@ -744,6 +798,7 @@ async function streamAgentTurn(writer: UiStreamWriter, options: AgentStreamOptio
 }
 
 export interface AgentRunOpts {
+  runId?: string;
   messages: ModelMessage[];
   /** Bias the system prompt with extra context (selected thread, focused account). */
   extraSystem?: string;
@@ -776,6 +831,7 @@ export function agentTimeContext(timezone: string, now = new Date()): string {
 }
 
 export async function runAgent({
+  runId = newOperationBatchId(),
   messages,
   extraSystem,
   userId,
@@ -791,14 +847,14 @@ export async function runAgent({
       'AI not configured: set OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or sign in and add an API key.',
     );
   }
-  const requestContext = { userId, userEmail, userName, agent: 'ai' as const };
+  const requestContext = { userId, userEmail, userName, runId, agent: 'ai' as const };
   // Memories are injected at conversation start so remembered facts and
   // preferences are ALWAYS in play — the recall tool remains for ad-hoc
   // lookups, but the agent never starts blind. Memories and narrative context
   // are independent reads, so they run together.
   // One batch id per agent turn: every mutating tool call inside this run
   // records its operation under it, forming a single undoable change-set.
-  const operationBatchId = newOperationBatchId();
+  const operationBatchId = runId;
   const timezone = userTimezone || 'UTC';
   const tools = liftToolsForAgent(operationBatchId, timezone);
 
@@ -811,10 +867,20 @@ export async function runAgent({
     steps,
     toUIMessageStreamResponse() {
       return createUIMessageStreamResponse({
+        headers: {
+          'x-agent-run-id': runId,
+          'x-accel-buffering': 'no',
+          'cache-control': 'no-cache, no-transform',
+        },
         stream: createUIMessageStream({
           execute: async ({ writer }) => {
             writer.write({ type: 'start' });
             let completed: any[] = [];
+            const heartbeat = setInterval(
+              () => writer.write({ type: 'data-agent-heartbeat', data: { runId }, transient: true }),
+              15_000,
+            );
+            console.info('[agent-run-start]', { runId });
             try {
               const memoryQuery = narrativeQueryFromMessages(messages);
               const [memories, narrative] = await Promise.all([
@@ -833,10 +899,11 @@ export async function runAgent({
                 .filter(Boolean)
                 .join('\n\n');
 
-              completed = await runWithAiRequestContext(requestContext, () =>
-                streamAgentTurn(writer, { userId, system, messages, tools, toolGroups, signal }),
+              const outcome = await runWithAiRequestContext(requestContext, () =>
+                streamAgentTurn(writer, { runId, userId, system, messages, tools, toolGroups, signal }),
               );
-              writer.write({ type: 'finish', finishReason: 'stop' });
+              completed = outcome.steps;
+              writer.write({ type: 'finish', finishReason: outcome.failed ? 'error' : 'stop' });
             } catch (err: any) {
               if (signal?.aborted) {
                 writer.write({ type: 'abort' });
@@ -859,12 +926,18 @@ export async function runAgent({
                 throw err;
               }
             } finally {
+              clearInterval(heartbeat);
+              console.info('[agent-run-end]', {
+                runId,
+                aborted: !!signal?.aborted,
+                completedSteps: completed.length,
+              });
               resolveSteps(completed);
             }
           },
           onError: (error) => {
-            console.error('[agent]', error);
-            return errorText(error);
+            console.error('[agent]', { runId, error: safeAuthErrorText(error) });
+            return safeAuthErrorText(error);
           },
         }),
       });

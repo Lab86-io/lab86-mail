@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { getAiRequestContext } from '../ai/context';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
@@ -14,6 +15,12 @@ import {
 import { assertModelWithinLimit } from './sheet-workbook';
 
 const documentsApi = (api as any).documents;
+function documentExecution() {
+  const context = getAiRequestContext();
+  return context.runId && context.toolExecutionKey
+    ? { runId: context.runId, key: context.toolExecutionKey }
+    : undefined;
+}
 
 const defaultDependencies = {
   convexMutation,
@@ -215,6 +222,7 @@ export async function updateDocument(input: {
     reason: input.reason,
     actor: input.actor,
     allowDowngrade: input.allowDowngrade,
+    execution: documentExecution(),
   });
 }
 
@@ -263,6 +271,7 @@ export async function createDocumentSuggestion(input: {
     {
       ...input,
       suggestionId,
+      execution: documentExecution(),
     },
   );
   return { ...result, suggestionId };

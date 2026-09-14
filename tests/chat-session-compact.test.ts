@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { compactMessage } from '../lib/store/chat-sessions';
 
 describe('compactMessage (persisted chat history)', () => {
-  test('keeps small tool outputs and completes interrupted server tools', () => {
+  test('keeps confirmed outputs and records interrupted server outcomes as unknown', () => {
     const message = compactMessage({
       role: 'assistant',
       parts: [
@@ -14,13 +14,15 @@ describe('compactMessage (persisted chat history)', () => {
           input: { query: 'x' },
           output: { threads: [] },
         },
-        // A server tool caught mid-flight by a save: render as completed.
+        // A server tool caught mid-flight by a save has an unconfirmed outcome.
         { type: 'tool-mark_read', toolCallId: 'c2', state: 'input-available', input: {} },
       ],
     });
     expect(message.parts[1].state).toBe('output-available');
     expect(message.parts[1].output).toEqual({ threads: [] });
-    expect(message.parts[2].state).toBe('output-available');
+    expect(message.parts[2].state).toBe('output-error');
+    expect(message.parts[2].errorText).toContain('outcome not confirmed');
+    expect(message.parts[2].output).toBeUndefined();
   });
 
   test('never rewrites an unanswered human-in-the-loop pause as answered', () => {

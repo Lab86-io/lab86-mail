@@ -419,11 +419,7 @@ export async function generateObjectForCurrentUser<T>(
             ? {
                 openai: {
                   strictJsonSchema: true,
-                  ...(reasoningEffort
-                    ? { reasoningEffort }
-                    : speed === 'classify' && /gpt-5\.6-luna/.test(runtime.modelName)
-                      ? { reasoningEffort: 'none' }
-                      : {}),
+                  ...(reasoningEffort ? { reasoningEffort } : {}),
                 },
               }
             : undefined),

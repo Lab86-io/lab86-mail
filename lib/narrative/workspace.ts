@@ -203,5 +203,8 @@ export function hydrateWorkspace(
       work,
     };
   });
-  return { enabled: true, stamp, mode: threads.length ? mode : 'empty', threads };
+  const active = threads.filter(
+    (thread) => !thread.work || !['done', 'released', 'archived'].includes(thread.work.state),
+  );
+  return { enabled: true, stamp, mode: active.length ? mode : 'empty', threads: active };
 }

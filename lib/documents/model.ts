@@ -88,10 +88,26 @@ const sheetTabSchema = z.object({
 const deckElementSchema = z.object({
   id: z.string().min(1).max(120),
   type: z.enum(['text', 'shape']),
-  x: z.number().min(0).max(100),
-  y: z.number().min(0).max(100),
-  width: z.number().min(1).max(100),
-  height: z.number().min(1).max(100),
+  x: z
+    .number()
+    .min(0)
+    .max(100)
+    .describe('Left edge as percent of slide width (0–100). x + width must not exceed 100.'),
+  y: z
+    .number()
+    .min(0)
+    .max(100)
+    .describe('Top edge as percent of slide height (0–100); never negative. y + height must not exceed 100.'),
+  width: z
+    .number()
+    .min(1)
+    .max(100)
+    .describe('Width as percent of slide width, minimum 1; keep inside canvas.'),
+  height: z
+    .number()
+    .min(1)
+    .max(100)
+    .describe('Height as percent of slide height, minimum 1 even for accent lines; keep inside canvas.'),
   text: z.string().max(50_000).optional(),
   role: z.enum(['title', 'subtitle', 'body', 'caption', 'shape']).optional(),
   fill: z.string().max(80).optional(),

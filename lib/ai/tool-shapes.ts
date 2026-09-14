@@ -957,6 +957,18 @@ const MAPPERS: Record<string, Mapper> = {
       actions: [],
     };
   },
+  albatross_complete_work: (input, output, tool) => {
+    const workId = str(output.workId) || str(input.workId);
+    return receipt(
+      tool,
+      input,
+      output,
+      'albatross',
+      workId ? [{ kind: 'open_work', workId }] : [],
+      { workId },
+      str(output.summary) || str(output.claim) || undefined,
+    );
+  },
   albatross_record_progress: (input, output, tool) => {
     const workId = str(output.workId) || str(input.workId);
     return receipt(

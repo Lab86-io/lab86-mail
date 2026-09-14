@@ -273,6 +273,7 @@ const USER_BULK_TABLES = [
   'albatrossLapses',
   'albatrossMetricEntries',
   'mobileCommands',
+  'agentToolExecutions',
   'mobileSyncChanges',
   'mobileSyncTombstones',
   'nativePushDeliveries',

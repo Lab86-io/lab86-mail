@@ -1,7 +1,10 @@
 import { v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { recordDocumentEffect } from './agentExecution';
 import { now, requireInternalSecret } from './lib';
+
+const executionValidator = v.optional(v.object({ runId: v.string(), key: v.string() }));
 
 const kindValidator = v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck'));
 const importSourceValidator = v.object({
@@ -277,6 +280,7 @@ export const update = mutation({
     reason: v.optional(v.string()),
     actor: v.optional(v.union(v.literal('user'), v.literal('ai'), v.literal('system'))),
     allowDowngrade: v.optional(v.boolean()),
+    execution: executionValidator,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -300,6 +304,7 @@ export const update = mutation({
     const model = args.model ?? document.model;
     const sourceRefs = args.sourceRefs ?? document.sourceRefs;
     const revision = document.currentRevision + 1;
+    await recordDocumentEffect(ctx, args.userId, args.execution, { documentId: args.documentId, revision });
     const ts = now();
     await ctx.db.patch(document._id, {
       title,
@@ -440,6 +445,7 @@ export const createSuggestion = mutation({
     internalSecret: v.optional(v.string()),
     userId: v.string(),
     suggestionId: v.string(),
+    execution: executionValidator,
     documentId: v.string(),
     title: v.string(),
     description: v.string(),
@@ -465,6 +471,10 @@ export const createSuggestion = mutation({
         createdAt: existing[0].createdAt,
       };
     }
+    await recordDocumentEffect(ctx, args.userId, args.execution, {
+      documentId: args.documentId,
+      suggestionId: args.suggestionId,
+    });
     const ts = now();
     await ctx.db.insert('documentSuggestions', {
       userId: args.userId,
