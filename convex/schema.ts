@@ -72,6 +72,27 @@ const albatrossConfirmationRef = v.object({
 
 export default defineSchema({
   ...narrativeTables,
+  agentToolExecutions: defineTable({
+    userId: v.string(),
+    runId: v.string(),
+    key: v.string(),
+    toolName: v.string(),
+    mutating: v.boolean(),
+    status: v.union(v.literal('running'), v.literal('succeeded'), v.literal('failed'), v.literal('unknown')),
+    output: v.optional(v.any()),
+    error: v.optional(v.string()),
+    effect: v.optional(
+      v.object({
+        documentId: v.string(),
+        revision: v.optional(v.number()),
+        suggestionId: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user_run_key', ['userId', 'runId', 'key'])
+    .index('by_user', ['userId']),
   users: defineTable({
     clerkUserId: v.string(),
     email: v.string(),
@@ -533,6 +554,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
+    completedByWorkId: v.optional(v.string()),
     archivedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
@@ -1991,6 +2013,8 @@ export default defineSchema({
     assignees: v.optional(v.array(v.string())),
     dueAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
+    retiredAt: v.optional(v.number()),
+    retiredByWorkId: v.optional(v.string()),
     order: v.number(),
     // Attachments: pasted links carry url; uploaded files carry a Convex
     // storage id (URL resolved at read time).
@@ -2038,6 +2062,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index('by_user_source_intent', ['userId', 'source.intentId'])
     .index('by_board', ['boardId'])
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
     .index('by_column_order', ['columnId', 'order'])

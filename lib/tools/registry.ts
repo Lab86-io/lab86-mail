@@ -12,6 +12,8 @@ export interface ToolContext {
   // the UI can present the turn as a single change-set (lib/ai/operations.ts).
   operationBatchId?: string;
   chatId?: string;
+  runId?: string;
+  toolExecutionKey?: string;
   // IANA timezone for interpreting naive wall-clock timestamps in tool args.
   userTimezone?: string;
 }
@@ -58,6 +60,8 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
       agent: ctx.agent,
       operationBatchId: ctx.operationBatchId,
       chatId: ctx.chatId,
+      runId: ctx.runId,
+      toolExecutionKey: ctx.toolExecutionKey,
       userTimezone: ctx.userTimezone,
     },
     async () => {
@@ -66,6 +70,11 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
         parsed = tool.input.parse(args);
       } catch (err: any) {
         const issue = err?.issues?.[0];
+        console.warn('[agent-tool-validation]', {
+          runId: ctx.runId,
+          tool: tool.name,
+          issues: err?.issues?.map((entry: any) => ({ path: entry.path, code: entry.code })),
+        });
         throw new ToolValidationError(
           issue
             ? `Invalid args for ${tool.name}: ${issue.path.join('.')} — ${issue.message}`

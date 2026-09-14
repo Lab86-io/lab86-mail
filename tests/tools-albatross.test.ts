@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import * as albatross from '../lib/tools/albatross';
+import { invokeTool } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
 
 const apiMock = {
@@ -44,6 +45,7 @@ const apiMock = {
   },
   albatrossWorkV2: {
     workDetail: 'albatrossWorkV2.workDetail',
+    completeWork: 'albatrossWorkV2.completeWork',
     attachProof: 'albatrossWorkV2.attachProof',
     answerQuestion: 'albatrossWorkV2.answerQuestion',
     setAgentState: 'albatrossWorkV2.setAgentState',
@@ -75,6 +77,7 @@ let sequence = 0;
 async function convexMutationMock(fn: string, args: any) {
   mutationCalls.push({ fn, args });
   sequence += 1;
+  if (fn === apiMock.albatrossWorkV2.completeWork) return { state: 'done', title: 'Monro' };
   if (fn === apiMock.albatrossWorkV2.attachProof && workDetailFixture) {
     workDetailFixture = {
       ...workDetailFixture,
@@ -1076,4 +1079,45 @@ describe('Albatross tools', () => {
       ),
     ).toBeUndefined();
   });
+});
+
+test('explicit completion uses the atomic transition and never generates a plan', async () => {
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossCompleteWork, args, ctx), {
+    workId: 'monro',
+    claim: 'The tire is repaired.',
+  });
+  expect(result).toMatchObject({ ok: true, state: 'done', workId: 'monro' });
+  expect(mutationCalls).toHaveLength(1);
+  expect(mutationCalls[0].fn).toBe(apiMock.albatrossWorkV2.completeWork);
+  expect(toolInvocations).toHaveLength(0);
+});
+
+test('a completed outcome makes a replan a harmless no-op before writing agent state', async () => {
+  workDetailFixture = { work: { _id: 'monro', title: 'Monro', workState: 'done', status: 'done' } };
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossReplanWork, args, ctx), {
+    workId: 'monro',
+    reason: 'The outcome is done',
+  });
+  expect(result).toMatchObject({ ok: true, changed: false, actionsApplied: 0 });
+  expect(mutationCalls).toHaveLength(0);
+});
+
+test('a failed optional attachment returns saved progress and an attachment warning', async () => {
+  workDetailFixture = { work: { _id: 'monro', workState: 'active', status: 'ready' } };
+  albatross.__setAlbatrossToolDepsForTest({
+    api: apiMock as any,
+    convexQuery: convexQueryMock as any,
+    convexMutation: (async (fn: any, args: any) => {
+      if (args.sourceKind === 'mail_thread') throw new Error('Missing provider thread');
+      return convexMutationMock(fn, args);
+    }) as any,
+  });
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+    workId: 'monro',
+    claim: 'Appointment booked',
+    evidence: [{ sourceKind: 'mail_thread', sourceId: 'mail:account:thread', title: 'Booking' }],
+  });
+  expect(result).toMatchObject({ ok: true, evidenceRecorded: 1, state: 'active' });
+  expect(result.warnings[0]).toContain('Booking');
+  expect(workDetailFixture.evidence).toHaveLength(1);
 });

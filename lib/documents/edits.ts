@@ -27,6 +27,16 @@ export const documentEditOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('block_update'), blockId: id, patch: blockPatch }).strict(),
   z.object({ op: z.literal('block_remove'), blockId: id }).strict(),
   z.object({ op: z.literal('block_move'), blockId: id, ...position }).strict(),
+  z
+    .object({
+      op: z.literal('deck_restyle'),
+      theme: z.enum(['dark', 'light']),
+      accent: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default('#7c83ff'),
+    })
+    .strict(),
   z.object({ op: z.literal('slide_insert'), slide, ...position }).strict(),
   z
     .object({
@@ -174,6 +184,22 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
     } else {
       if (model.kind !== 'deck') throw new Error('Slide and element edits require a presentation.');
       switch (operation.op) {
+        case 'deck_restyle': {
+          // Theme every slide without inventing geometry or replacing its content.
+          for (const target of model.slides) {
+            target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
+            for (const item of target.elements) {
+              if (item.type === 'shape') {
+                item.fill = operation.accent;
+                continue;
+              }
+              item.color =
+                item.role === 'title' ? operation.accent : operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+              item.fontSize ??= item.role === 'title' ? 28 : 16;
+            }
+          }
+          break;
+        }
         case 'slide_insert':
           operation.slide.elements.forEach(assertFitsCanvas);
           insert(model.slides, operation.slide, operation.afterId);

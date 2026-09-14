@@ -376,7 +376,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements (use deck_restyle for a consistent dark/light theme across all slides without coordinate generation; element coordinates are percentages 0–100, width/height at least 1), or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({

@@ -30,6 +30,7 @@ import {
   shouldCoalesceAreaReindex,
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
+import { isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -1609,7 +1610,7 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
   const cardId = ctx.db.normalizeId('cards', link.artifactId);
   if (!cardId) return null;
   const card = await ctx.db.get(cardId);
-  if (!card || card.userId !== userId) return null;
+  if (!card || card.userId !== userId || card.retiredAt) return null;
   return {
     cardId: card._id,
     boardId: card.boardId,
@@ -1758,9 +1759,7 @@ export const areaHome = query({
     const activeIntents = recentIntents
       .filter(
         (intent) =>
-          String(intent.primaryAreaId ?? intent.areaId ?? '') === areaIdStr &&
-          intent.status !== 'done' &&
-          intent.status !== 'archived',
+          String(intent.primaryAreaId ?? intent.areaId ?? '') === areaIdStr && !isTerminalWork(intent),
       )
       .slice(0, AREA_HOME_PLAN_CAP);
     const intentPlans = await Promise.all(

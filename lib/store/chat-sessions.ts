@@ -30,23 +30,23 @@ const MAX_PART_JSON_BYTES = 4_000;
 const MAX_SESSIONS_LISTED = 30;
 const MAX_SESSIONS_SCANNED = 1_000;
 
-// Tool outputs can carry whole thread bodies; history only needs the shape
-// (name, state, input) for the step cards, so big payloads are dropped.
-// Server tools stuck at 'input-available' are rewritten as completed so
-// restored history does not render spinners — EXCEPT human-in-the-loop pauses:
-// faking those as answered makes a restored session auto-continue and re-run
-// every mutating tool. An unanswered pause must persist as a pause.
+// Keep confirmed results and uncertainty distinct when restoring interrupted chat.
+// HITL questions retain their pending state; an interrupted server call is not a success.
 export function compactMessage(message: any): any {
   const parts = Array.isArray(message?.parts)
     ? message.parts.map((part: any) => {
         const type = String(part?.type || '');
         if (type !== 'dynamic-tool' && !type.startsWith('tool-')) return part;
         const isHitlPause = part.state === 'input-available' && isHitlToolName(toolPartName(part));
+        const interrupted = ['input-available', 'input-streaming'].includes(part.state) && !isHitlPause;
         const compact: Record<string, unknown> = {
           type: part.type,
           toolName: part.toolName,
           toolCallId: part.toolCallId,
-          state: part.state === 'input-available' && !isHitlPause ? 'output-available' : part.state,
+          state: interrupted ? 'output-error' : part.state,
+          errorText: interrupted
+            ? 'Interrupted: outcome not confirmed. Continue checks saved work before retrying.'
+            : part.errorText,
           input: part.input,
         };
         try {

@@ -8,6 +8,7 @@ import {
   progressFromPlanCompletions,
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
+import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -351,6 +352,7 @@ export const updateIntent = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    if (isTerminalWork(intent) && (args.status || args.planError !== undefined)) return args.intentId;
     const ts = now();
     const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
@@ -499,6 +501,7 @@ export const answerQuestions = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    assertWorkOpen(intent);
     const ts = now();
     const byId = new Map(
       args.answers.map((entry) => [
@@ -566,6 +569,7 @@ export const savePlan = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    assertWorkOpen(intent);
     const ts = now();
     const openQuestions = (args.questions || []).filter((question) => !question.answer);
     const planStatus = openQuestions.length ? 'needs_answers' : 'ready';
@@ -906,6 +910,7 @@ export const markPlanApplied = mutation({
     const userId = await resolveUserId(ctx, args);
     const plan = await requirePlan(ctx, args.planId, userId);
     const intent = await ctx.db.get(plan.intentId);
+    if (intent) assertWorkOpen(intent);
     if (!intent || intent.userId !== userId) throw new Error('Intent not found.');
     if (intent.pendingPlanId && intent.pendingPlanId !== plan._id) {
       throw new Error('A newer plan revision is waiting to be applied.');

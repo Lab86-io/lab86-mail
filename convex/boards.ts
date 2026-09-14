@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { assertWorkOpen } from '../lib/albatross/work-lifecycle';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -479,6 +480,15 @@ export const createCard = mutation({
     await requireBoard(ctx, args.boardId, userId, 'member');
     const column = await ctx.db.get(args.columnId);
     if (!column || column.boardId !== args.boardId) throw new Error('Column not found on board.');
+    const sourceWorkId =
+      typeof args.source?.intentId === 'string'
+        ? ctx.db.normalizeId('albatrossIntents', args.source.intentId)
+        : null;
+    if (sourceWorkId) {
+      const work = await ctx.db.get(sourceWorkId);
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
+    }
     const assignees = await normalizeAssignees(ctx, args.boardId, args.assignees);
     const siblings = await ctx.db
       .query('cards')
@@ -954,7 +964,9 @@ export const listDueCards = query({
         q.eq('userId', userId).gte('dueAt', args.startAt).lt('dueAt', args.endAt),
       )
       .take(1000);
-    return rows.map((card) => ({ ...snapshotCard(card), cardId: card._id }));
+    return rows
+      .filter((card) => !card.retiredAt)
+      .map((card) => ({ ...snapshotCard(card), cardId: card._id }));
   },
 });
 
@@ -976,7 +988,7 @@ export const listReportCards = query({
       .take(cap);
     const filtered = rows
       .filter((card) => {
-        return !card.completedAt;
+        return !card.completedAt && !card.retiredAt;
       })
       .sort((a, b) => {
         const aDone = a.completedAt ? 1 : 0;
@@ -1026,11 +1038,13 @@ async function boardPayload(ctx: QueryCtx | MutationCtx, board: any, role: Role)
   cards.sort((a, b) => a.order - b.order);
   const ownerEmail = await actorEmail(ctx, board.ownerUserId);
   const cardPayloads = await Promise.all(
-    cards.map(async (card) => ({
-      cardId: card._id,
-      ...snapshotCard(card),
-      attachments: await resolveAttachments(ctx, card.attachments),
-    })),
+    cards
+      .filter((card) => !card.retiredAt)
+      .map(async (card) => ({
+        cardId: card._id,
+        ...snapshotCard(card),
+        attachments: await resolveAttachments(ctx, card.attachments),
+      })),
   );
   return {
     boardId: board._id,

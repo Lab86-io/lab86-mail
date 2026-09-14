@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { useEffect, useState } from 'react';
 import { LapsePrompt, ReleaseSheet } from '@/components/albatross/Forgiveness';
@@ -258,6 +259,7 @@ async function postJson(url: string, body: Record<string, unknown>, fallback: st
 }
 
 export function WorkDetail({ workId }: { workId: string }) {
+  const queryClient = useQueryClient();
   const { isAuthenticated } = useConvexAuth();
   const setSelectedWorkId = useClientStore((state) => state.setSelectedWorkId);
   const guidedWorkId = useClientStore((state) => state.guidedWorkId);
@@ -561,6 +563,7 @@ export function WorkDetail({ workId }: { workId: string }) {
         { state },
         'Could not update this Albatross.',
       );
+      void queryClient.invalidateQueries({ queryKey: ['brief-v2', 'inactive'] });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not update this Albatross.');
     } finally {
