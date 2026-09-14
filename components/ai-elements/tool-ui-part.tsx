@@ -117,6 +117,8 @@ const MessageDraft = dynamic(() => import('@/components/tool-ui/message-draft').
 // Everything the dispatcher can render. Kept in sync with DISPLAY_TOOL_NAMES
 // (lib/tools/display.ts) — tested in tests/tools-display.test.ts.
 export const TOOL_UI_RENDERED_TOOLS: ReadonlySet<string> = new Set([
+  'word_document_create',
+  'word_document_edit',
   'document_create',
   'document_edit',
   'document_suggest_changes',
@@ -237,6 +239,8 @@ export function ToolUiDisplayPart({
   if (
     output?.ok &&
     [
+      'word_document_create',
+      'word_document_edit',
       'document_create',
       'document_edit',
       'document_suggest_changes',
@@ -292,7 +296,7 @@ export function ToolUiDisplayPart({
           <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)]">
             {toolName === 'document_suggest_changes' || output.status === 'proposed'
               ? 'Review the suggestion in the editor'
-              : output.status === 'applied'
+              : output.status === 'applied' || toolName === 'word_document_edit'
                 ? `Saved revision ${output.revision} · Open file`
                 : 'Open the editable file'}
           </span>

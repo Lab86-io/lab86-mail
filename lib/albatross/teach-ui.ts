@@ -503,6 +503,21 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   }),
   draft_reply: fixed('Drafting a reply', 'Drafted a reply for your review', 'Drafting the reply failed'),
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
+  word_document_create: fixed(
+    'Creating the Word document',
+    'Created the Word document',
+    'Creating the Word document failed',
+  ),
+  word_document_get: fixed(
+    'Reading the Word document',
+    'Read the Word document',
+    'Reading the Word document failed',
+  ),
+  word_document_edit: fixed(
+    'Editing the Word document',
+    'Saved a new Word revision',
+    'Editing the Word document failed',
+  ),
   document_list: fixed('Listing your files', 'Listed your files', 'Listing files failed'),
   document_get: fixed('Opening the file', 'Opened the file', 'Opening the file failed'),
   document_edit: (_args, out) => ({

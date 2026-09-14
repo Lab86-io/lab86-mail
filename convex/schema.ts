@@ -1801,6 +1801,19 @@ export default defineSchema({
       }),
     ),
     lastWopiSave: v.optional(v.object({ id: v.string(), revision: v.number() })),
+    aiEdit: v.optional(
+      v.object({
+        id: v.string(),
+        targetSessionId: v.string(),
+        expiresAt: v.number(),
+        state: v.union(
+          v.literal('requested'),
+          v.literal('prepared'),
+          v.literal('complete'),
+          v.literal('failed'),
+        ),
+      }),
+    ),
     wopiLock: v.optional(v.object({ value: v.string(), sessionId: v.string(), expiresAt: v.number() })),
   })
     .index('by_user', ['userId'])

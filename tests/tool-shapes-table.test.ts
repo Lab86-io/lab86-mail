@@ -315,6 +315,18 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
   ['area_update_identity', { areaId: 'a1' }, { ok: true }, 'receipt'],
   ['area_archive', { areaId: 'a1' }, { ok: true }, 'receipt'],
   [
+    'word_document_create',
+    { title: 'Report' },
+    { ok: true, documentId: 'w1', title: 'Report.docx', revision: 1, openPath: '/?view=files&office=w1' },
+    'document',
+  ],
+  [
+    'word_document_edit',
+    { documentId: 'w1' },
+    { ok: true, documentId: 'w1', title: 'Report.docx', revision: 2, openPath: '/?view=files&office=w1' },
+    'document',
+  ],
+  [
     'document_create',
     { kind: 'doc', title: 'Memo' },
     {

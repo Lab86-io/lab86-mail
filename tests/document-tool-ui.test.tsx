@@ -5,6 +5,20 @@ import { toolActivityLine } from '../lib/albatross/teach-ui';
 import { fileToolNavigationPath } from '../lib/documents/deep-link';
 
 describe('document edit result UI', () => {
+  test('Word edits render an actual saved-revision link to the full editor', () => {
+    expect(TOOL_UI_RENDERED_TOOLS.has('word_document_edit')).toBe(true);
+    const markup = renderToStaticMarkup(
+      <ToolUiDisplayPart
+        toolName="word_document_edit"
+        output={{ ok: true, title: 'Report.docx', revision: 2, openPath: '/?view=files&office=word-1' }}
+      />,
+    );
+    expect(markup).toContain('office=word-1');
+    expect(markup).toContain('Saved revision 2');
+    expect(
+      JSON.stringify(toolActivityLine('word_document_edit', {}, 'output-available', { ok: true })),
+    ).toContain('Saved a new Word revision');
+  });
   test('review and applied states stay distinct in cards and activity', () => {
     expect(TOOL_UI_RENDERED_TOOLS.has('document_edit')).toBe(true);
     const output = {

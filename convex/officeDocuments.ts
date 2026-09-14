@@ -88,6 +88,22 @@ export const list = query({
   },
 });
 
+export const rename = mutation({
+  args: { ...owner, documentId: v.string(), title: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await owned(ctx, args.userId, args.documentId);
+    if (!document) return { ok: false };
+    const title =
+      args.title
+        .trim()
+        .slice(0, 490)
+        .replace(/\.(docx|xlsx|pptx)$/i, '') || 'Untitled';
+    await ctx.db.patch(document._id, { title: `${title}.${document.extension}`, updatedAt: now() });
+    return { ok: true };
+  },
+});
+
 export const get = query({
   args: { ...owner, documentId: v.string(), revision: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -128,6 +144,8 @@ export const startSession = mutation({
     requireInternalSecret(args.internalSecret);
     const document = await owned(ctx, args.userId, args.documentId);
     if (!document) return { ok: false, code: 'NOT_FOUND' };
+    if (document.aiEdit?.state === 'prepared' && document.aiEdit.expiresAt > now())
+      return { ok: false, code: 'EDIT_IN_PROGRESS' };
     if (document.currentRevision !== args.expectedRevision) return { ok: false, code: 'REVISION_CONFLICT' };
     const existing = await ctx.db
       .query('officeSessions')
@@ -266,6 +284,112 @@ export const saveVersion = mutation({
       revision,
       updatedAt: createdAt,
     };
+  },
+});
+
+/** Saved-package edits are atomic and cannot race an active word processor. */
+export const coordinateEdit = mutation({
+  args: {
+    ...owner,
+    documentId: v.string(),
+    requestId: v.string(),
+    action: v.union(v.literal('request'), v.literal('prepare'), v.literal('complete'), v.literal('fail')),
+    sessionId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await owned(ctx, args.userId, args.documentId);
+    if (!document || document.extension !== 'docx') return { ok: false };
+    const previous = document.aiEdit;
+    if (args.action === 'request') {
+      if (previous && previous.expiresAt > now() && ['requested', 'prepared'].includes(previous.state))
+        return { ok: false };
+      const lock = document.wopiLock;
+      if (!lock || lock.expiresAt <= now()) return { ok: true, ready: true };
+      await ctx.db.patch(document._id, {
+        aiEdit: {
+          id: args.requestId,
+          targetSessionId: lock.sessionId,
+          expiresAt: now() + 120_000,
+          state: 'requested',
+        },
+      });
+      return { ok: true, ready: false };
+    }
+    if (!previous || previous.id !== args.requestId) return { ok: false };
+    if (args.sessionId && args.sessionId !== previous.targetSessionId) return { ok: false };
+    if (
+      args.action === 'prepare' &&
+      (previous.expiresAt <= now() ||
+        previous.state !== 'requested' ||
+        previous.targetSessionId !== args.sessionId)
+    )
+      return { ok: false };
+    await ctx.db.patch(document._id, {
+      aiEdit: {
+        ...previous,
+        state: args.action === 'prepare' ? 'prepared' : args.action === 'complete' ? 'complete' : 'failed',
+      },
+    });
+    return { ok: true };
+  },
+});
+
+export const saveEditedVersion = mutation({
+  args: {
+    ...owner,
+    documentId: v.string(),
+    expectedRevision: v.number(),
+    storageId: v.id('_storage'),
+    size: v.number(),
+    sha256: v.string(),
+    requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const document = await owned(ctx, args.userId, args.documentId);
+    const coordinating =
+      document?.aiEdit &&
+      document.aiEdit.expiresAt > now() &&
+      ['requested', 'prepared'].includes(document.aiEdit.state);
+    const code =
+      !document || document.extension !== 'docx'
+        ? 'NOT_FOUND'
+        : args.requestId &&
+            (!coordinating || document.aiEdit?.id !== args.requestId || document.aiEdit?.state !== 'prepared')
+          ? 'LOCKED'
+          : coordinating && (document.aiEdit?.id !== args.requestId || document.aiEdit?.state !== 'prepared')
+            ? 'LOCKED'
+            : document.wopiLock && document.wopiLock.expiresAt > now()
+              ? 'LOCKED'
+              : document.currentRevision !== args.expectedRevision
+                ? 'REVISION_CONFLICT'
+                : null;
+    if (code || !document) {
+      await ctx.storage.delete(args.storageId);
+      return { ok: false, code };
+    }
+    const latest = await ctx.db
+      .query('officeVersions')
+      .withIndex('by_user_document_revision', (q) =>
+        q.eq('userId', args.userId).eq('documentId', args.documentId),
+      )
+      .order('desc')
+      .first();
+    const revision = (latest?.revision || document.currentRevision) + 1;
+    const createdAt = now();
+    await ctx.db.insert('officeVersions', {
+      userId: args.userId,
+      documentId: args.documentId,
+      revision,
+      storageId: args.storageId,
+      size: args.size,
+      sha256: args.sha256,
+      recovery: false,
+      createdAt,
+    });
+    await ctx.db.patch(document._id, { currentRevision: revision, updatedAt: createdAt });
+    return { ok: true, revision };
   },
 });
 

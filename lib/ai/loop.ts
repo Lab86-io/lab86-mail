@@ -72,6 +72,9 @@ export function narrativeQueryFromMessages(messages: ModelMessage[]): string {
 }
 
 export const AGENT_TOOL_NAMES = new Set([
+  'word_document_create',
+  'word_document_get',
+  'word_document_edit',
   'narrative_search',
   'narrative_task_context',
   'narrative_read',

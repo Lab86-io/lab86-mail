@@ -4,13 +4,19 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, History, Loader2, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useClientStore } from '@/lib/client-state';
+import type { OfficeFile } from '@/lib/documents/office-service';
 import { CollaboraFrame, type CollaboraHandle, type CollaboraSession } from './CollaboraFrame';
+import { DocumentSaveStatus } from './DocumentSaveStatus';
+import { useWordEditorEdits } from './useWordEditorEdits';
 
 interface OfficeMetadata {
   title: string;
+  extension: 'docx' | 'xlsx' | 'pptx';
   currentRevision: number;
   versions: Array<{ revision: number; recovery: boolean; createdAt: number }>;
   google?: { fileId: string; syncedRevision: number };
+  aiEdit?: OfficeFile['aiEdit'];
 }
 interface OfficeInstance {
   destroyEditor: () => void;
@@ -59,6 +65,10 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
   const [retry, setRetry] = useState(0);
   const [collabora, setCollabora] = useState<CollaboraSession | null>(null);
   const [saving, setSaving] = useState(false);
+  const [title, setTitle] = useState('');
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const editOverlay = useRef<HTMLDivElement>(null);
   const collaboraRef = useRef<CollaboraHandle>(null);
   const savingRef = useRef(false);
   const initialRevision = useRef<number | null>(null);
@@ -72,13 +82,74 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     },
     refetchInterval: 5000,
   });
+  const aiBusy = useWordEditorEdits({
+    request: file.data?.aiEdit,
+    session: collabora,
+    ready: ready && !saving,
+    save: async () => {
+      if (!collaboraRef.current) throw new Error('The word processor is not ready.');
+      return collaboraRef.current.save();
+    },
+    pause: () => {
+      setPaused(true);
+      setReady(false);
+    },
+    resume: () => {
+      setCollabora(null);
+      setPaused(false);
+      setReady(false);
+      setRetry((value) => value + 1);
+      void file.refetch();
+    },
+    onError: setError,
+  });
+  useEffect(() => {
+    if (!editingTitle && file.data) setTitle(file.data.title.replace(/\.(docx|xlsx|pptx)$/i, ''));
+  }, [file.data, editingTitle]);
+  const rename = async (value: string) => {
+    const clean = value.trim();
+    try {
+      if (clean && clean !== file.data?.title.replace(/\.(docx|xlsx|pptx)$/i, '')) {
+        const response = await fetch(`/api/office/${encodeURIComponent(documentId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: clean }),
+        });
+        if (!response.ok) throw new Error('The file name could not be saved.');
+        await file.refetch();
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Rename failed.');
+    } finally {
+      setEditingTitle(false);
+    }
+  };
+  useEffect(() => {
+    if (aiBusy) editOverlay.current?.focus();
+  }, [aiBusy]);
   useEffect(() => {
     if (file.data && initialRevision.current === null) initialRevision.current = file.data.currentRevision;
   }, [file.data]);
+  useEffect(() => {
+    if (file.data?.extension !== 'docx') return;
+    useClientStore.getState().setAssistantDocument({
+      id: documentId,
+      title: file.data.title,
+      kind: 'doc',
+      provider: 'office',
+      revision: file.data.currentRevision,
+      dirty: changed || saving,
+    });
+    return () => {
+      const state = useClientStore.getState();
+      if (state.assistantDocument?.provider === 'office' && state.assistantDocument.id === documentId)
+        state.setAssistantDocument(null);
+    };
+  }, [documentId, file.data?.extension, file.data?.title, file.data?.currentRevision, changed, saving]);
 
   const close = () => {
     if (
-      (changed || saving) &&
+      (changed || saving || aiBusy) &&
       !window.confirm(
         'The editor may still be saving. Stay here to save, or leave and check Versions for the saved copy. Leave editor?',
       )
@@ -136,14 +207,14 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
   }, [documentId, id, retry]);
 
   useEffect(() => {
-    if (!changed && !saving) return;
+    if (!changed && !saving && !aiBusy) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [changed, saving]);
+  }, [changed, saving, aiBusy]);
 
   const save = async () => {
     if (!collaboraRef.current || savingRef.current) return;
@@ -179,15 +250,35 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         <Button variant="ghost" size="icon-sm" aria-label="Back to Files" onClick={close}>
           <ArrowLeft className="size-4" />
         </Button>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-medium">{file.data?.title || 'Office working copy'}</h1>
-          <p aria-live="polite" className="text-[11px] text-[var(--color-text-muted)]">
-            {file.data ? `Saved copy · revision ${file.data.currentRevision}` : 'Opening saved copy…'}
-            {changed ? ' · editor may have newer changes' : ''}
-          </p>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <input
+            aria-label="File name"
+            value={title}
+            placeholder="Opening document…"
+            disabled={!file.data || aiBusy}
+            onFocus={() => setEditingTitle(true)}
+            onChange={(event) => setTitle(event.target.value)}
+            onBlur={(event) => void rename(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur();
+            }}
+            style={{ fieldSizing: 'content' }}
+            className="min-w-0 max-w-full rounded-sm bg-transparent text-sm font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+          />
+          <DocumentSaveStatus
+            applying={aiBusy}
+            saving={saving || !file.data}
+            error={Boolean(error || file.error)}
+            recovered={false}
+            dirty={changed}
+            revision={file.data?.currentRevision || 1}
+            googleBehind={Boolean(
+              file.data?.google && file.data.google.syncedRevision < file.data.currentRevision,
+            )}
+          />
         </div>
         {collabora ? (
-          <Button size="sm" disabled={!ready || saving} onClick={() => void save()}>
+          <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
             {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
           </Button>
@@ -206,14 +297,17 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
           <History className="size-4" />
           <span className="hidden sm:inline">Versions</span>
         </Button>
+        {file.data?.extension === 'docx' ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => useClientStore.getState().setAssistantPresentation('split')}
+            aria-label="Edit with Albatross"
+          >
+            Albatross
+          </Button>
+        ) : null}
       </header>
-      <div className="border-b border-[var(--color-border)] px-4 py-2 text-[11px] text-[var(--color-text-muted)]">
-        {file.data?.google
-          ? file.data.google.syncedRevision < file.data.currentRevision
-            ? 'Edits saved in Albatross. Click Save to Google to update the original.'
-            : 'Google working copy. Click Save to Google when your edits are ready.'
-          : 'Private working copy. Your original is retained in Versions.'}
-      </div>
       {error || file.error ? (
         <div
           role="alert"
@@ -235,8 +329,8 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         </div>
       ) : null}
       <div className="relative flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1">
-          {collabora ? (
+        <div className="relative min-w-0 flex-1" inert={aiBusy}>
+          {collabora && !paused ? (
             <CollaboraFrame
               ref={collaboraRef}
               session={collabora}
@@ -257,6 +351,16 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
             </div>
           ) : null}
         </div>
+        {aiBusy ? (
+          <div
+            ref={editOverlay}
+            tabIndex={-1}
+            role="status"
+            className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-[var(--color-bg)]/90 text-xs outline-none"
+          >
+            <Loader2 className="size-4 animate-spin" /> Applying Albatross edit…
+          </div>
+        ) : null}
         {history ? (
           <aside
             aria-label="Office versions"

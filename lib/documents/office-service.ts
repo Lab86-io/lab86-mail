@@ -34,6 +34,12 @@ export interface OfficeFile {
     pendingSave?: { session: string; revision: number; providerVersion: string };
   };
   lastWopiSave?: { id: string; revision: number };
+  aiEdit?: {
+    id: string;
+    targetSessionId: string;
+    expiresAt: number;
+    state: 'requested' | 'prepared' | 'complete' | 'failed';
+  };
   wopiLock?: { value: string; sessionId: string; expiresAt: number };
   versions: Array<{ revision: number; recovery: boolean; createdAt: number; size: number }>;
   version: { revision: number; url: string | null; size: number; sha256: string } | null;

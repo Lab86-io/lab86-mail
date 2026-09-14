@@ -1123,6 +1123,10 @@ const MAPPERS: Record<string, Mapper> = {
   area_archive: (input, output, tool) =>
     receipt(tool, input, output, 'albatross', [], { areaId: str(input.areaId) }),
   // --- Documents and files ---
+  word_document_create: (input, output, tool) =>
+    documentShape(tool, { ...input, kind: 'doc' }, output, 'created'),
+  word_document_edit: (input, output, tool) =>
+    documentShape(tool, { ...input, kind: 'doc' }, output, 'applied'),
   document_create: (input, output, tool) => documentShape(tool, input, output, 'created'),
   document_edit: (input, output, tool) => documentShape(tool, input, output),
   document_suggest_changes: (input, output, tool) =>

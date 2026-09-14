@@ -44,4 +44,10 @@ describe('page-aware assistant', () => {
     expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('assistantDocument');
     useClientStore.setState(previous);
   });
+  test('Word context points at the binary tools and lets them coordinate unsaved typing', () => {
+    const context = assistantPageContext('files', { ...document, provider: 'office', dirty: true });
+    expect(context).toContain('word_document_get');
+    expect(context).toContain('automatically');
+    expect(context).not.toContain('ask the user to resolve');
+  });
 });

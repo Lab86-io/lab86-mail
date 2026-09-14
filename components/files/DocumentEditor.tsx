@@ -408,6 +408,29 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const wordAvailability = useQuery({
+    queryKey: ['office-files'],
+    queryFn: () => fetchJson<{ enabled: boolean }>('/api/office'),
+    enabled: model?.kind === 'doc',
+    staleTime: 30_000,
+  });
+  const openWordMutation = useMutation({
+    mutationFn: async () => {
+      if (!(await saveNow()))
+        throw new Error('Save or recover your changes before opening the word processor.');
+      return fetchJson<{ document: { openPath: string } }>('/api/office/word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceDocumentId: documentId, expectedRevision: revisionRef.current }),
+      });
+    },
+    onSuccess: ({ document }) => {
+      window.history.pushState(null, '', document.openPath);
+      window.dispatchEvent(new Event('lab86-mail:files-navigate'));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const publishMutation = useMutation({
     mutationFn: async () => {
       if (!(await saveNow())) throw new Error('Save this file before publishing it.');
@@ -604,6 +627,23 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
             )}
           </Button>
         )}
+        {model.kind === 'doc' && wordAvailability.data?.enabled ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={applying || openWordMutation.isPending}
+            title="Open a DOCX copy in the full word processor"
+            onClick={() => openWordMutation.mutate()}
+          >
+            {openWordMutation.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ExternalLink className="size-3.5" />
+            )}
+            <span className="hidden sm:inline">Word processor</span>
+            <span className="sr-only sm:hidden">Word processor</span>
+          </Button>
+        ) : null}
         <Button variant="outline" size="sm" onClick={openDocumentChat} aria-label="Edit with Albatross">
           <span>Albatross</span>
         </Button>

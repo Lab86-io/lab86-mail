@@ -202,6 +202,7 @@ import {
   uiToast,
 } from './ui-tools';
 import { browserbaseFetch, browserbaseSearch } from './web';
+import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from './word-documents';
 
 const allTools: AnyTool[] = [
   mcpSearch,
@@ -284,6 +285,9 @@ const allTools: AnyTool[] = [
   getTrackedThreadTool,
   documentCreate,
   documentEdit,
+  wordDocumentCreate,
+  wordDocumentGet,
+  wordDocumentEdit,
   documentList,
   documentGet,
   documentSuggestChanges,
