@@ -34,6 +34,8 @@ const config: NextConfig = {
   serverExternalPackages: ['mailparser', 'jsdom', '@napi-rs/canvas'],
   outputFileTracingIncludes: {
     '/*': [
+      './lib/documents/spreadsheet-worker.mjs',
+      './lib/documents/grid-workbook.mjs',
       './node_modules/@odoo/owl/dist/owl.iife.js',
       './node_modules/@odoo/o-spreadsheet/dist/o_spreadsheet.iife.js',
     ],

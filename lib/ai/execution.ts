@@ -95,7 +95,22 @@ export async function executeCheckpointedTool(
 }
 
 export async function readRecoveryContext(userId: string, runId: string, read = convexQuery) {
-  const records = await read<any[]>((api as any).agentExecution.readRun, { userId, runId });
+  const records: any[] = [];
+  let cursor: string | undefined;
+  do {
+    const result = await read<any>((api as any).agentExecution.readRun, {
+      userId,
+      runId,
+      ...(cursor ? { cursor } : {}),
+    });
+    // Accept the previous query shape while backend and web revisions roll forward.
+    if (Array.isArray(result)) {
+      records.push(...result);
+      break;
+    }
+    records.push(...result.page);
+    cursor = result.isDone ? undefined : result.continueCursor;
+  } while (cursor);
   const identifier = (value: unknown) =>
     typeof value === 'string' && /^[a-zA-Z0-9_:-]{1,256}$/.test(value) ? value : undefined;
   const payload = [];

@@ -356,6 +356,34 @@ describe('Monro completion', () => {
 });
 
 describe('interrupted deck execution', () => {
+  test('recovery paginates past 100 checkpoints without losing older document effects', async () => {
+    const t = harness();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 105; i++)
+        await ctx.db.insert('agentToolExecutions', {
+          userId: caller.userId,
+          runId: 'long-run',
+          key: `key-${i}`,
+          toolName: 'document_edit',
+          mutating: true,
+          status: 'succeeded',
+          effect: { documentId: `doc-${i}`, revision: i + 1 },
+          createdAt: i,
+          updatedAt: i,
+        });
+    });
+    let pages = 0;
+    const context = await readRecoveryContext(caller.userId, 'long-run', (async (_query: any, args: any) => {
+      pages++;
+      return t.query(api.agentExecution.readRun, { ...caller, ...args });
+    }) as any);
+    expect(pages).toBe(2);
+    const records = JSON.parse(context.split('\n')[1]);
+    expect(records).toHaveLength(105);
+    expect(records[0].documentId).toBe('doc-104');
+    expect(records.at(-1).documentId).toBe('doc-0');
+  });
+
   test('continuation IDs are stable for every message identity and absent identities cannot resume', () => {
     expect(resolveAgentRunId('normal-id', true)).toBe('normal-id');
     for (const id of ['user:42', 'message / unicode 🐦', 'x'.repeat(500)]) {
@@ -543,10 +571,10 @@ describe('interrupted deck execution', () => {
     await expect(executeCheckpointedTool(input, save, deps)).rejects.toThrow('already saved');
     expect(invoked).toBe(1);
     const records = await t.query(api.agentExecution.readRun, { ...caller, runId });
-    expect(records[0]).toMatchObject({ status: 'unknown', effect: { documentId, revision: 2 } });
-    expect(await t.query(api.agentExecution.readRun, { ...caller, userId: 'another-user', runId })).toEqual(
-      [],
-    );
+    expect(records.page[0]).toMatchObject({ status: 'unknown', effect: { documentId, revision: 2 } });
+    expect(
+      (await t.query(api.agentExecution.readRun, { ...caller, userId: 'another-user', runId })).page,
+    ).toEqual([]);
     expect((await t.query(api.documents.get, { ...caller, documentId }))?.currentRevision).toBe(2);
   });
 
@@ -606,7 +634,7 @@ describe('interrupted deck execution', () => {
     const doc = await t.query(api.documents.get, { ...caller, documentId });
     expect(doc?.suggestions).toHaveLength(1);
     expect(doc?.currentRevision).toBe(1);
-    expect((await t.query(api.agentExecution.readRun, { ...caller, runId }))[0].effect).toEqual({
+    expect((await t.query(api.agentExecution.readRun, { ...caller, runId })).page[0].effect).toEqual({
       documentId,
       suggestionId: 'first',
     });

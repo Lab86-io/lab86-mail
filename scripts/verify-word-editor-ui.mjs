@@ -10,7 +10,7 @@ try {
   const state = async () => (await page.request.get(`${base}/fixture-word-state`)).json();
   const open = async () => {
     await page.request.post(`${base}/fixture-reset`);
-    await page.goto(`${base}/?kind=word`);
+    await page.goto(`${base}/?view=files&office=word-a`);
     await page.getByRole('button', { name: 'Save', exact: true }).waitFor();
     await page.frameLocator('iframe[title="Document editor"]').getByRole('textbox').waitFor();
     await page.waitForFunction(
@@ -22,7 +22,9 @@ try {
   await open();
   await page.getByRole('textbox', { name: 'File name', exact: true }).fill('Edited title');
   await page.getByRole('textbox', { name: 'File name', exact: true }).press('Enter');
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    async () => (await (await fetch('/fixture-word-state')).json()).title === 'Edited title.docx',
+  );
   assert.equal((await state()).title, 'Edited title.docx');
   assert.equal(await page.getByRole('button', { name: 'Edit with Albatross' }).count(), 1);
   const body = () => page.frameLocator('iframe[title="Document editor"]').getByRole('textbox');

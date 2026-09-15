@@ -757,6 +757,11 @@ describe('current briefs reconcile terminal Work without changing historical edi
       const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="Work" />);
       expect(html).not.toContain('Closed Monro action');
       expect(html).toContain('Still open');
+      const empty = renderToStaticMarkup(
+        <BriefNodeView node={{ ...node, items: [node.items[0]] }} context={context} regionSummary="Work" />,
+      );
+      expect(empty).toBe('');
+
       const historical = renderToStaticMarkup(
         <BriefNodeView node={node} context={{ ...context, hiddenRefs: new Set() }} regionSummary="Work" />,
       );

@@ -1,7 +1,10 @@
 /** Loopback-only protocol double; this does not pretend to render the real Collabora suite. */
 export function wordEditorTransport() {
   let state;
+  let editTimer;
   const reset = () => {
+    clearTimeout(editTimer);
+    editTimer = undefined;
     state = {
       title: 'Word acceptance.docx',
       text: 'Original saved content',
@@ -81,7 +84,7 @@ export function wordEditorTransport() {
       else {
         state.aiEdit.state = 'prepared';
         if (!state.hold)
-          setTimeout(() => {
+          editTimer = setTimeout(() => {
             state.text += '\nAI edit preserved the draft.';
             state.currentRevision++;
             state.aiEdit.state = 'complete';

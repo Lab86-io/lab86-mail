@@ -509,3 +509,11 @@ describe('tool shape table', () => {
     expect(shape?.summary).toContain('0 events');
   });
 });
+
+test('Word create and edit outputs retain the document icon kind', () => {
+  for (const tool of ['word_document_create', 'word_document_edit']) {
+    expect(resolveToolShape(tool, {}, { documentId: 'word-1', title: 'Word file' })).toMatchObject({
+      docKind: 'doc',
+    });
+  }
+});

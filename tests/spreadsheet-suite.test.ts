@@ -13,6 +13,25 @@ import { applySpreadsheetChanges } from '../lib/documents/spreadsheet-server';
 import { changes, chart, sheetId, suiteCommands } from '../scripts/fixtures/spreadsheet-suite-plan';
 
 describe('full Odoo spreadsheet tools', () => {
+  test('worker execution leaves the event loop responsive and deadlines preserve the source', async () => {
+    const source = createDefaultDocumentModel('sheet', 'deadline');
+    const before = structuredClone(source);
+    const plan = {
+      kind: 'sheet-changes' as const,
+      version: 1 as const,
+      changes: [{ sheet: 'Sheet 1', cell: 'A1', content: 'saved' }],
+    };
+    let settled = false;
+    const pending = applySpreadsheetChanges(source, plan).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(settled).toBe(false);
+    await pending;
+    await expect(applySpreadsheetChanges(source, plan, { timeoutMs: 1 })).rejects.toThrow('timed out');
+    expect(source).toEqual(before);
+  });
+
   test('mixed edits can update a sheet created earlier in the same batch', async () => {
     const source = createDefaultDocumentModel('sheet', 'suite');
     const operations = [

@@ -1175,6 +1175,7 @@ export function DailyReport({
                 transition={{ duration: 0.28, ease: 'easeOut' }}
               >
                 <BriefCanvas
+                  key={report._id}
                   hideInactive={!selectedId}
                   value={report.document}
                   composing={report.artifactStatus === 'composing'}
@@ -1196,6 +1197,7 @@ export function DailyReport({
                 transition={{ duration: 0.28, ease: 'easeOut' }}
               >
                 <BriefCanvas
+                  key={report._id}
                   hideInactive={!selectedId}
                   value={fallbackLetter}
                   onChanged={invalidate}

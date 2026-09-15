@@ -1,6 +1,6 @@
 /** Generate contracts from the exact source distributed with the pinned engine. */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import ts from 'typescript';
@@ -16,12 +16,23 @@ try {
     '--strip-components=1',
   ]);
   const path = resolve(dir, 'src/types/commands.ts');
-  const program = ts.createProgram([path], {
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
-    moduleResolution: ts.ModuleResolutionKind.Bundler,
-    module: ts.ModuleKind.ESNext,
-  });
+  symlinkSync(resolve('node_modules'), resolve(dir, 'node_modules'), 'dir');
+  const config = ts.readConfigFile(resolve(dir, 'tsconfig.json'), ts.sys.readFile);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir);
+  const program = ts.createProgram([path, resolve(dir, 'global.d.ts')], { ...parsed.options, noEmit: true });
+  const diagnostics = [
+    ...(config.error ? [config.error] : []),
+    ...parsed.errors,
+    ...ts.getPreEmitDiagnostics(program),
+  ];
+  if (diagnostics.length)
+    throw new Error(
+      ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+        getCanonicalFileName: (name) => name,
+        getCurrentDirectory: () => dir,
+        getNewLine: () => '\n',
+      }),
+    );
   const checker = program.getTypeChecker();
   const file = program.getSourceFile(path);
   const definitions = {};

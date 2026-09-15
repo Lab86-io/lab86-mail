@@ -47,3 +47,61 @@ test('chart libraries share in-flight loads and recover from a failed dependency
     dom.window.close();
   }
 });
+
+test('engine loading retries failed styles and templates and reuses successfully loaded assets', async () => {
+  const { mock } = await import('bun:test');
+  const { loadSpreadsheetEngine, SPREADSHEET_STYLESHEETS } = await import(
+    '../lib/documents/odoo-spreadsheet-engine'
+  );
+  const { ODOO_SPREADSHEET_ASSET_BASE, ODOO_OWL_ASSET_BASE, ODOO_SPREADSHEET_VERSION } = await import(
+    '../lib/documents/sheet-workbook'
+  );
+  const addChild = mock(() => {});
+  mock.module(`${ODOO_SPREADSHEET_ASSET_BASE}/dist/o_spreadsheet.esm.js`, () => ({
+    __info__: { version: ODOO_SPREADSHEET_VERSION },
+    registries: { topbarMenuRegistry: { addChild } },
+  }));
+  mock.module(`${ODOO_OWL_ASSET_BASE}/dist/owl.es.js`, () => ({}));
+  const dom = new JSDOM('', { url: 'https://spreadsheet.example.test' });
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const previousFetch = globalThis.fetch;
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document });
+  let templatesFail = true;
+  globalThis.fetch = (async () =>
+    new Response('<templates/>', { status: templatesFail ? 503 : 200 })) as typeof fetch;
+  const head = dom.window.document.head;
+  const append = head.appendChild.bind(head);
+  let failStyle = true;
+  const requests: string[] = [];
+  head.appendChild = ((node: HTMLLinkElement) => {
+    const result = append(node);
+    requests.push(node.href);
+    queueMicrotask(() => {
+      if (failStyle) {
+        failStyle = false;
+        node.dispatchEvent(new dom.window.Event('error'));
+      } else node.dispatchEvent(new dom.window.Event('load'));
+    });
+    return result;
+  }) as typeof head.appendChild;
+  try {
+    const first = loadSpreadsheetEngine();
+    expect(loadSpreadsheetEngine()).toBe(first);
+    await expect(first).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(head.querySelectorAll('link[data-loaded="true"]')).toHaveLength(2);
+    templatesFail = false;
+    const loaded = await loadSpreadsheetEngine();
+    expect(loaded.templates).toBe('<templates/>');
+    expect(requests).toHaveLength(4);
+    expect(head.querySelectorAll('link[data-loaded="true"]')).toHaveLength(SPREADSHEET_STYLESHEETS.length);
+    expect(addChild).toHaveBeenCalledTimes(1);
+    expect(await loadSpreadsheetEngine()).toBe(loaded);
+    expect(requests).toHaveLength(4);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+    dom.window.close();
+  }
+});

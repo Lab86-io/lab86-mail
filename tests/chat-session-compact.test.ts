@@ -4,7 +4,13 @@ import { compactMessage } from '../lib/store/chat-sessions';
 
 describe('compactMessage (persisted chat history)', () => {
   test('large document reads remain valid successful tool results after continuation compaction', async () => {
-    for (const name of ['document_get', 'word_document_get', 'google_document_get']) {
+    for (const name of [
+      'document_get',
+      'word_document_get',
+      'google_document_get',
+      'get_thread',
+      'read_document',
+    ]) {
       const message = compactMessage({
         id: 'assistant',
         role: 'assistant',
@@ -20,7 +26,7 @@ describe('compactMessage (persisted chat history)', () => {
       });
       expect(message.parts[0].output).toMatchObject({ outputOmitted: true });
       const model = await convertToModelMessages([message]);
-      expect(JSON.stringify(model)).toContain('Read succeeded. Reread the source');
+      expect(JSON.stringify(model)).toContain('outputOmitted');
       expect(JSON.stringify(model)).not.toContain('x'.repeat(5000));
     }
   });
@@ -102,7 +108,7 @@ describe('compactMessage (persisted chat history)', () => {
         },
       ],
     });
-    expect(message.parts[0].output).toBeUndefined();
+    expect(message.parts[0].output).toMatchObject({ outputOmitted: true });
     expect(message.parts[0].state).toBe('output-available');
     expect(message.parts[0].input).toEqual({ threadId: 't1' });
   });

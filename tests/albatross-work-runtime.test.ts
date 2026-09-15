@@ -655,7 +655,27 @@ describe('reporting and progress queries', () => {
         updatedAt: ts,
       });
     });
+    const closedWorkId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('albatrossIntents', {
+        userId: caller.userId,
+        rawText: 'Closed approval Work',
+        source: 'chat',
+        status: 'done',
+        workState: 'done',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const approval = await ctx.db.query('albatrossApprovals').first();
+      await ctx.db.patch(approval!._id, { intentId: String(id) });
+      return id;
+    });
     const context = await t.query(api.albatrossWork.dailyReportContext, { ...caller, limit: 10 });
+    expect(context.workStates).toContainEqual({
+      id: String(closedWorkId),
+      status: 'done',
+      workState: 'done',
+    });
+
     expect(context.projects.map((p) => p.title)).toEqual(['Context project']);
     expect(context.sprints.map((s) => s.title)).toEqual(['Context sprint']);
     expect(context.approvals.map((a) => a.title)).toEqual(['Context approval']);

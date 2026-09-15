@@ -57,14 +57,14 @@ export const finishTool = mutation({
 });
 
 export const readRun = query({
-  args: identity,
+  args: { ...identity, cursor: v.optional(v.string()) },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     return ctx.db
       .query('agentToolExecutions')
       .withIndex('by_user_run_created', (q) => q.eq('userId', args.userId).eq('runId', args.runId))
       .order('desc')
-      .take(100);
+      .paginate({ numItems: 100, cursor: args.cursor ?? null });
   },
 });
 

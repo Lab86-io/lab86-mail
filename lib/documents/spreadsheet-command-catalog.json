@@ -1010,26 +1010,26 @@
         "align": {
           "anyOf": [
             {
+              "const": "center"
+            },
+            {
               "const": "left"
             },
             {
               "const": "right"
-            },
-            {
-              "const": "center"
             }
           ]
         },
         "wrapping": {
           "anyOf": [
             {
+              "const": "clip"
+            },
+            {
               "const": "overflow"
             },
             {
               "const": "wrap"
-            },
-            {
-              "const": "clip"
             }
           ]
         },
@@ -1039,10 +1039,10 @@
               "const": "top"
             },
             {
-              "const": "middle"
+              "const": "bottom"
             },
             {
-              "const": "bottom"
+              "const": "middle"
             }
           ]
         },
@@ -1241,10 +1241,10 @@
         "position": {
           "anyOf": [
             {
-              "const": "before"
+              "const": "after"
             },
             {
-              "const": "after"
+              "const": "before"
             }
           ]
         },
@@ -1720,16 +1720,19 @@
         "operator": {
           "anyOf": [
             {
-              "const": "beginsWithText"
-            },
-            {
-              "const": "isBetween"
+              "const": "isEmpty"
             },
             {
               "const": "containsText"
             },
             {
-              "const": "isEmpty"
+              "const": "notContainsText"
+            },
+            {
+              "const": "beginsWithText"
+            },
+            {
+              "const": "isBetween"
             },
             {
               "const": "isNotEmpty"
@@ -1754,9 +1757,6 @@
             },
             {
               "const": "isNotBetween"
-            },
-            {
-              "const": "notContainsText"
             },
             {
               "const": "isNotEqual"
@@ -1794,13 +1794,13 @@
               "const": "value"
             },
             {
-              "const": "percentage"
-            },
-            {
               "const": "percentile"
             },
             {
               "const": "formula"
+            },
+            {
+              "const": "percentage"
             }
           ]
         },
@@ -1827,13 +1827,13 @@
               "const": "number"
             },
             {
-              "const": "percentage"
-            },
-            {
               "const": "percentile"
             },
             {
               "const": "formula"
+            },
+            {
+              "const": "percentage"
             }
           ]
         },
@@ -1892,23 +1892,23 @@
               "const": "number"
             },
             {
-              "const": "percentage"
-            },
-            {
               "const": "percentile"
             },
             {
               "const": "formula"
+            },
+            {
+              "const": "percentage"
             }
           ]
         },
         "operator": {
           "anyOf": [
             {
-              "const": "gt"
+              "const": "ge"
             },
             {
-              "const": "ge"
+              "const": "gt"
             }
           ]
         },
@@ -2191,10 +2191,10 @@
         "figureId": {
           "type": "string"
         },
-        "width": {
+        "offset": {
           "anyOf": [
             {
-              "type": "number"
+              "$ref": "#/$defs/T44"
             }
           ]
         },
@@ -2205,17 +2205,17 @@
             }
           ]
         },
+        "width": {
+          "anyOf": [
+            {
+              "type": "number"
+            }
+          ]
+        },
         "tag": {
           "anyOf": [
             {
               "type": "string"
-            }
-          ]
-        },
-        "offset": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/T44"
             }
           ]
         },
@@ -2302,13 +2302,13 @@
         "align": {
           "anyOf": [
             {
+              "const": "center"
+            },
+            {
               "const": "left"
             },
             {
               "const": "right"
-            },
-            {
-              "const": "center"
             }
           ]
         },
@@ -2318,10 +2318,10 @@
               "const": "top"
             },
             {
-              "const": "middle"
+              "const": "bottom"
             },
             {
-              "const": "bottom"
+              "const": "middle"
             }
           ]
         },
@@ -2485,10 +2485,13 @@
         "position": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "all"
             },
             {
-              "const": "right"
+              "const": "clear"
+            },
+            {
+              "const": "left"
             },
             {
               "const": "top"
@@ -2497,10 +2500,10 @@
               "const": "bottom"
             },
             {
-              "const": "all"
+              "const": "right"
             },
             {
-              "const": "hv"
+              "const": "external"
             },
             {
               "const": "h"
@@ -2509,10 +2512,7 @@
               "const": "v"
             },
             {
-              "const": "external"
-            },
-            {
-              "const": "clear"
+              "const": "hv"
             }
           ]
         },
@@ -2526,10 +2526,10 @@
         "style": {
           "anyOf": [
             {
-              "const": "thin"
+              "const": "medium"
             },
             {
-              "const": "medium"
+              "const": "thin"
             },
             {
               "const": "thick"
@@ -2574,10 +2574,10 @@
         "style": {
           "anyOf": [
             {
-              "const": "thin"
+              "const": "medium"
             },
             {
-              "const": "medium"
+              "const": "thin"
             },
             {
               "const": "thick"
@@ -2690,13 +2690,13 @@
         "type": {
           "anyOf": [
             {
-              "const": "polynomial"
-            },
-            {
               "const": "exponential"
             },
             {
               "const": "logarithmic"
+            },
+            {
+              "const": "polynomial"
             },
             {
               "const": "trailingMovingAverage"
@@ -2776,7 +2776,147 @@
       "required": ["dataRange"],
       "additionalProperties": false
     },
-    "T67": {
+    "T66": {
+      "type": "object",
+      "properties": {
+        "minColor": {
+          "type": "string"
+        },
+        "midColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "maxColor": {
+          "type": "string"
+        }
+      },
+      "required": ["minColor", "maxColor"],
+      "additionalProperties": false
+    },
+    "T63": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "geo"
+        },
+        "dataSets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/T64"
+          }
+        },
+        "dataSetsHaveTitle": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        },
+        "labelRange": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "legendPosition": {
+          "anyOf": [
+            {
+              "const": "none"
+            },
+            {
+              "const": "left"
+            },
+            {
+              "const": "top"
+            },
+            {
+              "const": "bottom"
+            },
+            {
+              "const": "right"
+            }
+          ]
+        },
+        "colorScale": {
+          "anyOf": [
+            {
+              "const": "blues"
+            },
+            {
+              "const": "cividis"
+            },
+            {
+              "const": "greens"
+            },
+            {
+              "const": "greys"
+            },
+            {
+              "const": "oranges"
+            },
+            {
+              "const": "purples"
+            },
+            {
+              "const": "rainbow"
+            },
+            {
+              "const": "reds"
+            },
+            {
+              "const": "viridis"
+            },
+            {
+              "$ref": "#/$defs/T66"
+            }
+          ]
+        },
+        "missingValueColor": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "humanize": {
+          "anyOf": [
+            {
+              "const": false
+            },
+            {
+              "const": true
+            }
+          ]
+        }
+      },
+      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
+      "additionalProperties": false
+    },
+    "T69": {
       "type": "object",
       "properties": {
         "title": {
@@ -2790,27 +2930,27 @@
       "required": [],
       "additionalProperties": false
     },
-    "T66": {
+    "T68": {
       "type": "object",
       "properties": {
         "x": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T67"
+              "$ref": "#/$defs/T69"
             }
           ]
         },
         "y": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T67"
+              "$ref": "#/$defs/T69"
             }
           ]
         },
         "y1": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T67"
+              "$ref": "#/$defs/T69"
             }
           ]
         }
@@ -2818,7 +2958,7 @@
       "required": [],
       "additionalProperties": false
     },
-    "T63": {
+    "T67": {
       "type": "object",
       "properties": {
         "type": {
@@ -2930,10 +3070,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -2942,14 +3082,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -2986,7 +3126,7 @@
       ],
       "additionalProperties": false
     },
-    "T68": {
+    "T70": {
       "type": "object",
       "properties": {
         "type": {
@@ -3065,10 +3205,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3077,14 +3217,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -3102,7 +3242,7 @@
       "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
-    "T69": {
+    "T71": {
       "type": "object",
       "properties": {
         "type": {
@@ -3174,10 +3314,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3186,7 +3326,7 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
@@ -3203,7 +3343,7 @@
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -3231,7 +3371,7 @@
       "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
-    "T70": {
+    "T72": {
       "type": "object",
       "properties": {
         "type": {
@@ -3264,16 +3404,16 @@
         "baselineMode": {
           "anyOf": [
             {
-              "const": "percentage"
-            },
-            {
-              "const": "text"
+              "const": "progress"
             },
             {
               "const": "difference"
             },
             {
-              "const": "progress"
+              "const": "text"
+            },
+            {
+              "const": "percentage"
             }
           ]
         },
@@ -3311,7 +3451,7 @@
       "required": ["type", "title", "baselineMode", "baselineColorUp", "baselineColorDown"],
       "additionalProperties": false
     },
-    "T73": {
+    "T75": {
       "type": "object",
       "properties": {
         "lowerColor": {
@@ -3327,7 +3467,7 @@
       "required": ["lowerColor", "middleColor", "upperColor"],
       "additionalProperties": false
     },
-    "T74": {
+    "T76": {
       "type": "object",
       "properties": {
         "type": {
@@ -3357,11 +3497,11 @@
       "required": ["type", "value", "operator"],
       "additionalProperties": false
     },
-    "T72": {
+    "T74": {
       "type": "object",
       "properties": {
         "colors": {
-          "$ref": "#/$defs/T73"
+          "$ref": "#/$defs/T75"
         },
         "rangeMin": {
           "type": "string"
@@ -3370,16 +3510,16 @@
           "type": "string"
         },
         "lowerInflectionPoint": {
-          "$ref": "#/$defs/T74"
+          "$ref": "#/$defs/T76"
         },
         "upperInflectionPoint": {
-          "$ref": "#/$defs/T74"
+          "$ref": "#/$defs/T76"
         }
       },
       "required": ["colors", "rangeMin", "rangeMax", "lowerInflectionPoint", "upperInflectionPoint"],
       "additionalProperties": false
     },
-    "T71": {
+    "T73": {
       "type": "object",
       "properties": {
         "type": {
@@ -3396,7 +3536,7 @@
           ]
         },
         "sectionRule": {
-          "$ref": "#/$defs/T72"
+          "$ref": "#/$defs/T74"
         },
         "background": {
           "anyOf": [
@@ -3419,11 +3559,21 @@
       "required": ["type", "title", "sectionRule"],
       "additionalProperties": false
     },
-    "T75": {
+    "T77": {
       "type": "object",
       "properties": {
         "type": {
           "const": "scatter"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
         },
         "labelsAsText": {
           "anyOf": [
@@ -3488,23 +3638,13 @@
             }
           ]
         },
-        "title": {
-          "$ref": "#/$defs/T52"
-        },
-        "background": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3513,14 +3653,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -3545,10 +3685,10 @@
           ]
         }
       },
-      "required": ["type", "labelsAsText", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
+      "required": ["type", "title", "labelsAsText", "dataSets", "dataSetsHaveTitle", "legendPosition"],
       "additionalProperties": false
     },
-    "T77": {
+    "T79": {
       "type": "object",
       "properties": {
         "dataRange": {
@@ -3596,13 +3736,13 @@
       "required": ["dataRange"],
       "additionalProperties": false
     },
-    "T76": {
+    "T78": {
       "type": "object",
       "properties": {
         "dataSets": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/T77"
+            "$ref": "#/$defs/T79"
           }
         },
         "type": {
@@ -3658,10 +3798,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3670,7 +3810,7 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
@@ -3687,7 +3827,7 @@
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -3715,7 +3855,7 @@
       "required": ["dataSets", "type", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
-    "T78": {
+    "T80": {
       "type": "object",
       "properties": {
         "type": {
@@ -3838,10 +3978,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3850,14 +3990,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -3894,11 +4034,21 @@
       ],
       "additionalProperties": false
     },
-    "T79": {
+    "T81": {
       "type": "object",
       "properties": {
         "type": {
           "const": "pyramid"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "title": {
+          "$ref": "#/$defs/T52"
         },
         "stacked": {
           "anyOf": [
@@ -3943,23 +4093,13 @@
             }
           ]
         },
-        "title": {
-          "$ref": "#/$defs/T52"
-        },
-        "background": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -3968,14 +4108,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -4010,10 +4150,10 @@
           ]
         }
       },
-      "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
+      "required": ["type", "title", "stacked", "dataSets", "dataSetsHaveTitle", "legendPosition"],
       "additionalProperties": false
     },
-    "T80": {
+    "T82": {
       "type": "object",
       "properties": {
         "type": {
@@ -4105,10 +4245,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -4117,14 +4257,14 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -4140,146 +4280,6 @@
         }
       },
       "required": ["type", "stacked", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
-      "additionalProperties": false
-    },
-    "T82": {
-      "type": "object",
-      "properties": {
-        "minColor": {
-          "type": "string"
-        },
-        "midColor": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "maxColor": {
-          "type": "string"
-        }
-      },
-      "required": ["minColor", "maxColor"],
-      "additionalProperties": false
-    },
-    "T81": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "const": "geo"
-        },
-        "dataSets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/T64"
-          }
-        },
-        "dataSetsHaveTitle": {
-          "anyOf": [
-            {
-              "const": false
-            },
-            {
-              "const": true
-            }
-          ]
-        },
-        "labelRange": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "title": {
-          "$ref": "#/$defs/T52"
-        },
-        "background": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "legendPosition": {
-          "anyOf": [
-            {
-              "const": "left"
-            },
-            {
-              "const": "right"
-            },
-            {
-              "const": "top"
-            },
-            {
-              "const": "bottom"
-            },
-            {
-              "const": "none"
-            }
-          ]
-        },
-        "colorScale": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/T82"
-            },
-            {
-              "const": "blues"
-            },
-            {
-              "const": "cividis"
-            },
-            {
-              "const": "greens"
-            },
-            {
-              "const": "greys"
-            },
-            {
-              "const": "oranges"
-            },
-            {
-              "const": "purples"
-            },
-            {
-              "const": "rainbow"
-            },
-            {
-              "const": "reds"
-            },
-            {
-              "const": "viridis"
-            }
-          ]
-        },
-        "missingValueColor": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "region": {
-          "anyOf": [
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "humanize": {
-          "anyOf": [
-            {
-              "const": false
-            },
-            {
-              "const": true
-            }
-          ]
-        }
-      },
-      "required": ["type", "dataSets", "dataSetsHaveTitle", "title", "legendPosition"],
       "additionalProperties": false
     },
     "T83": {
@@ -4324,10 +4324,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -4336,7 +4336,7 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
@@ -4353,7 +4353,7 @@
         "axesDesign": {
           "anyOf": [
             {
-              "$ref": "#/$defs/T66"
+              "$ref": "#/$defs/T68"
             }
           ]
         },
@@ -4441,13 +4441,13 @@
         "align": {
           "anyOf": [
             {
+              "const": "center"
+            },
+            {
               "const": "left"
             },
             {
               "const": "right"
-            },
-            {
-              "const": "center"
             }
           ]
         },
@@ -4457,10 +4457,10 @@
               "const": "top"
             },
             {
-              "const": "middle"
+              "const": "bottom"
             },
             {
-              "const": "bottom"
+              "const": "middle"
             }
           ]
         },
@@ -4531,10 +4531,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -4543,7 +4543,7 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
@@ -4710,10 +4710,10 @@
         "legendPosition": {
           "anyOf": [
             {
-              "const": "left"
+              "const": "none"
             },
             {
-              "const": "right"
+              "const": "left"
             },
             {
               "const": "top"
@@ -4722,7 +4722,7 @@
               "const": "bottom"
             },
             {
-              "const": "none"
+              "const": "right"
             }
           ]
         },
@@ -4809,10 +4809,7 @@
               "$ref": "#/$defs/T63"
             },
             {
-              "$ref": "#/$defs/T68"
-            },
-            {
-              "$ref": "#/$defs/T69"
+              "$ref": "#/$defs/T67"
             },
             {
               "$ref": "#/$defs/T70"
@@ -4821,22 +4818,25 @@
               "$ref": "#/$defs/T71"
             },
             {
-              "$ref": "#/$defs/T75"
+              "$ref": "#/$defs/T72"
             },
             {
-              "$ref": "#/$defs/T76"
+              "$ref": "#/$defs/T73"
+            },
+            {
+              "$ref": "#/$defs/T77"
             },
             {
               "$ref": "#/$defs/T78"
-            },
-            {
-              "$ref": "#/$defs/T79"
             },
             {
               "$ref": "#/$defs/T80"
             },
             {
               "$ref": "#/$defs/T81"
+            },
+            {
+              "$ref": "#/$defs/T82"
             },
             {
               "$ref": "#/$defs/T83"
@@ -4905,10 +4905,7 @@
               "$ref": "#/$defs/T63"
             },
             {
-              "$ref": "#/$defs/T68"
-            },
-            {
-              "$ref": "#/$defs/T69"
+              "$ref": "#/$defs/T67"
             },
             {
               "$ref": "#/$defs/T70"
@@ -4917,22 +4914,25 @@
               "$ref": "#/$defs/T71"
             },
             {
-              "$ref": "#/$defs/T75"
+              "$ref": "#/$defs/T72"
             },
             {
-              "$ref": "#/$defs/T76"
+              "$ref": "#/$defs/T73"
+            },
+            {
+              "$ref": "#/$defs/T77"
             },
             {
               "$ref": "#/$defs/T78"
-            },
-            {
-              "$ref": "#/$defs/T79"
             },
             {
               "$ref": "#/$defs/T80"
             },
             {
               "$ref": "#/$defs/T81"
+            },
+            {
+              "$ref": "#/$defs/T82"
             },
             {
               "$ref": "#/$defs/T83"
@@ -5687,10 +5687,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -5728,10 +5728,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -5769,10 +5769,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -5810,10 +5810,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -5851,10 +5851,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -6413,10 +6413,10 @@
         "order": {
           "anyOf": [
             {
-              "const": "asc"
+              "const": "desc"
             },
             {
-              "const": "desc"
+              "const": "asc"
             }
           ]
         },
@@ -6477,6 +6477,9 @@
         "type": {
           "anyOf": [
             {
+              "const": "index"
+            },
+            {
               "const": "no_calculations"
             },
             {
@@ -6493,9 +6496,6 @@
             },
             {
               "const": "%_of_parent_col_total"
-            },
-            {
-              "const": "index"
             },
             {
               "const": "%_of_parent_total"
@@ -6643,10 +6643,10 @@
         "order": {
           "anyOf": [
             {
-              "const": "asc"
+              "const": "desc"
             },
             {
-              "const": "desc"
+              "const": "asc"
             }
           ]
         },
@@ -7296,10 +7296,10 @@
         "position": {
           "anyOf": [
             {
-              "const": "before"
+              "const": "after"
             },
             {
-              "const": "after"
+              "const": "before"
             }
           ]
         },
@@ -7711,10 +7711,10 @@
         "sortDirection": {
           "anyOf": [
             {
-              "const": "asc"
+              "const": "desc"
             },
             {
-              "const": "desc"
+              "const": "asc"
             }
           ]
         },
@@ -7896,37 +7896,27 @@
       "type": "object",
       "properties": {
         "filterType": {
-          "const": "values"
-        },
-        "hiddenValues": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": ["filterType", "hiddenValues"],
-      "additionalProperties": false
-    },
-    "T199": {
-      "type": "object",
-      "properties": {
-        "filterType": {
           "const": "criterion"
         },
         "type": {
           "anyOf": [
             {
-              "const": "beginsWithText"
+              "const": "none"
             },
             {
-              "const": "isBetween"
+              "const": "isEmpty"
             },
             {
               "const": "containsText"
             },
             {
-              "const": "isEmpty"
+              "const": "notContainsText"
+            },
+            {
+              "const": "beginsWithText"
+            },
+            {
+              "const": "isBetween"
             },
             {
               "const": "isNotEmpty"
@@ -7953,16 +7943,10 @@
               "const": "isNotBetween"
             },
             {
-              "const": "notContainsText"
-            },
-            {
               "const": "isNotEqual"
             },
             {
               "const": "customFormula"
-            },
-            {
-              "const": "none"
             },
             {
               "const": "isEqualText"
@@ -8020,10 +8004,10 @@
               "const": "today"
             },
             {
-              "const": "tomorrow"
+              "const": "yesterday"
             },
             {
-              "const": "yesterday"
+              "const": "tomorrow"
             },
             {
               "const": "lastWeek"
@@ -8041,6 +8025,22 @@
         }
       },
       "required": ["filterType", "type", "values"],
+      "additionalProperties": false
+    },
+    "T199": {
+      "type": "object",
+      "properties": {
+        "filterType": {
+          "const": "values"
+        },
+        "hiddenValues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["filterType", "hiddenValues"],
       "additionalProperties": false
     },
     "T197": {

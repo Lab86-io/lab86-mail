@@ -828,9 +828,11 @@ export const dailyReportContext = query({
     ]);
 
     const workIds = new Set(
-      [...applications.map((row) => row.intentId), ...projects.map((row) => row.sourceIntentId)].filter(
-        Boolean,
-      ),
+      [
+        ...applications.map((row) => row.intentId),
+        ...projects.map((row) => row.sourceIntentId),
+        ...approvals.map((row) => row.intentId),
+      ].filter(Boolean),
     );
     const workStates = (
       await Promise.all(

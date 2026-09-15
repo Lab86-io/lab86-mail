@@ -322,3 +322,17 @@ describe('Today workspace composition and trust boundary', () => {
     expect(deps.generate).toHaveBeenCalledTimes(1);
   });
 });
+
+test('a thread with completed and active Work retains its active Work regardless of ordering', () => {
+  const entries = [source('one', { topics: ['work:done', 'work:active'] })];
+  const works = [
+    { id: 'done', title: 'Completed', state: 'done', guided: false },
+    { id: 'active', title: 'Still needed', state: 'active', guided: false },
+  ];
+  for (const ordered of [works, [...works].reverse()]) {
+    const result = hydrateWorkspace(composition, entries, ordered, 'v', 'generated');
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0].work?.id).toBe('active');
+  }
+  expect(hydrateWorkspace(composition, entries, [works[0]], 'v', 'generated').threads).toEqual([]);
+});

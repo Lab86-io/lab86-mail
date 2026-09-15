@@ -193,7 +193,9 @@ export function hydrateWorkspace(
     if (used.has(id)) throw new Error('Duplicate workspace thread');
     used.add(id);
     // Work identity comes only from an owned live Work record, never AI output.
-    const work = works.find((w) => sources.some((e) => e.topics.includes(`work:${w.id}`)));
+    const matchingWorks = works.filter((w) => sources.some((e) => e.topics.includes(`work:${w.id}`)));
+    const work =
+      matchingWorks.find((w) => !['done', 'released', 'archived'].includes(w.state)) || matchingWorks[0];
     return {
       id,
       title: cleanNarrativeText(thread.title, 100),

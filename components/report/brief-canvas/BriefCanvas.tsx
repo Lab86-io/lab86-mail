@@ -86,7 +86,7 @@ export function BriefCanvas({
   const letterKind = useMemo(() => briefLetterKind(document), [document]);
   const refs = useMemo(() => collectBriefRefs(document), [document]);
   const actionableRefs = useMemo(
-    () => refs.filter((ref) => ['work', 'task', 'card'].includes(ref.kind)),
+    () => refs.filter((ref) => ['work', 'project', 'task', 'card'].includes(ref.kind)),
     [refs],
   );
   const inactive = useQuery({

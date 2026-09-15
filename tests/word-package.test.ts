@@ -12,16 +12,17 @@ import {
 import { fullWordEdits, png } from '../scripts/fixtures/word-suite-plan';
 
 describe('full Word DOCX packages', () => {
-  test('replacing default headers and footers reuses their package parts without stale notes', async () => {
+  test('replacing headers and footers covers every section and existing page variant without stale notes', async () => {
     const original = await Packer.toBuffer(
       new Document({
-        sections: [
-          {
-            headers: { default: new Header({ children: [new Paragraph('Old header')] }) },
-            footers: { default: new Footer({ children: [new Paragraph('Old footer')] }) },
-            children: [new Paragraph('Body')],
+        sections: [1, 2].map((index) => ({
+          headers: {
+            default: new Header({ children: [new Paragraph(`Old header ${index}`)] }),
+            first: new Header({ children: [new Paragraph(`Old first header ${index}`)] }),
           },
-        ],
+          footers: { default: new Footer({ children: [new Paragraph(`Old footer ${index}`)] }) },
+          children: [new Paragraph(`Body ${index}`)],
+        })),
       }),
     );
     const first = await editWordPackage(original, [
@@ -41,7 +42,9 @@ describe('full Word DOCX packages', () => {
     expect((await readWordPackage(second)).notes.map((note) => note.text)).toEqual(
       expect.arrayContaining(['Final header', 'Final footer']),
     );
-    expect(JSON.stringify((await readWordPackage(second)).notes)).not.toMatch(/Old|First/);
+    const notes = (await readWordPackage(second)).notes;
+    expect(notes.filter((note) => /^Final (header|footer)$/.test(note.text))).toHaveLength(6);
+    expect(JSON.stringify(notes)).not.toMatch(/Old|First/);
   });
 
   test('formatting inserts run and paragraph properties in canonical schema order', async () => {
@@ -230,4 +233,39 @@ describe('full Word DOCX packages', () => {
       (await readWordPackage(bytes)).notes.find((note) => note.part.endsWith('comments.xml'))?.text,
     ).toContain('Second comment');
   });
+});
+
+test('page layout and table properties retain schema order around existing section properties', async () => {
+  const original = await createWordPackage('Ordered sections');
+  const zip = await JSZip.loadAsync(original);
+  const dom = new JSDOM(await zip.file('word/document.xml')!.async('string'), {
+    contentType: 'application/xml',
+  });
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const doc = dom.window.document;
+  const section = doc.getElementsByTagNameNS(W, 'sectPr')[0];
+  section.replaceChildren(doc.createElementNS(W, 'w:cols'), doc.createElementNS(W, 'w:docGrid'));
+  zip.file('word/document.xml', new dom.window.XMLSerializer().serializeToString(doc));
+  dom.window.close();
+  const result = await editWordPackage(await zip.generateAsync({ type: 'uint8array' }), [
+    { op: 'page_setup', size: 'a4', marginInches: 1 },
+    { op: 'set_header_footer', area: 'footer', text: 'Footer' },
+    { op: 'set_header_footer', area: 'header', text: 'Header' },
+    { op: 'insert_table', rows: [['Title'], ['Value']], header: true },
+  ]);
+  const saved = await JSZip.loadAsync(result);
+  const parsed = new JSDOM(await saved.file('word/document.xml')!.async('string'), {
+    contentType: 'application/xml',
+  });
+  for (const [tag, expected] of [
+    ['sectPr', ['headerReference', 'footerReference', 'pgSz', 'pgMar', 'cols', 'docGrid']],
+    ['tblPr', ['tblW', 'tblBorders']],
+    ['tblBorders', ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']],
+    ['trPr', ['tblHeader']],
+    ['tcPr', ['shd']],
+  ] as const) {
+    const node = parsed.window.document.getElementsByTagNameNS(W, tag)[0];
+    expect(Array.from(node.children).map((child) => child.localName)).toEqual([...expected]);
+  }
+  parsed.window.close();
 });

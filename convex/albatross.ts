@@ -1364,9 +1364,11 @@ export const listAreasOverview = query({
       ensure(areaId).facts[fact.status as 'verified' | 'candidate'] += 1;
       touch(areaId, fact.updatedAt);
     }
+    const retiredCardIds = new Set(cards.filter((card) => card.retiredAt).map((card) => String(card._id)));
     const linkedTaskIdsByArea = new Map<string, Set<string>>();
     for (const link of links) {
-      if (link.status === 'rejected') continue;
+      if (link.status === 'rejected' || (link.artifactKind === 'task' && retiredCardIds.has(link.artifactId)))
+        continue;
       const areaId = String(link.areaId);
       if (!areaIds.has(areaId)) continue;
       const entry = ensure(areaId);
@@ -1381,6 +1383,7 @@ export const listAreasOverview = query({
       touch(areaId, link.updatedAt);
     }
     for (const card of cards) {
+      if (card.retiredAt) continue;
       const areaId = boardToArea.get(String(card.boardId));
       if (!areaId) continue;
       const ids = linkedTaskIdsByArea.get(areaId) ?? new Set<string>();

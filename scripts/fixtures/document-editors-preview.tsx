@@ -7,7 +7,11 @@ import { OfficeEditor } from '../../components/files/OfficeEditor';
 import { TooltipProvider } from '../../components/ui/tooltip';
 
 function Preview() {
-  const [selected, setSelected] = useState(new URLSearchParams(location.search).get('kind') || 'doc');
+  const [selected, setSelected] = useState(() =>
+    new URLSearchParams(location.search).has('office')
+      ? 'word'
+      : new URLSearchParams(location.search).get('kind') || 'doc',
+  );
   useEffect(() => {
     const navigate = () => {
       if (new URLSearchParams(location.search).has('office')) setSelected('word');

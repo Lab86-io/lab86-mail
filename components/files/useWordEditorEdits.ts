@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { OfficeFile } from '@/lib/documents/office-service';
 import type { CollaboraSession } from './CollaboraFrame';
 
@@ -14,7 +14,9 @@ export function useWordEditorEdits(input: {
   onError: (message: string) => void;
 }) {
   const latest = useRef(input);
-  latest.current = input;
+  useLayoutEffect(() => {
+    latest.current = input;
+  });
   const handled = useRef<string | null>(null);
   const paused = useRef(false);
   const mounted = useRef(true);

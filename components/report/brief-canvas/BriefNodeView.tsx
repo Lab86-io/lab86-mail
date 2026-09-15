@@ -73,6 +73,17 @@ export function BriefNodeView({
   regionSummary: string;
   topLevel?: boolean;
 }) {
+  if (
+    node.kind === 'timeline' ||
+    node.kind === 'checklist' ||
+    node.kind === 'collection' ||
+    node.kind === 'plan'
+  ) {
+    const items = node.items.filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)));
+    if (!items.length)
+      return node.kind === 'collection' && node.emptyText ? <BriefEmpty text={node.emptyText} /> : null;
+    node = { ...node, items } as typeof node;
+  }
   const common = topLevel ? '' : nodeClass(node);
   switch (node.kind) {
     case 'stack':
