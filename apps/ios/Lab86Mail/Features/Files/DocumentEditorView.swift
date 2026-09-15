@@ -174,6 +174,10 @@ struct DocumentEditorView: View {
                 }
             case .workbook(let snapshot):
                 NativeWorkbookPreview(snapshot: snapshot, webEditorURL: webEditorURL)
+            case .deckV2(let deck):
+                NativeDeckV2Editor(deck: deck, webEditorURL: webEditorURL) { next in
+                    updateModel(.deckV2(next))
+                }
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) { active, next in
                     updateModel(.deck(activeSlideID: active, slides: next))
@@ -396,6 +400,7 @@ struct GoogleDocumentEditorView: View {
                 } label: {
                     Label("Albatross", systemImage: "sparkles")
                 }
+                .disabled(draft?.model.requiresWebEditor == true)
             }
         }
         .task(id: route.fileID) {
@@ -432,6 +437,8 @@ struct GoogleDocumentEditorView: View {
                 TextField("File name", text: titleBinding)
                     .font(.headline)
                     .textInputAutocapitalization(.sentences)
+                    // A model the native app cannot save keeps its title too.
+                    .disabled(document.model.requiresWebEditor)
                 Spacer(minLength: 0)
                 Label(
                     isSaving ? "Saving" : "Google Drive",
@@ -453,6 +460,10 @@ struct GoogleDocumentEditorView: View {
                 }
             case .workbook(let snapshot):
                 NativeWorkbookPreview(snapshot: snapshot, webEditorURL: document.webURL)
+            case .deckV2(let deck):
+                NativeDeckV2Editor(deck: deck, webEditorURL: document.webURL) {
+                    updateModel(.deckV2($0))
+                }
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) {
                     updateModel(.deck(activeSlideID: $0, slides: $1))

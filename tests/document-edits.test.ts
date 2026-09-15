@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { runWithAiRequestContext } from '../lib/ai/context';
 import { AGENT_TOOL_NAMES, liftToolsForAgent } from '../lib/ai/loop';
+import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
+import { compositionArtwork } from '../lib/documents/deck-imagery';
 import { documentEditsSchema, prepareDocumentEdits } from '../lib/documents/edits';
-import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
+import {
+  type AlbatrossDocumentRecord,
+  createDefaultDocumentModel,
+  deckElementText,
+} from '../lib/documents/model';
 import { TOOLS } from '../lib/tools';
 import {
   __setDocumentToolDepsForTest,
@@ -10,6 +16,7 @@ import {
   documentExport,
   spreadsheetCapabilitiesTool,
 } from '../lib/tools/documents';
+import { poolArtworks } from './fixtures/presentation-briefs';
 import { toolContext, withToolContext } from './tools/harness';
 
 test('the spreadsheet capability tool supplies exact chart command schemas before editing', async () => {
@@ -177,6 +184,44 @@ describe('deterministic document edits', () => {
         },
       ]),
     ).toThrow('canvas');
+  });
+  test('deck_restyle on version 2 moves the palette and fonts and keeps geometry, ids and content', () => {
+    const source = referenceDeck('editorial');
+    const result = prepareDocumentEdits(source, [
+      { op: 'deck_restyle', palette: 'signal', fontPair: 'sans' },
+    ]);
+    if (result.kind !== 'deck' || result.version !== 2) throw new Error('Wrong kind');
+    expect(result.theme).toEqual(DECK_THEMES.signal);
+    for (const [index, slide] of source.slides.entries())
+      expect(
+        result.slides[index].elements.map((e) => [e.id, e.x, e.y, e.width, e.height, deckElementText(e)]),
+      ).toEqual(slide.elements.map((e) => [e.id, e.x, e.y, e.width, e.height, deckElementText(e)]));
+    expect(source.theme).toEqual(DECK_THEMES.editorial);
+    const layout = prepareDocumentEdits(source, [
+      { op: 'deck_restyle', palette: 'signal', scope: 'theme-and-layout', lockedElementIds: ['cover-image'] },
+    ]);
+    if (layout.kind !== 'deck' || layout.version !== 2) throw new Error('Wrong kind');
+    expect(layout.slides.map((slide) => slide.id)).toEqual(source.slides.map((slide) => slide.id));
+    expect(layout.slides[0].elements.find((e) => e.id === 'cover-image')).toEqual(
+      source.slides[0].elements.find((e) => e.id === 'cover-image')!,
+    );
+    expect(documentEditsSchema.safeParse([{ op: 'deck_restyle', scope: 'theme' }]).success).toBe(false);
+    // Imagery alone is a valid restyle; paintings come from the edit context, never from the operation.
+    expect(documentEditsSchema.safeParse([{ op: 'deck_restyle', imagery: 'none' }]).success).toBe(true);
+    const [statement] = poolArtworks(1).map(compositionArtwork);
+    const painted = prepareDocumentEdits(source, [{ op: 'deck_restyle', imagery: 'paintings' }], {
+      artworks: { statement },
+      imageryTheme: { mode: 'paintings', subject: 'valley' },
+    });
+    if (painted.kind !== 'deck' || painted.version !== 2) throw new Error('Wrong kind');
+    expect(painted.theme.imagery).toEqual({ mode: 'paintings', subject: 'valley' });
+    expect(painted.slides[1].backgroundImage).toMatchObject({ assetId: 'art-1', opacity: 0.28 });
+    expect(painted.slides[1].notes).toContain(statement.credit);
+    const cleared = prepareDocumentEdits(painted, [{ op: 'deck_restyle', imagery: 'none' }]);
+    if (cleared.kind !== 'deck' || cleared.version !== 2) throw new Error('Wrong kind');
+    expect(cleared.theme.imagery).toBeUndefined();
+    expect(cleared.slides[1].backgroundImage).toBeUndefined();
+    expect(cleared.slides[1].notes).toBeUndefined();
   });
   test('Odoo changes are bounded engine commands, not flattened workbook replacements', () => {
     const source = engine();

@@ -281,6 +281,7 @@ const USER_BULK_TABLES = [
   'officeDocuments',
   'officeVersions',
   'officeSessions',
+  'documentAssets',
 ] as const;
 
 const PURGE_BATCH = 250;
@@ -305,8 +306,8 @@ export const purgeUserDataBatch = internalMutation({
             .take(PURGE_BATCH - deleted),
         );
       for (const row of rows) {
-        if (table === 'officeVersions' && 'storageId' in row) {
-          // Version metadata must not be deleted before its private binary.
+        if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
+          // Metadata must not be deleted before its private binary.
           await ctx.storage.delete(row.storageId as Id<'_storage'>);
         }
         await ctx.db.delete(row._id);

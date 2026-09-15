@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
+import { compositionArtwork } from '../lib/documents/deck-imagery';
+import { documentEditsSchema } from '../lib/documents/edits';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
+import { isArtworkSource } from '../lib/documents/presentation-compositions';
 import {
   __setDocumentToolDepsForTest,
   documentApplyInstruction,
   documentCreate,
+  documentEdit,
   documentExport,
   documentGet,
   documentList,
@@ -11,6 +16,7 @@ import {
   documentSuggestChanges,
 } from '../lib/tools/documents';
 import { __setCloudFileToolDepsForTest, cloudFileSearch, googleFileImport } from '../lib/tools/files';
+import { poolArtworks } from './fixtures/presentation-briefs';
 import { runTool, toolContext } from './tools/harness';
 
 function record(overrides: Partial<AlbatrossDocumentRecord> = {}): AlbatrossDocumentRecord {
@@ -327,6 +333,182 @@ describe('document tools', () => {
         sourceContext: undefined,
       }),
     ).rejects.toThrow('file changed while Albatross was editing');
+  });
+
+  test('an explicit deck_restyle applies a version 2 revision directly and the tools describe it', async () => {
+    const current = record({ kind: 'deck', model: referenceDeck('editorial') });
+    const update = mock(async (input: any) => ({
+      ok: true,
+      document: { ...current, model: input.model, currentRevision: 3 },
+    }));
+    const suggestion = mock(async () => ({ ok: true, suggestionId: 'never' }));
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+    const result = await runTool(documentEdit.handler, {
+      documentId: current.documentId,
+      expectedRevision: 2,
+      mode: 'apply',
+      summary: 'Signal palette with sans fonts',
+      operations: [{ op: 'deck_restyle', palette: 'signal', fontPair: 'sans', scope: 'theme' }],
+    });
+    expect(result).toMatchObject({ ok: true, status: 'applied', revision: 3 });
+    expect(suggestion).not.toHaveBeenCalled();
+    expect(update.mock.calls[0][0]).toMatchObject({
+      expectedRevision: 2,
+      actor: 'ai',
+      model: { kind: 'deck', version: 2, theme: DECK_THEMES.signal },
+    });
+    const chart = referenceDeck('editorial').slides[3].elements.find((e) => e.id === 'm-chart');
+    expect(
+      update.mock.calls[0][0].model.slides[3].elements.find((e: any) => e.id === 'm-chart'),
+    ).toMatchObject({
+      series: chart?.type === 'chart' ? chart.series : null,
+    });
+    expect(documentEdit.description).toContain('deck_restyle');
+    expect(documentEdit.description).toContain('theme-and-layout');
+    expect(documentEdit.description).toContain('mode apply');
+    expect(documentCreate.description).toContain('image-left');
+    expect(documentCreate.description).toContain('editorial');
+    expect(documentEdit.input.shape.operations).toBe(documentEditsSchema);
+  });
+
+  test('a presentation takes the user’s image uploads first and passes the artwork choice through', async () => {
+    const uploads = mock(async () => ({
+      assets: [{ assetId: 'asset-1', src: 'https://owned/asset-1', alt: 'Harbor photo', aspect: 1.5 }],
+      notes: ['brief.pdf is not an image and was skipped.'],
+    }));
+    const proposal = mock(async () => ({
+      title: 'Harbor Works',
+      summary: 'Six slides. Added 2 public-domain paintings with credits.',
+      model: referenceDeck('editorial'),
+    }));
+    const create = mock(async (input: any) =>
+      record({ kind: 'deck', title: input.title, model: input.model }),
+    );
+    __setDocumentToolDepsForTest({
+      assetsFromUploads: uploads as any,
+      createDocument: create as any,
+      generateDocumentProposal: proposal as any,
+      recordOperation: (async () => 'operation-1') as any,
+    });
+    const result = await runTool(
+      documentCreate.handler,
+      {
+        kind: 'deck',
+        title: 'Harbor Works',
+        instructions: 'Six slides on the dredging plan',
+        imageUploadIds: ['upload-1', 'upload-2'],
+        artwork: 'none',
+      },
+      toolContext(),
+    );
+    expect(uploads).toHaveBeenCalledWith('test_user_tools', ['upload-1', 'upload-2']);
+    expect(proposal.mock.calls[0][0]).toMatchObject({
+      kind: 'deck',
+      artwork: 'none',
+      assets: [{ assetId: 'asset-1', src: 'https://owned/asset-1' }],
+    });
+    expect(result).toMatchObject({ ok: true, notes: ['brief.pdf is not an image and was skipped.'] });
+    expect(documentCreate.description).toContain('imageUploadIds');
+    expect(documentCreate.description).not.toMatch(/\bAI\b/);
+
+    // Uploads on a text document are noted and never read; without uploads the field stays absent.
+    uploads.mockClear();
+    proposal.mockClear();
+    const memo = await runTool(
+      documentCreate.handler,
+      { kind: 'doc', title: 'Memo', instructions: 'Draft', imageUploadIds: ['upload-1'] },
+      toolContext(),
+    );
+    expect(uploads).not.toHaveBeenCalled();
+    expect(memo.notes).toEqual(['Image uploads apply to presentations only and were not used.']);
+    expect(proposal.mock.calls[0][0]).not.toHaveProperty('assets');
+    const plain = await runTool(
+      documentCreate.handler,
+      { kind: 'deck', title: 'Plain', instructions: 'Draft' },
+      toolContext(),
+    );
+    expect(plain.notes).toBeUndefined();
+    expect(proposal.mock.calls[1][0]).not.toHaveProperty('artwork');
+  });
+
+  test('deck_restyle with imagery paintings resolves artwork first; failures become a note', async () => {
+    const current = record({ kind: 'deck', model: referenceDeck('editorial') });
+    const artworks = poolArtworks(2).map(compositionArtwork);
+    const resolve = mock(async () => ({
+      artworks: { statement: artworks[0], close: artworks[1] },
+      imagery: { mode: 'paintings' as const, subject: 'valley' },
+      notes: [],
+    }));
+    const update = mock(async (input: any) => ({
+      ok: true,
+      document: { ...current, model: input.model, currentRevision: 3 },
+    }));
+    const suggestion = mock(async () => ({ ok: true, suggestionId: 'suggestion-1' }));
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      artworksForDeck: resolve as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+    const applied = await runTool(documentEdit.handler, {
+      documentId: current.documentId,
+      expectedRevision: 2,
+      mode: 'apply',
+      summary: 'Paintings on the open slides',
+      operations: [{ op: 'deck_restyle', imagery: 'paintings' }],
+    });
+    expect(applied).toMatchObject({ ok: true, status: 'applied', summary: 'Paintings on the open slides' });
+    expect(resolve.mock.calls[0][0]).toBe(current.model);
+    expect(resolve.mock.calls[0][1]).toEqual({ userId: 'test_user_tools' });
+    const model = update.mock.calls[0][0].model;
+    expect(model.theme.imagery).toEqual({ mode: 'paintings', subject: 'valley' });
+    expect(model.slides[1].backgroundImage).toMatchObject({ assetId: 'art-1' });
+    expect(model.slides[5].elements.some((e: any) => e.type === 'image' && isArtworkSource(e.source))).toBe(
+      true,
+    );
+
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      artworksForDeck: (async () => ({ artworks: {}, imagery: { mode: 'paintings' }, notes: [] })) as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+    const empty = await runTool(documentEdit.handler, {
+      documentId: current.documentId,
+      expectedRevision: 2,
+      summary: 'Paintings',
+      operations: [{ op: 'deck_restyle', imagery: 'paintings' }],
+    });
+    expect(empty).toMatchObject({
+      status: 'proposed',
+      summary:
+        'Not yet applied. A reviewable suggestion is ready in Files: Paintings No artwork was available for these slides.',
+    });
+
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      artworksForDeck: (async () => {
+        throw new Error('museum down');
+      }) as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+    const failed = await runTool(documentEdit.handler, {
+      documentId: current.documentId,
+      expectedRevision: 2,
+      mode: 'apply',
+      summary: 'Signal with paintings',
+      operations: [{ op: 'deck_restyle', palette: 'signal', imagery: 'paintings' }],
+    });
+    expect(failed.summary).toBe(
+      'Signal with paintings Artwork could not be added; the slides stay typographic.',
+    );
+    expect(update.mock.calls[1][0].model.theme.colors).toEqual(DECK_THEMES.signal.colors);
+    expect(documentEdit.description).toContain('imagery paintings');
   });
 
   test('does not claim a proposal exists if its file disappeared during generation', async () => {

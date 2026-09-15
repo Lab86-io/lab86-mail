@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
 import { generateDocumentProposal } from '@/lib/documents/ai';
-import { documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
+import { artworksForDeck } from '@/lib/documents/deck-imagery';
+import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
+import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
 import {
@@ -32,6 +34,8 @@ const sourceRefSchema = z.object({
 const defaultDependencies = {
   applySpreadsheetChanges,
   archiveDocument,
+  artworksForDeck,
+  assetsFromUploads,
   createDocument,
   createDocumentSuggestion,
   generateDocumentProposal,
@@ -51,7 +55,7 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. A presentation is designed from an art-direction brief (audience, purpose, tone, palette editorial or signal, font pair serif or sans) and composed through eleven slide compositions: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Numbers and charts appear only when sourceContext supplies them. For a presentation, imageUploadIds lists the user’s own chat image uploads (up to eight); they take the image slots in order. artwork auto (the default) fills the remaining cover, statement, image, quote and close slots with credited public-domain paintings; artwork none keeps those slides typographic. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -62,6 +66,10 @@ export const documentCreate = defineTool({
     sourceRefs: z.array(sourceRefSchema).max(100).optional(),
     publishToGoogle: z.boolean().default(false),
     googleConnectionId: z.string().max(500).optional(),
+    /** Chat upload ids of the user’s own images for a presentation, in the order the slides should use them. */
+    imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
+    /** auto: credited public-domain paintings fill the open image slots. none: keep those slides typographic. */
+    artwork: z.enum(['auto', 'none']).optional(),
   }),
   output: z.object({
     ok: z.boolean(),
@@ -72,9 +80,20 @@ export const documentCreate = defineTool({
     openPath: z.string(),
     googleUrl: z.string().optional(),
     publishError: z.string().optional(),
+    /** Plain notes on uploads that were skipped. */
+    notes: z.array(z.string()).optional(),
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const notes: string[] = [];
+    let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
+    if (args.imageUploadIds?.length) {
+      if (args.kind === 'deck') {
+        const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
+        assets = uploads.assets;
+        notes.push(...uploads.notes);
+      } else notes.push('Image uploads apply to presentations only and were not used.');
+    }
     const proposal = args.instructions
       ? await dependencies.generateDocumentProposal({
           userId,
@@ -83,6 +102,8 @@ export const documentCreate = defineTool({
           kind: args.kind,
           instruction: args.instructions,
           sourceContext: args.sourceContext,
+          ...(assets ? { assets } : {}),
+          ...(args.artwork ? { artwork: args.artwork } : {}),
         })
       : null;
     const document = await dependencies.createDocument({
@@ -126,6 +147,7 @@ export const documentCreate = defineTool({
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       googleUrl: google?.webUrl,
       publishError,
+      ...(notes.length ? { notes } : {}),
     };
   },
 });
@@ -376,7 +398,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements (use deck_restyle for a consistent dark/light theme across all slides without coordinate generation; element coordinates are percentages 0–100, width/height at least 1), or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, or six custom hex colors), fontPair (serif or sans), scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay), and imagery paintings (credited public-domain paintings on the cover, statement, image, quote and close slides that have no image) or none (paintings removed; the user’s own images stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -415,7 +437,25 @@ export const documentEdit = defineTool({
         status: 'conflict' as const,
         summary: 'Nothing changed. Read the latest file and review your edits against its new revision.',
       };
-    const proposedModel = prepareDocumentEdits(document.model, args.operations);
+    const context: DocumentEditContext = {};
+    let artworkNote = '';
+    const wantsPaintings =
+      document.kind === 'deck' &&
+      document.model.kind === 'deck' &&
+      args.operations.some(
+        (operation) => operation.op === 'deck_restyle' && operation.imagery === 'paintings',
+      );
+    if (wantsPaintings && document.model.kind === 'deck') {
+      try {
+        const art = await dependencies.artworksForDeck(document.model, { userId });
+        context.artworks = art.artworks;
+        context.imageryTheme = art.imagery;
+        if (!Object.keys(art.artworks).length) artworkNote = ' No artwork was available for these slides.';
+      } catch {
+        artworkNote = ' Artwork could not be added; the slides stay typographic.';
+      }
+    }
+    const proposedModel = prepareDocumentEdits(document.model, args.operations, context);
     if (args.mode !== 'apply') {
       const suggestion = await dependencies.createDocumentSuggestion({
         userId,
@@ -435,7 +475,7 @@ export const documentEdit = defineTool({
         summary:
           proposedModel.kind === 'sheet-changes'
             ? `Not yet applied. Review these workbook changes in the spreadsheet editor: ${args.summary}`
-            : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}`,
+            : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}${artworkNote}`,
       };
     }
     const saved = await dependencies.updateDocument({
@@ -461,7 +501,7 @@ export const documentEdit = defineTool({
       revision: saved.document.currentRevision,
       ok: true,
       status: 'applied' as const,
-      summary: args.summary,
+      summary: `${args.summary}${artworkNote}`,
     };
   },
 });

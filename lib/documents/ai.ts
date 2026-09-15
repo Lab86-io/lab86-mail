@@ -1,22 +1,49 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
+import { envFlag } from '@/lib/hosted/controls';
+import {
+  artworksBySlideIndex,
+  artworksForDeck,
+  imageryTheme,
+  planDeckImagery,
+  resolveDeckImagery,
+} from './deck-imagery';
+import { type DeckIssue, repairDeck } from './deck-quality';
+import { availableRenderBrowser, renderDeckSlides } from './deck-render';
+import { deckModelsEqual } from './deck-versions';
+import { isDeckV2AuthoringEnabled } from './editor-flags';
+import { type DocumentEditContext, prepareDocumentEdits } from './edits';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
   createDefaultDocumentModel,
+  type DeckModelV2,
   type DocumentKind,
   deckModelSchema,
+  deckModelV2Schema,
   docModelSchema,
   documentKindLabel,
   isSheetWorkbookModel,
   type SheetChangeSet,
   sheetModelSchema,
 } from './model';
+import { buildDeckTheme, type CompositionArtwork, type CompositionAsset } from './presentation-compositions';
 import {
+  applyCopyRepairs,
+  briefFieldForElement,
   composePresentation,
+  composePresentationV2,
+  copyRepairSchema,
+  mentionsRestyle,
   PRESENTATION_DESIGN_GUIDANCE,
+  PRESENTATION_DESIGN_GUIDANCE_V2,
+  type PresentationBriefV2,
   presentationBriefSchema,
+  presentationBriefV2Schema,
   presentationSlideCountMatches,
+  RESTYLE_CLASSIFIER_GUIDANCE,
+  restyleClassificationSchema,
+  restyleOperationFor,
 } from './presentation-design';
 import { MAX_SHEET_CHANGES, sheetChangeSchema, workbookText } from './sheet-workbook';
 import {
@@ -29,6 +56,11 @@ import { applySpreadsheetChanges } from './spreadsheet-server';
 
 const defaultDependencies = {
   generateObjectForCurrentUser,
+  availableRenderBrowser,
+  renderDeckSlides,
+  isDeckV2AuthoringEnabled,
+  resolveDeckImagery,
+  artworksForDeck,
 };
 
 let dependencies = defaultDependencies;
@@ -50,11 +82,20 @@ const schemas = {
   deck: deckModelSchema,
 } as const;
 
-function outputSchema(kind: DocumentKind) {
+/** The deck schema an existing deck is edited through: version 2 stays version 2. */
+function deckModelSchemaFor(current?: AlbatrossDocumentModel) {
+  return current?.kind === 'deck' && current.version === 2 ? deckModelV2Schema : deckModelSchema;
+}
+
+function modelSchemaFor(kind: DocumentKind, current?: AlbatrossDocumentModel) {
+  return kind === 'deck' ? deckModelSchemaFor(current) : schemas[kind];
+}
+
+function outputSchema(kind: DocumentKind, current?: AlbatrossDocumentModel) {
   return z.object({
     title: z.string().min(1).max(500),
     summary: z.string().min(1).max(1_000),
-    model: schemas[kind],
+    model: modelSchemaFor(kind, current),
   });
 }
 
@@ -74,10 +115,12 @@ export interface DocumentProposal {
   model: AlbatrossDocumentModel | SheetChangeSet;
 }
 
-function modelGuidance(kind: 'doc' | 'deck') {
+function modelGuidance(kind: 'doc' | 'deck', current?: AlbatrossDocumentModel) {
   if (kind === 'doc') {
     return `Create structured blocks. Use heading blocks for hierarchy, paragraphs for prose, bullet or numbered blocks for lists, and quote only for attributed/source language. Keep block ids short and unique.`;
   }
+  if (current?.kind === 'deck' && current.version === 2)
+    return `Edit the presentation as 16:9 slides on the version 2 model. Every element uses percentage coordinates from 0 to 100. Keep the deck theme, the element names and the image asset ids; use theme colors for new elements. Keep concise slide titles, readable body text, a clear visual hierarchy, speaker notes when useful, and short unique ids.`;
   return `Create a presentation as 16:9 slides. Every element uses percentage coordinates from 0 to 100. Use concise slide titles, readable body text, a clear visual hierarchy, speaker notes when useful, and short unique ids.`;
 }
 
@@ -133,6 +176,220 @@ async function generateSheetChangeSet(input: {
   };
 }
 
+interface DeckGenerationInput {
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  instruction: string;
+  sourceContext?: string;
+  /** Owned assets the deck may show. Never external links. */
+  assets?: CompositionAsset[];
+  /** auto: credited public-domain paintings fill the open image slots. none: typographic slides. */
+  artwork?: 'auto' | 'none';
+}
+
+/** Paintings for a new deck, with the note the summary carries. Failures degrade to typography. */
+interface DeckArtworkSelection {
+  artworks?: Partial<Record<number, CompositionArtwork>>;
+  imagery?: ReturnType<typeof imageryTheme>;
+  note: string;
+}
+
+async function selectDeckArtworks(
+  input: DeckGenerationInput,
+  brief: PresentationBriefV2,
+): Promise<DeckArtworkSelection> {
+  if (input.artwork === 'none') return { note: '' };
+  const plan = planDeckImagery(brief, buildDeckTheme(brief.palette, brief.fontPair), {
+    assets: input.assets,
+  });
+  if (!plan.slots.length) return { note: '' };
+  try {
+    const resolved = await dependencies.resolveDeckImagery(plan, { userId: input.userId });
+    const artworks = artworksBySlideIndex(plan, resolved);
+    const count = Object.keys(artworks).length;
+    if (!count) return { note: ' Artwork was not available; the slides are typographic.' };
+    return {
+      artworks,
+      imagery: imageryTheme(plan),
+      note: ` Added ${count} public-domain ${count === 1 ? 'painting' : 'paintings'} with credits.`,
+    };
+  } catch {
+    return { note: ' Artwork could not be added; the slides are typographic.' };
+  }
+}
+
+const COPY_REPAIR_GUIDANCE = `Some slide copy does not fit its box. Return shorter text for each listed field. Keep the meaning. Keep every number, name and date exactly as written. Do not add, remove or reorder slides. Plain language, no emoji. Fields: title, kicker, body, notes, chart.source, items.N.label, items.N.detail, items.N.meta.`;
+
+function issueList(issues: DeckIssue[]) {
+  return issues
+    .filter((issue) => issue.severity === 'error')
+    .map((issue) => `${issue.slideId}: ${issue.message}`)
+    .join(' ');
+}
+
+/**
+ * Quality loop for a composed deck: check, bounded repair, one optional model
+ * call that shortens copy that still does not fit, then a final check. A deck
+ * that still fails is never returned. The render check runs only when a
+ * browser is available and DECK_RENDER_CHECK is set; its failure is a note in
+ * the summary, not a failure of the generation.
+ */
+async function finishComposedDeck(
+  input: DeckGenerationInput,
+  initial: PresentationBriefV2,
+  art: DeckArtworkSelection = { note: '' },
+): Promise<{ brief: PresentationBriefV2; model: DeckModelV2; summary: string }> {
+  let brief = initial;
+  const slideIds = brief.slides.map((_, index) => `slide-${index + 1}`);
+  const compose = () =>
+    repairDeck(
+      composePresentationV2(brief, {
+        assets: input.assets,
+        slideIds,
+        ...(art.artworks ? { artworks: art.artworks } : {}),
+        ...(art.imagery ? { imagery: art.imagery } : {}),
+      }),
+    );
+  let repaired = compose();
+  if (!repaired.report.ok) {
+    const targets: { slideId: string; field: string; text: string; problem: string }[] = [];
+    for (const issue of repaired.report.issues) {
+      if (issue.severity !== 'error') continue;
+      const slide = repaired.model.slides.find((candidate) => candidate.id === issue.slideId);
+      for (const elementId of issue.elementIds) {
+        const element = slide?.elements.find((candidate) => candidate.id === elementId);
+        const field = element ? briefFieldForElement(element) : null;
+        if (element?.type === 'text' && field)
+          targets.push({ slideId: issue.slideId, field, text: element.text, problem: issue.message });
+      }
+    }
+    if (targets.length) {
+      const { object } = await dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
+        userId: input.userId,
+        userEmail: input.userEmail,
+        userName: input.userName,
+        feature: 'document_generation',
+        speed: 'primary',
+        maxOutputTokens: 4_000,
+        schema: copyRepairSchema,
+        system: COPY_REPAIR_GUIDANCE,
+        prompt: JSON.stringify(targets),
+      });
+      const fixes = copyRepairSchema.safeParse(object);
+      if (fixes.success) {
+        brief = applyCopyRepairs(brief, slideIds, fixes.data.fixes);
+        repaired = compose();
+      }
+    }
+    if (!repaired.report.ok)
+      throw new DocumentGenerationError(
+        `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
+      );
+  }
+  let summary = `${brief.summary}${art.note}`;
+  if (envFlag('DECK_RENDER_CHECK')) {
+    const browser = dependencies.availableRenderBrowser();
+    if (browser) {
+      try {
+        const rendered = await dependencies.renderDeckSlides(repaired.model, {
+          browser,
+          ...(process.env.NEXT_PUBLIC_APP_URL ? { assetOrigin: process.env.NEXT_PUBLIC_APP_URL } : {}),
+        });
+        summary = `${summary} (rendered: ${rendered.length})`;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        summary = `${summary} (render check did not complete: ${message.slice(0, 200)})`;
+      }
+    }
+  }
+  return { brief, model: repaired.model, summary };
+}
+
+/** New deck on the version 2 model: one model call for the brief, the composer, the quality loop. */
+async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentProposal> {
+  const { object } = await dependencies.generateObjectForCurrentUser({
+    userId: input.userId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    feature: 'document_generation',
+    speed: 'primary',
+    maxOutputTokens: 14_000,
+    schema: presentationBriefV2Schema,
+    system: PRESENTATION_DESIGN_GUIDANCE_V2,
+    prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}${
+      input.assets?.length
+        ? `\nOwned image assets (assetId: description):\n${input.assets.map((asset) => `${asset.assetId}: ${asset.alt || 'image'}`).join('\n')}`
+        : ''
+    }\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+  });
+  let brief: PresentationBriefV2;
+  try {
+    brief = presentationBriefV2Schema.parse(object);
+  } catch (error) {
+    throw new DocumentGenerationError('The presentation generator returned an incomplete design.', {
+      cause: error,
+    });
+  }
+  if (!presentationSlideCountMatches(input.instruction, brief.slides.length))
+    throw new DocumentGenerationError(
+      `The generator returned ${brief.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
+    );
+  const art = await selectDeckArtworks(input, brief);
+  const finished = await finishComposedDeck(input, brief, art);
+  return { title: finished.brief.title, summary: finished.summary, model: finished.model };
+}
+
+/**
+ * A restyle of an existing deck: one classification call, then the deterministic
+ * restyle operation. Returns null when the instruction is not a pure restyle.
+ */
+async function proposeDeckRestyle(input: {
+  userId: string;
+  userEmail?: string;
+  userName?: string;
+  instruction: string;
+  current: AlbatrossDocumentRecord;
+}): Promise<DocumentProposal | null> {
+  if (input.current.model.kind !== 'deck') return null;
+  const { object } = await dependencies.generateObjectForCurrentUser({
+    userId: input.userId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    feature: 'document_suggestion',
+    speed: 'classify',
+    maxOutputTokens: 1_000,
+    schema: restyleClassificationSchema,
+    system: RESTYLE_CLASSIFIER_GUIDANCE,
+    prompt: `Presentation "${input.current.title}" with ${input.current.model.slides.length} slides.\nInstruction:\n${input.instruction.trim().slice(0, 4_000)}`,
+  });
+  const classification = restyleClassificationSchema.safeParse(object);
+  if (!classification.success) return null;
+  const operation = restyleOperationFor(classification.data);
+  if (!operation) return null;
+  const context: DocumentEditContext = {};
+  let note = '';
+  if (operation.imagery === 'paintings') {
+    try {
+      const art = await dependencies.artworksForDeck(input.current.model, { userId: input.userId });
+      context.artworks = art.artworks;
+      context.imageryTheme = art.imagery;
+      if (!Object.keys(art.artworks).length) note = ' No artwork was available for these slides.';
+    } catch {
+      note = ' Artwork could not be added; the slides stay typographic.';
+    }
+  }
+  const model = prepareDocumentEdits(input.current.model, [operation], context);
+  if (model.kind !== 'deck') return null;
+  if (deckModelsEqual(input.current.model, model))
+    throw new DocumentGenerationError(
+      note
+        ? `Artwork was not available, so nothing was changed.`
+        : 'The requested look matches the current one. Nothing was changed.',
+    );
+  return { title: input.current.title, summary: `${classification.data.summary}${note}`, model };
+}
+
 export async function generateDocumentProposal(input: {
   userId: string;
   userEmail?: string;
@@ -141,13 +398,19 @@ export async function generateDocumentProposal(input: {
   instruction: string;
   current?: AlbatrossDocumentRecord;
   sourceContext?: string;
+  /** Owned image assets a new presentation may use. */
+  assets?: CompositionAsset[];
+  /** auto (default): paintings fill the open image slots of a new presentation. none: typographic slides. */
+  artwork?: 'auto' | 'none';
 }): Promise<DocumentProposal> {
   const blankDeck =
     input.current?.model.kind === 'deck' &&
     input.current.model.slides.every((slide) =>
       slide.elements.every((element) => element.type === 'text' && !element.text?.trim()),
     );
+  const deckV2 = input.kind === 'deck' && dependencies.isDeckV2AuthoringEnabled();
   if (input.kind === 'deck' && (!input.current || blankDeck)) {
+    if (deckV2) return generateDeckV2(input);
     const { object } = await dependencies.generateObjectForCurrentUser({
       userId: input.userId,
       feature: 'document_generation',
@@ -170,6 +433,10 @@ export async function generateDocumentProposal(input: {
       });
     }
   }
+  if (deckV2 && input.current && mentionsRestyle(input.instruction)) {
+    const restyle = await proposeDeckRestyle({ ...input, current: input.current });
+    if (restyle) return restyle;
+  }
   if (input.kind === 'sheet') {
     const current = input.current || {
       documentId: 'new-workbook',
@@ -189,7 +456,8 @@ export async function generateDocumentProposal(input: {
           model: await applySpreadsheetChanges(current.model, proposal.model as SheetChangeSet),
         };
   }
-  const schema = outputSchema(input.kind);
+  const schema = outputSchema(input.kind, input.current?.model);
+  const modelSchema = modelSchemaFor(input.kind, input.current?.model);
   const current = input.current
     ? `Current ${documentKindLabel(input.kind).toLowerCase()}:\n${JSON.stringify({
         title: input.current.title,
@@ -208,8 +476,8 @@ export async function generateDocumentProposal(input: {
     maxOutputTokens: 14_000,
     schema,
     system: `You are Albatross's document editor. Produce a complete, directly editable canonical model for the requested ${documentKindLabel(input.kind).toLowerCase()}.
-${modelGuidance(input.kind)}
-${input.kind === 'deck' ? 'Preserve the existing art direction, background and text colors, spacing and visual hierarchy. Add real slide content with varied layouts; never put editing instructions into slides. All elements must fit within the 0–100 canvas.' : ''}
+${modelGuidance(input.kind, input.current?.model)}
+${input.kind === 'deck' ? 'Preserve the existing art direction, background and text colors, spacing and visual hierarchy. Add real slide content with varied layouts; never put editing instructions into slides. All elements must fit within the 0–100 canvas. Never invent numbers; use metrics only when the grounding material supplies them.' : ''}
 Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup. Return the full model, a concise title, and a one-sentence summary of what changed.`,
     prompt: `${current}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
   });
@@ -224,7 +492,7 @@ Preserve accurate supplied facts, never invent citations or claim provider-side 
     if (
       input.current &&
       parsed.title === input.current.title &&
-      JSON.stringify(parsed.model) === JSON.stringify(schemas[input.kind].parse(input.current.model))
+      JSON.stringify(parsed.model) === JSON.stringify(modelSchema.parse(input.current.model))
     )
       throw new DocumentGenerationError('The generated revision contains no changes. Nothing was applied.');
     return parsed as {

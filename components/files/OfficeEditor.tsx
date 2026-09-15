@@ -2,9 +2,11 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Download, History, Loader2, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useClientStore } from '@/lib/client-state';
+import { type EditorUiMode, uiModeToggleLabel } from '@/lib/documents/collabora-chrome';
 import type { OfficeFile } from '@/lib/documents/office-service';
 import { CollaboraFrame, type CollaboraHandle, type CollaboraSession } from './CollaboraFrame';
 import { DocumentSaveStatus } from './DocumentSaveStatus';
@@ -68,6 +70,8 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
   const [title, setTitle] = useState('');
   const [editingTitle, setEditingTitle] = useState(false);
   const [paused, setPaused] = useState(false);
+  // The mode the editor last confirmed; the toggle's pressed state follows the reply.
+  const [uiMode, setUiMode] = useState<EditorUiMode>('classic');
   const editOverlay = useRef<HTMLDivElement>(null);
   const collaboraRef = useRef<CollaboraHandle>(null);
   const savingRef = useRef(false);
@@ -151,12 +155,16 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     if (
       (changed || saving || aiBusy) &&
       !window.confirm(
-        'The editor may still be saving. Stay here to save, or leave and check Versions for the saved copy. Leave editor?',
+        'The editor may still be saving. Stay here to save, or leave and check History for the saved copy. Leave editor?',
       )
     )
       return;
     onClose();
   };
+  const openAlbatross = useCallback(() => useClientStore.getState().setAssistantPresentation('split'), []);
+  const toggleUiMode = () =>
+    collaboraRef.current?.setUiMode(uiMode === 'notebookbar' ? 'classic' : 'notebookbar');
+  const themedChrome = Boolean(collabora?.chrome?.enabled);
 
   useEffect(() => {
     void retry; // An explicit retry starts a fresh, document-bound session.
@@ -165,6 +173,7 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
     const controller = new AbortController();
     setReady(false);
     setError(null);
+    setUiMode('classic');
     void (async () => {
       try {
         const response = await fetch(`/api/office/${documentId}/session`, {
@@ -246,68 +255,88 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
       aria-label="Office editing workspace"
       className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]"
     >
-      <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
-        <Button variant="ghost" size="icon-sm" aria-label="Back to Files" onClick={close}>
-          <ArrowLeft className="size-4" />
-        </Button>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <input
-            aria-label="File name"
-            value={title}
-            placeholder="Opening document…"
-            disabled={!file.data || aiBusy}
-            onFocus={() => setEditingTitle(true)}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={(event) => void rename(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur();
-            }}
-            style={{ fieldSizing: 'content' }}
-            className="min-w-0 max-w-full rounded-sm bg-transparent text-base font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)] sm:text-[12px]"
-          />
-          <DocumentSaveStatus
-            applying={aiBusy}
-            saving={saving || !file.data}
-            error={Boolean(error || file.error)}
-            recovered={false}
-            dirty={changed}
-            revision={file.data?.currentRevision || 1}
-            googleBehind={Boolean(
-              file.data?.google && file.data.google.syncedRevision < file.data.currentRevision,
-            )}
-          />
-        </div>
-        {collabora ? (
-          <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
-          </Button>
-        ) : null}
-        <Button asChild variant="outline" size="icon-sm">
-          <a aria-label="Download saved Office copy" href={`/api/office/${documentId}/content`}>
-            <Download className="size-4" />
-          </a>
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          aria-pressed={history}
-          onClick={() => setHistory((value) => !value)}
-        >
-          <History className="size-4" />
-          <span className="hidden sm:inline">Versions</span>
-        </Button>
-        {file.data?.extension === 'docx' ? (
+      <TooltipProvider>
+        <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label="Back to Files" onClick={close}>
+                <ArrowLeft className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Back to Files</TooltipContent>
+          </Tooltip>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <input
+              aria-label="File name"
+              value={title}
+              placeholder="Opening document…"
+              disabled={!file.data || aiBusy}
+              onFocus={() => setEditingTitle(true)}
+              onChange={(event) => setTitle(event.target.value)}
+              onBlur={(event) => void rename(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+              style={{ fieldSizing: 'content' }}
+              className="min-w-0 max-w-full rounded-sm bg-transparent text-base font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)] sm:text-[12px]"
+            />
+            <DocumentSaveStatus
+              applying={aiBusy}
+              saving={saving || !file.data}
+              error={Boolean(error || file.error)}
+              recovered={false}
+              dirty={changed}
+              revision={file.data?.currentRevision || 1}
+              googleBehind={Boolean(
+                file.data?.google && file.data.google.syncedRevision < file.data.currentRevision,
+              )}
+            />
+          </div>
+          {collabora ? (
+            <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
+            </Button>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button asChild variant="outline" size="icon-sm">
+                <a aria-label="Download the saved copy" href={`/api/office/${documentId}/content`}>
+                  <Download className="size-4" />
+                </a>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Download the saved copy</TooltipContent>
+          </Tooltip>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => useClientStore.getState().setAssistantPresentation('split')}
-            aria-label="Edit with Albatross"
+            aria-pressed={history}
+            aria-label="Show history"
+            onClick={() => setHistory((value) => !value)}
           >
-            Albatross
+            <History className="size-4 sm:hidden" />
+            <span className="hidden sm:inline">History</span>
           </Button>
-        ) : null}
-      </header>
+          {themedChrome ? (
+            <Button
+              variant="outline"
+              size="sm"
+              aria-pressed={uiMode === 'notebookbar'}
+              aria-label={uiMode === 'notebookbar' ? 'Show the compact toolbar' : 'Show all tools'}
+              disabled={!ready || aiBusy}
+              onClick={toggleUiMode}
+            >
+              {uiModeToggleLabel(uiMode)}
+            </Button>
+          ) : null}
+          {file.data?.extension === 'docx' ? (
+            <Button variant="outline" size="sm" onClick={openAlbatross} aria-label="Edit with Albatross">
+              Albatross
+            </Button>
+          ) : null}
+        </header>
+      </TooltipProvider>
       {error || file.error ? (
         <div
           role="alert"
@@ -337,6 +366,8 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
               onReady={setReady}
               onModified={setChanged}
               onError={setError}
+              onUiMode={setUiMode}
+              onAlbatross={openAlbatross}
             />
           ) : (
             <div id={id} className="h-full" />
@@ -363,15 +394,15 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
         ) : null}
         {history ? (
           <aside
-            aria-label="Office versions"
+            aria-label="History"
             className="absolute inset-0 z-10 overflow-auto border-l border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:static sm:w-72"
           >
             <header className="flex items-center justify-between text-xs font-medium">
-              Versions
+              History
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Close versions"
+                aria-label="Close history"
                 onClick={() => setHistory(false)}
               >
                 <X className="size-3.5" />
