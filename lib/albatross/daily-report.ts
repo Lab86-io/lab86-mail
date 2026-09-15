@@ -375,8 +375,8 @@ export function buildAlbatrossDailyReportContextFromLive(
     .slice(0, 5);
 
   const activeIntentIds = new Set<string>();
-  const activeIntents = applications
-    .filter((application) => !closedIds.has(application.intentId))
+  const liveApplications = applications.filter((application) => !closedIds.has(application.intentId));
+  const activeIntents = liveApplications
     .filter((application) => application.status === 'queued' || application.status === 'partially_applied')
     .filter((application) => {
       if (!application.intentId || activeIntentIds.has(application.intentId)) return false;
@@ -416,7 +416,7 @@ export function buildAlbatrossDailyReportContextFromLive(
     if (approval.status === 'pending' || approval.status === 'claiming')
       addPressure(approval.areaId, 'approvals');
   }
-  for (const application of applications) {
+  for (const application of liveApplications) {
     for (const artifact of application.unresolvedArtifacts ?? []) {
       addPressure(artifact.areaId ?? application.areaId, 'unresolved');
     }
@@ -454,7 +454,7 @@ export function buildAlbatrossDailyReportContextFromLive(
       title: approval.title,
       reason: approval.risk || approval.detail || 'Waiting for approval',
     }));
-  const unresolvedReview = applications.flatMap((application) =>
+  const unresolvedReview = liveApplications.flatMap((application) =>
     (application.unresolvedArtifacts ?? []).map((artifact: any, index: number) => ({
       id: `${application._id ?? application.intentId}:unresolved:${index}`,
       areaId: artifact.areaId ?? application.areaId,

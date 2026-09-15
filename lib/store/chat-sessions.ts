@@ -52,6 +52,14 @@ export function compactMessage(message: any): any {
         try {
           if (part.output !== undefined && JSON.stringify(part.output).length <= MAX_PART_JSON_BYTES) {
             compact.output = part.output;
+          } else if (
+            part.state === 'output-available' &&
+            ['document_get', 'word_document_get', 'google_document_get'].includes(toolPartName(part))
+          ) {
+            compact.output = {
+              outputOmitted: true,
+              message: 'Read succeeded. Reread the source for its full contents before editing.',
+            };
           }
         } catch {
           // unserializable output — drop it

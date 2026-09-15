@@ -1017,6 +1017,7 @@ describe('areaHome', () => {
           order: 2,
           updatedAt: ts - 10,
         });
+        await ctx.db.insert('cards', { ...cardBase, title: 'Retired repair', order: 4, retiredAt: ts });
         await ctx.db.insert('cards', {
           ...cardBase,
           title: 'Board card done',

@@ -151,3 +151,7 @@ The live deck was not restyled by this code change. After staging rollout, run t
 - `git diff --check` passed.
 
 The regression coverage includes direct completion without a planner, idempotent completion metrics/evidence, late plan/error/question/approval writes, restoration after reopen, shared-project preservation, mail evidence normalization, partial attachment failure, current-versus-historical brief rendering, actual SDK continuation with the original read retained, uncertain restored history, tool-versus-stream error classification, six-slide theme preservation, concurrent tool claims, lost revision acknowledgements, and lost proposal acknowledgements.
+
+## Release review follow-up
+
+CodeRabbit's review of #249 arrived after the staging merge. Its verified findings were addressed for the staging-to-main release: current collections and Area board tasks exclude retired references, project references reconcile independently, timeline connectors follow visible rows, all nonterminal reopening states restore owned activity, terminal Work rejects step completion, and closed applications no longer create current review pressure. Final failed checkpoints are immutable. Oversized document reads retain a bounded successful result with reread guidance, and system recovery context contains only normalized execution metadata, never raw tool text or error bodies. Focused runtime, rendering, compaction, and source-boundary tests cover these paths.

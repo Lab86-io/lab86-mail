@@ -1725,7 +1725,7 @@ export const areaHome = query({
     const boardCards = boardCardScan.slice(0, 200);
     const seenCardIds = new Set(linkedTasks.map((task) => String(task.cardId)));
     const boardTasks = boardCards
-      .filter((card) => !seenCardIds.has(String(card._id)))
+      .filter((card) => !card.retiredAt && !seenCardIds.has(String(card._id)))
       .map((card) => ({
         cardId: card._id,
         boardId: card.boardId,

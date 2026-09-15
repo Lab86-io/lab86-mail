@@ -728,7 +728,7 @@ describe('current briefs reconcile terminal Work without changing historical edi
       onAction: () => {},
       onCanvasAction: () => {},
     };
-    for (const kind of ['plan', 'timeline', 'checklist']) {
+    for (const kind of ['plan', 'timeline', 'checklist', 'collection']) {
       const node = {
         kind,
         title: 'Work',
@@ -738,17 +738,36 @@ describe('current briefs reconcile terminal Work without changing historical edi
           {
             id: '1',
             label: 'Closed Monro action',
+            title: 'Closed Monro action',
             status: 'pending',
             checked: false,
             actions: [],
             ref: { kind: 'work', id: 'done' },
           },
-          { id: '2', label: 'Still open', status: 'pending', checked: false, actions: [] },
+          {
+            id: '2',
+            label: 'Still open',
+            title: 'Still open',
+            status: 'pending',
+            checked: false,
+            actions: [],
+          },
         ],
       } as any;
       const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="Work" />);
       expect(html).not.toContain('Closed Monro action');
       expect(html).toContain('Still open');
+      const historical = renderToStaticMarkup(
+        <BriefNodeView node={node} context={{ ...context, hiddenRefs: new Set() }} regionSummary="Work" />,
+      );
+      expect(historical).toContain('Closed Monro action');
+      if (kind === 'timeline') {
+        node.items.reverse();
+        const timeline = renderToStaticMarkup(
+          <BriefNodeView node={node} context={context} regionSummary="Work" />,
+        );
+        expect(timeline).not.toContain('w-px flex-1');
+      }
     }
   });
 });

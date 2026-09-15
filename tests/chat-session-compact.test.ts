@@ -1,7 +1,29 @@
 import { describe, expect, test } from 'bun:test';
+import { convertToModelMessages } from 'ai';
 import { compactMessage } from '../lib/store/chat-sessions';
 
 describe('compactMessage (persisted chat history)', () => {
+  test('large document reads remain valid successful tool results after continuation compaction', async () => {
+    for (const name of ['document_get', 'word_document_get', 'google_document_get']) {
+      const message = compactMessage({
+        id: 'assistant',
+        role: 'assistant',
+        parts: [
+          {
+            type: `tool-${name}`,
+            toolCallId: 'read',
+            state: 'output-available',
+            input: { documentId: 'deck' },
+            output: { text: 'x'.repeat(5000) },
+          },
+        ],
+      });
+      expect(message.parts[0].output).toMatchObject({ outputOmitted: true });
+      const model = await convertToModelMessages([message]);
+      expect(JSON.stringify(model)).toContain('Read succeeded. Reread the source');
+      expect(JSON.stringify(model)).not.toContain('x'.repeat(5000));
+    }
+  });
   test('keeps confirmed outputs and records interrupted server outcomes as unknown', () => {
     const message = compactMessage({
       role: 'assistant',

@@ -46,7 +46,7 @@ export const finishTool = mutation({
         q.eq('userId', args.userId).eq('runId', args.runId).eq('key', args.key),
       )
       .unique();
-    if (!record || record.status === 'succeeded') return;
+    if (!record || record.status === 'succeeded' || record.status === 'failed') return;
     await ctx.db.patch(record._id, {
       status: args.status,
       output: args.output,

@@ -416,14 +416,14 @@ function BriefLeaf({
           <ol className="space-y-1">
             {node.items
               .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
-              .map((item, index) => (
+              .map((item, index, visibleItems) => (
                 <li
                   key={`${item.ref ? briefRefKey(item.ref) : item.label}:${item.at ?? ''}`}
                   className="grid grid-cols-[18px_1fr] gap-2 py-2"
                 >
                   <div className="flex flex-col items-center">
                     <Clock3 className="size-3.5 text-[var(--color-accent-2)]" />
-                    {index < node.items.length - 1 ? (
+                    {index < visibleItems.length - 1 ? (
                       <span className="mt-1 w-px flex-1 bg-[var(--color-border)]" />
                     ) : null}
                   </div>
@@ -515,53 +515,57 @@ function BriefLeaf({
               node.variant === 'list' && 'divide-y divide-[var(--color-border)]',
             )}
           >
-            {node.items.map((item) => (
-              <article
-                key={`${item.ref ? briefRefKey(item.ref) : item.image || item.title}:${item.meta ?? ''}`}
-                className={cn(
-                  'min-w-0',
-                  node.variant === 'shelf' &&
-                    'w-[min(78%,260px)] shrink-0 snap-start overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
-                  node.variant === 'grid' &&
-                    'overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
-                  node.variant === 'list' && 'flex gap-3 py-3',
-                )}
-              >
-                {item.image ? (
-                  // biome-ignore lint/performance/noImgElement: model-authored external media is intentionally unoptimized.
-                  <img
-                    src={item.image}
-                    alt=""
-                    loading="lazy"
-                    className={cn(
-                      'object-cover',
-                      node.variant === 'list' ? 'size-14 rounded-lg' : 'aspect-[16/9] w-full',
-                    )}
-                  />
-                ) : node.variant !== 'list' ? (
-                  <div className="grid aspect-[16/9] place-items-center bg-[var(--color-bg-muted)]">
-                    <ImageIcon className="size-5 text-[var(--color-text-faint)]" />
+            {node.items
+              .filter((item) => !item.ref || !context.hiddenRefs.has(briefRefKey(item.ref)))
+              .map((item) => (
+                <article
+                  key={`${item.ref ? briefRefKey(item.ref) : item.image || item.title}:${item.meta ?? ''}`}
+                  className={cn(
+                    'min-w-0',
+                    node.variant === 'shelf' &&
+                      'w-[min(78%,260px)] shrink-0 snap-start overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+                    node.variant === 'grid' &&
+                      'overflow-hidden rounded-xl border bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]',
+                    node.variant === 'list' && 'flex gap-3 py-3',
+                  )}
+                >
+                  {item.image ? (
+                    // biome-ignore lint/performance/noImgElement: model-authored external media is intentionally unoptimized.
+                    <img
+                      src={item.image}
+                      alt=""
+                      loading="lazy"
+                      className={cn(
+                        'object-cover',
+                        node.variant === 'list' ? 'size-14 rounded-lg' : 'aspect-[16/9] w-full',
+                      )}
+                    />
+                  ) : node.variant !== 'list' ? (
+                    <div className="grid aspect-[16/9] place-items-center bg-[var(--color-bg-muted)]">
+                      <ImageIcon className="size-5 text-[var(--color-text-faint)]" />
+                    </div>
+                  ) : null}
+                  <div className={cn('min-w-0', node.variant === 'list' ? 'flex-1' : 'p-3')}>
+                    {item.badge ? (
+                      <span className="text-[10px] font-semibold r text-[var(--color-accent-3)]">
+                        {item.badge}
+                      </span>
+                    ) : null}
+                    <p className="line-clamp-2 text-sm font-medium">{item.title}</p>
+                    {item.meta ? (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)]">
+                        {item.meta}
+                      </p>
+                    ) : null}
+                    <BriefActions
+                      actions={item.actions}
+                      sourceRef={item.ref}
+                      compact
+                      onAction={(action, payload) => context.onAction(action, payload, item.ref)}
+                    />
                   </div>
-                ) : null}
-                <div className={cn('min-w-0', node.variant === 'list' ? 'flex-1' : 'p-3')}>
-                  {item.badge ? (
-                    <span className="text-[10px] font-semibold r text-[var(--color-accent-3)]">
-                      {item.badge}
-                    </span>
-                  ) : null}
-                  <p className="line-clamp-2 text-sm font-medium">{item.title}</p>
-                  {item.meta ? (
-                    <p className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)]">{item.meta}</p>
-                  ) : null}
-                  <BriefActions
-                    actions={item.actions}
-                    sourceRef={item.ref}
-                    compact
-                    onAction={(action, payload) => context.onAction(action, payload, item.ref)}
-                  />
-                </div>
-              </article>
-            ))}
+                </article>
+              ))}
           </div>
         </section>
       );

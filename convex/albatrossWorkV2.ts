@@ -30,7 +30,7 @@ import {
   stepNeedsCheck,
   stepVerification,
 } from '../lib/albatross/step-verification';
-import { isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { assertWorkOpen, isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -175,7 +175,7 @@ export const updateWorkState = mutation({
     const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
     if (args.state === 'done') return completeWorkInMutation(ctx, work, ts);
-    if (args.state === 'active' && isTerminalWork(work)) await restoreWorkArtifacts(ctx, work, ts);
+    if (args.state !== 'archived' && isTerminalWork(work)) await restoreWorkArtifacts(ctx, work, ts);
     await ctx.db.patch(args.workId, {
       workState: args.state,
       status:
@@ -257,6 +257,8 @@ export const inactiveBriefRefs = query({
         const id = ctx.db.normalizeId('albatrossIntents', ref.id);
         const work = id ? await ctx.db.get(id) : null;
         if (work?.userId === userId && isTerminalWork(work)) inactive.push(ref.id);
+      }
+      if (ref.kind === 'work' || ref.kind === 'project') {
         const projectId = ctx.db.normalizeId('albatrossProjects', ref.id);
         const project = projectId ? await ctx.db.get(projectId) : null;
         if (project?.userId === userId && project.status !== 'active') inactive.push(ref.id);
@@ -802,6 +804,7 @@ export const completeStep = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
+    assertWorkOpen(work);
     if (!work.latestPlanId) throw new Error('This Albatross does not have a plan yet.');
     const plan = await ctx.db.get(work.latestPlanId);
     if (!plan || plan.userId !== userId) throw new Error('Plan not found.');

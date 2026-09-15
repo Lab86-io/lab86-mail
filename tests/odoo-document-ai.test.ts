@@ -56,6 +56,19 @@ const validOutput = {
 afterEach(() => __setDocumentAiDepsForTest());
 
 describe('engine-backed spreadsheet AI proposals', () => {
+  test('rejects a non-workbook before invoking spreadsheet generation', async () => {
+    const gateway = mock(async () => ({ object: validOutput }));
+    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    await expect(
+      generateDocumentProposal({
+        userId: 'owner',
+        kind: 'sheet',
+        instruction: 'Update totals',
+        current: { ...currentWorkbook(), model: createDefaultDocumentModel('doc', 'document') },
+      }),
+    ).rejects.toThrow('Expected a workbook');
+    expect(gateway).not.toHaveBeenCalled();
+  });
   test('proposes reviewable cell commands with grounded text, preserving the canonical workbook', async () => {
     const current = currentWorkbook();
     const original = structuredClone(current);
