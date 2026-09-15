@@ -71,7 +71,6 @@ export const MAX_ARTWORK_EDGE = 2400;
 
 export { ARTWORK_STYLES_FOR_DIRECTION, stylesForDirection } from './deck-art-shared';
 
-import { stylesForDirection } from './deck-art-shared';
 
 function hashString(value: string): number {
   let hash = 2166136261;
