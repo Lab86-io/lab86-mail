@@ -74,12 +74,9 @@ export interface DocumentProposal {
   model: AlbatrossDocumentModel | SheetChangeSet;
 }
 
-function modelGuidance(kind: DocumentKind) {
+function modelGuidance(kind: 'doc' | 'deck') {
   if (kind === 'doc') {
     return `Create structured blocks. Use heading blocks for hierarchy, paragraphs for prose, bullet or numbered blocks for lists, and quote only for attributed/source language. Keep block ids short and unique.`;
-  }
-  if (kind === 'sheet') {
-    return `Create one or more useful sheets. Store sparse cells in A1 notation. Put labels in cells and formulas in formula without a leading equals sign. Include the formulas and structure needed to make the workbook useful, not just a prose summary.`;
   }
   return `Create a presentation as 16:9 slides. Every element uses percentage coordinates from 0 to 100. Use concise slide titles, readable body text, a clear visual hierarchy, speaker notes when useful, and short unique ids.`;
 }
