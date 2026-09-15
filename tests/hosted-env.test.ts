@@ -7,7 +7,6 @@ import {
   isClerkConfigured,
   isConvexConfigured,
   isNylasConfigured,
-  isStripeConfigured,
   nylasRedirectUri,
 } from '../lib/hosted/env';
 
@@ -19,8 +18,6 @@ describe('hosted env detectors', () => {
     'CONVEX_URL',
     'NYLAS_API_KEY',
     'NYLAS_CLIENT_ID',
-    'STRIPE_SECRET_KEY',
-    'STRIPE_PRO_PRICE_ID',
   ];
   const saved: Record<string, string | undefined> = {};
   const set = (k: string, v: string | undefined) => {
@@ -42,7 +39,6 @@ describe('hosted env detectors', () => {
     expect(isClerkConfigured()).toBe(false);
     expect(isConvexConfigured()).toBe(false);
     expect(isNylasConfigured()).toBe(false);
-    expect(isStripeConfigured()).toBe(false);
 
     set('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test');
     expect(isClerkConfigured()).toBe(false); // needs the secret too
@@ -56,10 +52,6 @@ describe('hosted env detectors', () => {
     set('NYLAS_API_KEY', 'k');
     set('NYLAS_CLIENT_ID', 'c');
     expect(isNylasConfigured()).toBe(true);
-
-    set('STRIPE_SECRET_KEY', 's');
-    set('STRIPE_PRO_PRICE_ID', 'p');
-    expect(isStripeConfigured()).toBe(true);
   });
 
   test('convexUrl honors NEXT_PUBLIC_CONVEX_URL and prefers it over CONVEX_URL', () => {
@@ -72,16 +64,6 @@ describe('hosted env detectors', () => {
     // Both set → the public var wins.
     set('CONVEX_URL', 'https://private.convex.test');
     expect(convexUrl()).toBe('https://public.convex.test');
-  });
-
-  test('legacy detectors still flip on their own env vars', () => {
-    set('NYLAS_API_KEY', 'k');
-    set('NYLAS_CLIENT_ID', 'c');
-    expect(isNylasConfigured()).toBe(true);
-
-    set('STRIPE_SECRET_KEY', 's');
-    set('STRIPE_PRO_PRICE_ID', 'p');
-    expect(isStripeConfigured()).toBe(true);
   });
 
   test('convexUrl / convexInternalSecret default to empty strings', () => {

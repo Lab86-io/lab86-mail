@@ -178,7 +178,7 @@ describe('the execution loop owns the visible product surfaces', () => {
   });
 
   test('guided work and recovery are mounted on every execution surface', () => {
-    const today = read('components/report/TodaySurface.tsx');
+    const today = read('components/report/Today.tsx');
     const detail = read('components/albatross/WorkDetail.tsx');
     const calendar = read('components/calendar/CalendarSurface.tsx');
     // Today shows the day, the mail, and one next move. Recovery lives in the Work detail.

@@ -22,9 +22,7 @@
 //   tile's), so they clear the rail cleanly and don't crowd the content.
 // - Hover/focus also mounts the shared strengthened treatment from
 //   lib/dock-hover.ts: an accent radial glow behind the tile (springing with
-//   the magnification) and an accent ring on its surface. The intents rail's
-//   Chamaac dock (components/ui/chamaac-dock.tsx) reuses DockTileGlow and
-//   DockTileLabel so both docks speak one hover language.
+//   the magnification) and an accent ring on its surface.
 // - useReducedMotion: no magnification (tiles stay at baseSize); the label
 //   and glow still appear, instantly, on hover/focus.
 

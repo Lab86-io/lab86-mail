@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { type EvidenceLike, evidenceSourceLabel, latestProof, proofSummary } from '@/lib/albatross/proof';
+import { type EvidenceLike, latestProof, proofSummary } from '@/lib/albatross/proof';
 import {
   needsYou,
   WORK_STATE_LABEL,
@@ -53,12 +53,6 @@ export function nextMoveLine(work: WorkStateInput & { openQuestions?: number }):
   if (work.workState === 'done') return 'Finished';
   if (work.nextStep?.trim()) return `Next: ${work.nextStep.trim()}`;
   return 'Albatross is carrying this';
-}
-
-export function NextMove({ work, className }: { work: WorkStateInput; className?: string }) {
-  return (
-    <span className={cn('text-[12px] text-[var(--color-text-muted)]', className)}>{nextMoveLine(work)}</span>
-  );
 }
 
 /**
@@ -146,53 +140,6 @@ export function Fact({ label, children }: { label: string; children: ReactNode }
       <dt className="text-[11.5px] text-[var(--color-text-faint)]">{label}</dt>
       <dd className="mt-1">{children}</dd>
     </div>
-  );
-}
-
-/**
- * One piece of proof: what it is, where it came from, and when. The stored
- * confidence score stays on the server — it chooses the wording above, and
- * nothing more.
- */
-export function EvidenceCard({ evidence }: { evidence: EvidenceLike }) {
-  const rejected = evidence.trust === 'rejected';
-  return (
-    <li className={cn('flex gap-3 py-3', rejected && 'opacity-55 [&_a]:line-through [&_p]:line-through')}>
-      <span
-        aria-hidden
-        className={cn(
-          'mt-1.5 size-1.5 shrink-0 rounded-full',
-          evidence.trust === 'confirmed'
-            ? 'bg-[var(--color-success)]'
-            : evidence.trust === 'rejected'
-              ? 'bg-[var(--color-border-strong)]'
-              : 'bg-[var(--color-accent)]',
-        )}
-      />
-      <div className="min-w-0 flex-1">
-        {evidence.url ? (
-          <a
-            href={evidence.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[13px] font-medium underline-offset-2 hover:underline"
-          >
-            {evidence.title}
-          </a>
-        ) : (
-          <p className="text-[13px] font-medium">{evidence.title}</p>
-        )}
-        {evidence.summary ? (
-          <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-            {evidence.summary}
-          </p>
-        ) : null}
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
-          {evidenceSourceLabel(evidence.sourceKind)}
-          {rejected ? ' · ruled out' : ''}
-        </p>
-      </div>
-    </li>
   );
 }
 

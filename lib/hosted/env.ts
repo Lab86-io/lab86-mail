@@ -12,10 +12,6 @@ export function isNylasConfigured() {
   return Boolean(process.env.NYLAS_API_KEY && process.env.NYLAS_CLIENT_ID);
 }
 
-export function isStripeConfigured() {
-  return Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRO_PRICE_ID);
-}
-
 export function isClerkBillingConfigured() {
   if (isSubscriptionServiceDisabled()) return false;
   // Billing is only "configured" when the checkout URL it implies can actually

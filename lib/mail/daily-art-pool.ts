@@ -1,4 +1,4 @@
-// Generated from public-domain museum collections. See docs/research/art-frames-2026-09-11.md.
+// Generated from public-domain museum collections. Source URLs and attribution are recorded on each entry.
 // Regenerate: bun scripts/generate-art-pool.ts
 import type { ArtPiece } from './art-types';
 

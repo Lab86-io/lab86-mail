@@ -1,9 +1,6 @@
-// The strengthened dock-tile hover treatment, shared by BOTH docks (the main
-// rail's MagicUI-derived dock in components/ui/dock.tsx and the intents
-// rail's Chamaac dock in components/ui/chamaac-dock.tsx): the hovered or
-// keyboard-focused tile — and only that tile — gets a soft accent radial
-// glow behind it plus a clearer surface highlight (each dock supplies its
-// elevated background; the accent ring + lift shadow come from here).
+// Dock-tile hover treatment for the main rail in components/ui/dock.tsx.
+// Only the hovered or keyboard-focused tile gets a soft accent radial glow
+// and surface highlight; the dock supplies its elevated background.
 //
 // Designed references:
 // - MagicUI magic-card, orb mode (https://magicui.design/r/magic-card.json):

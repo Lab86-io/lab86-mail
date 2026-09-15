@@ -4,7 +4,7 @@ import type { QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
-// Calendar corpus storage (see docs/productivity-platform-spec.md). Writers
+// Calendar corpus storage. Writers
 // are the Next server's sync/mutation paths (internal secret); the calendar
 // surface reads live via Clerk identity so provider writes show up pushed.
 

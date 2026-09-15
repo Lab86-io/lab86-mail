@@ -3,7 +3,7 @@ import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
-// Proactive-agent suggestion queue (see docs/productivity-platform-spec.md).
+// Proactive-agent suggestion queue.
 // Detectors and the morning sweep write here from the Next server; the review
 // tray reads live via Clerk identity. Accepting a suggestion happens in the
 // tool layer (which records an aiOperation), then resolves the row here.

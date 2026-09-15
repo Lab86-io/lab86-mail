@@ -1,6 +1,6 @@
 'use client';
 
-// The live work log (docs/chat-agentic-pass.md, section 2), built on
+// The live work log, built on
 // @ai-elements/chain-of-thought for the block (header, rule, steps) and
 // @ai-elements/tool for each call's row and its collapsible content. One row
 // per tool call; the row text is the activity sentence; a running row shows

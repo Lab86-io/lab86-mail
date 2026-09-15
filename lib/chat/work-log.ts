@@ -1,4 +1,4 @@
-// The live work log (docs/chat-agentic-pass.md, section 2): pure helpers that
+// The live work log: pure helpers that
 // group an assistant message's parts into work log blocks, read the block
 // state for its header, and label the reasoning line. The React block lives in
 // components/ai-elements/work-log.tsx.

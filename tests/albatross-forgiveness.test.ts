@@ -275,7 +275,7 @@ describe('the surfaces use it', () => {
 
   test('the Work page carries the review, and Today does not', () => {
     const list = readFileSync('components/albatross/AlbatrossesSurface.tsx', 'utf8');
-    const today = readFileSync('components/report/TodaySurface.tsx', 'utf8');
+    const today = readFileSync('components/report/Today.tsx', 'utf8');
     expect(list).toContain('<ReviewBatch');
     expect(list.indexOf('<ReviewBatch')).toBeLessThan(list.indexOf('visibleGroups.map'));
     expect(today).not.toContain('ReviewBatch');

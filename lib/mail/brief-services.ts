@@ -123,8 +123,3 @@ export function briefServicesFromIds(values: Array<string | null | undefined>): 
   }
   return services;
 }
-
-export function briefServiceDefinition(id: string): BriefService | null {
-  const normalized = normalizeBriefServiceId(id);
-  return normalized ? SERVICES[normalized] : null;
-}

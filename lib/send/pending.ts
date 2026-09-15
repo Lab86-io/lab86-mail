@@ -117,10 +117,6 @@ export function cancelPending(id: string): boolean {
   return true;
 }
 
-export function listPending() {
-  return [...tasks.values()].map((t) => ({ id: t.id, fireAt: t.fireAt }));
-}
-
 export function getPendingStatus(id: string) {
   const task = tasks.get(id);
   if (task && !task.cancelled) return { status: 'pending' as const, fireAt: task.fireAt };

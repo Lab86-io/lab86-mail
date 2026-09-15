@@ -428,7 +428,7 @@ async function main() {
     'lib/mail/local-art-palettes.ts',
     `// Sampled from bundled fallback artwork by scripts/generate-art-pool.ts.\nexport const LOCAL_ART_PALETTES: readonly string[][] = ${JSON.stringify(localPalettes, null, 2)};\n`,
   );
-  const header = `// Generated from public-domain museum collections. See docs/research/art-frames-2026-09-11.md.
+  const header = `// Generated from public-domain museum collections. Source URLs and attribution are recorded on each entry.
 // Regenerate: bun scripts/generate-art-pool.ts
 import type { ArtPiece } from './art-types';
 export type { ArtPiece, ArtSource } from './art-types';
