@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
 import type { DeckModelV2 } from './model';
 
@@ -88,18 +87,31 @@ function escapeAttribute(value: string) {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * The bundler must not trace this import: Next refuses `react-dom/server` in
+ * app code, but the render page is built inside a route handler at runtime.
+ */
+async function staticMarkup(
+  element: Parameters<typeof createElement>[0] extends never ? never : ReturnType<typeof createElement>,
+) {
+  const server = (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ 'react-dom/server')) as {
+    renderToStaticMarkup: (node: ReturnType<typeof createElement>) => string;
+  };
+  return server.renderToStaticMarkup(element);
+}
+
 /** One page with every slide stacked, each inside a fixed 1920 by 1080 frame. */
 export async function renderDeckHtml(model: DeckModelV2, options: RenderDeckHtmlOptions = {}) {
   const publicDir = options.publicDir ?? path.resolve(process.cwd(), 'public');
   const deck = absolutize(model, options.assetOrigin);
-  const slides = deck.slides
-    .map(
-      (slide, index) =>
-        `<div class="slide-frame" data-slide-index="${index}" data-slide-id="${escapeAttribute(slide.id)}">${renderToStaticMarkup(
-          createElement(SlideSurface, { slide, theme: deck.theme }),
-        )}</div>`,
-    )
-    .join('\n');
+  const frames: string[] = [];
+  for (const [index, slide] of deck.slides.entries()) {
+    const markup = await staticMarkup(createElement(SlideSurface, { slide, theme: deck.theme }));
+    frames.push(
+      `<div class="slide-frame" data-slide-index="${index}" data-slide-id="${escapeAttribute(slide.id)}">${markup}</div>`,
+    );
+  }
+  const slides = frames.join('\n');
   return `<!doctype html><html><head><meta charset="utf-8"><style>${await fontFaces(publicDir)}\n${SLIDE_CSS}</style></head><body>${slides}</body></html>`;
 }
 
