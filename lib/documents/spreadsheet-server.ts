@@ -1,5 +1,5 @@
 /** Run each pinned-engine operation in a terminable worker, isolated from request traffic. */
-import { fork } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import type { AlbatrossDocumentModel } from './model';
@@ -25,13 +25,15 @@ export async function applySpreadsheetChanges(
   assertModelWithinLimit(plan);
   assertModelWithinLimit(source);
   const output = await new Promise<unknown>((resolve, reject) => {
-    const worker = fork(join(process.cwd(), 'lib/documents/spreadsheet-worker.mjs'), [], {
-      // The engine uses native canvas bindings; run them in Node even when the host uses Bun.
-      execPath: process.versions.bun ? 'node' : process.execPath,
-      execArgv: ['--max-old-space-size=256'],
-      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-      serialization: 'json',
-    });
+    // Spawn the traced worker as a runtime asset; Turbopack rewrites fork() module paths.
+    const worker = spawn(
+      process.versions.bun ? 'node' : process.execPath,
+      ['--max-old-space-size=256', join(process.cwd(), 'lib/documents/spreadsheet-worker.mjs')],
+      {
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        serialization: 'json',
+      },
+    );
     let settled = false;
     const finish = (error?: Error, value?: unknown) => {
       if (settled) return;
@@ -52,7 +54,7 @@ export async function applySpreadsheetChanges(
     worker.once('exit', (code) => {
       if (!settled) finish(new Error(`Spreadsheet worker exited before returning a result (${code}).`));
     });
-    worker.send(
+    worker.send!(
       {
         source,
         plan,
