@@ -5,7 +5,7 @@ import { officeFailure } from '@/lib/documents/office-http';
 import { getOfficeFile, requireOffice, startOfficeSession } from '@/lib/documents/office-service';
 import { enforceUserRateLimit } from '@/lib/rate-limit';
 export const runtime = 'nodejs';
-export async function POST(_request: Request, context: { params: Promise<{ documentId: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ documentId: string }> }) {
   try {
     const user = await requireCurrentUser();
     const configuration = requireOffice();
@@ -17,7 +17,7 @@ export async function POST(_request: Request, context: { params: Promise<{ docum
       {
         ok: true,
         ...(configuration.provider === 'collabora'
-          ? await startCollaboraSession(user.userId, file)
+          ? await startCollaboraSession(user.userId, file, { host: request.headers.get('host') })
           : await startOfficeSession(user.userId, file)),
       },
       { headers: { 'Cache-Control': 'no-store' } },

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
 import type { DeckModelV2 } from './model';
 
@@ -30,7 +30,7 @@ const FONT_FILES = [
 
 const SLIDE_CSS = `
 html,body{margin:0;padding:0;background:#000}
-.deck-slide{container-type:inline-size;position:relative;aspect-ratio:16/9;overflow:hidden;background:#fff;width:${RENDER_WIDTH}px}
+.deck-slide{container-type:inline-size;position:relative;aspect-ratio:16/9;overflow:hidden;background:#fff;width:${RENDER_WIDTH}px;font-optical-sizing:none;font-variation-settings:"opsz" 14}
 .deck-slide .deck-element{position:absolute;box-sizing:border-box;line-height:1.2;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap}
 .deck-slide .deck-element .deck-text{display:block;width:100%}
 .deck-slide .deck-element[data-element-type="line"],.deck-slide .deck-element[data-element-type="chart"],.deck-slide .deck-element[data-element-type="image"]{overflow:visible;padding:0;background:transparent;border:0}
@@ -54,7 +54,9 @@ async function fontFaces(publicDir: string) {
     }
   }
   // The renderer's CSS variables resolve to these names when the app variables are absent.
-  faces.push(':root{--font-fraunces:"Fraunces";--font-geist-sans:"Geist";--font-geist-mono:"Geist Mono";--font-instrument:"Instrument Serif"}');
+  faces.push(
+    ':root{--font-fraunces:"Fraunces";--font-geist-sans:"Geist";--font-geist-mono:"Geist Mono";--font-instrument:"Instrument Serif"}',
+  );
   return faces.join('\n');
 }
 
@@ -66,7 +68,9 @@ function absolutize(model: DeckModelV2, origin: string | undefined): DeckModelV2
     ...model,
     slides: model.slides.map((slide) => ({
       ...slide,
-      ...(slide.backgroundImage ? { backgroundImage: { ...slide.backgroundImage, src: fix(slide.backgroundImage.src) } } : {}),
+      ...(slide.backgroundImage
+        ? { backgroundImage: { ...slide.backgroundImage, src: fix(slide.backgroundImage.src) } }
+        : {}),
       elements: slide.elements.map((element) =>
         element.type === 'image' ? { ...element, src: fix(element.src) } : element,
       ),
@@ -139,14 +143,26 @@ export function availableRenderBrowser(): 'local' | 'browserbase' | null {
   return null;
 }
 
+const defaultDependencies = { connectBrowser };
+let dependencies = defaultDependencies;
+export function __setDeckRenderDepsForTest(overrides: Partial<typeof defaultDependencies> = {}) {
+  dependencies = { ...defaultDependencies, ...overrides };
+}
+
 /** Render every slide to PNG. Throws when no browser is available or a slide fails. */
-export async function renderDeckSlides(model: DeckModelV2, options: RenderDeckOptions = {}): Promise<RenderedSlide[]> {
+export async function renderDeckSlides(
+  model: DeckModelV2,
+  options: RenderDeckOptions = {},
+): Promise<RenderedSlide[]> {
   const kind = options.browser ?? availableRenderBrowser();
   if (!kind) throw new Error('No render browser is available.');
   const html = await renderDeckHtml(model, options);
-  const { browser, close } = await connectBrowser(kind);
+  const { browser, close } = await dependencies.connectBrowser(kind);
   try {
-    const context = await browser.newContext({ viewport: { width: RENDER_WIDTH, height: RENDER_HEIGHT }, deviceScaleFactor: 1 });
+    const context = await browser.newContext({
+      viewport: { width: RENDER_WIDTH, height: RENDER_HEIGHT },
+      deviceScaleFactor: 1,
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(options.timeoutMs ?? 60_000);
     await page.setContent(html, { waitUntil: 'load' });

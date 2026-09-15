@@ -15,8 +15,8 @@ export const DECK_THEMES: Record<DeckDirection, DeckTheme> = {
       background: '#F4F1EA',
       surface: '#E7E1D3',
       ink: '#1E2A38',
-      muted: '#6F6A60',
-      accent: '#B5502F',
+      muted: '#5E5A51',
+      accent: '#AE4B2B',
       accentInk: '#FFFFFF',
     },
     fonts: {
@@ -186,12 +186,12 @@ export function referenceDeck(direction: DeckDirection): DeckModelV2 {
           'st-body',
           'Seven of the twelve miles are open today. The rest follows the old rail bed, which the county deeded to the trust in June.',
           [8, 74, 56, 14],
-          { role: 'body', fontSize: 16, color: editorial ? soft : '#DCE3FF', lineHeight: 1.4, valign: 'top' },
+          { role: 'body', fontSize: 16, color: editorial ? soft : '#EEF2FF', lineHeight: 1.4, valign: 'top' },
         ),
         text('st-num', '02', [86, 90, 8, 4], {
           role: 'caption',
           fontSize: 11,
-          color: editorial ? soft : '#DCE3FF',
+          color: editorial ? soft : '#EEF2FF',
           align: 'right',
           valign: 'bottom',
           font: 'mono',
@@ -560,7 +560,7 @@ export function hiringDeck(direction: DeckDirection = 'editorial'): DeckModelV2 
       text('cmp-r-h', 'June', [55, 34, 36, 6], {
         role: 'subtitle',
         fontSize: 14,
-        color: '#E6ECFF',
+        color: '#F2F5FF',
         valign: 'top',
       }),
       text('cmp-r-1', '17 people', [55, 41, 36, 8], {
@@ -578,7 +578,7 @@ export function hiringDeck(direction: DeckDirection = 'editorial'): DeckModelV2 
       ),
     ]),
     slide('h-chart', 'Headcount by team in June', [
-      text('hc-title', 'Headcount by team in June', [6, 12, 50, 12], {
+      text('hc-title', 'Headcount by team in June', [6, 12, 42, 16], {
         role: 'title',
         fontSize: 34,
         lineHeight: 1.04,

@@ -156,8 +156,12 @@ function backgroundUnder(slide: DeckSlideV2, theme: DeckTheme, element: DeckElem
 
 export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
   const issues: DeckIssue[] = [];
-  const push = (kind: DeckIssueKind, severity: DeckIssue['severity'], elementIds: string[], message: string) =>
-    issues.push({ kind, severity, slideId: slide.id, elementIds, message });
+  const push = (
+    kind: DeckIssueKind,
+    severity: DeckIssue['severity'],
+    elementIds: string[],
+    message: string,
+  ) => issues.push({ kind, severity, slideId: slide.id, elementIds, message });
   if (!slide.elements.some(isContent) && !slide.backgroundImage)
     push('empty-slide', 'error', [], 'The slide has no content.');
   let words = 0;
@@ -170,7 +174,12 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
     )
       push('off-canvas', 'error', [element.id], `${element.type} "${element.id}" leaves the slide.`);
     if (element.type === 'image' && !element.src)
-      push('missing-image', 'error', [element.id], `Image "${element.alt || element.id}" has no owned source.`);
+      push(
+        'missing-image',
+        'error',
+        [element.id],
+        `Image "${element.alt || element.id}" has no owned source.`,
+      );
     if (element.type === 'text') {
       words += element.text.split(/\s+/).filter(Boolean).length;
       if (element.text.trim() && textSize(element) < MIN_FONT_PT)
@@ -181,7 +190,7 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
       if (element.text.trim() && background) {
         const ratio = contrastRatio(element.color ?? theme.colors.ink, element.fill ?? background);
         const needed = slot(element) === 'display' && textSize(element) >= 24 ? 3 : 4.5;
-        if (ratio !== null && ratio < needed)
+        if (ratio !== null && Math.round(ratio * 100) / 100 < needed)
           push(
             'low-contrast',
             'error',
@@ -192,7 +201,12 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
     }
   });
   if (words > MAX_WORDS_PER_SLIDE)
-    push('too-much-copy', 'warning', [], `The slide holds ${words} words; ${MAX_WORDS_PER_SLIDE} is the ceiling.`);
+    push(
+      'too-much-copy',
+      'warning',
+      [],
+      `The slide holds ${words} words; ${MAX_WORDS_PER_SLIDE} is the ceiling.`,
+    );
   const content = slide.elements.filter(isContent);
   for (let i = 0; i < content.length; i += 1)
     for (let j = i + 1; j < content.length; j += 1) {
@@ -200,8 +214,7 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
       const b = content[j];
       if (a.overlapAllowed || b.overlapAllowed) continue;
       const area = overlapArea(a, b);
-      if (area > 0.5)
-        push('overlap', 'error', [a.id, b.id], `"${a.id}" and "${b.id}" overlap.`);
+      if (area > 0.5) push('overlap', 'error', [a.id, b.id], `"${a.id}" and "${b.id}" overlap.`);
     }
   return issues;
 }
@@ -231,7 +244,10 @@ function clampBox<T extends Box>(element: T): T {
  * and the report after the last pass. Overlap, contrast and missing images are
  * not repaired here; they need a design decision.
  */
-export function repairDeck(model: DeckModelV2, passes = 3): { model: DeckModelV2; report: DeckQualityReport } {
+export function repairDeck(
+  model: DeckModelV2,
+  passes = 3,
+): { model: DeckModelV2; report: DeckQualityReport } {
   let current = model;
   let report = checkDeck(current);
   for (let pass = 0; pass < passes && !report.ok; pass += 1) {

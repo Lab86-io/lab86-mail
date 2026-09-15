@@ -20,3 +20,14 @@ export function isThemedOfficeChromeEnabled(host?: string | null) {
 export function isDeckV2AuthoringEnabled(host?: string | null) {
   return flag('DECK_V2_AUTHORING', host);
 }
+
+/**
+ * Client-side view of the authoring flag. Public variables are inlined per
+ * build, and staging and production are separate builds, so each environment
+ * sets `NEXT_PUBLIC_DECK_V2_AUTHORING`. Development defaults on.
+ */
+export function isDeckV2AuthoringEnabledOnClient() {
+  const raw = process.env.NEXT_PUBLIC_DECK_V2_AUTHORING;
+  if (raw === undefined || raw === '') return process.env.NODE_ENV === 'development';
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}

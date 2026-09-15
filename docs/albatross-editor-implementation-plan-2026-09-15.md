@@ -79,3 +79,43 @@ Delivery: one pull request into `staging`, merged after CI and review pass.
 - PPTX opened in PowerPoint on the Mac, slides exported to PNG, compared with the web.
 - iOS and macOS builds on the Mac; native tests.
 - Pull request into `staging`, review findings fixed, merge, staging smoke check.
+
+## Outcome (2026-09-15)
+
+Every wave landed on this branch. Verification is listed in the pull request.
+
+### Wave 1
+
+- `lib/documents/deck-quality.ts`: checks and bounded repair. The reference decks pass
+  with no errors after the accent moved to `#AE4B2B` and muted to `#5E5A51`.
+- `lib/documents/deck-render.ts`: self-contained HTML with inlined fonts, local or
+  Browserbase browser, one PNG per slide. Optical size pinned to match the canvas.
+- Owned images: `convex/documentAssets.ts`, `lib/documents/deck-asset-store.ts`,
+  `POST /api/documents/assets`, `GET /api/documents/assets/[assetId]`. Signature-checked,
+  bounded, hashed, purged with the account.
+- `lib/documents/editor-flags.ts`, `lib/documents/rich-docx-fixture.ts`,
+  `scripts/cleanup-office-verification.ts`.
+
+### Wave 2
+
+- B: `lib/documents/collabora-chrome.ts`, themed `CollaboraFrame`, compact title row with
+  **All tools** and Albatross in `OfficeEditor`, controls map in
+  `docs/albatross-document-editor-controls.md`, live verification against staging
+  including a rich Word file and dark chrome.
+- C: `PresentationEditor` with drag, resize, snap guides, inline text, contextual
+  inspectors for text, shape, line, image and chart, insert menu with image upload,
+  deck theme panel. Flat lines now paint on the canvas.
+- D: `presentation-compositions.ts` with eleven compositions, the version 2 brief and
+  composer, quality loop with one repair call, restyle by theme or by theme and layout,
+  tool descriptions.
+
+### Not in this round
+
+- Owned assets are not yet passed into generation; images enter through the editor.
+- The PowerPoint visual check could not run from a remote shell on the Mac (sandbox
+  blocks saving). LibreOffice rendering matched the canvas. Someone at the Mac can
+  open `/tmp/deck-render/lakeshore-editorial.pptx` and compare.
+- A native canvas for version 2 decks. iOS and macOS show the read-only preview and
+  open the web editor.
+- The Insert menu is proven in Chromium, not in the JSDOM suite.
+- A custom accent hue does not reach the Collabora chrome; it uses the default tokens.

@@ -98,8 +98,8 @@ comparison, and a doughnut chart.
 | background | #F4F1EA | #F7F7F4 |
 | surface | #E7E1D3 | #E4E6E9 |
 | ink | #1E2A38 | #0B0F14 |
-| muted | #6F6A60 | #5B6470 |
-| accent | #B5502F | #2F5BFF |
+| muted | #5E5A51 | #5B6470 |
+| accent | #AE4B2B | #2F5BFF |
 | accentInk | #FFFFFF | #FFFFFF |
 
 The slide theme is independent from the application theme. Dark application mode does
