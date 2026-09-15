@@ -1,13 +1,19 @@
 /**
- * Pure presentation-model helpers: slide identity, selection correction,
- * bounded element layout and a small coalescing undo history. No React/DOM.
+ * Pure presentation-model helpers: slide identity, bounded element layout
+ * and a small coalescing undo history. No React/DOM. Every helper works on
+ * the version 2 deck; a stored version 1 deck is lifted on entry.
  * All geometry is percent of the slide; fonts are sized against a 960-wide
  * reference so text scales with the canvas, never the viewport.
  */
-import type { AlbatrossDocumentModel, DeckElement, DeckSlide } from '@/lib/documents/model';
+import { type AnyDeckModel, deckModelsEqual, upgradeDeckModel } from '@/lib/documents/deck-versions';
+import type { DeckElementV2, DeckModelV2, DeckSlideV2 } from '@/lib/documents/model';
 
-export type DeckModel = Extract<AlbatrossDocumentModel, { kind: 'deck' }>;
+export type DeckModel = DeckModelV2;
+export type DeckSlide = DeckSlideV2;
+export type DeckElement = DeckElementV2;
 export type ElementBounds = Pick<DeckElement, 'x' | 'y' | 'width' | 'height'>;
+
+export { deckModelsEqual, upgradeDeckModel };
 
 /** Reference slide width the model's `fontSize` values are authored against. */
 export const SLIDE_REFERENCE_WIDTH = 960;
@@ -32,13 +38,13 @@ export function createDeckId() {
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
-/** Keep an element fully inside the slide with a usable minimum size. */
-export function clampElementBounds(bounds: ElementBounds): ElementBounds {
+/** Keep an element fully inside the slide with a usable minimum size. Lines may be flat. */
+export function clampElementBounds(bounds: ElementBounds, minSize = MIN_ELEMENT_SIZE): ElementBounds {
   const width = round(
-    Math.min(100, Math.max(MIN_ELEMENT_SIZE, Number.isFinite(bounds.width) ? bounds.width : 1)),
+    Math.min(100, Math.max(minSize, Number.isFinite(bounds.width) ? bounds.width : minSize)),
   );
   const height = round(
-    Math.min(100, Math.max(MIN_ELEMENT_SIZE, Number.isFinite(bounds.height) ? bounds.height : 1)),
+    Math.min(100, Math.max(minSize, Number.isFinite(bounds.height) ? bounds.height : minSize)),
   );
   const x = Math.min(100 - width, Math.max(0, Number.isFinite(bounds.x) ? bounds.x : 0));
   const y = Math.min(100 - height, Math.max(0, Number.isFinite(bounds.y) ? bounds.y : 0));
@@ -46,7 +52,7 @@ export function clampElementBounds(bounds: ElementBounds): ElementBounds {
 }
 
 export function clampFontSize(value: number) {
-  return Math.min(160, Math.max(8, Number.isFinite(value) ? Math.round(value) : 16));
+  return Math.min(240, Math.max(8, Number.isFinite(value) ? Math.round(value) : 16));
 }
 
 /** CSS font size that follows the slide container's width (container query units). */
@@ -55,11 +61,19 @@ export function fontSizeForCanvas(fontSize: number | undefined) {
   return `${round((size / SLIDE_REFERENCE_WIDTH) * 100)}cqw`;
 }
 
-export function activeSlide(model: DeckModel): DeckSlide {
-  return model.slides.find((slide) => slide.id === model.activeSlideId) || model.slides[0];
+/** Points to container width units: the slide is 960pt wide at reference scale. */
+export function pointsForCanvas(points: number) {
+  return `${round((points / SLIDE_REFERENCE_WIDTH) * 100)}cqw`;
 }
 
-export function slideIndex(model: DeckModel, slideId: string) {
+const lift = (model: AnyDeckModel) => upgradeDeckModel(model);
+
+export function activeSlide(model: AnyDeckModel): DeckSlide {
+  const deck = lift(model);
+  return deck.slides.find((slide) => slide.id === deck.activeSlideId) || deck.slides[0];
+}
+
+export function slideIndex(model: AnyDeckModel, slideId: string) {
   return model.slides.findIndex((slide) => slide.id === slideId);
 }
 
@@ -67,11 +81,17 @@ function withSlides(model: DeckModel, slides: DeckSlide[], activeSlideId = model
   return { ...model, activeSlideId, slides };
 }
 
-export function updateSlide(model: DeckModel, slideId: string, patch: Partial<DeckSlide>): DeckModel {
+export function updateSlide(model: AnyDeckModel, slideId: string, patch: Partial<DeckSlide>): DeckModel {
+  const deck = lift(model);
   return withSlides(
-    model,
-    model.slides.map((slide) => (slide.id === slideId ? { ...slide, ...patch, id: slide.id } : slide)),
+    deck,
+    deck.slides.map((slide) => (slide.id === slideId ? { ...slide, ...patch, id: slide.id } : slide)),
   );
+}
+
+export function updateTheme(model: AnyDeckModel, patch: Partial<DeckModel['theme']>): DeckModel {
+  const deck = lift(model);
+  return { ...deck, theme: { ...deck.theme, ...patch } };
 }
 
 export function newSlide(id: string, index: number, createId: () => string = createDeckId): DeckSlide {
@@ -106,181 +126,237 @@ export function newSlide(id: string, index: number, createId: () => string = cre
 }
 
 /** Insert a fresh slide after the active one and select it. */
-export function addSlide(model: DeckModel, createId: () => string = createDeckId): DeckModel {
-  const index = slideIndex(model, model.activeSlideId);
-  const slide = newSlide(createId(), model.slides.length + 1, createId);
-  const slides = [...model.slides];
+export function addSlide(model: AnyDeckModel, createId: () => string = createDeckId): DeckModel {
+  const deck = lift(model);
+  const index = slideIndex(deck, deck.activeSlideId);
+  const slide = newSlide(createId(), deck.slides.length + 1, createId);
+  const slides = [...deck.slides];
   slides.splice(index + 1, 0, slide);
-  return withSlides(model, slides, slide.id);
+  return withSlides(deck, slides, slide.id);
 }
 
 /** Deep-copy a slide with new slide and element identities; select the copy. */
 export function duplicateSlide(
-  model: DeckModel,
+  model: AnyDeckModel,
   slideId: string,
   createId: () => string = createDeckId,
 ): DeckModel {
-  const index = slideIndex(model, slideId);
-  if (index < 0) return model;
-  const source = model.slides[index];
+  const deck = lift(model);
+  const index = slideIndex(deck, slideId);
+  if (index < 0) return deck;
+  const source = deck.slides[index];
   const copy: DeckSlide = {
     ...source,
     id: createId(),
     elements: source.elements.map((element) => ({ ...element, id: createId() })),
   };
-  const slides = [...model.slides];
+  const slides = [...deck.slides];
   slides.splice(index + 1, 0, copy);
-  return withSlides(model, slides, copy.id);
+  return withSlides(deck, slides, copy.id);
 }
 
 /** Remove a slide; the selection moves to the neighbour that took its place. */
-export function deleteSlide(model: DeckModel, slideId: string): DeckModel {
-  const index = slideIndex(model, slideId);
-  if (index < 0 || model.slides.length <= 1) return model;
-  const slides = model.slides.filter((slide) => slide.id !== slideId);
+export function deleteSlide(model: AnyDeckModel, slideId: string): DeckModel {
+  const deck = lift(model);
+  const index = slideIndex(deck, slideId);
+  if (index < 0 || deck.slides.length <= 1) return deck;
+  const slides = deck.slides.filter((slide) => slide.id !== slideId);
   const activeSlideId =
-    model.activeSlideId === slideId ? slides[Math.min(index, slides.length - 1)].id : model.activeSlideId;
-  return withSlides(model, slides, activeSlideId);
+    deck.activeSlideId === slideId ? slides[Math.min(index, slides.length - 1)].id : deck.activeSlideId;
+  return withSlides(deck, slides, activeSlideId);
 }
 
-export function moveSlide(model: DeckModel, slideId: string, direction: -1 | 1): DeckModel {
-  const index = slideIndex(model, slideId);
+export function moveSlide(model: AnyDeckModel, slideId: string, direction: -1 | 1): DeckModel {
+  const deck = lift(model);
+  const index = slideIndex(deck, slideId);
   const target = index + direction;
-  if (index < 0 || target < 0 || target >= model.slides.length) return model;
-  const slides = [...model.slides];
+  if (index < 0 || target < 0 || target >= deck.slides.length) return deck;
+  const slides = [...deck.slides];
   const [moved] = slides.splice(index, 1);
   slides.splice(target, 0, moved);
-  return withSlides(model, slides);
+  return withSlides(deck, slides);
 }
 
-export function selectSlide(model: DeckModel, slideId: string): DeckModel {
-  if (slideId === model.activeSlideId || slideIndex(model, slideId) < 0) return model;
-  return { ...model, activeSlideId: slideId };
+export function selectSlide(model: AnyDeckModel, slideId: string): DeckModel {
+  const deck = lift(model);
+  if (slideId === deck.activeSlideId || slideIndex(deck, slideId) < 0) return deck;
+  return { ...deck, activeSlideId: slideId };
 }
 
-export function newElement(type: DeckElement['type'], id: string, existingCount: number): DeckElement {
+export interface NewElementOptions {
+  /** Required for images: an owned asset. */
+  image?: { assetId: string; src?: string; alt: string; aspect?: number };
+  ink?: string;
+}
+
+export function newElement(
+  type: DeckElement['type'],
+  id: string,
+  existingCount: number,
+  options: NewElementOptions = {},
+): DeckElement {
   const offset = Math.min(30, existingCount * 4);
-  if (type === 'shape') {
-    return clampElement({
-      id,
-      type: 'shape',
-      role: 'shape',
-      x: 30 + offset,
-      y: 30 + offset,
-      width: 24,
-      height: 24,
-      fill: '#DCE6F2',
-    });
+  switch (type) {
+    case 'shape':
+      return clampElement({
+        id,
+        type: 'shape',
+        shape: 'rect',
+        x: 30 + offset,
+        y: 30 + offset,
+        width: 24,
+        height: 24,
+      });
+    case 'line':
+      return clampElement({
+        id,
+        type: 'line',
+        x: 20 + offset,
+        y: 50 + offset,
+        width: 60,
+        height: 0,
+        stroke: { color: options.ink ?? '#17202A', width: 1.5 },
+      });
+    case 'image': {
+      const image = options.image ?? { assetId: '', alt: '' };
+      const aspect = image.aspect ?? 4 / 3;
+      const width = 40;
+      const height = Math.min(70, (width / aspect) * (16 / 9));
+      return clampElement({
+        id,
+        type: 'image',
+        x: 30 + offset,
+        y: 15 + offset,
+        width,
+        height,
+        assetId: image.assetId,
+        ...(image.src ? { src: image.src } : {}),
+        alt: image.alt,
+        fit: 'cover',
+        ...(image.aspect ? { aspect: image.aspect } : {}),
+      });
+    }
+    case 'chart':
+      return clampElement({
+        id,
+        type: 'chart',
+        chart: 'column',
+        x: 20 + offset,
+        y: 25 + offset,
+        width: 60,
+        height: 50,
+        categories: ['A', 'B', 'C'],
+        series: [{ name: 'Series', values: [3, 5, 4] }],
+      });
+    default:
+      return clampElement({
+        id,
+        type: 'text',
+        role: 'body',
+        x: 10 + offset,
+        y: 40 + offset,
+        width: 60,
+        height: 14,
+        text: 'Text',
+        fontSize: 18,
+      });
   }
-  return clampElement({
-    id,
-    type: 'text',
-    role: 'body',
-    x: 10 + offset,
-    y: 40 + offset,
-    width: 60,
-    height: 14,
-    text: 'Text',
-    fontSize: 18,
-  });
 }
 
 export function clampElement(element: DeckElement): DeckElement {
-  const next: DeckElement = { ...element, ...clampElementBounds(element) };
-  if (next.fontSize !== undefined) next.fontSize = clampFontSize(next.fontSize);
+  const bounds = clampElementBounds(element, element.type === 'line' ? 0 : MIN_ELEMENT_SIZE);
+  const next = { ...element, ...bounds } as DeckElement;
+  if (next.type === 'text' && next.fontSize !== undefined) next.fontSize = clampFontSize(next.fontSize);
   return next;
 }
 
 export function addElement(
-  model: DeckModel,
+  model: AnyDeckModel,
   slideId: string,
   type: DeckElement['type'],
   createId: () => string = createDeckId,
+  options: NewElementOptions = {},
 ): { model: DeckModel; elementId: string } {
-  const slide = model.slides.find((candidate) => candidate.id === slideId);
-  if (!slide) return { model, elementId: '' };
-  const element = newElement(type, createId(), slide.elements.length);
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  if (!slide) return { model: deck, elementId: '' };
+  const element = newElement(type, createId(), slide.elements.length, {
+    ink: deck.theme.colors.ink,
+    ...options,
+  });
   return {
-    model: updateSlide(model, slideId, { elements: [...slide.elements, element] }),
+    model: updateSlide(deck, slideId, { elements: [...slide.elements, element] }),
     elementId: element.id,
   };
 }
+
+/** Any field of any element kind; the element's own kind decides what applies. */
+export type ElementPatch = Partial<Omit<DeckElement, 'id' | 'type'>> & Record<string, unknown>;
 
 /**
  * Patch an element, clamping geometry and font size. A title element's text
  * also keeps the slide title in step so the filmstrip and outline stay honest.
  */
 export function updateElement(
-  model: DeckModel,
+  model: AnyDeckModel,
   slideId: string,
   elementId: string,
-  patch: Partial<Omit<DeckElement, 'id' | 'type'>>,
+  patch: ElementPatch,
 ): DeckModel {
-  const slide = model.slides.find((candidate) => candidate.id === slideId);
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
   const current = slide?.elements.find((element) => element.id === elementId);
-  if (!slide || !current) return model;
-  const element = clampElement({ ...current, ...patch });
+  if (!slide || !current) return deck;
+  const element = clampElement({ ...current, ...patch, id: current.id, type: current.type } as DeckElement);
   const slidePatch: Partial<DeckSlide> = {
     elements: slide.elements.map((candidate) => (candidate.id === elementId ? element : candidate)),
   };
-  if (element.role === 'title' && patch.text !== undefined) slidePatch.title = element.text || slide.title;
-  return updateSlide(model, slideId, slidePatch);
+  if (element.type === 'text' && element.role === 'title' && patch.text !== undefined)
+    slidePatch.title = element.text || slide.title;
+  return updateSlide(deck, slideId, slidePatch);
 }
 
 export function nudgeElement(
-  model: DeckModel,
+  model: AnyDeckModel,
   slideId: string,
   elementId: string,
   dx: number,
   dy: number,
 ): DeckModel {
-  const element = model.slides
+  const deck = lift(model);
+  const element = deck.slides
     .find((candidate) => candidate.id === slideId)
     ?.elements.find((candidate) => candidate.id === elementId);
-  if (!element) return model;
-  return updateElement(model, slideId, elementId, { x: element.x + dx, y: element.y + dy });
+  if (!element) return deck;
+  return updateElement(deck, slideId, elementId, { x: element.x + dx, y: element.y + dy });
 }
 
-export function deleteElement(model: DeckModel, slideId: string, elementId: string): DeckModel {
-  const slide = model.slides.find((candidate) => candidate.id === slideId);
-  if (!slide?.elements.some((element) => element.id === elementId)) return model;
-  return updateSlide(model, slideId, {
+export function deleteElement(model: AnyDeckModel, slideId: string, elementId: string): DeckModel {
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  if (!slide?.elements.some((element) => element.id === elementId)) return deck;
+  return updateSlide(deck, slideId, {
     elements: slide.elements.filter((element) => element.id !== elementId),
   });
 }
 
-function elementsEqual(left: DeckElement, right: DeckElement) {
-  return (
-    left.id === right.id &&
-    left.type === right.type &&
-    left.x === right.x &&
-    left.y === right.y &&
-    left.width === right.width &&
-    left.height === right.height &&
-    (left.text ?? undefined) === (right.text ?? undefined) &&
-    (left.role ?? undefined) === (right.role ?? undefined) &&
-    (left.fill ?? undefined) === (right.fill ?? undefined) &&
-    (left.color ?? undefined) === (right.color ?? undefined) &&
-    (left.fontSize ?? undefined) === (right.fontSize ?? undefined)
-  );
-}
-
-/** Structural equality that ignores key order and undefined fields. */
-export function deckModelsEqual(left: DeckModel | null | undefined, right: DeckModel | null | undefined) {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  if (left.activeSlideId !== right.activeSlideId || left.slides.length !== right.slides.length) return false;
-  return left.slides.every((slide, index) => {
-    const other = right.slides[index];
-    return (
-      slide.id === other.id &&
-      slide.title === other.title &&
-      (slide.notes ?? undefined) === (other.notes ?? undefined) &&
-      (slide.background ?? undefined) === (other.background ?? undefined) &&
-      slide.elements.length === other.elements.length &&
-      slide.elements.every((element, elementIndex) => elementsEqual(element, other.elements[elementIndex]))
-    );
-  });
+/** Move an element one step up or down the layer order. */
+export function reorderElement(
+  model: AnyDeckModel,
+  slideId: string,
+  elementId: string,
+  direction: -1 | 1,
+): DeckModel {
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  if (!slide) return deck;
+  const index = slide.elements.findIndex((element) => element.id === elementId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= slide.elements.length) return deck;
+  const elements = [...slide.elements];
+  const [moved] = elements.splice(index, 1);
+  elements.splice(target, 0, moved);
+  return updateSlide(deck, slideId, { elements });
 }
 
 /** Undo history with optional coalescing of rapid same-key edits (typing). */
@@ -327,17 +403,4 @@ export function redoHistory<T>(history: EditHistory<T>): EditHistory<T> {
   if (!history.future.length) return history;
   const [present, ...future] = history.future;
   return { past: [...history.past, history.present], present, future };
-}
-
-/** Selection correction after any model change or external revision. */
-export function resolveSelection(
-  model: DeckModel,
-  selection: { slideId: string; elementId: string | null },
-): { slideId: string; elementId: string | null } {
-  const slide = model.slides.find((candidate) => candidate.id === selection.slideId) || activeSlide(model);
-  const elementId =
-    selection.elementId && slide.elements.some((element) => element.id === selection.elementId)
-      ? selection.elementId
-      : null;
-  return { slideId: slide.id, elementId };
 }

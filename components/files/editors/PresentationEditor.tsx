@@ -1,22 +1,24 @@
 'use client';
 
 import { ArrowDown, ArrowUp, Copy, Play, Plus, Redo2, Square, Trash2, Type, Undo2, X } from 'lucide-react';
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
-import type { AlbatrossDocumentModel, DeckElement, DeckSlide } from '@/lib/documents/model';
+import { type AnyDeckModel, deckModelForSave } from '@/lib/documents/deck-versions';
+import type { AlbatrossDocumentModel, DeckTheme } from '@/lib/documents/model';
 import { cn } from '@/lib/utils';
 import {
   activeSlide,
   addElement,
   addSlide,
   createHistory,
+  type DeckElement,
   type DeckModel,
+  type DeckSlide,
   deckModelsEqual,
   deleteElement,
   deleteSlide,
   duplicateSlide,
-  fontSizeForCanvas,
   moveSlide,
   nudgeElement,
   pushHistory,
@@ -26,29 +28,15 @@ import {
   undoHistory,
   updateElement,
   updateSlide,
+  upgradeDeckModel,
 } from './deck-model';
 import './document-editors.css';
+import { SlideSurface } from './SlideRenderer';
 
-function elementStyle(element: DeckElement): CSSProperties {
-  return {
-    left: `${element.x}%`,
-    top: `${element.y}%`,
-    width: `${element.width}%`,
-    height: `${element.height}%`,
-    fontSize: fontSizeForCanvas(element.fontSize || (element.role === 'title' ? 28 : 16)),
-    color: slideColor(element.color, '#17202A'),
-    fontWeight: element.role === 'title' ? 650 : 400,
-    ...(element.type === 'shape'
-      ? {
-          backgroundColor: slideColor(element.fill, '#DCE6F2'),
-          border: `1px solid ${slideColor(element.color, '#94A3B8')}`,
-        }
-      : {}),
-  };
-}
-
+/** Backward-compatible name: the canvas is the shared renderer with the deck theme applied. */
 export function SlideCanvas({
   slide,
+  theme,
   interactive = false,
   selected,
   onSelect,
@@ -56,6 +44,7 @@ export function SlideCanvas({
   readOnly = false,
 }: {
   slide: DeckSlide;
+  theme: DeckTheme;
   interactive?: boolean;
   selected?: string | null;
   onSelect?: (id: string) => void;
@@ -63,46 +52,15 @@ export function SlideCanvas({
   readOnly?: boolean;
 }) {
   return (
-    <div
-      className="deck-slide w-full"
-      style={{ backgroundColor: slideColor(slide.background, '#FFFFFF') }}
-      data-slide-canvas
-    >
-      {slide.elements.map((element, index) =>
-        interactive ? (
-          <button
-            key={element.id}
-            type="button"
-            className="deck-element"
-            data-element-id={element.id}
-            aria-label={`${element.type === 'shape' ? 'Shape' : element.role || 'Text'} object ${index + 1}`}
-            aria-pressed={selected === element.id}
-            disabled={readOnly}
-            data-selected={selected === element.id}
-            style={elementStyle(element)}
-            onClick={() => onSelect?.(element.id)}
-            onFocus={() => onSelect?.(element.id)}
-            onDoubleClick={() => onEdit?.(element.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                onEdit?.(element.id);
-              }
-            }}
-          >
-            {element.type === 'text'
-              ? element.text || (
-                  <span className="opacity-40">{element.role === 'title' ? 'Title' : 'Text'}</span>
-                )
-              : null}
-          </button>
-        ) : (
-          <div key={element.id} className="deck-element" style={elementStyle(element)}>
-            {element.type === 'text' ? element.text : null}
-          </div>
-        ),
-      )}
-    </div>
+    <SlideSurface
+      slide={slide}
+      theme={theme}
+      interactive={interactive}
+      selected={selected}
+      onSelect={onSelect}
+      onEdit={onEdit}
+      readOnly={readOnly}
+    />
   );
 }
 
@@ -164,7 +122,7 @@ function PresentationPlayer({ model, onClose }: { model: DeckModel; onClose: () 
         </div>
         <div className="grid min-h-0 flex-1 place-items-center overflow-hidden p-3">
           <div className="w-full max-w-[min(1600px,calc((100dvh-120px)*16/9))]">
-            <SlideCanvas slide={model.slides[index]} />
+            <SlideCanvas slide={model.slides[index]} theme={model.theme} />
           </div>
         </div>
         <div className="flex shrink-0 items-center justify-center gap-3 p-3">
@@ -189,14 +147,16 @@ function PresentationPlayer({ model, onClose }: { model: DeckModel; onClose: () 
 }
 
 export function PresentationEditor({
-  model,
+  model: stored,
   onChange,
   readOnly = false,
 }: {
-  model: DeckModel;
+  model: AnyDeckModel;
   onChange: (model: AlbatrossDocumentModel) => void;
   readOnly?: boolean;
 }) {
+  const model = useMemo(() => upgradeDeckModel(stored), [stored]);
+  const storedVersion = stored.version;
   const [history, setHistory] = useState(() => createHistory(model));
   const historyRef = useRef(history);
   const current = useRef(model);
@@ -219,7 +179,7 @@ export function PresentationEditor({
     historyRef.current = next;
     setHistory(next);
     current.current = next.present;
-    onChange(next.present);
+    onChange(deckModelForSave(next.present, storedVersion));
   };
   const change = (next: DeckModel, key?: string) => {
     if (readOnly || deckModelsEqual(current.current, next)) return;
@@ -407,7 +367,7 @@ export function PresentationEditor({
               )}
             >
               <div aria-hidden="true">
-                <SlideCanvas slide={item} />
+                <SlideCanvas slide={item} theme={model.theme} />
               </div>
               <span className="mt-1 block truncate px-1 text-[10px] text-[var(--color-text-muted)]">
                 {index + 1} · {item.title}
@@ -420,6 +380,7 @@ export function PresentationEditor({
             <div className="border border-slate-300 bg-white">
               <SlideCanvas
                 slide={slide}
+                theme={model.theme}
                 interactive
                 selected={selected}
                 onSelect={setSelected}
@@ -455,7 +416,7 @@ export function PresentationEditor({
                   aria-label="Slide background"
                   className="mt-1 block h-9 w-12 rounded border border-[var(--color-border)] bg-transparent p-1"
                   disabled={readOnly}
-                  value={slideColor(slide.background, '#FFFFFF')}
+                  value={slideColor(slide.background, slideColor(model.theme.colors.background, '#FFFFFF'))}
                   onChange={(event) =>
                     change(updateSlide(current.current, slide.id, { background: event.target.value }))
                   }
@@ -466,7 +427,10 @@ export function PresentationEditor({
               <div className="space-y-3 rounded-[var(--radius-control)] border border-[var(--color-border)] p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-medium">
-                    {object.type === 'shape' ? 'Shape' : 'Text'} · arrows move, Shift moves faster
+                    {object.type === 'text'
+                      ? 'Text'
+                      : object.type.charAt(0).toUpperCase() + object.type.slice(1)}{' '}
+                    · arrows move, Shift moves faster
                   </p>
                   <Button
                     variant="ghost"
@@ -520,11 +484,14 @@ export function PresentationEditor({
                         min={8}
                         max={160}
                         disabled={readOnly}
-                        value={object.fontSize || (object.role === 'title' ? 28 : 16)}
+                        value={
+                          object.fontSize ||
+                          (object.role === 'title' ? 28 : object.role === 'number' ? 64 : 16)
+                        }
                         onChange={(event) => patchObject({ fontSize: Number(event.target.value) })}
                       />
                     </label>
-                  ) : (
+                  ) : object.type === 'shape' ? (
                     <label className="text-xs text-[var(--color-text-muted)]">
                       Fill
                       <input
@@ -532,22 +499,47 @@ export function PresentationEditor({
                         aria-label="Shape fill"
                         className="mt-1 block h-9 w-12"
                         disabled={readOnly}
-                        value={slideColor(object.fill, '#DCE6F2')}
+                        value={slideColor(object.fill, slideColor(model.theme.colors.surface, '#DCE6F2'))}
                         onChange={(event) => patchObject({ fill: event.target.value })}
                       />
                     </label>
-                  )}
-                  <label className="text-xs text-[var(--color-text-muted)]">
-                    {object.type === 'shape' ? 'Border' : 'Text color'}
-                    <input
-                      type="color"
-                      aria-label="Object color"
-                      className="mt-1 block h-9 w-12"
-                      disabled={readOnly}
-                      value={slideColor(object.color, object.type === 'shape' ? '#94A3B8' : '#17202A')}
-                      onChange={(event) => patchObject({ color: event.target.value })}
-                    />
-                  </label>
+                  ) : null}
+                  {object.type === 'text' ? (
+                    <label className="text-xs text-[var(--color-text-muted)]">
+                      Text color
+                      <input
+                        type="color"
+                        aria-label="Object color"
+                        className="mt-1 block h-9 w-12"
+                        disabled={readOnly}
+                        value={slideColor(object.color, slideColor(model.theme.colors.ink, '#17202A'))}
+                        onChange={(event) => patchObject({ color: event.target.value })}
+                      />
+                    </label>
+                  ) : object.type === 'shape' || object.type === 'line' ? (
+                    <label className="text-xs text-[var(--color-text-muted)]">
+                      {object.type === 'line' ? 'Line color' : 'Border'}
+                      <input
+                        type="color"
+                        aria-label="Object color"
+                        className="mt-1 block h-9 w-12"
+                        disabled={readOnly}
+                        value={slideColor(
+                          object.stroke?.color,
+                          slideColor(model.theme.colors.muted, '#94A3B8'),
+                        )}
+                        onChange={(event) =>
+                          patchObject({
+                            stroke: {
+                              width: object.stroke?.width ?? 0.75,
+                              ...object.stroke,
+                              color: event.target.value,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  ) : null}
                 </div>
               </div>
             ) : (

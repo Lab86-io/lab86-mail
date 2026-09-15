@@ -191,3 +191,50 @@
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
+
+/* Version 2 elements: lines, images and charts fill their box; text keeps its own metrics. */
+.deck-slide .deck-element .deck-text {
+  display: block;
+  width: 100%;
+}
+.deck-slide .deck-element[data-element-type="line"],
+.deck-slide .deck-element[data-element-type="chart"],
+.deck-slide .deck-element[data-element-type="image"] {
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.deck-slide .deck-line,
+.deck-slide .deck-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.deck-slide .deck-element[data-element-type="line"] {
+  min-height: 0;
+}
+.deck-slide .deck-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.deck-slide .deck-image-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--deck-surface);
+  color: var(--deck-muted);
+  font-family: var(--deck-body);
+  font-size: 1.5cqw;
+}
+.deck-slide .deck-slide-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}

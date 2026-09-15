@@ -13,6 +13,7 @@ import {
   slideColor,
   undoHistory,
   updateElement,
+  upgradeDeckModel,
 } from '../components/files/editors/deck-model';
 import {
   docModelsEqual,
@@ -100,8 +101,10 @@ describe('rich document model fidelity', () => {
 });
 
 describe('presentation edit identity and recovery', () => {
-  const base = createDefaultDocumentModel('deck', 'base');
-  if (base.kind !== 'deck') throw new Error('Expected deck fixture');
+  const stored = createDefaultDocumentModel('deck', 'base');
+  if (stored.kind !== 'deck') throw new Error('Expected deck fixture');
+  // Editors work on the lifted version 2 deck; identity holds there.
+  const base = upgradeDeckModel(stored);
   test('canvas colors match the supported Office export subset', () => {
     expect(slideColor(' a1b2c3 ', '#FFFFFF')).toBe('#A1B2C3');
     expect(slideColor('#a1b2c3', '#FFFFFF')).toBe('#A1B2C3');
@@ -138,7 +141,7 @@ describe('presentation edit identity and recovery', () => {
     const first = base.slides[0].elements[0];
     const changed = updateElement(base, base.activeSlideId, first.id, { text: 'New heading', fontSize: 999 });
     expect(changed.slides[0].title).toBe('New heading');
-    expect(changed.slides[0].elements[0].fontSize).toBe(160);
+    expect(changed.slides[0].elements[0].type === 'text' && changed.slides[0].elements[0].fontSize).toBe(240);
     expect(changed.slides[0].elements[1]).toEqual(base.slides[0].elements[1]);
     expect(deckModelsEqual(changed, base)).toBe(false);
   });

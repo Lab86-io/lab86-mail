@@ -174,6 +174,8 @@ struct DocumentEditorView: View {
                 }
             case .workbook(let snapshot):
                 NativeWorkbookPreview(snapshot: snapshot, webEditorURL: webEditorURL)
+            case .richDeck(let snapshot):
+                NativeRichDeckPreview(snapshot: snapshot, webEditorURL: webEditorURL)
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) { active, next in
                     updateModel(.deck(activeSlideID: active, slides: next))
@@ -453,6 +455,8 @@ struct GoogleDocumentEditorView: View {
                 }
             case .workbook(let snapshot):
                 NativeWorkbookPreview(snapshot: snapshot, webEditorURL: document.webURL)
+            case .richDeck(let snapshot):
+                NativeRichDeckPreview(snapshot: snapshot, webEditorURL: document.webURL)
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) {
                     updateModel(.deck(activeSlideID: $0, slides: $1))

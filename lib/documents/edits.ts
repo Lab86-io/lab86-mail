@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { deckModelForSave, upgradeDeckModel } from './deck-versions';
 import {
   type AlbatrossDocumentModel,
-  deckModelSchema,
+  deckElementV2Schema,
+  deckSlideV2Schema,
   docModelSchema,
   parseDocumentModel,
   type SuggestionPayload,
@@ -12,8 +14,8 @@ import { spreadsheetCommandSchema, validateSpreadsheetCommand } from './spreadsh
 const id = z.string().min(1).max(200);
 const block = docModelSchema.shape.blocks.element;
 const blockPatch = z.object(block.shape).omit({ id: true }).partial().strict();
-const slide = deckModelSchema.shape.slides.element;
-const element = slide.shape.elements.element;
+const slide = deckSlideV2Schema;
+const element = deckElementV2Schema;
 function assertFitsCanvas(item: z.infer<typeof element>) {
   if (item.x + item.width > 100 || item.y + item.height > 100)
     throw new Error('The element must fit inside the slide canvas.');
@@ -95,7 +97,9 @@ function validateIdentity(model: AlbatrossDocumentModel) {
 /** All operations validate on a private copy before any persistence happens. */
 export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unknown): SuggestionPayload {
   const operations = documentEditsSchema.parse(input);
-  const model = structuredClone(parseDocumentModel(source));
+  const parsed = parseDocumentModel(source);
+  // Slide edits run on version 2; a deck stored as version 1 keeps that shape when it can.
+  const model = structuredClone(parsed.kind === 'deck' ? upgradeDeckModel(parsed) : parsed);
   validateIdentity(model);
   if (
     model.kind === 'sheet' &&
@@ -193,6 +197,16 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
       switch (operation.op) {
         case 'deck_restyle': {
           // Theme every slide without inventing geometry or replacing its content.
+          const ink = operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+          model.theme = {
+            ...model.theme,
+            colors: {
+              ...model.theme.colors,
+              background: operation.theme === 'dark' ? '#111827' : '#ffffff',
+              ink,
+              accent: operation.accent,
+            },
+          };
           for (const target of model.slides) {
             target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
             for (const item of target.elements) {
@@ -200,8 +214,8 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
                 item.fill = operation.accent;
                 continue;
               }
-              item.color =
-                item.role === 'title' ? operation.accent : operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+              if (item.type !== 'text') continue;
+              item.color = item.role === 'title' ? operation.accent : ink;
               item.fontSize ??= item.role === 'title' ? 28 : 16;
             }
           }
@@ -241,7 +255,9 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
     }
   }
   validateIdentity(model);
-  const validated = parseDocumentModel(model);
+  const validated = parseDocumentModel(
+    model.kind === 'deck' && parsed.kind === 'deck' ? deckModelForSave(model, parsed.version) : model,
+  );
   assertModelWithinLimit(validated);
   return validated;
 }

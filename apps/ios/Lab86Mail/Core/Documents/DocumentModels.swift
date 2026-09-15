@@ -357,6 +357,8 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
     /// A tagged engine model is never projected into the legacy grid on save.
     case workbook(AlbatrossWorkbookSnapshot)
     case deck(activeSlideID: String, slides: [AlbatrossDeckSlide])
+    /// A version 2 deck keeps its raw JSON; the native canvas cannot edit it yet.
+    case richDeck(AlbatrossRichDeckSnapshot)
 
     init?(json: JSONValue) {
         switch json["kind"]?.stringValue {
@@ -375,6 +377,11 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
                 sheets: sheets
             )
         case "deck":
+            if json["version"]?.doubleValue == 2 {
+                guard let snapshot = AlbatrossRichDeckSnapshot(json: json) else { return nil }
+                self = .richDeck(snapshot)
+                return
+            }
             let slides = (json["slides"]?.arrayValue ?? []).compactMap(AlbatrossDeckSlide.init)
             guard let first = slides.first else { return nil }
             self = .deck(
@@ -390,7 +397,7 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
         switch self {
         case .doc: .doc
         case .sheet, .workbook: .sheet
-        case .deck: .deck
+        case .deck, .richDeck: .deck
         }
     }
 
@@ -411,6 +418,8 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
             ])
         case .workbook(let snapshot):
             snapshot.json
+        case .richDeck(let snapshot):
+            snapshot.json
         case .deck(let activeSlideID, let slides):
             .object([
                 "kind": .string("deck"),
@@ -422,8 +431,10 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
     }
 
     var requiresWebEditor: Bool {
-        if case .workbook = self { return true }
-        return false
+        switch self {
+        case .workbook, .richDeck: return true
+        case .doc, .sheet, .deck: return false
+        }
     }
 }
 

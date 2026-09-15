@@ -44,6 +44,30 @@ struct NativeFileCompatibilityTests {
         #expect(AlbatrossDocumentModel(json: model.json) == model)
     }
 
+    @Test func richDeckRoundTripPreservesEveryVersionTwoField() throws {
+        let raw = try json(##"{"kind":"deck","version":2,"activeSlideId":"cover","theme":{"name":"Editorial","colors":{"background":"#F4F1EA","surface":"#E7E1D3","ink":"#1E2A38","muted":"#6F6A60","accent":"#B5502F","accentInk":"#FFFFFF"},"fonts":{"display":{"family":"Fraunces","exportFamily":"Georgia"},"body":{"family":"Geist"}}},"slides":[{"id":"cover","title":"The Lakeshore Trail","notes":"Open warmly.","elements":[{"id":"t","type":"text","x":6,"y":24,"width":42,"height":40,"text":"The Lakeshore Trail","role":"title","fontSize":68,"fontWeight":500,"lineHeight":0.96,"valign":"top"},{"id":"i","type":"image","x":52,"y":0,"width":48,"height":100,"assetId":"a1","src":"/art/fallback-3.jpg","alt":"Painted valley","fit":"cover","focal":{"x":0.5,"y":0.55}},{"id":"l","type":"line","x":6,"y":12,"width":5,"height":0,"stroke":{"color":"#B5502F","width":1.5}},{"id":"c","type":"chart","x":40,"y":38,"width":54,"height":50,"chart":"column","categories":["Q1","Q2"],"series":[{"name":"Spend","values":[180,240]}],"futureField":{"nested":[1,true]}}]}]}"##)
+        let model = try #require(AlbatrossDocumentModel(json: raw))
+        guard case .richDeck(let snapshot) = model else { Issue.record("Must not flatten a v2 deck into v1"); return }
+        #expect(model.json == raw)
+        #expect(model.kind == .deck)
+        #expect(model.requiresWebEditor)
+        #expect(snapshot.activeSlideID == "cover")
+        #expect(snapshot.themeName == "Editorial")
+        #expect(snapshot.slides[0].lines == ["The Lakeshore Trail", "Painted valley", "Spend: Q1 180, Q2 240"])
+        #expect(snapshot.slides[0].elementCount == 4)
+        #expect(snapshot.slides[0].notes == "Open warmly.")
+        #expect(AlbatrossDocumentModel(json: model.json) == model)
+    }
+
+    @Test func invalidRichDeckDoesNotFallBackToDestructiveLegacyEditing() throws {
+        for payload in [
+            #"{"kind":"deck","version":2,"slides":[{"id":"a","elements":[]}]}"#,
+            #"{"kind":"deck","version":2,"theme":{"colors":{}},"slides":[]}"#,
+        ] {
+            #expect(AlbatrossDocumentModel(json: try json(payload)) == nil)
+        }
+    }
+
     @Test func invalidWorkbookDoesNotFallBackToDestructiveLegacyEditing() throws {
         for payload in [
             #"{"kind":"sheet","version":2,"engine":"unknown","sheets":[{"id":"a"}]}"#,
