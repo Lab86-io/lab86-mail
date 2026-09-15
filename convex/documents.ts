@@ -55,6 +55,7 @@ export const create = mutation({
     sourceRefs: v.optional(v.array(v.any())),
     reason: v.optional(v.string()),
     importSource: v.optional(importSourceValidator),
+    execution: executionValidator,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -90,6 +91,10 @@ export const create = mutation({
       reason: args.reason || 'create',
       actor: 'user',
       createdAt: ts,
+    });
+    await recordDocumentEffect(ctx, args.userId, args.execution, {
+      documentId: args.documentId,
+      revision: 1,
     });
     return row;
   },

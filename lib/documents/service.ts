@@ -75,6 +75,7 @@ export async function createDocument(input: {
     sourceRefs: input.sourceRefs || [],
     reason: input.reason,
     importSource: input.importSource,
+    execution: documentExecution(),
   });
 }
 

@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
-import { generateDocumentProposal } from '@/lib/documents/ai';
+import { composeDocumentPresentation, generateDocumentProposal } from '@/lib/documents/ai';
 import { artworksForDeck } from '@/lib/documents/deck-imagery';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
+import {
+  presentationBriefSchema,
+  presentationBriefV2Schema,
+  presentationSlideCountMatches,
+} from '@/lib/documents/presentation-design';
 import {
   archiveDocument,
   createDocument,
@@ -38,6 +43,7 @@ const defaultDependencies = {
   assetsFromUploads,
   createDocument,
   createDocumentSuggestion,
+  composeDocumentPresentation,
   generateDocumentProposal,
   getDocument,
   listDocuments,
@@ -55,22 +61,45 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. A presentation is designed from an art-direction brief (audience, purpose, tone, palette editorial or signal, font pair serif or sans) and composed through eleven slide compositions: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Numbers and charts appear only when sourceContext supplies them. For a presentation, imageUploadIds lists the user’s own chat image uploads (up to eight); they take the image slots in order. artwork auto (the default) fills the remaining cover, statement, image, quote and close slots with credited public-domain paintings; artwork none keeps those slides typographic. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through the existing design and layout checks without another model call. Prefer the version 2 brief with audience, purpose, tone, palette (editorial or signal), fontPair (serif or sans), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none keeps slides typographic. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
-  input: z.object({
-    kind: z.enum(DOCUMENT_KINDS),
-    title: z.string().min(1).max(500),
-    instructions: z.string().min(1).max(20_000).optional(),
-    sourceContext: z.string().max(40_000).optional(),
-    sourceRefs: z.array(sourceRefSchema).max(100).optional(),
-    publishToGoogle: z.boolean().default(false),
-    googleConnectionId: z.string().max(500).optional(),
-    /** Chat upload ids of the user’s own images for a presentation, in the order the slides should use them. */
-    imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
-    /** auto: credited public-domain paintings fill the open image slots. none: keep those slides typographic. */
-    artwork: z.enum(['auto', 'none']).optional(),
-  }),
+  input: z
+    .object({
+      kind: z.enum(DOCUMENT_KINDS),
+      title: z.string().min(1).max(500),
+      instructions: z.string().min(1).max(20_000).optional(),
+      sourceContext: z.string().max(40_000).optional(),
+      sourceRefs: z.array(sourceRefSchema).max(100).optional(),
+      presentation: z
+        .union([presentationBriefV2Schema, presentationBriefSchema])
+        .optional()
+        .describe(
+          'Finished presentation content for kind=deck; composed and saved directly without AI generation. Put source detail and citations in speaker notes.',
+        ),
+      publishToGoogle: z.boolean().default(false),
+      googleConnectionId: z.string().max(500).optional(),
+      imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
+      artwork: z.enum(['auto', 'none']).optional(),
+    })
+    .superRefine((args, ctx) => {
+      if (args.presentation && args.kind !== 'deck')
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation'],
+          message: 'Presentation content requires kind=deck.',
+        });
+      if (
+        args.presentation &&
+        args.instructions &&
+        !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
+      )
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation', 'slides'],
+          message: 'Slide count does not match the instructions.',
+        });
+    }),
   output: z.object({
     ok: z.boolean(),
     documentId: z.string(),
@@ -85,6 +114,7 @@ export const documentCreate = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    ctx.abortSignal?.throwIfAborted();
     const notes: string[] = [];
     let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
     if (args.imageUploadIds?.length) {
@@ -94,18 +124,30 @@ export const documentCreate = defineTool({
         notes.push(...uploads.notes);
       } else notes.push('Image uploads apply to presentations only and were not used.');
     }
-    const proposal = args.instructions
-      ? await dependencies.generateDocumentProposal({
+    ctx.abortSignal?.throwIfAborted();
+    const proposal = args.presentation
+      ? await dependencies.composeDocumentPresentation({
           userId,
-          userEmail: ctx.userEmail || undefined,
-          userName: ctx.userName || undefined,
-          kind: args.kind,
-          instruction: args.instructions,
-          sourceContext: args.sourceContext,
-          ...(assets ? { assets } : {}),
-          ...(args.artwork ? { artwork: args.artwork } : {}),
+          instruction: args.instructions || '',
+          presentation: args.presentation,
+          assets,
+          artwork: args.artwork,
+          abortSignal: ctx.abortSignal,
         })
-      : null;
+      : args.instructions
+        ? await dependencies.generateDocumentProposal({
+            userId,
+            userEmail: ctx.userEmail || undefined,
+            userName: ctx.userName || undefined,
+            kind: args.kind,
+            instruction: args.instructions,
+            sourceContext: args.sourceContext,
+            abortSignal: ctx.abortSignal,
+            ...(assets ? { assets } : {}),
+            ...(args.artwork ? { artwork: args.artwork } : {}),
+          })
+        : null;
+    ctx.abortSignal?.throwIfAborted();
     const document = await dependencies.createDocument({
       userId,
       kind: args.kind,
@@ -126,6 +168,7 @@ export const documentCreate = defineTool({
     let publishError: string | undefined;
     if (args.publishToGoogle) {
       try {
+        ctx.abortSignal?.throwIfAborted();
         google = await dependencies.publishDocumentToGoogle({
           userId,
           document,
@@ -257,7 +300,9 @@ export const documentSuggestChanges = defineTool({
       instruction: args.instruction,
       current: document,
       sourceContext: args.sourceContext,
+      abortSignal: ctx.abortSignal,
     });
+    ctx.abortSignal?.throwIfAborted();
     const suggestion = await dependencies.createDocumentSuggestion({
       userId,
       documentId: document.documentId,
@@ -310,11 +355,13 @@ export const documentApplyInstruction = defineTool({
       instruction: args.instruction,
       current: document,
       sourceContext: args.sourceContext,
+      abortSignal: ctx.abortSignal,
     });
     const model =
       proposal.model.kind === 'sheet-changes'
         ? await dependencies.applySpreadsheetChanges(document.model, proposal.model)
         : proposal.model;
+    ctx.abortSignal?.throwIfAborted();
     const result = await dependencies.updateDocument({
       userId,
       documentId: document.documentId,

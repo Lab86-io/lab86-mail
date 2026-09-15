@@ -39,6 +39,34 @@ afterEach(() => {
 });
 
 describe('document tools', () => {
+  test.each([
+    documentSuggestChanges,
+    documentApplyInstruction,
+  ])('%s cannot commit generated edits after cancellation', async (tool) => {
+    const controller = new AbortController();
+    const save = mock(async () => {
+      throw new Error('must not save');
+    });
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => record()) as any,
+      generateDocumentProposal: async (input) => {
+        expect(input.abortSignal).toBe(controller.signal);
+        controller.abort(new Error('Cancelled generation'));
+        return { title: 'PubMed', summary: 'Late result', model: createDefaultDocumentModel('doc') };
+      },
+      createDocumentSuggestion: save,
+      updateDocument: save,
+    });
+    await expect(
+      runTool(
+        tool.handler as any,
+        { documentId: 'document-1', instruction: 'Rewrite' },
+        { abortSignal: controller.signal },
+      ),
+    ).rejects.toThrow('Cancelled generation');
+    expect(save).not.toHaveBeenCalled();
+  });
+
   test('explicit engine edits save directly through the Odoo engine', async () => {
     const current = record({
       kind: 'sheet',

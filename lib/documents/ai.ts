@@ -37,6 +37,7 @@ import {
   mentionsRestyle,
   PRESENTATION_DESIGN_GUIDANCE,
   PRESENTATION_DESIGN_GUIDANCE_V2,
+  type PresentationBrief,
   type PresentationBriefV2,
   presentationBriefSchema,
   presentationBriefV2Schema,
@@ -136,7 +137,9 @@ async function generateSheetChangeSet(input: {
   instruction: string;
   current: AlbatrossDocumentRecord;
   sourceContext?: string;
+  abortSignal?: AbortSignal;
 }): Promise<DocumentProposal> {
+  input.abortSignal?.throwIfAborted();
   if (input.current.model.kind !== 'sheet') throw new Error('Expected a workbook.');
   const sources = input.sourceContext?.trim()
     ? `\nGrounding material:\n${input.sourceContext.trim().slice(0, 40_000)}`
@@ -148,6 +151,7 @@ async function generateSheetChangeSet(input: {
     userEmail: input.userEmail,
     userName: input.userName,
     feature: 'document_suggestion',
+    abortSignal: input.abortSignal,
     speed: 'primary',
     maxOutputTokens: 14_000,
     schema: sheetChangesOutputSchema,
@@ -186,6 +190,7 @@ interface DeckGenerationInput {
   assets?: CompositionAsset[];
   /** auto: credited public-domain paintings fill the open image slots. none: typographic slides. */
   artwork?: 'auto' | 'none';
+  abortSignal?: AbortSignal;
 }
 
 /** Paintings for a new deck, with the note the summary carries. Failures degrade to typography. */
@@ -199,6 +204,7 @@ async function selectDeckArtworks(
   input: DeckGenerationInput,
   brief: PresentationBriefV2,
 ): Promise<DeckArtworkSelection> {
+  input.abortSignal?.throwIfAborted();
   if (input.artwork === 'none') return { note: '' };
   const plan = planDeckImagery(brief, buildDeckTheme(brief.palette, brief.fontPair), {
     assets: input.assets,
@@ -206,6 +212,7 @@ async function selectDeckArtworks(
   if (!plan.slots.length) return { note: '' };
   try {
     const resolved = await dependencies.resolveDeckImagery(plan, { userId: input.userId });
+    input.abortSignal?.throwIfAborted();
     const artworks = artworksBySlideIndex(plan, resolved);
     const count = Object.keys(artworks).length;
     if (!count) return { note: ' Artwork was not available; the slides are typographic.' };
@@ -239,7 +246,9 @@ async function finishComposedDeck(
   input: DeckGenerationInput,
   initial: PresentationBriefV2,
   art: DeckArtworkSelection = { note: '' },
+  allowCopyGeneration = true,
 ): Promise<{ brief: PresentationBriefV2; model: DeckModelV2; summary: string }> {
+  input.abortSignal?.throwIfAborted();
   let brief = initial;
   const slideIds = brief.slides.map((_, index) => `slide-${index + 1}`);
   const compose = () =>
@@ -264,12 +273,13 @@ async function finishComposedDeck(
           targets.push({ slideId: issue.slideId, field, text: element.text, problem: issue.message });
       }
     }
-    if (targets.length) {
+    if (targets.length && allowCopyGeneration) {
       const { object } = await dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
         userId: input.userId,
         userEmail: input.userEmail,
         userName: input.userName,
         feature: 'document_generation',
+        abortSignal: input.abortSignal,
         speed: 'primary',
         maxOutputTokens: 4_000,
         schema: copyRepairSchema,
@@ -287,6 +297,7 @@ async function finishComposedDeck(
         `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
       );
   }
+  input.abortSignal?.throwIfAborted();
   let summary = `${brief.summary}${art.note}`;
   if (envFlag('DECK_RENDER_CHECK')) {
     const browser = dependencies.availableRenderBrowser();
@@ -306,6 +317,24 @@ async function finishComposedDeck(
   return { brief, model: repaired.model, summary };
 }
 
+/** Compose finished content through the existing layout checks, without another model call. */
+export async function composeDocumentPresentation(
+  input: DeckGenerationInput & { presentation: PresentationBrief | PresentationBriefV2 },
+): Promise<DocumentProposal> {
+  input.abortSignal?.throwIfAborted();
+  const brief = input.presentation;
+  if (!('audience' in brief))
+    return { title: brief.title, summary: brief.summary, model: composePresentation(brief) };
+  if (!dependencies.isDeckV2AuthoringEnabled())
+    throw new DocumentGenerationError(
+      'Version 2 presentation authoring is disabled. Use the legacy presentation brief.',
+    );
+  const art = await selectDeckArtworks(input, brief);
+  const finished = await finishComposedDeck(input, brief, art, false);
+  input.abortSignal?.throwIfAborted();
+  return { title: brief.title, summary: finished.summary, model: finished.model };
+}
+
 /** New deck on the version 2 model: one model call for the brief, the composer, the quality loop. */
 async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentProposal> {
   const { object } = await dependencies.generateObjectForCurrentUser({
@@ -313,6 +342,7 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
     userEmail: input.userEmail,
     userName: input.userName,
     feature: 'document_generation',
+    abortSignal: input.abortSignal,
     speed: 'primary',
     maxOutputTokens: 14_000,
     schema: presentationBriefV2Schema,
@@ -335,6 +365,7 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
     throw new DocumentGenerationError(
       `The generator returned ${brief.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
     );
+  input.abortSignal?.throwIfAborted();
   const art = await selectDeckArtworks(input, brief);
   const finished = await finishComposedDeck(input, brief, art);
   return { title: finished.brief.title, summary: finished.summary, model: finished.model };
@@ -350,6 +381,7 @@ async function proposeDeckRestyle(input: {
   userName?: string;
   instruction: string;
   current: AlbatrossDocumentRecord;
+  abortSignal?: AbortSignal;
 }): Promise<DocumentProposal | null> {
   if (input.current.model.kind !== 'deck') return null;
   const { object } = await dependencies.generateObjectForCurrentUser({
@@ -357,6 +389,7 @@ async function proposeDeckRestyle(input: {
     userEmail: input.userEmail,
     userName: input.userName,
     feature: 'document_suggestion',
+    abortSignal: input.abortSignal,
     speed: 'classify',
     maxOutputTokens: 1_000,
     schema: restyleClassificationSchema,
@@ -402,7 +435,9 @@ export async function generateDocumentProposal(input: {
   assets?: CompositionAsset[];
   /** auto (default): paintings fill the open image slots of a new presentation. none: typographic slides. */
   artwork?: 'auto' | 'none';
+  abortSignal?: AbortSignal;
 }): Promise<DocumentProposal> {
+  input.abortSignal?.throwIfAborted();
   const blankDeck =
     input.current?.model.kind === 'deck' &&
     input.current.model.slides.every((slide) =>
@@ -414,6 +449,7 @@ export async function generateDocumentProposal(input: {
     const { object } = await dependencies.generateObjectForCurrentUser({
       userId: input.userId,
       feature: 'document_generation',
+      abortSignal: input.abortSignal,
       speed: 'primary',
       maxOutputTokens: 14_000,
       schema: presentationBriefSchema,
@@ -472,6 +508,7 @@ export async function generateDocumentProposal(input: {
     userEmail: input.userEmail,
     userName: input.userName,
     feature: input.current ? 'document_suggestion' : 'document_generation',
+    abortSignal: input.abortSignal,
     speed: 'primary',
     maxOutputTokens: 14_000,
     schema,

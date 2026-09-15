@@ -5,6 +5,7 @@ import schema from '../convex/schema';
 import { createDefaultDocumentModel } from '../lib/documents/model';
 
 const convexModules = {
+  '../convex/agentExecution.ts': () => import('../convex/agentExecution'),
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/albatrossWork.ts': () => import('../convex/albatrossWork'),
   '../convex/documents.ts': () => import('../convex/documents'),
@@ -44,6 +45,63 @@ async function createDocument(
 }
 
 describe('document Convex transactions', () => {
+  test('creation records the exact file in recovery and prevents a second commit for the same execution', async () => {
+    const t = newHarness();
+    const identity = { internalSecret: SECRET, userId: USER, runId: 'create-run', key: 'create-key' };
+    await t.mutation(api.agentExecution.beginTool, {
+      ...identity,
+      toolName: 'document_create',
+      mutating: true,
+    });
+    const args = {
+      internalSecret: SECRET,
+      userId: USER,
+      kind: 'deck' as const,
+      title: 'PubMed',
+      model: createDefaultDocumentModel('deck'),
+      execution: { runId: identity.runId, key: identity.key },
+    };
+    await t.mutation(api.documents.create, { ...args, documentId: 'created-deck' });
+    const recovery = await t.query(api.agentExecution.readRun, {
+      internalSecret: SECRET,
+      userId: USER,
+      runId: identity.runId,
+    });
+    expect(recovery.page[0]).toMatchObject({
+      status: 'running',
+      effect: { documentId: 'created-deck', revision: 1 },
+    });
+    await expect(t.mutation(api.documents.create, { ...args, documentId: 'duplicate-deck' })).rejects.toThrow(
+      'already committed',
+    );
+    const documents = await t.query(api.documents.list, { internalSecret: SECRET, userId: USER });
+    expect(documents.map((row) => row.documentId)).toEqual(['created-deck']);
+  });
+
+  test('an interrupted execution cannot create a late file or leave an orphan revision', async () => {
+    const t = newHarness();
+    const identity = { internalSecret: SECRET, userId: USER, runId: 'interrupted-run', key: 'create-key' };
+    await t.mutation(api.agentExecution.beginTool, {
+      ...identity,
+      toolName: 'document_create',
+      mutating: true,
+    });
+    await t.mutation(api.agentExecution.finishTool, { ...identity, status: 'unknown' });
+    await expect(
+      t.mutation(api.documents.create, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: 'late-deck',
+        kind: 'deck',
+        title: 'PubMed',
+        model: createDefaultDocumentModel('deck'),
+        execution: { runId: identity.runId, key: identity.key },
+      }),
+    ).rejects.toThrow('no longer active');
+    expect(await t.query(api.documents.list, { internalSecret: SECRET, userId: USER })).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query('documentRevisions').collect())).toEqual([]);
+  });
+
   test('restores a version as a new revision and rejects stale or foreign restore requests', async () => {
     const t = newHarness();
     await createDocument(t, 'restore-me');
