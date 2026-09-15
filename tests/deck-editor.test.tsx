@@ -111,7 +111,9 @@ if (process.env.ALBATROSS_DECK_EDITOR_DOM_TEST !== '1') {
   const { act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { PresentationEditor } = await import('../components/files/editors/PresentationEditor');
-  const { insertMenuItems } = await import('../components/files/editors/deck/insert-menu');
+  const { insertMenuItems, insertMenuActions } = await import('../components/files/editors/deck/insert-menu');
+  const { searchArtPool } = await import('../lib/documents/deck-art');
+  const { artworkPlacement } = await import('../components/files/editors/deck/assets');
   const { referenceDeck, DECK_THEMES } = await import('../lib/documents/deck-fixtures');
   const { createDefaultDocumentModel } = await import('../lib/documents/model');
   const { deckModelForSave, deckModelsEqual, upgradeDeckModel } = await import(
@@ -146,7 +148,10 @@ if (process.env.ALBATROSS_DECK_EDITOR_DOM_TEST !== '1') {
   const { useState } = await import('react');
 
   /** The editor under a stateful parent that stores every change, as the document page does. */
-  async function mountEditor(initial: Deck, options: { richAuthoring?: boolean; upload?: any } = {}) {
+  async function mountEditor(
+    initial: Deck,
+    options: { richAuthoring?: boolean; upload?: any; artwork?: any } = {},
+  ) {
     const changes: Model[] = [];
     let model: Deck = initial;
     function Host() {
@@ -157,6 +162,7 @@ if (process.env.ALBATROSS_DECK_EDITOR_DOM_TEST !== '1') {
           model={stored}
           richAuthoring={options.richAuthoring ?? true}
           upload={options.upload}
+          artwork={options.artwork}
           onChange={(next) => {
             changes.push(next);
             if (next.kind === 'deck') setStored(next);
@@ -525,6 +531,172 @@ if (process.env.ALBATROSS_DECK_EDITOR_DOM_TEST !== '1') {
       expect(
         editor.latest().slides[0].elements.find((element) => element.id === 'cover-title'),
       ).toMatchObject({ fontSize: 40 });
+    });
+  });
+
+  describe('artwork', () => {
+    const buttonNamed = (text: string) => {
+      const found = [...document.querySelectorAll('button')].find((node) => node.textContent === text);
+      if (!found) throw new Error(`Missing button ${text}`);
+      return found;
+    };
+    const wait = () => act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+    function artworkClient(options: { fail?: string } = {}) {
+      const queries: any[] = [];
+      const posted: any[] = [];
+      return {
+        queries,
+        posted,
+        search: async (query: any) => {
+          queries.push(query);
+          return searchArtPool({
+            text: query.text,
+            styles: query.styles,
+            accentHue: query.hue,
+            count: query.count,
+            seed: query.seed,
+          });
+        },
+        import: async (candidate: any) => {
+          posted.push(candidate);
+          if (options.fail) throw new Error(options.fail);
+          return {
+            assetId: `art-${posted.length}`,
+            src: `/assets/art-${posted.length}.jpg`,
+            width: 1400,
+            height: 1000,
+            aspect: 1.4,
+            mime: 'image/jpeg',
+            attribution: {
+              title: candidate.title,
+              artist: candidate.artist,
+              date: candidate.date,
+              credit: candidate.credit,
+              source: candidate.source,
+              sourceUrl: candidate.sourceUrl,
+              license: candidate.license,
+            },
+          };
+        },
+      };
+    }
+
+    test('the insert menu offers Artwork only with rich authoring', () => {
+      expect(insertMenuActions(true)).toEqual([{ action: 'artwork', label: 'Artwork' }]);
+      expect(insertMenuActions(false)).toEqual([]);
+    });
+
+    test('with rich authoring off the slide panel has no artwork control', async () => {
+      const stored = createDefaultDocumentModel('deck', 'old');
+      if (stored.kind !== 'deck') throw new Error('fixture');
+      await mountEditor(stored, { richAuthoring: false, artwork: artworkClient() });
+      expect(document.body.textContent).not.toContain('Choose artwork');
+      expect(document.querySelector('.deck-artwork')).toBeNull();
+    });
+
+    test('Choose artwork opens the panel; Use as background sets the slide background', async () => {
+      const client = artworkClient();
+      const editor = await mountEditor(editorial(), { artwork: client });
+      click(q('nav[aria-label="Slides"] button[aria-label^="Slide 6:"]'));
+      expect(document.querySelector('.deck-artwork')).toBeNull();
+      await click(buttonNamed('Choose artwork'));
+      await wait();
+      expect(q('aside[aria-label="Inspector"] .deck-artwork')).toBeTruthy();
+      expect(document.activeElement).toBe(byLabel('Search artwork'));
+      expect(client.queries[0]).toMatchObject({ hue: 15, seed: editor.latest().slides[5].id });
+      await click(q('.deck-artwork-item'));
+      await click(buttonNamed('Use as background'));
+      await wait();
+      expect(client.posted).toHaveLength(1);
+      expect(editor.latest().slides[5].backgroundImage).toEqual({
+        assetId: 'art-1',
+        src: '/assets/art-1.jpg',
+        opacity: 1,
+        focal: { x: 0.5, y: 0.5 },
+      });
+      expect(editor.latest().slides[4].backgroundImage).toBeUndefined();
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    });
+
+    test('Place on slide inserts a centered image at the artwork aspect and credits the notes', async () => {
+      const client = artworkClient();
+      const editor = await mountEditor(editorial(), { artwork: client });
+      click(q('nav[aria-label="Slides"] button[aria-label^="Slide 2:"]'));
+      const before = editor.latest().slides[1];
+      await click(buttonNamed('Choose artwork'));
+      await wait();
+      const tile = q<HTMLButtonElement>('.deck-artwork-item');
+      const credit = tile.getAttribute('aria-label') ?? '';
+      await click(tile);
+      await click(buttonNamed('Place on slide'));
+      await wait();
+      const after = editor.latest().slides[1];
+      expect(after.elements).toHaveLength(before.elements.length + 1);
+      const image = after.elements.at(-1)!;
+      expect(image).toMatchObject({
+        type: 'image',
+        assetId: 'art-1',
+        src: '/assets/art-1.jpg',
+        aspect: 1.4,
+        alt: client.posted[0].title,
+        source: credit,
+        ...artworkPlacement(1.4),
+      });
+      expect(image.width).toBeLessThanOrEqual(60);
+      expect(Math.round(image.x * 2 + image.width)).toBe(100);
+      expect(image.id).toBe(
+        document.querySelector('[data-selected="true"]')?.getAttribute('data-element-id'),
+      );
+      const line = `Artwork: ${credit}, ${client.posted[0].source}`;
+      expect(after.notes).toContain(line);
+      expect(after.notes?.startsWith(before.notes ?? '')).toBe(true);
+      // The same artwork again: the credit line stays single.
+      await click(buttonNamed('Place on slide'));
+      await wait();
+      expect(editor.latest().slides[1].notes?.split(line)).toHaveLength(2);
+      expect(editor.latest().slides[1].elements).toHaveLength(before.elements.length + 2);
+      // Version 2 survives save.
+      expect(editor.stored().version).toBe(2);
+    });
+
+    test('Replace with artwork swaps the selected image asset and keeps its box', async () => {
+      const client = artworkClient();
+      const editor = await mountEditor(editorial(), { artwork: client });
+      click(elementButton('cover-image'));
+      await click(buttonNamed('Replace with artwork'));
+      await wait();
+      expect(buttonNamed('Replace image')).toBeTruthy();
+      const original = editor.latest().slides[0].elements.find((element) => element.id === 'cover-image')!;
+      await click(q('.deck-artwork-item'));
+      await click(buttonNamed('Replace image'));
+      await wait();
+      const replaced = editor.latest().slides[0].elements.find((element) => element.id === 'cover-image')!;
+      expect(replaced).toMatchObject({
+        assetId: 'art-1',
+        src: '/assets/art-1.jpg',
+        aspect: 1.4,
+        x: original.x,
+        y: original.y,
+        width: original.width,
+        height: original.height,
+      });
+      expect(replaced.type === 'image' && replaced.alt).toBe(original.type === 'image' ? original.alt : '');
+      expect(editor.latest().slides[0].elements).toHaveLength(editorial().slides[0].elements.length);
+      expect(editor.latest().slides[0].notes).toContain(`Artwork: ${client.posted[0].credit}`);
+    });
+
+    test('an import failure shows the server text and leaves the deck alone', async () => {
+      const client = artworkClient({ fail: 'The museum image is too large to import.' });
+      const editor = await mountEditor(editorial(), { artwork: client });
+      await click(buttonNamed('Choose artwork'));
+      await wait();
+      await click(q('.deck-artwork-item'));
+      await click(buttonNamed('Place on slide'));
+      await wait();
+      expect(q('[role="alert"]').textContent).toBe('The museum image is too large to import.');
+      expect(editor.changes).toHaveLength(0);
+      await click(buttonNamed('Close'));
+      expect(document.querySelector('.deck-artwork')).toBeNull();
     });
   });
 }

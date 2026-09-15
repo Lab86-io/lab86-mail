@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,7 +16,17 @@ import { type AnyDeckModel, deckModelForSave } from '@/lib/documents/deck-versio
 import { isDeckV2AuthoringEnabledOnClient } from '@/lib/documents/editor-flags';
 import type { AlbatrossDocumentModel, DeckTheme } from '@/lib/documents/model';
 import { cn } from '@/lib/utils';
-import { uploadDeckAsset } from './deck/assets';
+import { ArtworkPanel } from './deck/artwork-panel';
+import {
+  artworkPlacement,
+  type DeckArtworkCandidate,
+  type DeckArtworkQuery,
+  type ImportedDeckArtwork,
+  importDeckArtwork,
+  notesWithArtworkCredit,
+  searchDeckArtworks,
+  uploadDeckAsset,
+} from './deck/assets';
 import {
   type BoxHandle,
   DRAG_START_PX,
@@ -204,12 +215,30 @@ interface LiveDrag {
 
 const EDITABLE = 'input, textarea, select, [contenteditable="true"]';
 
+/** Search and import for the artwork panel; the defaults call the artwork routes. */
+export interface DeckArtworkClient {
+  search: (query: DeckArtworkQuery, signal?: AbortSignal) => Promise<DeckArtworkCandidate[]>;
+  import: (candidate: DeckArtworkCandidate) => Promise<ImportedDeckArtwork>;
+}
+
+const defaultArtworkClient: DeckArtworkClient = {
+  search: (query, signal) => searchDeckArtworks(query, undefined, signal),
+  import: (candidate) => importDeckArtwork(candidate),
+};
+
+interface ArtworkTarget {
+  /** The image element to replace, or null to insert a new one. */
+  replace: string | null;
+  focusKey: number;
+}
+
 export function PresentationEditor({
   model: stored,
   onChange,
   readOnly = false,
   richAuthoring,
   upload = uploadDeckAsset,
+  artwork = defaultArtworkClient,
 }: {
   model: AnyDeckModel;
   onChange: (model: AlbatrossDocumentModel) => void;
@@ -218,6 +247,8 @@ export function PresentationEditor({
   richAuthoring?: boolean;
   /** Image upload; the default posts to the assets route. */
   upload?: typeof uploadDeckAsset;
+  /** Artwork search and import; the defaults call the artwork routes. */
+  artwork?: DeckArtworkClient;
 }) {
   const rich = richAuthoring ?? isDeckV2AuthoringEnabledOnClient();
   const model = useMemo(() => upgradeDeckModel(stored), [stored]);
@@ -232,6 +263,7 @@ export function PresentationEditor({
   const [live, setLive] = useState<LiveDrag | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [artworkTarget, setArtworkTarget] = useState<ArtworkTarget | null>(null);
   const textField = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const stage = useRef<HTMLDivElement>(null);
@@ -265,7 +297,9 @@ export function PresentationEditor({
     publish(pushHistory(historyRef.current, next, { key, now: Date.now() }));
   };
   const changeRef = useRef(change);
-  changeRef.current = change;
+  useLayoutEffect(() => {
+    changeRef.current = change;
+  });
   const choose = (id: string) => {
     setSelected(null);
     setEditing(null);
@@ -299,7 +333,9 @@ export function PresentationEditor({
     setNotice(null);
     try {
       const asset = await upload(file);
-      const next = addElement(current.current, slide.id, 'image', createDeckId, {
+      // The slide may have changed during the upload: insert where the user is now.
+      const deck = current.current;
+      const next = addElement(deck, deck.activeSlideId, 'image', createDeckId, {
         image: {
           assetId: asset.assetId,
           src: asset.src,
@@ -314,6 +350,57 @@ export function PresentationEditor({
     } finally {
       setUploading(false);
     }
+  };
+  const openArtwork = (replace: string | null = null) => {
+    setInspectorOpen(true);
+    setArtworkTarget((target) => ({ replace, focusKey: (target?.focusKey ?? 0) + 1 }));
+  };
+  const replacing =
+    rich && artworkTarget?.replace && object?.type === 'image' && object.id === artworkTarget.replace
+      ? object
+      : null;
+  /* Place an imported artwork: a new image sized to its aspect, or the asset of the chosen image. */
+  const placeArtwork = (asset: ImportedDeckArtwork, candidate: DeckArtworkCandidate) => {
+    const deck = current.current;
+    const slideId = deck.activeSlideId;
+    const target = deck.slides.find((item) => item.id === slideId);
+    if (!target) return;
+    const credit = asset.attribution.credit || candidate.credit;
+    const source = asset.attribution.source || candidate.source;
+    const notes = notesWithArtworkCredit(target.notes, credit, source);
+    const image = {
+      assetId: asset.assetId,
+      src: asset.src,
+      ...(asset.aspect ? { aspect: asset.aspect } : {}),
+      source: credit,
+    };
+    if (replacing && target.elements.some((element) => element.id === replacing.id)) {
+      const alt = replacing.alt.trim() ? replacing.alt : asset.attribution.title || candidate.title;
+      const next = updateElement(deck, slideId, replacing.id, { ...image, alt });
+      change(updateSlide(next, slideId, { notes }));
+      return;
+    }
+    const added = addElement(deck, slideId, 'image', createDeckId, {
+      image: { ...image, alt: asset.attribution.title || candidate.title },
+    });
+    const placed = updateElement(added.model, slideId, added.elementId, {
+      ...artworkPlacement(asset.aspect),
+      source: credit,
+    });
+    change(updateSlide(placed, slideId, { notes }));
+    setSelected(added.elementId);
+    setEditing(null);
+  };
+  const backgroundArtwork = (asset: ImportedDeckArtwork) => {
+    const deck = current.current;
+    change(
+      setSlideBackgroundImage(deck, deck.activeSlideId, {
+        assetId: asset.assetId,
+        src: asset.src,
+        opacity: 1,
+        focal: { x: 0.5, y: 0.5 },
+      }),
+    );
   };
 
   /* Pointer drags: move, resize and line ends. One undo step per drag. */
@@ -547,6 +634,7 @@ export function PresentationEditor({
           disabled={readOnly || uploading || slide.elements.length >= 300}
           onInsert={insert}
           onPickImage={() => fileInput.current?.click()}
+          onPickArtwork={rich ? () => openArtwork() : undefined}
         />
         <input
           ref={fileInput}
@@ -685,6 +773,20 @@ export function PresentationEditor({
         </div>
         {inspectorOpen ? (
           <aside aria-label="Inspector" className="deck-inspector shrink-0">
+            {rich && artworkTarget ? (
+              <ArtworkPanel
+                theme={model.theme}
+                slideId={slide.id}
+                readOnly={readOnly}
+                placeLabel={replacing ? 'Replace image' : 'Place on slide'}
+                focusKey={artworkTarget.focusKey}
+                onPlace={placeArtwork}
+                onBackground={backgroundArtwork}
+                onClose={() => setArtworkTarget(null)}
+                search={artwork.search}
+                importArtwork={artwork.import}
+              />
+            ) : null}
             <DeckInspector
               model={model}
               slide={slide}
@@ -701,6 +803,10 @@ export function PresentationEditor({
               }}
               onTheme={(theme) => change(updateTheme(current.current, theme))}
               upload={upload}
+              onChooseArtwork={rich ? () => openArtwork() : undefined}
+              onReplaceWithArtwork={
+                rich && object?.type === 'image' ? () => openArtwork(object.id) : undefined
+              }
             />
           </aside>
         ) : null}

@@ -48,6 +48,10 @@ export interface DeckInspectorProps {
   onReorder: (direction: -1 | 1) => void;
   onTheme: (theme: DeckTheme) => void;
   upload: (file: File) => Promise<UploadedDeckAsset>;
+  /** Opens the artwork panel for the slide background. Rich authoring only. */
+  onChooseArtwork?: () => void;
+  /** Opens the artwork panel to replace the selected image. Rich authoring only. */
+  onReplaceWithArtwork?: () => void;
 }
 
 const WEIGHTS = [
@@ -600,11 +604,13 @@ function ImagePanel({
   readOnly,
   onElementPatch,
   upload,
+  onReplaceWithArtwork,
 }: {
   element: DeckImageElement;
   readOnly?: boolean;
   onElementPatch: DeckInspectorProps['onElementPatch'];
   upload: DeckInspectorProps['upload'];
+  onReplaceWithArtwork?: () => void;
 }) {
   const uploader = useUpload(upload);
   return (
@@ -682,6 +688,17 @@ function ImagePanel({
             )
           }
         />
+        {onReplaceWithArtwork ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={readOnly || uploader.busy}
+            onClick={onReplaceWithArtwork}
+          >
+            Replace with artwork
+          </Button>
+        ) : null}
       </div>
       {uploader.error ? (
         <p role="alert" className="deck-inspector-error">
@@ -692,14 +709,9 @@ function ImagePanel({
   );
 }
 
-/** Stable keys for series rows; names may repeat, so repeats get a counter. */
+/** Series rows are positional: the key is the slot, so a rename keeps its input mounted. */
 function seriesKeys(series: { name: string }[]) {
-  const seen = new Map<string, number>();
-  return series.map((item) => {
-    const count = seen.get(item.name) ?? 0;
-    seen.set(item.name, count + 1);
-    return count ? `${item.name}#${count}` : item.name || '#';
-  });
+  return series.map((_, index) => `series-${index}`);
 }
 
 function ChartPanel({
@@ -863,9 +875,18 @@ function SlidePanel({
   onBackgroundImage,
   onTheme,
   upload,
+  onChooseArtwork,
 }: Pick<
   DeckInspectorProps,
-  'model' | 'slide' | 'rich' | 'readOnly' | 'onSlidePatch' | 'onBackgroundImage' | 'onTheme' | 'upload'
+  | 'model'
+  | 'slide'
+  | 'rich'
+  | 'readOnly'
+  | 'onSlidePatch'
+  | 'onBackgroundImage'
+  | 'onTheme'
+  | 'upload'
+  | 'onChooseArtwork'
 >) {
   const uploader = useUpload(upload);
   const background = slide.backgroundImage;
@@ -900,6 +921,17 @@ function SlidePanel({
                     )
                   }
                 />
+                {onChooseArtwork ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={readOnly || uploader.busy}
+                    onClick={onChooseArtwork}
+                  >
+                    Choose artwork
+                  </Button>
+                ) : null}
                 {background ? (
                   <Button
                     variant="outline"
@@ -955,6 +987,7 @@ export function DeckInspector(props: DeckInspectorProps) {
           onBackgroundImage={props.onBackgroundImage}
           onTheme={props.onTheme}
           upload={props.upload}
+          onChooseArtwork={rich ? props.onChooseArtwork : undefined}
         />
         <p className="deck-inspector-note">
           Select an element on the slide to edit it. Arrow keys move it, Shift moves it faster, Delete removes
@@ -994,6 +1027,7 @@ export function DeckInspector(props: DeckInspectorProps) {
           readOnly={readOnly}
           onElementPatch={props.onElementPatch}
           upload={props.upload}
+          onReplaceWithArtwork={rich ? props.onReplaceWithArtwork : undefined}
         />
       ) : (
         <ChartPanel

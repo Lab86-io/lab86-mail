@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { DeckElement } from '../deck-model';
@@ -35,17 +36,31 @@ export function insertMenuItems(rich: boolean): InsertMenuItem[] {
   return items;
 }
 
+/** Entries under the element list that open a picker instead of inserting at once. */
+export interface InsertMenuAction {
+  action: 'artwork';
+  label: string;
+}
+
+export function insertMenuActions(rich: boolean): InsertMenuAction[] {
+  return rich ? [{ action: 'artwork', label: 'Artwork' }] : [];
+}
+
 export function InsertMenu({
   rich,
   disabled = false,
   onInsert,
   onPickImage,
+  onPickArtwork,
 }: {
   rich: boolean;
   disabled?: boolean;
   onInsert: (type: Exclude<DeckElement['type'], 'image'>) => void;
   onPickImage: () => void;
+  /** Opens the artwork panel; the panel imports and inserts. */
+  onPickArtwork?: () => void;
 }) {
+  const actions = onPickArtwork ? insertMenuActions(rich) : [];
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
@@ -60,6 +75,12 @@ export function InsertMenu({
             key={item.type}
             onSelect={() => (item.type === 'image' ? onPickImage() : onInsert(item.type))}
           >
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+        {actions.length ? <DropdownMenuSeparator /> : null}
+        {actions.map((item) => (
+          <DropdownMenuItem key={item.action} onSelect={() => onPickArtwork?.()}>
             {item.label}
           </DropdownMenuItem>
         ))}

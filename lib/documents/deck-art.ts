@@ -69,11 +69,9 @@ export const ARTWORK_IMAGE_HOSTS = [
 
 export const MAX_ARTWORK_EDGE = 2400;
 
-/** Styles that sit well with each built-in deck direction. */
-export function stylesForDirection(direction: 'editorial' | 'signal' | string): ArtStyle[] {
-  if (direction === 'signal') return ['modern', 'art-deco', 'neoclassical', 'east-asian'];
-  return ['impressionist', 'romantic', 'dutch-golden-age', 'american', 'east-asian', 'baroque'];
-}
+export { ARTWORK_STYLES_FOR_DIRECTION, stylesForDirection } from './deck-art-shared';
+
+import { stylesForDirection } from './deck-art-shared';
 
 function hashString(value: string): number {
   let hash = 2166136261;

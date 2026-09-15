@@ -660,3 +660,162 @@
   object-fit: cover;
   pointer-events: none;
 }
+
+/* Artwork panel: a small museum wall in the inspector. Three across in the
+   rail; five across when the inspector sits under the stage. */
+.deck-artwork {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.deck-artwork-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.deck-artwork-head .deck-inspector-heading {
+  margin: 0;
+}
+.deck-artwork-search {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.deck-artwork-search input {
+  flex: 1 1 auto;
+}
+.deck-artwork-styles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.deck-artwork-chip {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-control-border);
+  border-radius: 999px;
+  background: var(--color-control);
+}
+.deck-artwork-chip:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+.deck-artwork-chip[aria-pressed="true"] {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.deck-artwork-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.deck-artwork-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.deck-artwork-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.deck-artwork-grid[aria-busy="true"] {
+  opacity: 0.6;
+}
+.deck-artwork-item {
+  display: block;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+.deck-artwork-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.deck-artwork-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+.deck-artwork-thumb {
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-bg-muted);
+}
+.deck-artwork-item:hover:not(:disabled) .deck-artwork-thumb {
+  border-color: var(--color-border-strong);
+}
+.deck-artwork-item[aria-pressed="true"] .deck-artwork-thumb {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.deck-artwork-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.deck-artwork-credit {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--color-text-muted);
+}
+.deck-artwork-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.deck-artwork-status {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.deck-artwork-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+.deck-artwork-selected {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.deck-artwork-selected-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.deck-artwork-selected-meta {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-muted);
+}
+@container deckeditor (min-width: 900px) {
+  .deck-artwork-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
