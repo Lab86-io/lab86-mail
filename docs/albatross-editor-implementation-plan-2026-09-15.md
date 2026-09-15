@@ -150,6 +150,18 @@ assets in generation, and artwork from the museum collections the app already us
   slide or use as background, credit in the notes.
 - The deck theme carries `imagery { mode, styles, subject }`.
 
-### Owned assets in generation
+### Owned assets and artwork in generation
 
-See the generation section below once the workstream lands.
+- `lib/documents/deck-upload-assets.ts`: chat uploads become owned deck assets through
+  the same signature, size and hash checks. `document_create` accepts
+  `imageUploadIds` (up to eight) and `artwork: 'auto' | 'none'`.
+- `lib/documents/deck-imagery.ts`: plans which slides take a painting (cover, statements,
+  image slides, quotes, the close), searches the pool first and the museums when
+  `DECK_ART_LIVE` is set, imports at most four per deck, and never fails a generation.
+  Uploads take the image slots first.
+- Compositions: cover with the painting on the right half, statement with the painting
+  ghosted under an ink veil, image slides with the painting in the image box, quote beside
+  a left-third painting, close with an art strip. Credits sit on the slide and in the notes.
+- Restyle: `imagery: 'paintings'` hangs artwork on a deck that had none; `imagery: 'none'`
+  removes artwork and keeps user images. Theme colors are validated before palette math.
+- Sample: a harbor dredging plan in the gallery.

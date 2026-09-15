@@ -175,7 +175,7 @@ export async function storeDeckAsset(
   const mime = sniffImageMime(bytes);
   if (!mime) throw new DeckAssetError('Use a PNG, JPEG, WebP or GIF image.', 415);
   const header = imageDimensionsFromHeader(bytes);
-  if (!header || !header.width || !header.height)
+  if (!header?.width || !header?.height)
     throw new DeckAssetError('The image could not be read.', 415);
   if (header.width > MAX_DECK_ASSET_PIXELS || header.height > MAX_DECK_ASSET_PIXELS)
     throw new DeckAssetError(`Images must be ${MAX_DECK_ASSET_PIXELS} pixels or smaller on each side.`, 413);

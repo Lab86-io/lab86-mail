@@ -227,7 +227,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
         {showLegend
           ? element.categories.map((category, index) => (
               <g
-                key={`${category}-${index}`}
+                key={labelKey(category, index)}
                 transform={`translate(${8 + index * (width / element.categories.length)}, ${height - 6})`}
               >
                 <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
@@ -340,7 +340,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   }
   const labels = element.categories.map((category, index) => (
     <text
-      key={`${category}-${index}`}
+      key={labelKey(category, index)}
       x={padLeft + slot * (index + 0.5)}
       y={padTop + plotH + 11}
       fontSize={labelSize}
@@ -353,7 +353,10 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   ));
   const legend = showLegend
     ? element.series.map((series, index) => (
-        <g key={`${series.name}-${index}`} transform={`translate(${padLeft + index * 80}, ${height - 5})`}>
+        <g
+          key={seriesKey(series.name, index)}
+          transform={`translate(${padLeft + index * 80}, ${height - 5})`}
+        >
           <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
           <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
             {series.name}
@@ -380,6 +383,14 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
       )}
     </svg>
   );
+}
+
+function seriesKey(name: string, position: number) {
+  return `${name || 's'}-${position}`;
+}
+
+function labelKey(label: string, position: number) {
+  return `${label || 'c'}-${position}`;
 }
 
 export function ElementContent({ element }: { element: DeckElementV2 }) {
