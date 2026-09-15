@@ -144,7 +144,7 @@ The live deck was not restyled by this code change. After staging rollout, run t
 
 ## Final local validation
 
-- Full suite with coverage: 3,937 tests passed across 403 files. Execution-checkpoint coverage and all changed library files meet the release baseline. Real SDK stream tests cover recovery after invalid deck geometry, fatal interruption after partial content without replay, safe fallback before content, and cancellation before generation. Changed-file coverage meets or exceeds the CI baseline without changing its thresholds.
+- Full suite with coverage: 3,938 tests passed across 403 files. Execution-checkpoint coverage and all changed library files meet the release baseline. Real SDK stream tests cover recovery after invalid deck geometry, fatal interruption after partial content without replay, safe fallback before content, and cancellation before generation. Changed-file coverage meets or exceeds the CI baseline without changing its thresholds.
 - TypeScript passed. Production `next build` passed, including its TypeScript and static-page stages.
 - Biome passes over all tracked files plus new patch files, with one existing image-element warning. The literal `bun run lint` command is blocked by a pre-existing nested root config at `.claude/worktrees/chat-agentic-pass/biome.json`; the explicit-file run checks the actual repository without modifying that other worktree.
 - Convex code generation/bundle analysis passed and generated API bindings are included. The codegen operation did not activate a deployment.
@@ -167,3 +167,5 @@ Spreadsheet commands now execute in an isolated Node worker process with a 15-se
 Word edits read callback state only after React commits, tool results retain the Word document kind, and the preview honors direct Office links and cancels stale fixture timers. Browser acceptance passed for direct opening, rename, AI save/pause/reopen, failed-save draft retention, copying an existing document, and 798/390-pixel layouts. These checks use the documented synthetic Collabora transport; they do not claim a live Collabora end-to-end test.
 
 An additional automatic review of 7add9ab (5204728927) caught Word section scope and remaining XML property containers. Header/footer edits now cover every live section and existing page variant; package tests verify old header/footer content disappears without adding parts. Section/table/row/cell property insertion uses the same schema-aware ordering, including header/footer references. The third review completed even though a separate manual follow-up command was rate-limited.
+
+The isolated worker is also exercised directly for coverage because Bun cannot instrument the child Node process. The same exported worker function handles production IPC requests and direct success/version-rejection tests; it reports 80.43% line coverage, while integration tests retain real process isolation and timeout checks. No coverage thresholds or exclusions were relaxed.

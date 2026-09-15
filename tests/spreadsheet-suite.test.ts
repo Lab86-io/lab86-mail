@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { fileURLToPath } from 'node:url';
 import { prepareDocumentEdits } from '../lib/documents/edits';
 import { createDefaultDocumentModel } from '../lib/documents/model';
 import { sheetChangeSetSchema } from '../lib/documents/sheet-workbook';
@@ -191,4 +192,23 @@ describe('full Odoo spreadsheet tools', () => {
     expect(result.workbook.sheets[1].cells?.A1).toBe('trim me');
     expect(result.activeSheetId).toBe('new-sheet');
   });
+});
+
+test('the worker engine exports a candidate and closes its DOM after rejection', async () => {
+  const { executeSpreadsheetWorker } = await import('../lib/documents/spreadsheet-worker.mjs');
+  const data = {
+    source: createDefaultDocumentModel('sheet', 'worker'),
+    plan: { kind: 'sheet-changes', version: 1, changes: [{ sheet: 'Sheet 1', cell: 'A1', content: '42' }] },
+    version: '19.0.50',
+    jsdomPath: fileURLToPath(import.meta.resolve('jsdom')),
+    canvasPath: fileURLToPath(import.meta.resolve('@napi-rs/canvas')),
+    enginePaths: ['@odoo/owl/dist/owl.iife.js', '@odoo/o-spreadsheet/dist/o_spreadsheet.iife.js'].map(
+      (path) => fileURLToPath(import.meta.resolve(path)),
+    ),
+  };
+  const result = await executeSpreadsheetWorker(data);
+  expect(result.workbook.sheets[0].cells.A1).toBe('42');
+  await expect(executeSpreadsheetWorker({ ...data, version: 'wrong-version' })).rejects.toThrow(
+    'version mismatch',
+  );
 });
