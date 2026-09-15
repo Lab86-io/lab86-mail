@@ -1,5 +1,43 @@
+import {
+  type ArtworkCandidate,
+  type ImportedArtwork,
+  searchArtPool,
+  stylesForDirection,
+} from '../../lib/documents/deck-art';
 import type { CompositionAsset } from '../../lib/documents/presentation-compositions';
 import { type PresentationBriefV2, presentationBriefV2Schema } from '../../lib/documents/presentation-design';
+
+/** A pool candidate as an imported asset; the preview address stands in for owned storage. */
+export function importedArtwork(candidate: ArtworkCandidate, index: number): ImportedArtwork {
+  return {
+    assetId: `art-${index + 1}`,
+    src: candidate.previewUrl,
+    width: 1600,
+    height: 1000,
+    aspect: 1.6,
+    mime: 'image/jpeg',
+    size: 100_000,
+    attribution: {
+      title: candidate.title,
+      artist: candidate.artist,
+      date: candidate.date,
+      credit: candidate.credit,
+      source: candidate.source,
+      sourceUrl: candidate.sourceUrl,
+      license: candidate.license,
+      ...(candidate.style ? { style: candidate.style } : {}),
+    },
+    palette: candidate.palette ?? [],
+    accentHue: candidate.accentHue ?? 0,
+  };
+}
+
+/** Pool pieces as imported assets, deterministic for the fixture seed. */
+export function poolArtworks(count: number, text = 'landscape river harbor'): ImportedArtwork[] {
+  return searchArtPool({ text, styles: stylesForDirection('editorial'), count, seed: 'fixture' }).map(
+    (candidate, index) => importedArtwork(candidate, index),
+  );
+}
 
 /** Owned art the fixtures may show: the app's own fallback images. */
 export const VALLEY: CompositionAsset = {
@@ -255,6 +293,87 @@ export function retroBrief(): PresentationBriefV2 {
         ],
         notes: '',
         visualRole: 'Three numbered asks.',
+      },
+    ],
+  });
+}
+
+/** A harbor deck with no owned images: every artwork composition role and one metrics slide. */
+export function harborBrief(): PresentationBriefV2 {
+  return presentationBriefV2Schema.parse({
+    title: 'Harbor Works',
+    summary: 'The dredging plan for the outer harbor.',
+    audience: 'the Harbor Commission',
+    purpose: 'Agree on the dredging schedule.',
+    tone: 'formal',
+    palette: 'editorial',
+    fontPair: 'serif',
+    imagery: 'Harbor paintings, ships and water at dusk.',
+    slides: [
+      {
+        role: 'cover',
+        title: 'Harbor Works',
+        kicker: 'Dredging plan · 2027',
+        body: 'How the outer harbor reaches a nine-metre channel by the spring tide of 2028.',
+        items: [],
+        notes: 'Depths in metres below chart datum.',
+        visualRole: 'Cover with a painting on the right.',
+      },
+      {
+        role: 'statement',
+        title: 'Nine metres of water, open all year, by spring 2028.',
+        kicker: 'The aim',
+        body: 'The channel is seven metres today and closes to deep hulls at low water.',
+        items: [],
+        notes: '',
+        visualRole: 'Painting behind the statement.',
+      },
+      {
+        role: 'image-right',
+        title: 'The channel silts from the north bank',
+        kicker: 'Where the sand comes from',
+        body: 'Winter storms move sand off the north spit into the channel. The survey shows the bar grows most in January and February.',
+        items: [
+          { label: '0.4 m', detail: 'lost each winter' },
+          { label: '2', detail: 'survey passes a year' },
+        ],
+        notes: 'Survey by the port authority, March 2026.',
+        image: { alt: 'Sand bar at the harbor mouth', subject: 'harbor' },
+        visualRole: 'Painting right, facts on a hairline.',
+      },
+      {
+        role: 'metrics',
+        title: 'What the work costs',
+        kicker: 'Budget',
+        body: '',
+        items: [
+          { label: '3.2M', detail: 'dredging contract' },
+          { label: '18', detail: 'weeks of work' },
+        ],
+        notes: 'Figures from the tender, fixture data.',
+        visualRole: 'Numbers in a row.',
+      },
+      {
+        role: 'quote',
+        title: 'Every winter we lose depth we paid for the summer before.',
+        kicker: 'From the harbor master',
+        body: 'Commission hearing, June 2026.',
+        items: [{ label: 'R. Lindqvist', detail: 'Harbor master since 2019' }],
+        notes: '',
+        visualRole: 'Quote beside a painting.',
+      },
+      {
+        role: 'close',
+        title: 'Three decisions',
+        kicker: '',
+        body: 'Questions: works@harbor.example',
+        items: [
+          { label: 'Approve the tender', detail: 'Contract signed before the autumn.' },
+          { label: 'Fix the survey cadence', detail: 'Two passes a year, January and July.' },
+          { label: 'Set the opening tide', detail: 'Spring tide, March 2028.' },
+        ],
+        notes: '',
+        visualRole: 'Three asks under an art strip.',
       },
     ],
   });

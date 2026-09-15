@@ -1,11 +1,18 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { envFlag } from '@/lib/hosted/controls';
+import {
+  artworksBySlideIndex,
+  artworksForDeck,
+  imageryTheme,
+  planDeckImagery,
+  resolveDeckImagery,
+} from './deck-imagery';
 import { type DeckIssue, repairDeck } from './deck-quality';
 import { availableRenderBrowser, renderDeckSlides } from './deck-render';
 import { deckModelsEqual } from './deck-versions';
 import { isDeckV2AuthoringEnabled } from './editor-flags';
-import { prepareDocumentEdits } from './edits';
+import { type DocumentEditContext, prepareDocumentEdits } from './edits';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
@@ -20,7 +27,7 @@ import {
   type SheetChangeSet,
   sheetModelSchema,
 } from './model';
-import type { CompositionAsset } from './presentation-compositions';
+import { buildDeckTheme, type CompositionArtwork, type CompositionAsset } from './presentation-compositions';
 import {
   applyCopyRepairs,
   briefFieldForElement,
@@ -52,6 +59,8 @@ const defaultDependencies = {
   availableRenderBrowser,
   renderDeckSlides,
   isDeckV2AuthoringEnabled,
+  resolveDeckImagery,
+  artworksForDeck,
 };
 
 let dependencies = defaultDependencies;
@@ -175,6 +184,39 @@ interface DeckGenerationInput {
   sourceContext?: string;
   /** Owned assets the deck may show. Never external links. */
   assets?: CompositionAsset[];
+  /** auto: credited public-domain paintings fill the open image slots. none: typographic slides. */
+  artwork?: 'auto' | 'none';
+}
+
+/** Paintings for a new deck, with the note the summary carries. Failures degrade to typography. */
+interface DeckArtworkSelection {
+  artworks?: Partial<Record<number, CompositionArtwork>>;
+  imagery?: ReturnType<typeof imageryTheme>;
+  note: string;
+}
+
+async function selectDeckArtworks(
+  input: DeckGenerationInput,
+  brief: PresentationBriefV2,
+): Promise<DeckArtworkSelection> {
+  if (input.artwork === 'none') return { note: '' };
+  const plan = planDeckImagery(brief, buildDeckTheme(brief.palette, brief.fontPair), {
+    assets: input.assets,
+  });
+  if (!plan.slots.length) return { note: '' };
+  try {
+    const resolved = await dependencies.resolveDeckImagery(plan, { userId: input.userId });
+    const artworks = artworksBySlideIndex(plan, resolved);
+    const count = Object.keys(artworks).length;
+    if (!count) return { note: ' Artwork was not available; the slides are typographic.' };
+    return {
+      artworks,
+      imagery: imageryTheme(plan),
+      note: ` Added ${count} public-domain ${count === 1 ? 'painting' : 'paintings'} with credits.`,
+    };
+  } catch {
+    return { note: ' Artwork could not be added; the slides are typographic.' };
+  }
 }
 
 const COPY_REPAIR_GUIDANCE = `Some slide copy does not fit its box. Return shorter text for each listed field. Keep the meaning. Keep every number, name and date exactly as written. Do not add, remove or reorder slides. Plain language, no emoji. Fields: title, kicker, body, notes, chart.source, items.N.label, items.N.detail, items.N.meta.`;
@@ -196,10 +238,19 @@ function issueList(issues: DeckIssue[]) {
 async function finishComposedDeck(
   input: DeckGenerationInput,
   initial: PresentationBriefV2,
+  art: DeckArtworkSelection = { note: '' },
 ): Promise<{ brief: PresentationBriefV2; model: DeckModelV2; summary: string }> {
   let brief = initial;
   const slideIds = brief.slides.map((_, index) => `slide-${index + 1}`);
-  const compose = () => repairDeck(composePresentationV2(brief, { assets: input.assets, slideIds }));
+  const compose = () =>
+    repairDeck(
+      composePresentationV2(brief, {
+        assets: input.assets,
+        slideIds,
+        ...(art.artworks ? { artworks: art.artworks } : {}),
+        ...(art.imagery ? { imagery: art.imagery } : {}),
+      }),
+    );
   let repaired = compose();
   if (!repaired.report.ok) {
     const targets: { slideId: string; field: string; text: string; problem: string }[] = [];
@@ -236,7 +287,7 @@ async function finishComposedDeck(
         `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
       );
   }
-  let summary = brief.summary;
+  let summary = `${brief.summary}${art.note}`;
   if (envFlag('DECK_RENDER_CHECK')) {
     const browser = dependencies.availableRenderBrowser();
     if (browser) {
@@ -284,7 +335,8 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
     throw new DocumentGenerationError(
       `The generator returned ${brief.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
     );
-  const finished = await finishComposedDeck(input, brief);
+  const art = await selectDeckArtworks(input, brief);
+  const finished = await finishComposedDeck(input, brief, art);
   return { title: finished.brief.title, summary: finished.summary, model: finished.model };
 }
 
@@ -315,11 +367,27 @@ async function proposeDeckRestyle(input: {
   if (!classification.success) return null;
   const operation = restyleOperationFor(classification.data);
   if (!operation) return null;
-  const model = prepareDocumentEdits(input.current.model, [operation]);
+  const context: DocumentEditContext = {};
+  let note = '';
+  if (operation.imagery === 'paintings') {
+    try {
+      const art = await dependencies.artworksForDeck(input.current.model, { userId: input.userId });
+      context.artworks = art.artworks;
+      context.imageryTheme = art.imagery;
+      if (!Object.keys(art.artworks).length) note = ' No artwork was available for these slides.';
+    } catch {
+      note = ' Artwork could not be added; the slides stay typographic.';
+    }
+  }
+  const model = prepareDocumentEdits(input.current.model, [operation], context);
   if (model.kind !== 'deck') return null;
   if (deckModelsEqual(input.current.model, model))
-    throw new DocumentGenerationError('The requested look matches the current one. Nothing was changed.');
-  return { title: input.current.title, summary: classification.data.summary, model };
+    throw new DocumentGenerationError(
+      note
+        ? `Artwork was not available, so nothing was changed.`
+        : 'The requested look matches the current one. Nothing was changed.',
+    );
+  return { title: input.current.title, summary: `${classification.data.summary}${note}`, model };
 }
 
 export async function generateDocumentProposal(input: {
@@ -332,6 +400,8 @@ export async function generateDocumentProposal(input: {
   sourceContext?: string;
   /** Owned image assets a new presentation may use. */
   assets?: CompositionAsset[];
+  /** auto (default): paintings fill the open image slots of a new presentation. none: typographic slides. */
+  artwork?: 'auto' | 'none';
 }): Promise<DocumentProposal> {
   const blankDeck =
     input.current?.model.kind === 'deck' &&

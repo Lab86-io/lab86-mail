@@ -2,13 +2,14 @@ import { z } from 'zod';
 import { deckModelForSave, upgradeDeckModel } from './deck-versions';
 import {
   type AlbatrossDocumentModel,
+  type DeckTheme,
   deckElementV2Schema,
   deckSlideV2Schema,
   docModelSchema,
   parseDocumentModel,
   type SuggestionPayload,
 } from './model';
-import { FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
+import { type CompositionArtwork, FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
 import { deckPaletteColorsSchema, restyleDeck } from './presentation-design';
 import { assertModelWithinLimit, parseCellAddress, sheetChangeSchema } from './sheet-workbook';
 import { spreadsheetCommandSchema, validateSpreadsheetCommand } from './spreadsheet-commands';
@@ -43,14 +44,20 @@ export const documentEditOperationSchema = z.discriminatedUnion('op', [
       scope: z.enum(['theme', 'theme-and-layout']).default('theme'),
       /** Elements kept exactly as they are, in addition to elements marked locked. */
       lockedElementIds: z.array(id).max(500).optional(),
+      /** paintings: hang credited public-domain paintings on slides without an image. none: remove the paintings; the user's images stay. */
+      imagery: z.enum(['paintings', 'none']).optional(),
       /** Legacy form: dark or light with one accent. Kept for older callers. */
       theme: z.enum(['dark', 'light']).optional(),
       accent: hexColor.optional(),
     })
     .strict()
-    .refine((value) => value.theme || value.palette || value.fontPair || value.scope === 'theme-and-layout', {
-      message: 'deck_restyle needs a palette, a fontPair, a layout scope, or the legacy theme.',
-    }),
+    .refine(
+      (value) =>
+        value.theme || value.palette || value.fontPair || value.imagery || value.scope === 'theme-and-layout',
+      {
+        message: 'deck_restyle needs a palette, a fontPair, imagery, a layout scope, or the legacy theme.',
+      },
+    ),
   z.object({ op: z.literal('slide_insert'), slide, ...position }).strict(),
   z
     .object({
@@ -106,8 +113,20 @@ function validateIdentity(model: AlbatrossDocumentModel) {
   } else unique(model.version === 2 ? model.workbook.sheets : model.sheets);
 }
 
+/** Resources an edit may need that the operation itself cannot carry. */
+export interface DocumentEditContext {
+  /** Credited paintings by slide id for a deck_restyle with imagery paintings, resolved by the caller. */
+  artworks?: Partial<Record<string, CompositionArtwork>>;
+  /** The deck-wide imagery record that goes with those paintings. */
+  imageryTheme?: NonNullable<DeckTheme['imagery']>;
+}
+
 /** All operations validate on a private copy before any persistence happens. */
-export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unknown): SuggestionPayload {
+export function prepareDocumentEdits(
+  source: AlbatrossDocumentModel,
+  input: unknown,
+  context: DocumentEditContext = {},
+): SuggestionPayload {
   const operations = documentEditsSchema.parse(input);
   const parsed = parseDocumentModel(source);
   // Slide edits run on version 2; a deck stored as version 1 keeps that shape when it can.
@@ -241,6 +260,9 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
             ...(operation.fontPair ? { fontPair: operation.fontPair } : {}),
             scope: operation.scope,
             ...(operation.lockedElementIds ? { lockedElementIds: operation.lockedElementIds } : {}),
+            ...(operation.imagery ? { imagery: operation.imagery } : {}),
+            ...(context.artworks ? { artworks: context.artworks } : {}),
+            ...(context.imageryTheme ? { imageryTheme: context.imageryTheme } : {}),
           });
           model.theme = restyled.theme;
           model.slides = restyled.slides;

@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import type { DeckElement, DeckElementV2, DeckModelV2, DeckSlideV2, DeckTheme } from './model';
 import {
+  ARTWORK_PREFIX,
   buildDeckTheme,
   COMPOSITION_ROLES,
+  type CompositionArtwork,
   type CompositionAsset,
   type CompositionChart,
   type CompositionContent,
@@ -12,10 +14,13 @@ import {
   FONT_PAIR_NAMES,
   type FontPairName,
   fontPairOf,
+  isArtworkSource,
   PALETTE_NAMES,
   type PaletteInput,
   paletteTokens,
   parseSlotName,
+  stripArtworkNotes,
+  withArtworkNote,
 } from './presentation-compositions';
 
 // Content and art direction are generated together; geometry is deterministic
@@ -253,16 +258,30 @@ export const presentationBriefV2Schema = z.object({
 export type PresentationBriefV2 = z.infer<typeof presentationBriefV2Schema>;
 
 export const PRESENTATION_DESIGN_GUIDANCE_V2 = `Design a complete presentation as 16:9 slides. Return finished slide copy and an art-direction brief, not instructions to create them.
-The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. Palettes: editorial (warm paper, ink navy, rust accent) or signal (cool paper, near-black ink, electric blue). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces display with Geist text) or sans (Geist throughout). Editorial with serif is the default.
+The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. imagery holds the subject words for public-domain paintings that fit the topic, for example "harbor, ships, dusk"; write "none" when the deck should stay typographic. Palettes: editorial (warm paper, ink navy, rust accent) or signal (cool paper, near-black ink, electric blue). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces display with Geist text) or sans (Geist throughout). Editorial with serif is the default.
 Every slide has one composition role. cover: title, kicker, one-sentence body, optional image. statement: one sentence that carries the slide, optional support line. image-left and image-right: kicker, title, body, up to three short facts as items, an image request. metrics: title and up to three numbers as items (label is the number, detail is what it measures) with chart data. chart: title, body and chart data; items are up to three callouts. process: title and two to four steps as items (label is the step, meta is the date, detail is one sentence). comparison: title and two to four sides as items. list: title and two to four items. quote: the quote as the title, the attribution as the body. close: title, two to four asks as items, a contact line as the body.
 Vary the roles across the deck; use at least four different roles in a deck of five or more slides. Open with a cover and end with a close. Use metrics or chart only when the grounding material supplies the numbers. Never invent numbers; use metrics only when the grounding material supplies them. Never invent citations.
 Image requests need alt text and a subject. Only set assetId to an asset id listed in the grounding material. Never reference an outside image address; a slide without an owned image composes as typography.
 Respect the requested slide count. Write short headlines, concise labels and details that fit their limits. Speaker notes carry sources, nuance, exact dates with time zones and the fuller explanation. Each slide holds real content, never placeholders or a restatement of the request. Only attribute events to a date when source timestamps support it. Plain language, no emoji.`;
 
+/** The compositions that hang a painting when no owned image takes the slot. */
+export const ARTWORK_ROLES: readonly CompositionRole[] = [
+  'cover',
+  'statement',
+  'image-left',
+  'image-right',
+  'quote',
+  'close',
+];
+
 export interface ComposePresentationOptions {
   /** Owned assets the deck may show, in the order slides request them. */
   assets?: CompositionAsset[];
   slideIds?: string[];
+  /** Credited paintings by slide index, for the slides the imagery plan chose. */
+  artworks?: Partial<Record<number, CompositionArtwork>>;
+  /** Deck-wide imagery record written to the theme when artwork is present. */
+  imagery?: DeckTheme['imagery'];
 }
 
 function briefItems(items: PresentationBriefV2['slides'][number]['items']): CompositionItem[] {
@@ -293,8 +312,9 @@ export function briefToContents(brief: PresentationBriefV2, options: ComposePres
     if (index < 0) return undefined;
     return pool.splice(index, 1)[0];
   };
-  return brief.slides.map((slide): CompositionContent => {
+  return brief.slides.map((slide, index): CompositionContent => {
     const asset = slide.image ? takeAsset(slide.image.assetId) : undefined;
+    const artwork = !asset && ARTWORK_ROLES.includes(slide.role) ? options.artworks?.[index] : undefined;
     return {
       role: slide.role,
       title: slide.title,
@@ -304,6 +324,7 @@ export function briefToContents(brief: PresentationBriefV2, options: ComposePres
       ...(slide.notes.trim() ? { notes: slide.notes } : {}),
       ...(slide.chart ? { chart: briefChart(slide.chart) } : {}),
       ...(slide.image ? { image: { alt: slide.image.alt, ...(asset ? { asset } : {}) } } : {}),
+      ...(artwork ? { artwork } : {}),
       ...(slide.role === 'cover' && brief.audience.trim()
         ? { footer: `Prepared for ${brief.audience.trim()}` }
         : {}),
@@ -318,6 +339,7 @@ export function composePresentationV2(
 ): DeckModelV2 {
   const theme = buildDeckTheme(brief.palette, brief.fontPair);
   const contents = briefToContents(brief, options);
+  if (options.imagery && contents.some((content) => content.artwork)) theme.imagery = options.imagery;
   const slides = contents.map((content, index) =>
     composeSlide(content, {
       theme,
@@ -397,12 +419,20 @@ export interface RestyleOptions {
   fontPair?: FontPairName;
   scope: 'theme' | 'theme-and-layout';
   lockedElementIds?: string[];
+  /** paintings: hang the supplied artworks on slides that have none. none: remove every painting; user images stay. */
+  imagery?: 'paintings' | 'none';
+  /** Credited paintings by slide id, resolved before the restyle runs. */
+  artworks?: Partial<Record<string, CompositionArtwork>>;
+  /** Deck-wide imagery record written to the theme when paintings are added. */
+  imageryTheme?: DeckTheme['imagery'];
 }
 
 export interface ExtractedSlide {
   content: CompositionContent;
   /** Slot name to the existing element id, so a recomposition keeps ids where content maps one to one. */
   ids: Partial<Record<string, string>>;
+  /** True when the slide background image is the composer's painting rather than the user's own. */
+  backgroundIsArtwork: boolean;
 }
 
 type TextElement = Extract<DeckElementV2, { type: 'text' }>;
@@ -491,8 +521,10 @@ export function extractSlideContent(
   let sourceLine: string | undefined;
   let chart: CompositionChart | undefined;
   let image: CompositionContent['image'];
+  let artwork: CompositionArtwork | undefined;
   const items = new Map<number, CompositionItem>();
   const unnamed: DeckElementV2[] = [];
+  const artworkNote = (slide.notes ?? '').split('\n').find((line) => line.startsWith(ARTWORK_PREFIX));
   for (const element of slide.elements) {
     const slot = parseSlotName(element.name);
     if (!slot) {
@@ -501,6 +533,7 @@ export function extractSlideContent(
     }
     role ??= slot.role;
     ids[slot.slot] = element.id;
+    if (slot.slot === 'credit' || slot.slot === 'veil') continue;
     if (element.type === 'text') {
       if (slot.slot === 'title') title = element.text;
       else if (slot.slot === 'kicker') kicker = element.text;
@@ -521,9 +554,21 @@ export function extractSlideContent(
       if (chart) return null;
       chart = chartOf(element);
     } else if (element.type === 'image') {
+      if (isArtworkSource(element.source)) {
+        artwork = { asset: assetOf(element), credit: element.source!.slice(ARTWORK_PREFIX.length) };
+        continue;
+      }
       if (image) return null;
       image = { alt: element.alt, asset: assetOf(element) };
     }
+  }
+  // The painting behind a statement lives in the background; the notes line names it.
+  const backgroundIsArtwork = Boolean(slide.backgroundImage && artworkNote && !artwork);
+  if (backgroundIsArtwork && slide.backgroundImage) {
+    artwork = {
+      asset: { assetId: slide.backgroundImage.assetId, src: slide.backgroundImage.src ?? '' },
+      credit: artworkNote!.slice(ARTWORK_PREFIX.length),
+    };
   }
   // Elements the composer did not write: text becomes content, charts and images fill free slots.
   const texts = unnamed.filter((e): e is TextElement => e.type === 'text' && e.text.trim().length > 0);
@@ -621,7 +666,7 @@ export function extractSlideContent(
     ids[`item-${next}-label`] = element.id;
     next += 1;
   }
-  if (!title && !body && !items.size && !chart && !image) return null;
+  if (!title && !body && !items.size && !chart && !image && !artwork) return null;
   const orderedItems = [...items.entries()].sort(([a], [b]) => a - b).map(([, item]) => item);
   const resolvedTitle = title ?? slide.title ?? '';
   const resolvedRole =
@@ -650,13 +695,15 @@ export function extractSlideContent(
       ...(kicker ? { kicker } : {}),
       ...(body ? { body } : {}),
       items: orderedItems,
-      ...(slide.notes ? { notes: slide.notes } : {}),
+      ...(stripArtworkNotes(slide.notes) ? { notes: stripArtworkNotes(slide.notes) } : {}),
       ...(chart ? { chart } : {}),
       ...(image ? { image } : {}),
+      ...(artwork ? { artwork } : {}),
       ...(footer ? { footer } : {}),
       ...(sourceLine ? { sourceLine } : {}),
     },
     ids,
+    backgroundIsArtwork,
   };
 }
 
@@ -671,7 +718,9 @@ export function restyleDeck(model: DeckModelV2, options: RestyleOptions): DeckMo
   const oldTheme = model.theme;
   const oldTokens = paletteTokens(oldTheme.colors);
   const theme = buildDeckTheme(options.palette ?? oldTheme.colors, options.fontPair ?? fontPairOf(oldTheme));
+  if (options.imagery !== 'none' && oldTheme.imagery) theme.imagery = oldTheme.imagery;
   const newTokens = paletteTokens(theme.colors);
+  let hung = 0;
   const lockedIds = new Set(options.lockedElementIds ?? []);
   const isLocked = (element: DeckElementV2) => Boolean(element.locked) || lockedIds.has(element.id);
   const remap = (color: string | undefined) => {
@@ -707,26 +756,47 @@ export function restyleDeck(model: DeckModelV2, options: RestyleOptions): DeckMo
       ...(slide.background ? { background: remap(slide.background) } : {}),
       elements: slide.elements.map(recolor),
     };
-    if (options.scope === 'theme') return themed;
     const extracted = extractSlideContent(slide, index, total, oldTheme);
-    if (!extracted) return themed;
+    // Imagery changes decide which slides recompose under the theme scope.
+    let artwork = extracted?.content.artwork;
+    let imageryChange = false;
+    if (options.imagery === 'none' && artwork) {
+      artwork = undefined;
+      imageryChange = true;
+    } else if (options.imagery === 'paintings' && extracted && !artwork && !extracted.content.image?.asset) {
+      const supplied = options.artworks?.[slide.id];
+      if (supplied && ARTWORK_ROLES.includes(extracted.content.role)) {
+        artwork = supplied;
+        imageryChange = true;
+        hung += 1;
+      }
+    }
+    if (!extracted || (options.scope === 'theme' && !imageryChange)) return themed;
     const locked = slide.elements.filter(isLocked);
     const lockedSet = new Set(locked.map((element) => element.id));
-    const composed = composeSlide(extracted.content, {
-      theme,
-      index,
-      total,
-      slideId: slide.id,
-      ids: extracted.ids,
-    });
+    const { artwork: _previous, ...rest } = extracted.content;
+    const composed = composeSlide(
+      { ...rest, ...(artwork ? { artwork } : {}) },
+      { theme, index, total, slideId: slide.id, ids: extracted.ids },
+    );
+    const keepBackground = slide.backgroundImage && !extracted.backgroundIsArtwork;
+    // Notes keep their text; only the composer's artwork line comes or goes. Empty notes stay as they were.
+    const stripped = withArtworkNote(slide.notes, artwork);
+    const notes = stripped || (slide.notes === '' ? '' : undefined);
     return {
       ...composed,
       title: slide.title,
-      ...(slide.notes !== undefined ? { notes: slide.notes } : {}),
-      ...(slide.backgroundImage ? { backgroundImage: slide.backgroundImage } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      ...(composed.backgroundImage
+        ? { backgroundImage: composed.backgroundImage }
+        : keepBackground
+          ? { backgroundImage: slide.backgroundImage }
+          : {}),
       elements: [...composed.elements.filter((element) => !lockedSet.has(element.id)), ...locked],
     };
   });
+  // The theme records paintings only once at least one hangs in the deck.
+  if (options.imagery === 'paintings' && hung) theme.imagery = options.imageryTheme ?? { mode: 'paintings' };
   return { ...model, theme, slides };
 }
 
@@ -736,7 +806,7 @@ export function restyleDeck(model: DeckModelV2, options: RestyleOptions): DeckMo
  * proposal replaces a content edit.
  */
 export const RESTYLE_INTENT_PATTERN =
-  /\b(re-?styl\w*|re-?design\w*|re-?theme\w*|themes?|look|looks|palettes?|colou?rs?|colou?r scheme|fonts?|typography|typefaces?|layouts?|styling|appearance|visual style|editorial|signal|serif|sans)\b/i;
+  /\b(re-?styl\w*|re-?design\w*|re-?theme\w*|themes?|look|looks|palettes?|colou?rs?|colou?r scheme|fonts?|typography|typefaces?|layouts?|styling|appearance|visual style|editorial|signal|serif|sans|paintings?|artworks?|imagery)\b/i;
 
 export function mentionsRestyle(instruction: string) {
   return RESTYLE_INTENT_PATTERN.test(instruction);
@@ -750,11 +820,13 @@ export const restyleClassificationSchema = z.object({
   colors: deckPaletteColorsSchema.nullish(),
   fontPair: z.enum(['serif', 'sans', 'keep']),
   scope: z.enum(['theme', 'theme-and-layout']),
+  /** paintings: add public-domain paintings. none: remove them. keep: leave imagery as it is. */
+  imagery: z.enum(['paintings', 'none', 'keep']).nullish(),
   summary: z.string().min(1).max(300),
 });
 export type RestyleClassification = z.infer<typeof restyleClassificationSchema>;
 
-export const RESTYLE_CLASSIFIER_GUIDANCE = `Decide whether an instruction about an existing presentation asks only for a change of appearance: theme, palette, colors, fonts, typography or layout. Answer restyle=true only when the instruction asks for no change to the words, numbers, charts, notes or slide order. Map the request: palette editorial (warm paper, navy ink, rust accent), signal (cool paper, near-black ink, electric blue), custom when the user names colors (then fill colors with six hex values), or keep. fontPair serif (Fraunces display) or sans (Geist), or keep. scope is theme for color and font changes and theme-and-layout when the user asks for a new layout, a redesign or a fresh look. Write a one-sentence plain summary of the change; do not use the word AI.`;
+export const RESTYLE_CLASSIFIER_GUIDANCE = `Decide whether an instruction about an existing presentation asks only for a change of appearance: theme, palette, colors, fonts, typography or layout. Answer restyle=true only when the instruction asks for no change to the words, numbers, charts, notes or slide order. Map the request: palette editorial (warm paper, navy ink, rust accent), signal (cool paper, near-black ink, electric blue), custom when the user names colors (then fill colors with six hex values), or keep. fontPair serif (Fraunces display) or sans (Geist), or keep. scope is theme for color and font changes and theme-and-layout when the user asks for a new layout, a redesign or a fresh look. imagery is paintings when the user asks for artwork, paintings or pictures on the slides, none when the user asks to remove artwork, and keep otherwise. Write a one-sentence plain summary of the change; do not use the word AI.`;
 
 /** The restyle operation a classification maps to, or null when it is not a restyle. */
 export function restyleOperationFor(classification: RestyleClassification) {
@@ -766,12 +838,17 @@ export function restyleOperationFor(classification: RestyleClassification) {
         ? classification.palette
         : undefined;
   const fontPair = classification.fontPair === 'keep' ? undefined : classification.fontPair;
-  if (!palette && !fontPair && classification.scope === 'theme') return null;
+  const imagery =
+    classification.imagery === 'paintings' || classification.imagery === 'none'
+      ? classification.imagery
+      : undefined;
+  if (!palette && !fontPair && !imagery && classification.scope === 'theme') return null;
   return {
     op: 'deck_restyle' as const,
     ...(palette ? { palette } : {}),
     ...(fontPair ? { fontPair } : {}),
     scope: classification.scope,
+    ...(imagery ? { imagery } : {}),
   };
 }
 

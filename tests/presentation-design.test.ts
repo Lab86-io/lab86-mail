@@ -5,13 +5,20 @@ import {
   generateDocumentProposal,
 } from '../lib/documents/ai';
 import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
+import {
+  compositionArtwork,
+  type DeckImageryPlan,
+  type ResolvedDeckImagery,
+} from '../lib/documents/deck-imagery';
 import { checkDeck } from '../lib/documents/deck-quality';
 import type { DeckElementV2, DeckModelV2 } from '../lib/documents/model';
 import {
+  ARTWORK_PREFIX,
   buildDeckTheme,
   DECK_FONT_PAIRS,
   DECK_PALETTES,
   fitTypeSize,
+  isArtworkSource,
   parseSlotName,
   resolvePalette,
 } from '../lib/documents/presentation-compositions';
@@ -23,7 +30,14 @@ import {
   PRESENTATION_DESIGN_GUIDANCE_V2,
   presentationBriefV2Schema,
 } from '../lib/documents/presentation-design';
-import { HILLS, lakeshoreBrief, retroBrief, VALLEY } from './fixtures/presentation-briefs';
+import {
+  HILLS,
+  harborBrief,
+  lakeshoreBrief,
+  poolArtworks,
+  retroBrief,
+  VALLEY,
+} from './fixtures/presentation-briefs';
 
 type Box = { x: number; y: number; width: number; height: number; type: string };
 
@@ -371,6 +385,107 @@ describe('designed generation through the document proposal', () => {
     const plain = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
     expect(plain.summary).not.toContain('rendered');
     expect(skipped).not.toHaveBeenCalled();
+  });
+
+  test('a new deck hangs planned paintings; a resolver failure or an empty result degrades to typography', async () => {
+    const artworks = poolArtworks(4);
+    const resolve = mock(
+      async (plan: DeckImageryPlan): Promise<ResolvedDeckImagery> => ({
+        assets: artworks,
+        bySlot: Object.fromEntries(plan.slots.map((slot, index) => [slot.slotId, artworks[index]])),
+        notes: [],
+      }),
+    );
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
+      resolveDeckImagery: resolve as any,
+    });
+    const proposal = await generateDocumentProposal({
+      userId: 'u',
+      kind: 'deck',
+      instruction: 'Harbor deck',
+      assets: [VALLEY],
+    });
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0][1]).toEqual({ userId: 'u' });
+    const plan = resolve.mock.calls[0][0];
+    // The owned image took the image-right slot, so the plan skipped it.
+    expect(plan.slots.map((slot) => slot.role)).toEqual(['cover', 'statement', 'close', 'quote']);
+    const model = proposal.model as DeckModelV2;
+    expect(checkDeck(model).ok).toBe(true);
+    expect(model.theme.imagery).toMatchObject({ mode: 'paintings', subject: 'harbor ships water dusk' });
+    expect(model.slides[0].elements.some((e) => e.type === 'image' && isArtworkSource(e.source))).toBe(true);
+    expect(model.slides[2].elements.find((e) => e.type === 'image')).toMatchObject({ assetId: 'dev-art-3' });
+    expect(model.slides[1].backgroundImage).toMatchObject({ assetId: 'art-2' });
+    expect(model.slides[4].notes).toBe(`${ARTWORK_PREFIX}${compositionArtwork(artworks[3]).credit}`);
+    expect(proposal.summary).toBe(
+      'The dredging plan for the outer harbor. Added 4 public-domain paintings with credits.',
+    );
+
+    const one = mock(
+      async (plan: DeckImageryPlan): Promise<ResolvedDeckImagery> => ({
+        assets: [artworks[0]],
+        bySlot: { [plan.slots[0].slotId]: artworks[0] },
+        notes: ['No artwork was imported for slide 2.'],
+      }),
+    );
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
+      resolveDeckImagery: one as any,
+    });
+    const single = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Harbor deck' });
+    expect(single.summary).toContain('Added 1 public-domain painting with credits.');
+
+    const none = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
+      resolveDeckImagery: none as any,
+    });
+    const plain = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Harbor deck' });
+    expect(plain.summary).toContain('Artwork was not available; the slides are typographic.');
+    expect(JSON.stringify(plain.model)).not.toContain(ARTWORK_PREFIX);
+    expect((plain.model as DeckModelV2).theme.imagery).toBeUndefined();
+
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
+      resolveDeckImagery: (async () => {
+        throw new Error('museum down');
+      }) as any,
+    });
+    const degraded = await generateDocumentProposal({
+      userId: 'u',
+      kind: 'deck',
+      instruction: 'Harbor deck',
+    });
+    expect(degraded.summary).toContain('Artwork could not be added; the slides are typographic.');
+    expect(checkDeck(degraded.model as DeckModelV2).ok).toBe(true);
+
+    // artwork none never plans; a brief that declines imagery never plans either.
+    const untouched = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
+      resolveDeckImagery: untouched as any,
+    });
+    const off = await generateDocumentProposal({
+      userId: 'u',
+      kind: 'deck',
+      instruction: 'Harbor deck',
+      artwork: 'none',
+    });
+    expect(off.summary).toBe('The dredging plan for the outer harbor.');
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
+      resolveDeckImagery: untouched as any,
+    });
+    await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
+    expect(untouched).not.toHaveBeenCalled();
+    expect(PRESENTATION_DESIGN_GUIDANCE_V2).toContain('write "none"');
   });
 
   test('a slide count outside the request is refused before anything composes', async () => {

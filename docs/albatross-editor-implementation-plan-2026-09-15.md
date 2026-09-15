@@ -119,3 +119,37 @@ Every wave landed on this branch. Verification is listed in the pull request.
   open the web editor.
 - The Insert menu is proven in Chromium, not in the JSDOM suite.
 - A custom accent hue does not reach the Collabora chrome; it uses the default tokens.
+
+## Second round (2026-09-15): native canvas, owned assets, artwork
+
+Jakob asked for three additions after the first round: a native canvas, owned
+assets in generation, and artwork from the museum collections the app already uses.
+
+### Native canvas
+
+- `apps/ios/Lab86Mail/Core/Documents/DeckV2Model.swift`: an editable version 2 model
+  with an `extra` bag at every level, so a round trip through the native app keeps
+  every field it does not know. Unknown deck and sheet versions are refused.
+- `apps/ios/Lab86Mail/Features/Files/DeckSlideView.swift`: one renderer for text,
+  shapes, lines, images and charts (Swift Charts), shared by thumbnails, the canvas and
+  presentation mode. Theme fonts map to the system serif, sans and mono designs.
+- `apps/ios/Lab86Mail/Features/Files/NativeDeckV2Editor.swift`: filmstrip, canvas with
+  move and resize, inline text, inspector, slide actions, theme presets, undo, and a
+  presentation view. Picture replacement and chart data link to the full editor.
+- 26 native tests pass on the iPhone simulator; the macOS target builds.
+
+### Artwork
+
+- `lib/documents/deck-art.ts`: search over the curated pool (409 public-domain pieces
+  from The Met, Cleveland, SMK and the National Gallery of Art) by style, words and
+  theme hue, plus live search of The Met, Cleveland, the Art Institute of Chicago and
+  SMK. Imports are bounded, re-encoded, palette-analyzed and stored as owned assets
+  with attribution. Only museum image hosts are fetched.
+- `GET /api/documents/artworks`, `POST /api/documents/artworks/import`.
+- The editor's Artwork panel: search, style chips, "Search museums too", place on
+  slide or use as background, credit in the notes.
+- The deck theme carries `imagery { mode, styles, subject }`.
+
+### Owned assets in generation
+
+See the generation section below once the workstream lands.

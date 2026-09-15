@@ -67,6 +67,25 @@ export const DECK_FONT_PAIRS: Record<FontPairName, DeckTheme['fonts']> = {
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
+export function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && HEX.test(value);
+}
+
+/**
+ * A stored theme may carry a color that is not six-digit hex (the schema
+ * accepts any short string). Every slot that is not hex takes the Editorial
+ * value, so mixing and contrast never see NaN channels.
+ */
+export function safeDeckColors(colors: Partial<DeckColors> | undefined): DeckColors {
+  const fallback = DECK_PALETTES.editorial;
+  const next = { ...fallback };
+  for (const key of Object.keys(fallback) as (keyof DeckColors)[]) {
+    const value = colors?.[key];
+    if (isHexColor(value)) next[key] = value;
+  }
+  return next;
+}
+
 function hexToRgb(value: string): [number, number, number] {
   const hex = value.replace('#', '');
   return [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
@@ -82,10 +101,10 @@ function rgbToHex(rgb: [number, number, number]) {
     .join('')}`.toUpperCase();
 }
 
-/** Linear mix of two hex colors; `t` is the share of `b`. */
+/** Linear mix of two hex colors; `t` is the share of `b`. A value that is not hex takes the Editorial ink. */
 export function mixHex(a: string, b: string, t: number) {
-  const left = hexToRgb(a);
-  const right = hexToRgb(b);
+  const left = hexToRgb(isHexColor(a) ? a : DECK_PALETTES.editorial.ink);
+  const right = hexToRgb(isHexColor(b) ? b : DECK_PALETTES.editorial.ink);
   return rgbToHex([0, 1, 2].map((i) => left[i] + (right[i] - left[i]) * t) as [number, number, number]);
 }
 
@@ -114,7 +133,8 @@ export interface PaletteTokens extends DeckColors {
   onAccentBody: string;
 }
 
-export function paletteTokens(colors: DeckColors): PaletteTokens {
+export function paletteTokens(input: DeckColors): PaletteTokens {
+  const colors = safeDeckColors(input);
   const name = paletteName(colors);
   if (name === 'editorial')
     return {
@@ -151,7 +171,9 @@ export interface ResolvedPalette {
 /** A palette by name, or a custom six-color set when it clears the contrast floors. */
 export function resolvePalette(input: PaletteInput): ResolvedPalette {
   if (typeof input === 'string') return { colors: DECK_PALETTES[input], name: input, adjusted: false };
-  const valid = (Object.values(input) as string[]).every((value) => HEX.test(value));
+  const valid = (Object.keys(DECK_PALETTES.editorial) as (keyof DeckColors)[]).every((key) =>
+    isHexColor(input[key]),
+  );
   const inkOnPaper = valid ? contrastRatio(input.ink, input.background) : null;
   const accentOnPaper = valid ? contrastRatio(input.accent, input.background) : null;
   const inkOnAccent = valid ? contrastRatio(input.accentInk, input.accent) : null;
@@ -209,6 +231,43 @@ export interface CompositionImage {
   asset?: CompositionAsset;
 }
 
+/**
+ * A public-domain painting placed by the composition, always with a credit.
+ * `credit` is the visible line: "Title, Artist, Date, Museum". The image
+ * element's `source` and a notes line carry the same text behind the
+ * `ARTWORK_PREFIX`, so a later restyle can tell artwork from the user's images.
+ */
+export interface CompositionArtwork {
+  asset: CompositionAsset;
+  credit: string;
+}
+
+export const ARTWORK_PREFIX = 'Artwork: ';
+
+export function artworkSourceLine(artwork: CompositionArtwork) {
+  return `${ARTWORK_PREFIX}${artwork.credit}`;
+}
+
+export function isArtworkSource(source: string | undefined): boolean {
+  return Boolean(source?.startsWith(ARTWORK_PREFIX));
+}
+
+/** Notes without the composer's artwork lines. */
+export function stripArtworkNotes(notes: string | undefined): string {
+  return (notes ?? '')
+    .split('\n')
+    .filter((line) => !line.startsWith(ARTWORK_PREFIX))
+    .join('\n')
+    .trim();
+}
+
+/** Notes with the artwork line appended once. */
+export function withArtworkNote(notes: string | undefined, artwork: CompositionArtwork | undefined) {
+  const base = stripArtworkNotes(notes);
+  if (!artwork) return base;
+  return base ? `${base}\n${artworkSourceLine(artwork)}` : artworkSourceLine(artwork);
+}
+
 /** Everything one slide says. The composition decides where it goes. */
 export interface CompositionContent {
   role: CompositionRole;
@@ -223,6 +282,8 @@ export interface CompositionContent {
   footer?: string;
   /** The visible source caption under a chart; defaults to the chart's own source. */
   sourceLine?: string;
+  /** A credited painting for the compositions that hang one; ignored where an owned image already sits. */
+  artwork?: CompositionArtwork;
 }
 
 export interface ComposeSlideOptions {
@@ -396,6 +457,37 @@ class Slide {
     return true;
   }
 
+  /** A painting in its box, carrying the credit as its source. */
+  artwork(slot: string, artwork: CompositionArtwork, box: Box, focal: { x: number; y: number }) {
+    this.elements.push({
+      id: this.id(slot),
+      type: 'image',
+      name: elementSlotName(this.role, slot),
+      x: box[0],
+      y: box[1],
+      width: box[2],
+      height: box[3],
+      assetId: artwork.asset.assetId,
+      src: artwork.asset.src,
+      alt: artwork.asset.alt || artwork.credit,
+      fit: 'cover',
+      focal: artwork.asset.focal ?? focal,
+      ...(artwork.asset.aspect ? { aspect: artwork.asset.aspect } : {}),
+      source: artworkSourceLine(artwork),
+    });
+  }
+
+  /** The visible credit: 11 pt, muted, where a caption fits. */
+  credit(artwork: CompositionArtwork, box: Box, color: string, align: 'left' | 'right' = 'left') {
+    this.text('credit', artwork.credit, box, {
+      role: 'caption',
+      fontSize: 11,
+      color,
+      align,
+      valign: 'bottom',
+    });
+  }
+
   chart(slot: string, chart: CompositionChart, box: Box, colors: string[]) {
     const round = chart.type === 'pie' || chart.type === 'doughnut';
     this.elements.push({
@@ -430,13 +522,20 @@ interface Voice {
 
 function voice(theme: DeckTheme): Voice {
   const editorial = fontPairOf(theme) === 'serif';
+  const c = paletteTokens(theme.colors);
   return {
-    c: paletteTokens(theme.colors),
+    c,
     editorial,
     display: editorial ? { fontWeight: 500 } : { fontWeight: 700, letterSpacing: -0.03 },
     kicker: { fontWeight: editorial ? 500 : 600, letterSpacing: editorial ? 0.04 : 0 },
-    paper: theme.colors.background,
+    paper: c.background,
   };
+}
+
+/** The painting a composition may hang: only when no owned image takes the slot. */
+function artworkFor(content: CompositionContent): CompositionArtwork | undefined {
+  if (content.image?.asset) return undefined;
+  return content.artwork;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -457,8 +556,8 @@ function factColumns(count: number): { pitch: number; width: number } {
   return { pitch: 10.5, width: 9.5 };
 }
 
-function pageNumber(s: Slide, options: ComposeSlideOptions, color: string) {
-  s.text('page', pad(options.index + 1), [86, 90, 8, 4], {
+function pageNumber(s: Slide, options: ComposeSlideOptions, color: string, x = 86) {
+  s.text('page', pad(options.index + 1), [x, 90, 8, 4], {
     role: 'caption',
     fontSize: 11,
     color,
@@ -507,9 +606,15 @@ function factsRow(s: Slide, v: Voice, items: CompositionItem[], x0: number, widt
 function composeCover(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
   const v = voice(options.theme);
   const s = new Slide('cover', options);
-  const hasImage = content.image
+  const artwork = artworkFor(content);
+  let hasImage = content.image
     ? s.image('image', content.image, [52, 0, 48, 100], { x: 0.5, y: 0.55 })
     : false;
+  if (!hasImage && artwork) {
+    // Artwork variant: the painting takes the right half; the credit sits under the foot line.
+    s.artwork('image', artwork, [52, 0, 48, 100], { x: 0.5, y: 0.4 });
+    hasImage = true;
+  }
   if (!hasImage) s.rect('panel', [72, 0, 28, 100], v.editorial ? v.c.ink : v.c.accent);
   if (v.editorial) s.rule('rule', 6, 9, 5, v.c.accent, 1.5);
   else s.rect('chip', [6, 10.5, 1.2, 5], v.c.accent);
@@ -534,23 +639,45 @@ function composeCover(content: CompositionContent, options: ComposeSlideOptions)
     });
   const foot = content.footer || content.items[0]?.label;
   if (foot)
-    s.text('foot', foot, [6, 90, 40, 4], {
+    s.text('foot', foot, [6, artwork ? 86 : 90, 40, 4], {
       role: 'caption',
       fontSize: 11,
       color: v.c.muted,
       valign: 'bottom',
     });
-  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+  if (artwork) s.credit(artwork, [6, 90.5, 44, 6], v.c.muted);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
 }
 
 function composeStatement(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
   const v = voice(options.theme);
   const s = new Slide('statement', options);
-  const ground = v.editorial ? v.c.ink : v.c.accent;
-  const text = v.editorial ? v.paper : v.c.accentInk;
-  const soft = v.editorial ? v.c.onInkBody : v.c.onAccentBody;
+  const artwork = artworkFor(content);
+  // Painting behind the statement: the painting sits under an ink veil, so the ground stays ink.
+  // A palette whose accent cannot carry body copy also falls back to the ink ground.
+  const accentCarries =
+    (contrastRatio(v.c.onAccentBody, v.c.accent) ?? 0) >= 4.5 &&
+    (contrastRatio(v.c.accentInk, v.c.accent) ?? 0) >= 3;
+  const onInk = v.editorial || Boolean(artwork) || !accentCarries;
+  const ground = onInk ? v.c.ink : v.c.accent;
+  const text = onInk ? v.paper : v.c.accentInk;
+  const soft = onInk ? v.c.onInkBody : v.c.onAccentBody;
+  if (artwork) {
+    s.elements.push({
+      id: s.id('veil'),
+      type: 'shape',
+      name: elementSlotName('statement', 'veil'),
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      fill: v.c.ink,
+      opacity: 0.35,
+    });
+  }
   if (v.editorial) s.rule('rule', 8, 17, 5, v.c.accent, 1.5);
-  const kickerColor = v.editorial ? v.c.onInkBody : v.c.onAccentBody;
+  const kickerColor = soft;
   kickerLine(s, v, content.kicker, [8, 11, 60, 4.5], kickerColor);
   const size = fitTypeSize(content.title, [8, 22, 76, 46], v.editorial ? 56 : 58, 40, {
     role: 'title',
@@ -572,13 +699,24 @@ function composeStatement(content: CompositionContent, options: ComposeSlideOpti
       lineHeight: 1.4,
       valign: 'top',
     });
+  if (artwork) s.credit(artwork, [8, 88, 60, 6], soft);
   pageNumber(s, options, soft);
   return {
     id: options.slideId,
     title: content.title,
     elements: s.elements,
     background: ground,
-    ...notes(content),
+    ...(artwork
+      ? {
+          backgroundImage: {
+            assetId: artwork.asset.assetId,
+            src: artwork.asset.src,
+            opacity: 0.28,
+            focal: artwork.asset.focal ?? { x: 0.5, y: 0.4 },
+          },
+        }
+      : {}),
+    ...notes(content, artwork),
   };
 }
 
@@ -591,7 +729,12 @@ function composeImageSide(
   const role = side === 'left' ? 'image-left' : 'image-right';
   const s = new Slide(role, options);
   const imageBox: Box = side === 'left' ? [0, 0, 46, 100] : [54, 0, 46, 100];
-  const hasImage = content.image ? s.image('image', content.image, imageBox, { x: 0.45, y: 0.5 }) : false;
+  const artwork = artworkFor(content);
+  let hasImage = content.image ? s.image('image', content.image, imageBox, { x: 0.45, y: 0.5 }) : false;
+  if (!hasImage && artwork) {
+    s.artwork('image', artwork, imageBox, { x: 0.5, y: 0.4 });
+    hasImage = true;
+  }
   const x = hasImage && side === 'left' ? 52 : 6;
   if (hasImage) {
     kickerLine(s, v, content.kicker, [x, 12, 40, 4.5]);
@@ -607,6 +750,7 @@ function composeImageSide(
       if (v.editorial) s.rule('rule', x, 72, 42, v.c.soft, 1);
       factsRow(s, v, content.items, x, 42, 75);
     }
+    if (artwork) s.credit(artwork, [x, 89, 33, 6], v.c.muted);
   } else if (side === 'left') {
     // Typographic variant: the text takes the full measure and the facts spread across it.
     kickerLine(s, v, content.kicker, [6, 12, 40, 4.5]);
@@ -653,8 +797,9 @@ function composeImageSide(
       });
     }
   }
-  pageNumber(s, options, v.c.muted);
-  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+  // A right-hand image owns the corner, so the page number moves into the text column.
+  pageNumber(s, options, v.c.muted, hasImage && side === 'right' ? 40 : 86);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
 }
 
 function chartColors(v: Voice) {
@@ -970,10 +1115,18 @@ function composeList(content: CompositionContent, options: ComposeSlideOptions):
 function composeQuote(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
   const v = voice(options.theme);
   const s = new Slide('quote', options);
-  s.upright('rule', 10, 22, 44, v.c.accent, 2);
-  kickerLine(s, v, content.kicker, [13, 12, 60, 4.5]);
-  const size = fitTypeSize(content.title, [13, 22, 74, 44], 44, 28, { role: 'title', lineHeight: 1.1 });
-  s.text('title', content.title, [13, 22, 74, 44], {
+  const artwork = artworkFor(content);
+  // Artwork variant: the painting takes the left third and the quote moves right of it.
+  if (artwork) s.artwork('image', artwork, [0, 0, 32, 100], { x: 0.5, y: 0.4 });
+  const x = artwork ? 41 : 13;
+  const width = artwork ? 50 : 74;
+  s.upright('rule', x - 3, 22, 44, v.c.accent, 2);
+  kickerLine(s, v, content.kicker, [x, 12, width, 4.5]);
+  const size = fitTypeSize(content.title, [x, 22, width, 44], artwork ? 40 : 44, 28, {
+    role: 'title',
+    lineHeight: 1.1,
+  });
+  s.text('title', content.title, [x, 22, width, 44], {
     role: 'title',
     fontSize: size,
     lineHeight: 1.1,
@@ -982,7 +1135,7 @@ function composeQuote(content: CompositionContent, options: ComposeSlideOptions)
     ...v.display,
   });
   if (content.body)
-    s.text('body', content.body, [13, 70, 60, 8], {
+    s.text('body', content.body, [x, 70, artwork ? 46 : 60, 8], {
       role: 'body',
       fontSize: 14,
       color: v.c.muted,
@@ -990,21 +1143,22 @@ function composeQuote(content: CompositionContent, options: ComposeSlideOptions)
       valign: 'top',
     });
   content.items.slice(0, 1).forEach((item, i) => {
-    s.text(`item-${i}-label`, item.label, [13, 80, 40, 5], {
+    s.text(`item-${i}-label`, item.label, [x, 80, 40, 5], {
       role: 'caption',
       fontSize: 12,
       valign: 'top',
       ...v.display,
     });
-    s.text(`item-${i}-detail`, item.detail, [13, 85, 40, 4], {
+    s.text(`item-${i}-detail`, item.detail, [x, 85, 40, 4], {
       role: 'caption',
       fontSize: 11,
       color: v.c.muted,
       valign: 'top',
     });
   });
+  if (artwork) s.credit(artwork, [x, 89, 40, 6], v.c.muted);
   pageNumber(s, options, v.c.muted);
-  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
 }
 
 function composeClose(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
@@ -1013,9 +1167,13 @@ function composeClose(content: CompositionContent, options: ComposeSlideOptions)
   const ground = v.editorial ? v.c.background : v.c.ink;
   const ink = v.editorial ? v.c.ink : v.paper;
   const muted = v.editorial ? v.c.muted : v.c.onInkBody;
-  kickerLine(s, v, content.kicker, [6, 9, 40, 4.5], v.editorial ? v.c.accent : v.c.onInkBody);
-  const size = fitTypeSize(content.title, [6, 14, 60, 18], 44, 32, { role: 'title', lineHeight: 1.02 });
-  s.text('title', content.title, [6, 14, 60, 18], {
+  const artwork = artworkFor(content);
+  // Art strip variant: a narrow band of the painting along the top edge; the head moves down 2 percent.
+  if (artwork) s.artwork('image', artwork, [0, 0, 100, 8], { x: 0.5, y: 0.35 });
+  const top = artwork ? 2 : 0;
+  kickerLine(s, v, content.kicker, [6, 9 + top, 40, 4.5], v.editorial ? v.c.accent : v.c.onInkBody);
+  const size = fitTypeSize(content.title, [6, 14 + top, 60, 18], 44, 32, { role: 'title', lineHeight: 1.02 });
+  s.text('title', content.title, [6, 14 + top, 60, 18], {
     role: 'title',
     fontSize: size,
     lineHeight: 1.02,
@@ -1025,12 +1183,14 @@ function composeClose(content: CompositionContent, options: ComposeSlideOptions)
   });
   const items = content.items.slice(0, 4);
   const layout = columns(items.length);
+  // The numerals take the accent only where it clears the display floor on this ground.
+  const numeral = (contrastRatio(v.c.accent, ground) ?? 0) >= 3 ? v.c.accent : ink;
   items.forEach((item, i) => {
     const x = 6 + i * layout.pitch;
     s.text(`item-${i}-number`, String(i + 1), [x, 44, 8, 12], {
       role: 'number',
       fontSize: 44,
-      color: v.c.accent,
+      color: numeral,
       valign: 'top',
       ...v.display,
     });
@@ -1056,24 +1216,27 @@ function composeClose(content: CompositionContent, options: ComposeSlideOptions)
   });
   s.rule('rule', 6, 90, 88, v.editorial ? v.c.soft : v.c.onInkRule, 1);
   if (content.body)
-    s.text('body', content.body, [6, 92, 60, 5], {
+    s.text('body', content.body, [6, 92, artwork ? 38 : 60, 5], {
       role: 'caption',
       fontSize: 11,
       color: muted,
       valign: 'top',
     });
+  if (artwork) s.credit(artwork, [46, 92, 38, 6], muted, 'right');
   pageNumber(s, options, muted);
   return {
     id: options.slideId,
     title: content.title,
     elements: s.elements,
     background: ground,
-    ...notes(content),
+    ...notes(content, artwork),
   };
 }
 
-function notes(content: CompositionContent) {
-  return content.notes?.trim() ? { notes: content.notes } : {};
+/** Speaker notes: the content's own notes, plus the artwork line when a painting was hung. */
+function notes(content: CompositionContent, artwork?: CompositionArtwork) {
+  if (!artwork) return content.notes?.trim() ? { notes: content.notes } : {};
+  return { notes: withArtworkNote(content.notes, artwork) };
 }
 
 /** Compose one slide through its composition. */
