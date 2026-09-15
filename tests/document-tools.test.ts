@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
+import { documentEditsSchema } from '../lib/documents/edits';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
 import {
   __setDocumentToolDepsForTest,
   documentApplyInstruction,
   documentCreate,
+  documentEdit,
   documentExport,
   documentGet,
   documentList,
@@ -327,6 +330,46 @@ describe('document tools', () => {
         sourceContext: undefined,
       }),
     ).rejects.toThrow('file changed while Albatross was editing');
+  });
+
+  test('an explicit deck_restyle applies a version 2 revision directly and the tools describe it', async () => {
+    const current = record({ kind: 'deck', model: referenceDeck('editorial') });
+    const update = mock(async (input: any) => ({
+      ok: true,
+      document: { ...current, model: input.model, currentRevision: 3 },
+    }));
+    const suggestion = mock(async () => ({ ok: true, suggestionId: 'never' }));
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => ({ ...current, suggestions: [] })) as any,
+      createDocumentSuggestion: suggestion as any,
+      updateDocument: update as any,
+    });
+    const result = await runTool(documentEdit.handler, {
+      documentId: current.documentId,
+      expectedRevision: 2,
+      mode: 'apply',
+      summary: 'Signal palette with sans fonts',
+      operations: [{ op: 'deck_restyle', palette: 'signal', fontPair: 'sans', scope: 'theme' }],
+    });
+    expect(result).toMatchObject({ ok: true, status: 'applied', revision: 3 });
+    expect(suggestion).not.toHaveBeenCalled();
+    expect(update.mock.calls[0][0]).toMatchObject({
+      expectedRevision: 2,
+      actor: 'ai',
+      model: { kind: 'deck', version: 2, theme: DECK_THEMES.signal },
+    });
+    const chart = referenceDeck('editorial').slides[3].elements.find((e) => e.id === 'm-chart');
+    expect(
+      update.mock.calls[0][0].model.slides[3].elements.find((e: any) => e.id === 'm-chart'),
+    ).toMatchObject({
+      series: chart?.type === 'chart' ? chart.series : null,
+    });
+    expect(documentEdit.description).toContain('deck_restyle');
+    expect(documentEdit.description).toContain('theme-and-layout');
+    expect(documentEdit.description).toContain('mode apply');
+    expect(documentCreate.description).toContain('image-left');
+    expect(documentCreate.description).toContain('editorial');
+    expect(documentEdit.input.shape.operations).toBe(documentEditsSchema);
   });
 
   test('does not claim a proposal exists if its file disappeared during generation', async () => {

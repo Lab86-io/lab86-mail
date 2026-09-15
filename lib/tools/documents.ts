@@ -51,7 +51,7 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. A presentation is designed from an art-direction brief (audience, purpose, tone, palette editorial or signal, font pair serif or sans) and composed through eleven slide compositions: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Numbers and charts appear only when sourceContext supplies them. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -376,7 +376,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements (use deck_restyle for a consistent dark/light theme across all slides without coordinate generation; element coordinates are percentages 0–100, width/height at least 1), or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, or six custom hex colors), fontPair (serif or sans), and scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({

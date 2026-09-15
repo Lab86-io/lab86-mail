@@ -8,10 +8,13 @@ import {
   parseDocumentModel,
   type SuggestionPayload,
 } from './model';
+import { FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
+import { deckPaletteColorsSchema, restyleDeck } from './presentation-design';
 import { assertModelWithinLimit, parseCellAddress, sheetChangeSchema } from './sheet-workbook';
 import { spreadsheetCommandSchema, validateSpreadsheetCommand } from './spreadsheet-commands';
 
 const id = z.string().min(1).max(200);
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const block = docModelSchema.shape.blocks.element;
 const blockPatch = z.object(block.shape).omit({ id: true }).partial().strict();
 const slide = deckSlideV2Schema;
@@ -32,13 +35,22 @@ export const documentEditOperationSchema = z.discriminatedUnion('op', [
   z
     .object({
       op: z.literal('deck_restyle'),
-      theme: z.enum(['dark', 'light']),
-      accent: z
-        .string()
-        .regex(/^#[0-9a-fA-F]{6}$/)
-        .default('#7c83ff'),
+      /** Named palette or a custom six-color set. Omit to keep the current colors. */
+      palette: z.union([z.enum(PALETTE_NAMES), deckPaletteColorsSchema]).optional(),
+      /** serif: Fraunces display with Geist text. sans: Geist throughout. Omit to keep the current fonts. */
+      fontPair: z.enum(FONT_PAIR_NAMES).optional(),
+      /** theme: colors and fonts only. theme-and-layout: also recompose every slide; facts, charts, notes and order stay. */
+      scope: z.enum(['theme', 'theme-and-layout']).default('theme'),
+      /** Elements kept exactly as they are, in addition to elements marked locked. */
+      lockedElementIds: z.array(id).max(500).optional(),
+      /** Legacy form: dark or light with one accent. Kept for older callers. */
+      theme: z.enum(['dark', 'light']).optional(),
+      accent: hexColor.optional(),
     })
-    .strict(),
+    .strict()
+    .refine((value) => value.theme || value.palette || value.fontPair || value.scope === 'theme-and-layout', {
+      message: 'deck_restyle needs a palette, a fontPair, a layout scope, or the legacy theme.',
+    }),
   z.object({ op: z.literal('slide_insert'), slide, ...position }).strict(),
   z
     .object({
@@ -196,29 +208,42 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
       if (model.kind !== 'deck') throw new Error('Slide and element edits require a presentation.');
       switch (operation.op) {
         case 'deck_restyle': {
-          // Theme every slide without inventing geometry or replacing its content.
-          const ink = operation.theme === 'dark' ? '#f3f4f6' : '#111827';
-          model.theme = {
-            ...model.theme,
-            colors: {
-              ...model.theme.colors,
-              background: operation.theme === 'dark' ? '#111827' : '#ffffff',
-              ink,
-              accent: operation.accent,
-            },
-          };
-          for (const target of model.slides) {
-            target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
-            for (const item of target.elements) {
-              if (item.type === 'shape') {
-                item.fill = operation.accent;
-                continue;
+          if (operation.theme) {
+            // Legacy form: theme every slide without inventing geometry or replacing its content.
+            const accent = operation.accent ?? '#7c83ff';
+            const ink = operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+            model.theme = {
+              ...model.theme,
+              colors: {
+                ...model.theme.colors,
+                background: operation.theme === 'dark' ? '#111827' : '#ffffff',
+                ink,
+                accent,
+              },
+            };
+            for (const target of model.slides) {
+              target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
+              for (const item of target.elements) {
+                if (item.type === 'shape') {
+                  item.fill = accent;
+                  continue;
+                }
+                if (item.type !== 'text') continue;
+                item.color = item.role === 'title' ? accent : ink;
+                item.fontSize ??= item.role === 'title' ? 28 : 16;
               }
-              if (item.type !== 'text') continue;
-              item.color = item.role === 'title' ? operation.accent : ink;
-              item.fontSize ??= item.role === 'title' ? 28 : 16;
             }
+            break;
           }
+          // Palette, fonts and optionally layout change; facts, charts, notes, order and locked elements stay.
+          const restyled = restyleDeck(model, {
+            ...(operation.palette ? { palette: operation.palette } : {}),
+            ...(operation.fontPair ? { fontPair: operation.fontPair } : {}),
+            scope: operation.scope,
+            ...(operation.lockedElementIds ? { lockedElementIds: operation.lockedElementIds } : {}),
+          });
+          model.theme = restyled.theme;
+          model.slides = restyled.slides;
           break;
         }
         case 'slide_insert':
