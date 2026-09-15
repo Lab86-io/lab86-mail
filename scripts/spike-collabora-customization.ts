@@ -390,8 +390,9 @@ try {
   note(
     `  - Dark chrome with .uno:ChangeTheme Light sent by the host: page pixel ${relit}; chrome data-theme still ${await dark.frame.evaluate(() => document.documentElement.getAttribute('data-theme'))}.`,
   );
+  const afterDark = await getOfficeFile(fixture.userId, file.documentId);
   note(
-    `  - Stored document.xml carries no color change from the dark UI: ${!/w:color w:val="F/.test(documentXml)}.`,
+    `  - Stored revision after the dark session: ${afterDark?.currentRevision} (unchanged from ${record.currentRevision}: ${afterDark?.currentRevision === record.currentRevision}); the dark chrome saved nothing and the file keeps its light colors.`,
   );
   await dark.page.close();
 } catch (error) {

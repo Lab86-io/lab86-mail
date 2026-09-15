@@ -152,6 +152,15 @@ export const deckThemeSchema = z.object({
     body: deckFontSchema,
     mono: deckFontSchema.optional(),
   }),
+  /** How artwork is used across the deck: none, or public-domain paintings in the named styles. */
+  imagery: z
+    .object({
+      mode: z.enum(['none', 'paintings']),
+      styles: z.array(z.string().max(40)).max(6).optional(),
+      /** Deck-wide subject words that guide artwork searches. */
+      subject: z.string().max(200).optional(),
+    })
+    .optional(),
 });
 
 const deckElementBase = {

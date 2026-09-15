@@ -187,7 +187,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
     ? element.colors.map((color) => slideColor(color, '#17202A'))
     : CHART_PALETTE_FALLBACK;
   const width = 400;
-  const height = 400 * (element.height / element.width) * (9 / 16);
+  const height = Math.max(120, 400 * (element.height / Math.max(1, element.width)) * (9 / 16));
   const labelSize = 9;
   const showLegend = element.legend ?? element.series.length > 1;
   const legendHeight = showLegend ? 14 : 0;
@@ -195,7 +195,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   if (element.chart === 'pie' || element.chart === 'doughnut') {
     const values = element.series[0]?.values ?? [];
     const total = values.reduce((sum, value) => sum + Math.max(0, value), 0) || 1;
-    const radius = Math.min(width, height - legendHeight) / 2 - 6;
+    const radius = Math.max(4, Math.min(width, height - legendHeight) / 2 - 6);
     const cx = width / 2;
     const cy = (height - legendHeight) / 2;
     let angle = -Math.PI / 2;
@@ -227,7 +227,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
         {showLegend
           ? element.categories.map((category, index) => (
               <g
-                key={category}
+                key={`${category}-${index}`}
                 transform={`translate(${8 + index * (width / element.categories.length)}, ${height - 6})`}
               >
                 <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
@@ -246,7 +246,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   const padTop = element.values ? 8 + labelSize + 4 : 8;
   const padBottom = 18 + legendHeight;
   const plotW = width - padLeft - 8;
-  const plotH = height - padBottom - padTop;
+  const plotH = Math.max(10, height - padBottom - padTop);
   const ticks = [0, 0.5, 1];
   const grid = ticks.map((tick) => (
     <g key={tick}>
@@ -340,7 +340,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   }
   const labels = element.categories.map((category, index) => (
     <text
-      key={category}
+      key={`${category}-${index}`}
       x={padLeft + slot * (index + 0.5)}
       y={padTop + plotH + 11}
       fontSize={labelSize}
@@ -353,7 +353,7 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   ));
   const legend = showLegend
     ? element.series.map((series, index) => (
-        <g key={series.name} transform={`translate(${padLeft + index * 80}, ${height - 5})`}>
+        <g key={`${series.name}-${index}`} transform={`translate(${padLeft + index * 80}, ${height - 5})`}>
           <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
           <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
             {series.name}

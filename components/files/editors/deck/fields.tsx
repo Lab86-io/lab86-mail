@@ -93,7 +93,9 @@ export function NumberField({
               return;
             }
             const next = Number(raw);
-            if (Number.isFinite(next)) onChange(next);
+            if (!Number.isFinite(next)) return;
+            const low = typeof min === 'number' ? Math.max(min, next) : next;
+            onChange(typeof max === 'number' ? Math.min(max, low) : low);
           }}
         />
         {unit ? <span className="deck-number-unit">{unit}</span> : null}

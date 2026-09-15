@@ -3,6 +3,16 @@ import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 const owner = { internalSecret: v.optional(v.string()), userId: v.string() };
+const attribution = v.object({
+  title: v.string(),
+  artist: v.string(),
+  date: v.string(),
+  credit: v.string(),
+  source: v.string(),
+  sourceUrl: v.string(),
+  license: v.string(),
+  style: v.optional(v.string()),
+});
 
 export const uploadUrl = mutation({
   args: owner,
@@ -22,6 +32,7 @@ export const create = mutation({
     width: v.number(),
     height: v.number(),
     sha256: v.string(),
+    attribution: v.optional(attribution),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -38,6 +49,7 @@ export const create = mutation({
         height: existing.height,
         mime: existing.mime,
         size: existing.size,
+        attribution: existing.attribution,
       };
     }
     const id = await ctx.db.insert('documentAssets', {
@@ -49,6 +61,7 @@ export const create = mutation({
       height: args.height,
       sha256: args.sha256,
       createdAt: now(),
+      ...(args.attribution ? { attribution: args.attribution } : {}),
     });
     return {
       assetId: id,
@@ -57,6 +70,7 @@ export const create = mutation({
       height: args.height,
       mime: args.mime,
       size: args.size,
+      attribution: args.attribution,
     };
   },
 });
@@ -76,6 +90,7 @@ export const get = query({
       height: row.height,
       mime: row.mime,
       size: row.size,
+      attribution: row.attribution,
     };
   },
 });

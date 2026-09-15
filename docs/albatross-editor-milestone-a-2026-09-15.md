@@ -199,7 +199,6 @@ centered cover crop.
 - Asset upload for images through owned storage. Fixtures use the app's art files.
 - Generation on the version 2 model with an art-direction brief (milestone D).
 - PowerPoint visual check of the exported file.
-- Collabora integration in `startCollaboraSession` and `CollaboraFrame`: pass
-  `ui_defaults` and `css_variables`, post the hide and insert messages after
-  `Document_Loaded`, and send `.uno:ChangeTheme Light` under a dark application theme.
-- The native preview shows slide text only. A native canvas for version 2 is later work.
+- Delivered in the same pull request: the Collabora integration (`collabora-chrome.ts`,
+  `CollaboraFrame`, `OfficeEditor`) and the editor chrome for milestone C.
+- The native canvas for version 2 decks is in progress on this branch.

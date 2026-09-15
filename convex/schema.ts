@@ -1739,6 +1739,18 @@ export default defineSchema({
     height: v.number(),
     sha256: v.string(),
     createdAt: v.number(),
+    attribution: v.optional(
+      v.object({
+        title: v.string(),
+        artist: v.string(),
+        date: v.string(),
+        credit: v.string(),
+        source: v.string(),
+        sourceUrl: v.string(),
+        license: v.string(),
+        style: v.optional(v.string()),
+      }),
+    ),
   })
     .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt'])

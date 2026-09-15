@@ -84,6 +84,10 @@ export interface RenderDeckHtmlOptions {
   publicDir?: string;
 }
 
+function escapeAttribute(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** One page with every slide stacked, each inside a fixed 1920 by 1080 frame. */
 export async function renderDeckHtml(model: DeckModelV2, options: RenderDeckHtmlOptions = {}) {
   const publicDir = options.publicDir ?? path.resolve(process.cwd(), 'public');
@@ -91,7 +95,7 @@ export async function renderDeckHtml(model: DeckModelV2, options: RenderDeckHtml
   const slides = deck.slides
     .map(
       (slide, index) =>
-        `<div class="slide-frame" data-slide-index="${index}" data-slide-id="${slide.id}">${renderToStaticMarkup(
+        `<div class="slide-frame" data-slide-index="${index}" data-slide-id="${escapeAttribute(slide.id)}">${renderToStaticMarkup(
           createElement(SlideSurface, { slide, theme: deck.theme }),
         )}</div>`,
     )
