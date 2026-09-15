@@ -446,6 +446,19 @@ describe('generateIntentPlan orchestration', () => {
     return { calls, intent };
   }
 
+  test('planner research tool results retain source identity and grounded reference IDs', async () => {
+    const { calls } = wire({});
+    await generateIntentPlan({ userId: 'user_1', intentId: 'intent_1' });
+    const planning = calls.generations.find((call) => call.feature === 'albatross_plan');
+    const result = await planning.tools.corpus_search.execute({ query: 'NYS taxes' });
+    expect(result.items).toHaveLength(CORPUS_ITEMS.length);
+    expect(result.items[0]).toMatchObject({ ...CORPUS_ITEMS[0], refId: expect.any(String) });
+    const repeated = await planning.tools.corpus_search.execute({ query: 'NYS taxes' });
+    expect(repeated.items.map((item: any) => item.refId)).toEqual(
+      result.items.map((item: any) => item.refId),
+    );
+  });
+
   test('narrative Work/Area decisions reach generation and are usable as grounded plan citations', async () => {
     const packet: NarrativeContextPacket = {
       ...emptyNarrativeContext('work'),

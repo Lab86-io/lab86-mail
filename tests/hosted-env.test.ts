@@ -4,6 +4,7 @@ import {
   convexInternalSecret,
   convexUrl,
   hostedPublicUrl,
+  isClerkBillingConfigured,
   isClerkConfigured,
   isConvexConfigured,
   isNylasConfigured,
@@ -18,6 +19,9 @@ describe('hosted env detectors', () => {
     'CONVEX_URL',
     'NYLAS_API_KEY',
     'NYLAS_CLIENT_ID',
+    'CLERK_BILLING_CHECKOUT_URL',
+    'NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL',
+    'LAB86_DISABLE_SUBSCRIPTIONS',
   ];
   const saved: Record<string, string | undefined> = {};
   const set = (k: string, v: string | undefined) => {
@@ -52,6 +56,20 @@ describe('hosted env detectors', () => {
     set('NYLAS_API_KEY', 'k');
     set('NYLAS_CLIENT_ID', 'c');
     expect(isNylasConfigured()).toBe(true);
+  });
+
+  test('Clerk billing requires authentication, a checkout URL, and enabled subscriptions', () => {
+    set('CLERK_BILLING_CHECKOUT_URL', 'https://billing.example.test/checkout');
+    expect(isClerkBillingConfigured()).toBe(false);
+    set('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test');
+    set('CLERK_SECRET_KEY', 'sk_test');
+    expect(isClerkBillingConfigured()).toBe(true);
+    set('CLERK_BILLING_CHECKOUT_URL', undefined);
+    expect(isClerkBillingConfigured()).toBe(false);
+    set('NEXT_PUBLIC_CLERK_BILLING_CHECKOUT_URL', 'https://billing.example.test/checkout');
+    expect(isClerkBillingConfigured()).toBe(true);
+    set('LAB86_DISABLE_SUBSCRIPTIONS', '1');
+    expect(isClerkBillingConfigured()).toBe(false);
   });
 
   test('convexUrl honors NEXT_PUBLIC_CONVEX_URL and prefers it over CONVEX_URL', () => {
