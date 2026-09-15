@@ -9,8 +9,10 @@ import {
 import { captureFromChat } from '@/lib/albatross/capture-from-chat';
 import { HORIZON_KINDS } from '@/lib/albatross/horizon';
 import { generateIntentPlan } from '@/lib/albatross/intent-plan';
+import { progressEvidenceSchema } from '@/lib/albatross/progress-evidence';
 import { shapePlans } from '@/lib/albatross/shape-policy';
 import { commitWorkSplit, proposeWorkSplit } from '@/lib/albatross/split-work';
+import { isTerminalWork } from '@/lib/albatross/work-lifecycle';
 import {
   type AlbatrossApplicationStep,
   appliedStepsFromApplyResult,
@@ -157,36 +159,6 @@ const planSchema = z
     sourceRefs: z.array(sourceRefSchema).optional(),
   })
   .passthrough();
-
-const workEvidenceKindSchema = z.enum([
-  'mail_thread',
-  'calendar_event',
-  'task',
-  'chat',
-  'question_answer',
-  'area_fact',
-  'github_issue',
-  'github_pull_request',
-  'github_project',
-  'github_project_item',
-  'github_commit',
-  'mcp_item',
-  'manual',
-]);
-
-const progressEvidenceSchema = z.object({
-  sourceKind: workEvidenceKindSchema.exclude(['chat', 'question_answer']),
-  sourceId: z.string().min(1).max(500),
-  title: z.string().min(1).max(300),
-  summary: z.string().max(1_200).optional(),
-  claim: z.string().min(1).max(600).optional(),
-  limits: z.string().max(600).optional(),
-  url: z.string().max(2_000).optional(),
-  connectionId: z.string().max(180).optional(),
-  accountId: z.string().max(320).optional(),
-  occurredAt: z.number().optional(),
-  trust: z.enum(['observed', 'inferred']).default('observed'),
-});
 
 function progressSourceId(workId: string, claim: string, operationBatchId?: string) {
   const claimHash = createHash('sha256').update(`${workId}\u001f${claim.trim()}`).digest('hex').slice(0, 24);
@@ -609,10 +581,32 @@ export const albatrossMetricLog = defineTool({
   },
 });
 
+export const albatrossCompleteWork = defineTool({
+  name: 'albatross_complete_work',
+  description:
+    'Complete an existing Albatross when the user explicitly says its outcome is done. Saves their statement and closes it immediately. No research, evidence attachments, or replanning required. Does not complete merely related work.',
+  category: 'tasks',
+  mutating: true,
+  input: z.object({ workId: z.string().min(1), claim: z.string().min(1).max(2_000) }),
+  output: z.object({ ok: z.boolean(), workId: z.string(), state: z.literal('done'), summary: z.string() }),
+  async handler(args, ctx) {
+    const result = await deps.convexMutation<any>(workV2Api().completeWork, {
+      userId: requireUserId(ctx.userId),
+      ...args,
+    });
+    return {
+      ok: true,
+      workId: args.workId,
+      state: 'done' as const,
+      summary: `Completed ${result.title || 'this Albatross'}.`,
+    };
+  },
+});
+
 export const albatrossRecordProgress = defineTool({
   name: 'albatross_record_progress',
   description:
-    "Persist the user's authoritative progress statement on an existing Albatross Work item, optionally attach corroborating evidence found in mail/calendar/tasks/Granola/GitHub/files/web, and answer any pending Work question the statement resolves. Call this before replanning.",
+    "Persist the user's authoritative progress statement on an existing Albatross Work item, optionally attach corroborating evidence found in mail/calendar/tasks/Granola/GitHub/files/web, and answer any pending Work question the statement resolves. For partial progress only: replan only if the returned state is still active. For an explicit completed outcome, use albatross_complete_work instead. The user report belongs in claim, never duplicate it in evidence.",
   category: 'tasks',
   mutating: true,
   input: z.object({
@@ -637,6 +631,8 @@ export const albatrossRecordProgress = defineTool({
     workId: z.string(),
     claim: z.string(),
     evidenceRecorded: z.number(),
+    state: z.string(),
+    warnings: z.array(z.string()),
     questionsAnswered: z.number(),
     summary: z.string(),
   }),
@@ -659,22 +655,31 @@ export const albatrossRecordProgress = defineTool({
       trust: 'confirmed',
     });
 
+    const warnings: string[] = [];
+    let evidenceRecorded = 1;
     for (const evidence of args.evidence || []) {
-      await deps.convexMutation(workV2Api().attachProof, {
-        userId,
-        workId: args.workId,
-        claim: evidence.claim || args.claim,
-        title: evidence.title,
-        summary: evidence.summary,
-        limits: evidence.limits,
-        sourceKind: evidence.sourceKind,
-        sourceId: evidence.sourceId,
-        connectionId: evidence.connectionId,
-        accountId: evidence.accountId,
-        occurredAt: evidence.occurredAt,
-        url: evidence.url,
-        trust: evidence.trust,
-      });
+      try {
+        await deps.convexMutation(workV2Api().attachProof, {
+          userId,
+          workId: args.workId,
+          claim: evidence.claim || args.claim,
+          title: evidence.title,
+          summary: evidence.summary,
+          limits: evidence.limits,
+          sourceKind: evidence.sourceKind,
+          sourceId: evidence.sourceId,
+          connectionId: evidence.connectionId,
+          accountId: evidence.accountId,
+          occurredAt: evidence.occurredAt,
+          url: evidence.url,
+          trust: evidence.trust,
+        });
+        evidenceRecorded += 1;
+      } catch {
+        warnings.push(
+          `Could not verify the attached source: ${evidence.title}. The progress report is saved.`,
+        );
+      }
     }
 
     for (const answer of args.questionAnswers || []) {
@@ -686,12 +691,14 @@ export const albatrossRecordProgress = defineTool({
       });
     }
 
-    const evidenceRecorded = 1 + (args.evidence?.length || 0);
+    const fresh = await deps.convexQuery<any>(workV2Api().workDetail, { userId, workId: args.workId });
     return {
       ok: true,
       workId: args.workId,
       claim: args.claim,
       evidenceRecorded,
+      state: fresh?.work?.workState || fresh?.work?.status || 'active',
+      warnings,
       questionsAnswered: args.questionAnswers?.length || 0,
       summary: `Recorded the progress report with ${evidenceRecorded} evidence ${evidenceRecorded === 1 ? 'entry' : 'entries'}.`,
     };
@@ -731,6 +738,22 @@ export const albatrossReplanWork = defineTool({
       workId: args.workId,
     });
     if (!before?.work) throw new Error('Albatross Work not found.');
+    if (isTerminalWork(before.work)) {
+      return {
+        ok: true,
+        workId: args.workId,
+        planId: String(before.plan?._id || ''),
+        title: String(before.work.title || 'Albatross'),
+        changed: false,
+        keptSteps: [],
+        removedSteps: [],
+        addedSteps: [],
+        actionsApplied: 0,
+        calendarEventsCreated: 0,
+        needsInput: false,
+        summary: 'This Albatross is already closed. No replanning is needed.',
+      };
+    }
     // The shape policy: a list, a practice, a monitor, or a routine keeps no
     // plan. Say so before any state changes, so nothing reads as an error.
     if (shapePlans(before.work.shape) === 'no') {
@@ -1011,6 +1034,9 @@ export const albatrossApplyIntentPlan = defineTool({
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
+    const current = await deps.convexQuery<any>(workV2Api().workDetail, { userId, workId: args.intentId });
+    if (current?.work && isTerminalWork(current.work))
+      throw new Error('This Albatross is closed. No more plan actions can be applied.');
     const operationBatchId = args.operationBatchId || ctx.operationBatchId || deps.newOperationBatchId();
     const [account, areaBoardId] = await Promise.all([
       args.account ? Promise.resolve(args.account) : resolveDefaultAccount(userId),

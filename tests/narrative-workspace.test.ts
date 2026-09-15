@@ -244,7 +244,9 @@ describe('Today workspace composition and trust boundary', () => {
     const deps = harness();
     const initial = await deps.snapshot();
     deps.snapshot.mockResolvedValueOnce(initial).mockResolvedValueOnce(null);
-    await expect(loadNarrativeWorkspace('owner', now, true, undefined, deps)).rejects.toMatchObject({
+    await expect(
+      loadNarrativeWorkspace('owner', now, true, new AbortController().signal, deps),
+    ).rejects.toMatchObject({
       status: 409,
     });
     expect(deps.record).not.toHaveBeenCalled();
@@ -319,4 +321,18 @@ describe('Today workspace composition and trust boundary', () => {
     expect(providerSignal?.aborted).toBe(false);
     expect(deps.generate).toHaveBeenCalledTimes(1);
   });
+});
+
+test('a thread with completed and active Work retains its active Work regardless of ordering', () => {
+  const entries = [source('one', { topics: ['work:done', 'work:active'] })];
+  const works = [
+    { id: 'done', title: 'Completed', state: 'done', guided: false },
+    { id: 'active', title: 'Still needed', state: 'active', guided: false },
+  ];
+  for (const ordered of [works, [...works].reverse()]) {
+    const result = hydrateWorkspace(composition, entries, ordered, 'v', 'generated');
+    expect(result.threads).toHaveLength(1);
+    expect(result.threads[0].work?.id).toBe('active');
+  }
+  expect(hydrateWorkspace(composition, entries, [works[0]], 'v', 'generated').threads).toEqual([]);
 });

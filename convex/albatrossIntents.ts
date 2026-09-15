@@ -8,6 +8,7 @@ import {
   progressFromPlanCompletions,
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
+import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -351,6 +352,7 @@ export const updateIntent = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    const terminal = isTerminalWork(intent);
     const ts = now();
     const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
@@ -361,16 +363,17 @@ export const updateIntent = mutation({
       patch.areaAutoAssigned = false;
     }
     if (args.priority !== undefined) patch.priority = Math.min(Math.max(Math.round(args.priority), 1), 3);
-    if (args.status !== undefined) {
+    if (!terminal && args.status !== undefined) {
       patch.status = args.status;
       if (args.status === 'applied') patch.appliedAt = ts;
     }
-    if (args.planError !== undefined) patch.planError = bounded(args.planError, 500) || undefined;
+    if (!terminal && args.planError !== undefined)
+      patch.planError = bounded(args.planError, 500) || undefined;
     await ctx.db.patch(args.intentId, patch);
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     // Completion history (issue #87/#18): only a real transition into 'done'
     // records an event; re-saving an already-done intent does not.
-    if (args.status === 'done' && intent.status !== 'done') {
+    if (!terminal && args.status === 'done' && intent.status !== 'done') {
       await recordCompletionEvent(ctx, {
         userId,
         artifactKind: 'intent',
@@ -499,6 +502,7 @@ export const answerQuestions = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    assertWorkOpen(intent);
     const ts = now();
     const byId = new Map(
       args.answers.map((entry) => [
@@ -566,6 +570,7 @@ export const savePlan = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
+    assertWorkOpen(intent);
     const ts = now();
     const openQuestions = (args.questions || []).filter((question) => !question.answer);
     const planStatus = openQuestions.length ? 'needs_answers' : 'ready';
@@ -906,6 +911,7 @@ export const markPlanApplied = mutation({
     const userId = await resolveUserId(ctx, args);
     const plan = await requirePlan(ctx, args.planId, userId);
     const intent = await ctx.db.get(plan.intentId);
+    if (intent) assertWorkOpen(intent);
     if (!intent || intent.userId !== userId) throw new Error('Intent not found.');
     if (intent.pendingPlanId && intent.pendingPlanId !== plan._id) {
       throw new Error('A newer plan revision is waiting to be applied.');

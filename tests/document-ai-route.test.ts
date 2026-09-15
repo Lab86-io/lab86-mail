@@ -3,8 +3,30 @@ import { NextRequest } from 'next/server';
 import { createDocumentAiPost } from '../app/api/documents/[documentId]/ai/route';
 import { DocumentGenerationError } from '../lib/documents/ai';
 import { createDefaultDocumentModel } from '../lib/documents/model';
+import { DocumentTooLargeError } from '../lib/documents/sheet-workbook';
 
 describe('document AI route', () => {
+  test('oversized generated workbooks return 413 without reporting an unexpected server error', async () => {
+    const reportUnexpectedError = mock(() => {});
+    const post = createDocumentAiPost({
+      requireCurrentUser: async () => ({ userId: 'owner' }),
+      enforceUserRateLimit: async () => {},
+      getDocument: async () => ({ kind: 'sheet', currentRevision: 1 }),
+      generateDocumentProposal: async () => {
+        throw new DocumentTooLargeError(2_000_000);
+      },
+      reportUnexpectedError,
+    } as any);
+    const result = await post(
+      new NextRequest('http://localhost/api/documents/workbook/ai', {
+        method: 'POST',
+        body: JSON.stringify({ instruction: 'Expand the workbook', mode: 'apply' }),
+      }),
+      { params: Promise.resolve({ documentId: 'workbook' }) },
+    );
+    expect(result.status).toBe(413);
+    expect(reportUnexpectedError).not.toHaveBeenCalled();
+  });
   test('maps invalid generated document models to a controlled 502 response', async () => {
     const reportUnexpectedError = mock(() => undefined);
     const post = createDocumentAiPost({

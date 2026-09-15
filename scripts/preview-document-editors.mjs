@@ -6,6 +6,7 @@ import { build, file, serve } from 'bun';
 import postcss from 'postcss';
 import { exportDocument } from '../lib/documents/export';
 import { parseDocumentModel } from '../lib/documents/model';
+import { wordEditorTransport } from './fixtures/word-editor-transport.mjs';
 
 const root = process.cwd();
 const built = await build({
@@ -136,10 +137,13 @@ const seeds = {
 };
 let records = structuredClone(seeds);
 const json = (value, status = 200) => Response.json(value, { status });
+const wordTransport = wordEditorTransport();
 const server = serve({
   hostname: '127.0.0.1',
   port: 18848,
   async fetch(request) {
+    const wordResponse = await wordTransport(request, records);
+    if (wordResponse) return wordResponse;
     const path = new URL(request.url).pathname;
     if (path === '/fixture-reset' && request.method === 'POST') {
       records = structuredClone(seeds);

@@ -1,6 +1,7 @@
 'use client';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 export interface CollaboraSession {
+  sessionId?: string;
   documentId: string;
   serverUrl: string;
   editorUrl: string;

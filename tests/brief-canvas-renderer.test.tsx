@@ -687,3 +687,92 @@ function handoffRows(): BriefNode {
     ],
   };
 }
+
+describe('current briefs reconcile terminal Work without changing historical editions', () => {
+  test('a live overlay hides a finished reference while the stored edition still renders it', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['brief-v2', 'inactive', 'work:monro'], ['monro']);
+    const document = {
+      version: 2,
+      title: 'Today',
+      summary: '',
+      generatedAt: Date.now(),
+      regions: [
+        {
+          id: 'work',
+          summary: '',
+          tree: {
+            kind: 'checklist',
+            title: 'Work',
+            items: [{ label: 'Repair the tire', checked: false, ref: { kind: 'work', id: 'monro' } }],
+          },
+        },
+      ],
+    };
+    const renderEdition = (hideInactive: boolean) =>
+      renderToStaticMarkup(
+        <QueryClientProvider client={client}>
+          <BriefCanvas value={document} hideInactive={hideInactive} />
+        </QueryClientProvider>,
+      );
+    expect(renderEdition(true)).not.toContain('Repair the tire');
+    expect(renderEdition(false)).toContain('Repair the tire');
+    expect(document.regions[0].tree.items).toHaveLength(1);
+  });
+
+  test('plan and timeline actions follow the same eligibility as checklist rows', () => {
+    const context: BriefNodeContext = {
+      entities: new Map(),
+      hiddenRefs: new Set([briefRefKey({ kind: 'work', id: 'done' })]),
+      completedRefs: new Map(),
+      onAction: () => {},
+      onCanvasAction: () => {},
+    };
+    for (const kind of ['plan', 'timeline', 'checklist', 'collection']) {
+      const node = {
+        kind,
+        title: 'Work',
+        actions: [],
+        sourceRefs: [],
+        items: [
+          {
+            id: '1',
+            label: 'Closed Monro action',
+            title: 'Closed Monro action',
+            status: 'pending',
+            checked: false,
+            actions: [],
+            ref: { kind: 'work', id: 'done' },
+          },
+          {
+            id: '2',
+            label: 'Still open',
+            title: 'Still open',
+            status: 'pending',
+            checked: false,
+            actions: [],
+          },
+        ],
+      } as any;
+      const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} regionSummary="Work" />);
+      expect(html).not.toContain('Closed Monro action');
+      expect(html).toContain('Still open');
+      const empty = renderToStaticMarkup(
+        <BriefNodeView node={{ ...node, items: [node.items[0]] }} context={context} regionSummary="Work" />,
+      );
+      expect(empty).toBe('');
+
+      const historical = renderToStaticMarkup(
+        <BriefNodeView node={node} context={{ ...context, hiddenRefs: new Set() }} regionSummary="Work" />,
+      );
+      expect(historical).toContain('Closed Monro action');
+      if (kind === 'timeline') {
+        node.items.reverse();
+        const timeline = renderToStaticMarkup(
+          <BriefNodeView node={node} context={context} regionSummary="Work" />,
+        );
+        expect(timeline).not.toContain('w-px flex-1');
+      }
+    }
+  });
+});

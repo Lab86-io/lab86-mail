@@ -30,6 +30,7 @@ import {
   shouldCoalesceAreaReindex,
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
+import { isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -1363,9 +1364,11 @@ export const listAreasOverview = query({
       ensure(areaId).facts[fact.status as 'verified' | 'candidate'] += 1;
       touch(areaId, fact.updatedAt);
     }
+    const retiredCardIds = new Set(cards.filter((card) => card.retiredAt).map((card) => String(card._id)));
     const linkedTaskIdsByArea = new Map<string, Set<string>>();
     for (const link of links) {
-      if (link.status === 'rejected') continue;
+      if (link.status === 'rejected' || (link.artifactKind === 'task' && retiredCardIds.has(link.artifactId)))
+        continue;
       const areaId = String(link.areaId);
       if (!areaIds.has(areaId)) continue;
       const entry = ensure(areaId);
@@ -1380,6 +1383,7 @@ export const listAreasOverview = query({
       touch(areaId, link.updatedAt);
     }
     for (const card of cards) {
+      if (card.retiredAt) continue;
       const areaId = boardToArea.get(String(card.boardId));
       if (!areaId) continue;
       const ids = linkedTaskIdsByArea.get(areaId) ?? new Set<string>();
@@ -1609,7 +1613,7 @@ async function resolveTaskLink(ctx: QueryCtx | MutationCtx, userId: string, link
   const cardId = ctx.db.normalizeId('cards', link.artifactId);
   if (!cardId) return null;
   const card = await ctx.db.get(cardId);
-  if (!card || card.userId !== userId) return null;
+  if (!card || card.userId !== userId || card.retiredAt) return null;
   return {
     cardId: card._id,
     boardId: card.boardId,
@@ -1724,7 +1728,7 @@ export const areaHome = query({
     const boardCards = boardCardScan.slice(0, 200);
     const seenCardIds = new Set(linkedTasks.map((task) => String(task.cardId)));
     const boardTasks = boardCards
-      .filter((card) => !seenCardIds.has(String(card._id)))
+      .filter((card) => !card.retiredAt && !seenCardIds.has(String(card._id)))
       .map((card) => ({
         cardId: card._id,
         boardId: card.boardId,
@@ -1758,9 +1762,7 @@ export const areaHome = query({
     const activeIntents = recentIntents
       .filter(
         (intent) =>
-          String(intent.primaryAreaId ?? intent.areaId ?? '') === areaIdStr &&
-          intent.status !== 'done' &&
-          intent.status !== 'archived',
+          String(intent.primaryAreaId ?? intent.areaId ?? '') === areaIdStr && !isTerminalWork(intent),
       )
       .slice(0, AREA_HOME_PLAN_CAP);
     const intentPlans = await Promise.all(

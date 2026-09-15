@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -184,6 +185,12 @@ export const createProject = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    if (args.sourceIntentId) {
+      const id = ctx.db.normalizeId('albatrossIntents', args.sourceIntentId);
+      const work = id ? await ctx.db.get(id) : null;
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
+    }
     const externalId = bounded(args.externalId, 160);
     const existing = await projectByExternalId(ctx, userId, externalId);
     const ts = now();
@@ -488,6 +495,12 @@ export const enqueueApproval = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    if (args.intentId) {
+      const id = ctx.db.normalizeId('albatrossIntents', args.intentId);
+      const work = id ? await ctx.db.get(id) : null;
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
+    }
     if (args.projectId) await requireProject(ctx, args.projectId, userId);
     if (args.sprintId) await requireSprint(ctx, args.sprintId, userId);
     const ts = now();
@@ -627,6 +640,12 @@ export const claimApproval = mutation({
     const approval = await ctx.db.get(args.approvalId);
     if (!approval || approval.userId !== userId) throw new Error('Approval not found.');
     if (approval.status !== 'pending') throw new Error(`Approval is already ${approval.status}.`);
+    if (approval.intentId) {
+      const id = ctx.db.normalizeId('albatrossIntents', approval.intentId);
+      const work = id ? await ctx.db.get(id) : null;
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
+    }
     const ts = now();
     await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });
     return { ok: true, approval: { ...approval, status: 'claiming', updatedAt: ts } };
@@ -808,6 +827,25 @@ export const dailyReportContext = query({
         .take(7),
     ]);
 
+    const workIds = new Set(
+      [
+        ...applications.map((row) => row.intentId),
+        ...projects.map((row) => row.sourceIntentId),
+        ...approvals.map((row) => row.intentId),
+      ].filter(Boolean),
+    );
+    const workStates = (
+      await Promise.all(
+        [...workIds].map(async (rawId) => {
+          const id = ctx.db.normalizeId('albatrossIntents', String(rawId));
+          const work = id ? await ctx.db.get(id) : null;
+          return work?.userId === userId
+            ? { id: String(work._id), workState: work.workState, status: work.status }
+            : null;
+        }),
+      )
+    ).filter((row): row is NonNullable<typeof row> => row !== null);
+
     // The newest answered check-in names the Work rows its tomorrow plan
     // created. The brief reads those rows directly — a Work that stalls in
     // needs_answers must still reach the morning brief with its open
@@ -832,7 +870,7 @@ export const dailyReportContext = query({
       const workId = ctx.db.normalizeId('albatrossIntents', String(rawId));
       if (!workId) continue;
       const work = await ctx.db.get(workId);
-      if (!work || work.userId !== userId) continue;
+      if (!work || work.userId !== userId || isTerminalWork(work)) continue;
       const questions = await ctx.db
         .query('albatrossWorkQuestions')
         .withIndex('by_user_work_status', (q) =>
@@ -861,6 +899,7 @@ export const dailyReportContext = query({
     }
 
     return {
+      workStates,
       projects,
       approvals,
       applications,

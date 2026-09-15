@@ -957,6 +957,18 @@ const MAPPERS: Record<string, Mapper> = {
       actions: [],
     };
   },
+  albatross_complete_work: (input, output, tool) => {
+    const workId = str(output.workId) || str(input.workId);
+    return receipt(
+      tool,
+      input,
+      output,
+      'albatross',
+      workId ? [{ kind: 'open_work', workId }] : [],
+      { workId },
+      str(output.summary) || str(output.claim) || undefined,
+    );
+  },
   albatross_record_progress: (input, output, tool) => {
     const workId = str(output.workId) || str(input.workId);
     return receipt(
@@ -1123,6 +1135,10 @@ const MAPPERS: Record<string, Mapper> = {
   area_archive: (input, output, tool) =>
     receipt(tool, input, output, 'albatross', [], { areaId: str(input.areaId) }),
   // --- Documents and files ---
+  word_document_create: (input, output, tool) =>
+    documentShape(tool, input, { ...output, kind: 'doc' }, 'created'),
+  word_document_edit: (input, output, tool) =>
+    documentShape(tool, input, { ...output, kind: 'doc' }, 'applied'),
   document_create: (input, output, tool) => documentShape(tool, input, output, 'created'),
   document_edit: (input, output, tool) => documentShape(tool, input, output),
   document_suggest_changes: (input, output, tool) =>

@@ -6,6 +6,7 @@ import {
 } from 'ai';
 import { after, type NextRequest } from 'next/server';
 import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
+import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
@@ -18,6 +19,7 @@ import { BriefResponseContextError, readBriefResponseContext } from '@/lib/brief
 import { captureNarrativeTurn, narrativeEnabled } from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 import { withDeadline } from '@/lib/shared/deadline';
+import { compactMessage } from '@/lib/store/chat-sessions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +32,7 @@ const MAX_COMPACT_TEXT_CHARS = 12_000;
 
 interface AgentRequestBody {
   messages: UIMessage[];
+  continuation?: boolean;
   extraSystem?: string;
   briefResponse?: BriefResponseRef;
   timezone?: string;
@@ -167,7 +170,9 @@ export async function POST(req: NextRequest) {
       limit: 60,
       windowMs: 60_000,
     });
-    const prepared = prepareAgentMessages(body.messages);
+    const prepared = prepareAgentMessages(
+      body.continuation === true ? body.messages.map(compactMessage) : body.messages,
+    );
     const compactionNote =
       prepared.omitted || prepared.compacted
         ? `Conversation continuity note: ${prepared.omitted} older UI message(s) were omitted and ${prepared.compacted} older message(s) were compacted to text-only form to keep this long conversation stable. Treat the remaining recent transcript as authoritative.`
@@ -191,6 +196,9 @@ export async function POST(req: NextRequest) {
         : []),
     ];
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
+    const runId = resolveAgentRunId(latestUser?.id, body.continuation === true);
+    if (!runId)
+      return Response.json({ error: 'Continuation requires the original user message ID.' }, { status: 400 });
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
     const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
@@ -216,7 +224,9 @@ export async function POST(req: NextRequest) {
         .then(convertToModelMessages)
         .then(sanitizeToolPairs),
     ]);
+    const recovery = body.continuation === true ? await readRecoveryContext(user.userId, runId) : '';
     const stream = await runAgent({
+      runId,
       messages: modelMessages,
       extraSystem:
         [
@@ -225,6 +235,7 @@ export async function POST(req: NextRequest) {
           areaDiscoveryContext,
           ...attachedContexts,
           compactionNote,
+          recovery,
         ]
           .filter(Boolean)
           .join('\n\n') || undefined,

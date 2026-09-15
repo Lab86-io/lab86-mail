@@ -1,3 +1,4 @@
+import { workbookDataFromGrid as convertGrid } from './grid-workbook.mjs';
 /**
  * Browser-only loader and session factory for the pinned o-spreadsheet engine.
  *
@@ -25,6 +26,7 @@ import {
   type SheetChangeSet,
   type SheetWorkbookModel,
 } from './sheet-workbook';
+import { spreadsheetImageStore } from './spreadsheet-image-store';
 import {
   assertSupportedContentTypes,
   inflateEntryText,
@@ -57,6 +59,40 @@ export const SPREADSHEET_TEMPLATES_URL = `${ODOO_SPREADSHEET_ASSET_BASE}/dist/o_
 const CONTENT_MESSAGE_TYPES = new Set(['REMOTE_REVISION', 'REVISION_UNDONE', 'REVISION_REDONE']);
 
 let loading: Promise<LoadedEngine> | null = null;
+
+export const SPREADSHEET_CHART_SCRIPTS = [
+  'chart.umd.js',
+  'chart-geo.umd.js',
+  'luxon.min.js',
+  'chart-luxon.umd.js',
+  'chart-treemap.js',
+];
+let chartLoading: Promise<void> | null = null;
+export function loadChartLibraries(): Promise<void> {
+  chartLoading ??= (async () => {
+    // UMD add-ons register against Chart, and the date adapter requires Luxon.
+    for (const filename of SPREADSHEET_CHART_SCRIPTS) {
+      if (document.querySelector(`script[data-sheet-chart="${filename}"]`)) continue;
+      await new Promise<void>((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `/vendor/spreadsheet-charts/${filename}`;
+        script.onload = () => {
+          script.dataset.sheetChart = filename;
+          resolve();
+        };
+        script.onerror = () => {
+          script.remove();
+          reject(new Error(`Could not load chart library ${filename}.`));
+        };
+        document.head.appendChild(script);
+      });
+    }
+  })().catch((error) => {
+    chartLoading = null;
+    throw error;
+  });
+  return chartLoading;
+}
 
 function ensureStylesheet(href: string) {
   const existing = document.querySelector<HTMLLinkElement>(`link[data-albatross-sheet="${href}"]`);
@@ -110,12 +146,20 @@ export function loadSpreadsheetEngine(): Promise<LoadedEngine> {
           return response.text();
         }),
         Promise.all(SPREADSHEET_STYLESHEETS.map(ensureStylesheet)),
+        loadChartLibraries(),
       ]);
       if (engine.__info__.version !== ODOO_SPREADSHEET_VERSION) {
         throw new Error(
           `Spreadsheet engine mismatch: bundle ${engine.__info__.version}, assets ${ODOO_SPREADSHEET_VERSION}.`,
         );
       }
+      engine.registries.topbarMenuRegistry.addChild('albatross_source', ['file'], {
+        name: 'About spreadsheet',
+        sequence: 900,
+        isReadonlyAllowed: true,
+        execute: () =>
+          window.open(`${ODOO_SPREADSHEET_ASSET_BASE}/NOTICE.md`, '_blank', 'noopener,noreferrer'),
+      });
       return { engine, owl, templates };
     })().catch((error) => {
       loading = null;
@@ -125,67 +169,8 @@ export function loadSpreadsheetEngine(): Promise<LoadedEngine> {
   return loading;
 }
 
-const GRID_NUMBER_FORMATS = {
-  text: '@',
-  number: '#,##0.00',
-  currency: '$#,##0.00',
-  percent: '0.00%',
-  date: 'yyyy-mm-dd',
-} as const;
-
-function constantTextFormula(value: string) {
-  // Odoo's formula parser does not use Excel's doubled-quote escaping. CHAR
-  // segments work in both engines, including trailing backslashes/newlines,
-  // and never allow user text to become executable expression syntax.
-  return `=${value
-    .split(/(["\\\r\n])/u)
-    .filter(Boolean)
-    .map((part) => (/^["\\\r\n]$/u.test(part) ? `CHAR(${part.charCodeAt(0)})` : `"${part}"`))
-    .join('&')}`;
-}
-
-/** Upgrade a version 1 grid without reinterpreting literal values as formulas. */
 export function workbookDataFromGrid(engine: EngineModule, grid: SheetGridModel): OdooWorkbookData {
-  const data = engine.helpers.createEmptyWorkbookData(grid.sheets[0]?.name || 'Sheet1');
-  const formats: Record<string, string> = {};
-  const formatIds = new Map<string, number>();
-  data.sheets = grid.sheets.map((tab) => {
-    const sheet = engine.helpers.createEmptySheet(tab.id, tab.name);
-    const cells: Record<string, string> = {};
-    const sheetFormats: Record<string, number> = {};
-    for (const [address, cell] of Object.entries(tab.cells)) {
-      const isLiteralString = !cell.formula && typeof cell.value === 'string';
-      const format = cell.format ? GRID_NUMBER_FORMATS[cell.format] : isLiteralString ? '@' : undefined;
-      const xc = address.toUpperCase();
-      if (format) {
-        let id = formatIds.get(format);
-        if (!id) {
-          id = formatIds.size + 1;
-          formatIds.set(format, id);
-          formats[id] = format;
-        }
-        sheetFormats[xc] = id;
-      }
-      let content = cell.formula ? `=${cell.formula.replace(/^=/u, '')}` : cell.value;
-      if (content === undefined || content === '') continue;
-      if (isLiteralString && (String(content).startsWith('=') || format !== '@')) {
-        // Odoo treats '=' as formula even with text formatting, and numeric
-        // formats otherwise parse numeric-looking strings. A constant-string
-        // expression preserves the exact typed value without executing it.
-        content = constantTextFormula(String(content));
-      }
-      cells[xc] = String(content);
-    }
-    return {
-      ...sheet,
-      colNumber: Math.max(sheet.colNumber, tab.columnCount),
-      rowNumber: Math.max(sheet.rowNumber, tab.rowCount),
-      cells,
-      formats: sheetFormats,
-    };
-  });
-  data.formats = formats;
-  return data;
+  return convertGrid(engine, grid);
 }
 
 export function workbookModelFromEngine(model: Model, engine: EngineModule): SheetWorkbookModel {
@@ -242,6 +227,7 @@ export function createSpreadsheetSession(options: SpreadsheetSessionOptions): Sp
     mode: options.readOnly ? 'readonly' : 'normal',
     transportService: new ReportingTransport(),
     client: { id: 'albatross-local', name: 'You' },
+    external: { fileStore: spreadsheetImageStore },
   });
   const wanted = options.model.version === 2 ? options.model.activeSheetId : options.model.activeSheetId;
   if (wanted && model.getters.getSheetIds().includes(wanted)) {
@@ -257,6 +243,8 @@ export function createSpreadsheetSession(options: SpreadsheetSessionOptions): Sp
       container.replaceChildren();
       const mountedApp = new owl.App(engine.Spreadsheet, {
         name: 'Albatross spreadsheet',
+        // Keep the complete spreadsheet menus available beside the chat panel.
+        env: { isSmall: false },
         props: {
           model,
           notifyUser: options.notifyUser,

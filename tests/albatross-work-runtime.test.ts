@@ -83,11 +83,21 @@ describe('project lifecycle', () => {
 
   test('updateProject transition into done records exactly one completion event', async () => {
     const t = newHarness();
+    const intentId = await t.run((ctx) =>
+      ctx.db.insert('albatrossIntents', {
+        userId: caller.userId,
+        rawText: 'Finish project',
+        source: 'chat',
+        status: 'ready',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
     const projectId = await t.mutation(api.albatrossWork.createProject, {
       ...caller,
       title: 'Finishable',
       areaId: 'area_done',
-      sourceIntentId: 'intent_done',
+      sourceIntentId: intentId,
     });
     await t.mutation(api.albatrossWork.updateProject, { ...caller, projectId, status: 'done' });
     // Re-marking done is not a transition and must not double-log.
@@ -98,7 +108,7 @@ describe('project lifecycle', () => {
       artifactKind: 'project',
       artifactId: String(projectId),
       areaId: 'area_done',
-      intentId: 'intent_done',
+      intentId,
     });
     const [project] = await t.query(api.albatrossWork.listProjects, { ...caller, status: 'done' });
     expect(project.completedAt).toBeGreaterThan(0);
@@ -300,7 +310,17 @@ describe('approval queue', () => {
 
   test('listApprovals defaults to the live queue and filters by status/intent', async () => {
     const t = newHarness();
-    const pending = await seedApproval(t, { intentId: 'intent_a' });
+    const intentId = await t.run((ctx) =>
+      ctx.db.insert('albatrossIntents', {
+        userId: caller.userId,
+        rawText: 'Pending approval',
+        source: 'chat',
+        status: 'ready',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const pending = await seedApproval(t, { intentId });
     const claiming = await seedApproval(t, { title: 'Second' });
     await t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId: claiming });
     const rejected = await seedApproval(t, { title: 'Third' });
@@ -316,7 +336,7 @@ describe('approval queue', () => {
     const rejectedRows = await t.query(api.albatrossWork.listApprovals, { ...caller, status: 'rejected' });
     expect(rejectedRows.map((a) => a._id)).toEqual([rejected]);
 
-    const byIntent = await t.query(api.albatrossWork.listApprovals, { ...caller, intentId: 'intent_a' });
+    const byIntent = await t.query(api.albatrossWork.listApprovals, { ...caller, intentId });
     expect(byIntent.map((a) => a._id)).toEqual([pending]);
 
     expect(await t.query(api.albatrossWork.getApproval, { ...caller, approvalId: pending })).toMatchObject({
@@ -635,7 +655,27 @@ describe('reporting and progress queries', () => {
         updatedAt: ts,
       });
     });
+    const closedWorkId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('albatrossIntents', {
+        userId: caller.userId,
+        rawText: 'Closed approval Work',
+        source: 'chat',
+        status: 'done',
+        workState: 'done',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const approval = await ctx.db.query('albatrossApprovals').first();
+      await ctx.db.patch(approval!._id, { intentId: String(id) });
+      return id;
+    });
     const context = await t.query(api.albatrossWork.dailyReportContext, { ...caller, limit: 10 });
+    expect(context.workStates).toContainEqual({
+      id: String(closedWorkId),
+      status: 'done',
+      workState: 'done',
+    });
+
     expect(context.projects.map((p) => p.title)).toEqual(['Context project']);
     expect(context.sprints.map((s) => s.title)).toEqual(['Context sprint']);
     expect(context.approvals.map((a) => a.title)).toEqual(['Context approval']);

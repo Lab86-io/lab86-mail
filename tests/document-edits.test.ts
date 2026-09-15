@@ -4,8 +4,24 @@ import { AGENT_TOOL_NAMES, liftToolsForAgent } from '../lib/ai/loop';
 import { documentEditsSchema, prepareDocumentEdits } from '../lib/documents/edits';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
 import { TOOLS } from '../lib/tools';
-import { __setDocumentToolDepsForTest, documentEdit, documentExport } from '../lib/tools/documents';
+import {
+  __setDocumentToolDepsForTest,
+  documentEdit,
+  documentExport,
+  spreadsheetCapabilitiesTool,
+} from '../lib/tools/documents';
 import { toolContext, withToolContext } from './tools/harness';
+
+test('the spreadsheet capability tool supplies exact chart command schemas before editing', async () => {
+  const catalog = await spreadsheetCapabilitiesTool.handler(
+    spreadsheetCapabilitiesTool.input.parse({}),
+    toolContext(),
+  );
+  expect(catalog.commands).toContain('CREATE_CHART');
+  const chart = await spreadsheetCapabilitiesTool.handler({ commands: ['CREATE_CHART'] }, toolContext());
+  expect(Object.keys(chart.schemas)).toEqual(['CREATE_CHART']);
+  expect(Object.keys(chart.$defs).length).toBeGreaterThan(0);
+});
 
 const doc = () => ({
   kind: 'doc' as const,
@@ -216,6 +232,8 @@ describe('document editing through the agent AI SDK toolset', () => {
       generateDocumentProposal: generation,
     });
     expect(TOOLS.document_edit).toBe(documentEdit);
+    expect(TOOLS.spreadsheet_capabilities).toBeDefined();
+    expect(AGENT_TOOL_NAMES.has('spreadsheet_capabilities')).toBe(true);
     expect(AGENT_TOOL_NAMES.has('document_edit')).toBe(true);
     const tools = liftToolsForAgent('batch-test');
     // The model sees a JSON schema derived from the zod input (patterns
@@ -278,10 +296,11 @@ describe('document editing through the agent AI SDK toolset', () => {
     });
     expect(update).toHaveBeenCalledTimes(1);
   });
-  test('Odoo apply clearly reports pending review and export discloses projection', async () => {
-    const update = mock(async () => {
-      throw new Error('Must not overwrite engine');
-    });
+  test('Odoo applies commands directly and export discloses projection', async () => {
+    const update = mock(async (input: any) => ({
+      ok: true as const,
+      document: { ...record(engine()), model: input.model, currentRevision: 5 },
+    }));
     __setDocumentToolDepsForTest({
       getDocument: async () => ({ ...record(engine()), suggestions: [] }),
       createDocumentSuggestion: async () => ({ ok: true, suggestionId: 'cells' }),
@@ -291,9 +310,9 @@ describe('document editing through the agent AI SDK toolset', () => {
       { ...args(), operations: [{ op: 'cell_update', sheetId: 'sheet-id', cell: 'B1', content: '=1+1' }] },
       toolContext(),
     );
-    expect(result).toMatchObject({ status: 'proposed', revision: 4, suggestionId: 'cells' });
-    expect(result.summary).toContain('Not yet applied');
-    expect(update).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'applied', revision: 5 });
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0].model.workbook.sheets[0].cells.B1).toBe('=1+1');
     expect(await documentExport.handler({ documentId: 'owned-file' }, toolContext())).toMatchObject({
       fidelity: 'projection',
       warning: expect.stringContaining('values and formulas only'),

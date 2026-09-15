@@ -705,6 +705,21 @@ describe('listAreasOverview', () => {
           order: 3,
           dueAt: ts - 60_000,
         });
+        const retired = await ctx.db.insert('cards', {
+          ...cardBase,
+          title: 'Retired overdue task',
+          order: 4,
+          dueAt: ts - 60_000,
+          retiredAt: ts,
+        });
+        await ctx.db.insert(
+          'areaArtifactLinks',
+          bareLink(userId, areaId, {
+            artifactKind: 'task',
+            artifactId: String(retired),
+            status: 'verified',
+          }) as any,
+        );
         await ctx.db.insert('areaFacts', {
           userId,
           areaId,
@@ -1017,6 +1032,7 @@ describe('areaHome', () => {
           order: 2,
           updatedAt: ts - 10,
         });
+        await ctx.db.insert('cards', { ...cardBase, title: 'Retired repair', order: 4, retiredAt: ts });
         await ctx.db.insert('cards', {
           ...cardBase,
           title: 'Board card done',

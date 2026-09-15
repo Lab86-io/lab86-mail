@@ -1,8 +1,30 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { __setObjectGenerationDepsForTest, generateObjectForCurrentUser } from '../lib/ai/gateway';
+import {
+  __setObjectGenerationDepsForTest,
+  agentProviderOptions,
+  generateObjectForCurrentUser,
+} from '../lib/ai/gateway';
 
 describe('structured AI gateway', () => {
   afterEach(() => __setObjectGenerationDepsForTest());
+
+  test('agent cache and reasoning options follow the provider transport', () => {
+    const direct = agentProviderOptions({ provider: 'openai' } as any, 'agent:owner');
+    expect(direct?.openai).toMatchObject({
+      reasoningEffort: process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low',
+      reasoningSummary: 'auto',
+      parallelToolCalls: true,
+      promptCacheKey: 'agent:owner',
+    });
+    expect(agentProviderOptions({ provider: 'openai' } as any)?.openai).not.toHaveProperty('promptCacheKey');
+    expect(agentProviderOptions({ provider: 'openrouter' } as any, 'agent:owner')).toEqual({
+      openai: {
+        reasoningEffort: process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low',
+        parallelToolCalls: true,
+      },
+    });
+    expect(agentProviderOptions({ provider: 'anthropic' } as any, 'agent:owner')).toBeUndefined();
+  });
 
   test('uses the resolved model, feature cap, and default strict provider options', async () => {
     const requests: any[] = [];
@@ -45,9 +67,10 @@ describe('structured AI gateway', () => {
     expect(requests[0]).toMatchObject({
       model: 'resolved-model',
       maxOutputTokens: 1200,
-      providerOptions: { openai: { reasoningEffort: 'none', strictJsonSchema: true } },
+      providerOptions: { openai: { strictJsonSchema: true } },
     });
     expect(requests[0].narrativeModel).toBeUndefined();
+    expect(requests[0].providerOptions.openai.reasoningEffort).toBeUndefined();
     expect(usage[0][0]).toBe(runtime);
     expect(usage[0].slice(1)).toEqual(['albatross_area_route', { inputTokens: 10, outputTokens: 2 }, true]);
   });

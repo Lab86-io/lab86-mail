@@ -249,6 +249,12 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     'work',
   ],
   [
+    'albatross_complete_work',
+    { workId: 'w1', claim: 'The repair is done.' },
+    { ok: true, workId: 'w1', state: 'done', summary: 'Finished' },
+    'receipt',
+  ],
+  [
     'albatross_record_progress',
     { workId: 'w1', claim: 'Done step 1' },
     { ok: true, workId: 'w1', claim: 'Done step 1', summary: 'Recorded' },
@@ -314,6 +320,18 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
   ],
   ['area_update_identity', { areaId: 'a1' }, { ok: true }, 'receipt'],
   ['area_archive', { areaId: 'a1' }, { ok: true }, 'receipt'],
+  [
+    'word_document_create',
+    { title: 'Report' },
+    { ok: true, documentId: 'w1', title: 'Report.docx', revision: 1, openPath: '/?view=files&office=w1' },
+    'document',
+  ],
+  [
+    'word_document_edit',
+    { documentId: 'w1' },
+    { ok: true, documentId: 'w1', title: 'Report.docx', revision: 2, openPath: '/?view=files&office=w1' },
+    'document',
+  ],
   [
     'document_create',
     { kind: 'doc', title: 'Memo' },
@@ -490,4 +508,12 @@ describe('tool shape table', () => {
     expect(shape?.kind).toBe('tasks');
     expect(shape?.summary).toContain('0 events');
   });
+});
+
+test('Word create and edit outputs retain the document icon kind', () => {
+  for (const tool of ['word_document_create', 'word_document_edit']) {
+    expect(resolveToolShape(tool, {}, { documentId: 'word-1', title: 'Word file' })).toMatchObject({
+      docKind: 'doc',
+    });
+  }
 });

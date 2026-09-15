@@ -26,6 +26,107 @@ afterAll(() => {
 });
 
 describe('binary Office working copies', () => {
+  test('Word AI edits coordinate with the exact live session, reject stale revisions and retain immutable history', async () => {
+    const t = convexTest(schema, modules);
+    const upload = () => t.run((ctx) => ctx.storage.store(new Blob(['word'])));
+    await t.mutation(office.create, {
+      ...auth,
+      documentId: 'word-ai',
+      title: 'Draft.docx',
+      extension: 'docx',
+      storageId: await upload(),
+      size: 4,
+      sha256: 'original',
+    });
+    await t.mutation(office.startSession, {
+      ...auth,
+      documentId: 'word-ai',
+      sessionId: 'editor',
+      key: 'editor',
+      expectedRevision: 1,
+    });
+    const lock = { ...auth, documentId: 'word-ai', sessionId: 'editor', value: 'lock' };
+    expect(await t.mutation(office.wopiLock, { ...lock, operation: 'LOCK' })).toMatchObject({ ok: true });
+    const request = { ...auth, documentId: 'word-ai', requestId: 'request-1' };
+    expect(await t.mutation(office.coordinateEdit, { ...request, action: 'request' })).toMatchObject({
+      ok: true,
+      ready: false,
+    });
+    expect(
+      await t.mutation(office.coordinateEdit, { ...request, requestId: 'another', action: 'request' }),
+    ).toMatchObject({ ok: false });
+    expect(
+      await t.mutation(office.coordinateEdit, { ...request, action: 'prepare', sessionId: 'wrong' }),
+    ).toMatchObject({ ok: false });
+    const requested = await t.query(office.get, { ...auth, documentId: 'word-ai' });
+    expect(requested.aiEdit.expiresAt - Date.now()).toBeGreaterThan(120_000);
+    await t.run(async (ctx) => {
+      const document = await ctx.db.query('officeDocuments').first();
+      await ctx.db.patch(document!._id, { aiEdit: { ...document!.aiEdit!, expiresAt: Date.now() + 1000 } });
+    });
+    expect(
+      await t.mutation(office.coordinateEdit, { ...request, action: 'prepare', sessionId: 'editor' }),
+    ).toMatchObject({ ok: true });
+    expect(
+      (await t.query(office.get, { ...auth, documentId: 'word-ai' })).aiEdit.expiresAt - Date.now(),
+    ).toBeGreaterThan(120_000);
+    expect(
+      await t.mutation(office.startSession, {
+        ...auth,
+        documentId: 'word-ai',
+        sessionId: 'other',
+        key: 'other',
+        expectedRevision: 1,
+      }),
+    ).toMatchObject({ ok: false, code: 'EDIT_IN_PROGRESS' });
+    const rejected = await upload();
+    const edit = {
+      ...auth,
+      documentId: 'word-ai',
+      expectedRevision: 1,
+      size: 4,
+      sha256: 'changed',
+      requestId: 'request-1',
+    };
+    expect(await t.mutation(office.saveEditedVersion, { ...edit, storageId: rejected })).toMatchObject({
+      ok: false,
+      code: 'LOCKED',
+    });
+    expect(await t.run((ctx) => ctx.storage.get(rejected))).toBeNull();
+    await t.mutation(office.wopiLock, { ...lock, operation: 'UNLOCK' });
+    expect(
+      await t.mutation(office.saveEditedVersion, { ...edit, requestId: 'wrong', storageId: await upload() }),
+    ).toMatchObject({ ok: false, code: 'LOCKED' });
+    expect(await t.mutation(office.saveEditedVersion, { ...edit, storageId: await upload() })).toMatchObject({
+      ok: true,
+      revision: 2,
+    });
+    await t.mutation(office.coordinateEdit, { ...request, action: 'complete' });
+    const document = await t.query(office.get, { ...auth, documentId: 'word-ai' });
+    expect(document.versions).toHaveLength(2);
+    expect(document.currentRevision).toBe(2);
+    expect(document.aiEdit.state).toBe('complete');
+    expect(await t.mutation(office.saveEditedVersion, { ...edit, storageId: await upload() })).toMatchObject({
+      ok: false,
+      code: 'LOCKED',
+    });
+    const { requestId: _request, ...plain } = edit;
+    expect(await t.mutation(office.saveEditedVersion, { ...plain, storageId: await upload() })).toMatchObject(
+      { ok: false, code: 'REVISION_CONFLICT' },
+    );
+    expect(
+      await t.mutation(office.saveEditedVersion, { ...plain, userId: 'other', storageId: await upload() }),
+    ).toMatchObject({ ok: false, code: 'NOT_FOUND' });
+    expect(
+      await t.mutation(office.rename, { ...auth, documentId: 'word-ai', title: 'Quarterly update' }),
+    ).toMatchObject({ ok: true });
+    expect((await t.query(office.get, { ...auth, documentId: 'word-ai' })).title).toBe(
+      'Quarterly update.docx',
+    );
+    expect(
+      await t.mutation(office.rename, { ...auth, userId: 'other', documentId: 'word-ai', title: 'Wrong' }),
+    ).toMatchObject({ ok: false });
+  });
   test('user deletion removes original workbook bytes and preserves other owners', async () => {
     const t = convexTest(schema, modules);
     const uploads = new Map<string, string>();

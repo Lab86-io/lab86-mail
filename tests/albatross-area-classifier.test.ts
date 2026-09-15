@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import {
   __setAreaClassifierDepsForTest,
   type AreaFactLite,
@@ -409,7 +410,7 @@ describe('sparse classifier orchestration', () => {
         {
           areaId: 'area_cardhunt',
           evidence: ['CardHunt production deploy'],
-          factIds: [],
+          factIds: ['fact_cardhunt_domain'],
           reason: 'Explicitly concerns CardHunt production.',
         },
       ],
@@ -420,6 +421,9 @@ describe('sparse classifier orchestration', () => {
       areaId: 'area_cardhunt',
       status: 'candidate',
       confirmationRefs: [],
+      sourceRefs: expect.arrayContaining([
+        expect.objectContaining({ kind: 'areaFact', id: 'fact_cardhunt_domain' }),
+      ]),
     });
   });
 
@@ -506,4 +510,11 @@ describe('sparse classifier orchestration', () => {
     }
     expect(persisted.some((verdict: any) => verdict.messageId === 'message_2')).toBe(false);
   });
+});
+
+test('the strict classifier response schema requires every declared assignment field', () => {
+  const schema: any = z.toJSONSchema(areaModelVerdictSchema);
+  const assignments = schema.properties.assignments.items;
+  expect(assignments.required).toContain('factIds');
+  expect([...assignments.required].sort()).toEqual(Object.keys(assignments.properties).sort());
 });

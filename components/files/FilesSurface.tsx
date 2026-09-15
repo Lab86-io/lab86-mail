@@ -535,6 +535,20 @@ export function FilesSurface() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const createWordMutation = useMutation({
+    mutationFn: () =>
+      fetchJson<{ document: { documentId: string } }>('/api/office/word', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Untitled document' }),
+      }),
+    onSuccess: async ({ document }) => {
+      await officeQuery.refetch();
+      openOfficeDocument(document.documentId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   // Excel comes in through the spreadsheet engine in the browser (its reader
   // needs a DOM parser); the server stores the untouched bytes alongside the
   // engine snapshot so the original is always downloadable.
@@ -889,8 +903,16 @@ export function FilesSurface() {
                 <Upload className="size-3.5" /> Import Office working copy
               </DropdownMenuItem>
             ) : null}
+            {officeQuery.data?.enabled ? (
+              <DropdownMenuItem
+                disabled={createWordMutation.isPending}
+                onSelect={() => createWordMutation.mutate()}
+              >
+                <FileText className="size-3.5" /> Document
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('doc')}>
-              <FileText className="size-3.5" /> Document
+              <FileText className="size-3.5" /> {officeQuery.data?.enabled ? 'Simple document' : 'Document'}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('sheet')}>
               <FileSpreadsheet className="size-3.5" /> Spreadsheet

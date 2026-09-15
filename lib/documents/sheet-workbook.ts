@@ -10,6 +10,7 @@
  * server projects workbooks into text, Excel, and Google Sheets without it.
  */
 import { z } from 'zod';
+import { spreadsheetCommandSchema } from './spreadsheet-commands';
 
 export const ODOO_SPREADSHEET_ENGINE = 'o-spreadsheet' as const;
 /** Pinned engine release; tests assert this matches package.json and public/vendor. */
@@ -56,9 +57,8 @@ export type WorkbookData = z.infer<typeof workbookDataSchema>;
 export type WorkbookSheetData = z.infer<typeof workbookSheetSchema>;
 
 /**
- * AI proposals for engine-backed sheets are cell-level change sets, applied in
- * the editor through engine commands. The server never rewrites a workbook
- * snapshot it cannot evaluate.
+ * AI proposals contain cell changes and/or ordered Odoo workbook commands.
+ * The pinned engine evaluates them on a private copy before a revision is saved.
  */
 export const sheetChangeSchema = z.object({
   sheet: z.string().min(1).max(200),
@@ -69,12 +69,18 @@ export const sheetChangeSchema = z.object({
   content: z.string().max(10_000),
 });
 
-export const sheetChangeSetSchema = z.object({
-  kind: z.literal('sheet-changes'),
-  version: z.literal(1),
-  changes: z.array(sheetChangeSchema).min(1).max(MAX_SHEET_CHANGES),
-  newSheets: z.array(z.string().min(1).max(200)).max(20).optional(),
-});
+export const sheetChangeSetSchema = z
+  .object({
+    kind: z.literal('sheet-changes'),
+    version: z.literal(1),
+    changes: z.array(sheetChangeSchema).max(MAX_SHEET_CHANGES),
+    newSheets: z.array(z.string().min(1).max(200)).max(20).optional(),
+    commands: z.array(spreadsheetCommandSchema).max(MAX_SHEET_CHANGES).optional(),
+  })
+  .refine(
+    (value) => value.changes.length + (value.commands?.length || 0) > 0,
+    'Provide cell changes or workbook commands.',
+  );
 
 export type SheetChange = z.infer<typeof sheetChangeSchema>;
 export type SheetChangeSet = z.infer<typeof sheetChangeSetSchema>;

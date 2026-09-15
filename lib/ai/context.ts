@@ -9,6 +9,8 @@ export interface AiRequestContext {
   // reviewable change-set (see lib/ai/operations.ts).
   operationBatchId?: string;
   chatId?: string;
+  runId?: string;
+  toolExecutionKey?: string;
   // IANA timezone reported by the client; tools interpret naive timestamps in it.
   userTimezone?: string;
 }

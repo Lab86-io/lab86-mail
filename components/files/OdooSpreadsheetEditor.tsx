@@ -10,7 +10,7 @@ import {
   loadSpreadsheetEngine,
   type SpreadsheetSession,
 } from '@/lib/documents/odoo-spreadsheet-engine';
-import { ODOO_SPREADSHEET_ASSET_BASE, ODOO_SPREADSHEET_VERSION } from '@/lib/documents/sheet-workbook';
+import { ODOO_SPREADSHEET_VERSION } from '@/lib/documents/sheet-workbook';
 import { cn } from '@/lib/utils';
 
 export interface OdooSpreadsheetEditorProps {
@@ -136,16 +136,6 @@ export function OdooSpreadsheetEditor({
         data-spreadsheet-engine={`o-spreadsheet ${ODOO_SPREADSHEET_VERSION}`}
         className="albatross-sheet-frame h-full min-h-0 min-w-0 flex-1 bg-white text-[#374151]"
       />
-      <div className="flex shrink-0 justify-end border-t border-[var(--color-border)] px-3 py-1 text-[11px] text-[var(--color-text-muted)]">
-        <a
-          href={`${ODOO_SPREADSHEET_ASSET_BASE}/NOTICE.md`}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-sm underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
-        >
-          Odoo · source and licenses
-        </a>
-      </div>
       {status !== 'ready' ? (
         <div
           role={status === 'error' ? 'alert' : 'status'}

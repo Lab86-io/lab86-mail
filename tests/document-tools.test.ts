@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe('document tools', () => {
-  test('explicit engine edits remain reviewable and never claim to have changed the saved workbook', async () => {
+  test('explicit engine edits save directly through the Odoo engine', async () => {
     const current = record({
       kind: 'sheet',
       model: {
@@ -47,9 +47,10 @@ describe('document tools', () => {
         },
       },
     });
-    const update = mock(async () => {
-      throw new Error('An engine proposal must not be applied server-side');
-    });
+    const update = mock(async (input: any) => ({
+      ok: true,
+      document: { ...current, model: input.model, currentRevision: 3 },
+    }));
     const suggestion = mock(async (_input: unknown) => ({ ok: true, suggestionId: 'review-1' }));
     __setDocumentToolDepsForTest({
       getDocument: (async () => ({ ...current, suggestions: [] })) as any,
@@ -72,19 +73,17 @@ describe('document tools', () => {
       sourceContext: undefined,
     });
     expect(result).toMatchObject({
-      ok: false,
+      ok: true,
       documentId: current.documentId,
-      revision: 2,
+      revision: 3,
       openPath: '/?view=files&document=document-1',
     });
-    expect(result.summary).toContain('Not applied:');
-    expect(result.summary).toContain('review-1');
-    expect(suggestion.mock.calls[0][0]).toMatchObject({
-      userId: 'test_user_tools',
-      baseRevision: 2,
-      proposedModel: { kind: 'sheet-changes' },
+    expect(suggestion).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0]).toMatchObject({
+      expectedRevision: 2,
+      model: { kind: 'sheet', version: 2, workbook: { sheets: [{ cells: { A1: '42' } }] } },
     });
-    expect(update).not.toHaveBeenCalled();
     expect(current.currentRevision).toBe(2);
   });
 
@@ -366,7 +365,7 @@ describe('document tools', () => {
         documentId: current.documentId,
         instruction: 'Update the forecast',
       }),
-    ).rejects.toThrow('suggestion could not be saved');
+    ).rejects.toThrow('Spreadsheet commands require a spreadsheet');
   });
 });
 

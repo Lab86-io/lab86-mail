@@ -67,6 +67,7 @@ export async function startCollaboraSession(userId: string, document: OfficeFile
   target.searchParams.set('lang', 'en-US');
   return {
     provider: 'collabora' as const,
+    sessionId,
     documentId: document.documentId,
     serverUrl: config.server,
     editorUrl: target.toString(),

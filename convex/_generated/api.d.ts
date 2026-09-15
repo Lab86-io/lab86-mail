@@ -9,6 +9,7 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as agentExecution from "../agentExecution.js";
 import type * as agentUploads from "../agentUploads.js";
 import type * as ai from "../ai.js";
 import type * as albatross from "../albatross.js";
@@ -47,6 +48,7 @@ import type * as smart from "../smart.js";
 import type * as suggestions from "../suggestions.js";
 import type * as userData from "../userData.js";
 import type * as users from "../users.js";
+import type * as workCompletion from "../workCompletion.js";
 
 import type {
   ApiFromModules,
@@ -56,6 +58,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  agentExecution: typeof agentExecution;
   agentUploads: typeof agentUploads;
   ai: typeof ai;
   albatross: typeof albatross;
@@ -94,6 +97,7 @@ declare const fullApi: ApiFromModules<{
   suggestions: typeof suggestions;
   userData: typeof userData;
   users: typeof users;
+  workCompletion: typeof workCompletion;
 }>;
 
 /**

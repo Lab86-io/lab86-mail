@@ -9,6 +9,7 @@ JavaScript modules, not incorporated into Albatross's application chunks.
 - [Owl license](/vendor/owl/2.8.2/LICENSE)
 - [Complete corresponding Owl source](/vendor/owl/2.8.2/source.tar.gz), commit `54129a5f8dfc1ce16c62ee2f216058c043043a6e`
 - [Runtime/source hashes](manifest.json)
+- [Chart renderer licenses](/vendor/spreadsheet-charts/NOTICE.md)
 - [Bootstrap MIT license](BOOTSTRAP-LICENSE), version 5.3.3
 - [Font Awesome licenses](/vendor/font-awesome-4.7.0/LICENSES.txt), version 4.7.0
 

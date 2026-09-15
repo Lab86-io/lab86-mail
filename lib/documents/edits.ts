@@ -7,6 +7,7 @@ import {
   type SuggestionPayload,
 } from './model';
 import { assertModelWithinLimit, parseCellAddress, sheetChangeSchema } from './sheet-workbook';
+import { spreadsheetCommandSchema, validateSpreadsheetCommand } from './spreadsheet-commands';
 
 const id = z.string().min(1).max(200);
 const block = docModelSchema.shape.blocks.element;
@@ -21,10 +22,21 @@ const position = { afterId: id.nullable().describe('Existing sibling ID, or null
 
 /** Narrow, deterministic edits: the agent need not regenerate an entire file. */
 export const documentEditOperationSchema = z.discriminatedUnion('op', [
+  z.object({ op: z.literal('spreadsheet_command'), command: spreadsheetCommandSchema }).strict(),
   z.object({ op: z.literal('block_insert'), block, ...position }).strict(),
   z.object({ op: z.literal('block_update'), blockId: id, patch: blockPatch }).strict(),
   z.object({ op: z.literal('block_remove'), blockId: id }).strict(),
   z.object({ op: z.literal('block_move'), blockId: id, ...position }).strict(),
+  z
+    .object({
+      op: z.literal('deck_restyle'),
+      theme: z.enum(['dark', 'light']),
+      accent: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default('#7c83ff'),
+    })
+    .strict(),
   z.object({ op: z.literal('slide_insert'), slide, ...position }).strict(),
   z
     .object({
@@ -85,17 +97,55 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
   const operations = documentEditsSchema.parse(input);
   const model = structuredClone(parseDocumentModel(source));
   validateIdentity(model);
-  if (model.kind === 'sheet' && model.version === 2) {
-    const changes = operations.map((operation) => {
+  if (
+    model.kind === 'sheet' &&
+    (model.version === 2 || operations.some((operation) => operation.op === 'spreadsheet_command'))
+  ) {
+    const sheets = model.version === 2 ? model.workbook.sheets : model.sheets;
+    const createdSheetIds = new Set<string>();
+    const onlyCells = operations.every((operation) => operation.op === 'cell_update');
+    const commands = operations.map((operation) => {
+      if (operation.op === 'spreadsheet_command') {
+        const command = validateSpreadsheetCommand(operation.command);
+        if (command.type === 'CREATE_SHEET') createdSheetIds.add(String(command.payload.sheetId));
+        return command;
+      }
       if (operation.op !== 'cell_update') throw new Error('This operation does not target a spreadsheet.');
-      const sheet = model.workbook.sheets[indexOf(model.workbook.sheets, operation.sheetId)];
+      const sheet = createdSheetIds.has(operation.sheetId)
+        ? { id: operation.sheetId, rowCount: 0, columnCount: 0 }
+        : sheets[indexOf(sheets, operation.sheetId)];
       const address = parseCellAddress(operation.cell)!;
-      if (address.row > sheet.rowNumber || address.column > sheet.colNumber)
-        throw new Error(`Cell ${operation.cell} is outside this sheet. Resize it in the editor first.`);
-      return { sheet: sheet.id, cell: operation.cell, content: operation.content };
+      if (
+        onlyCells &&
+        (address.row > Number('rowNumber' in sheet ? sheet.rowNumber : sheet.rowCount) ||
+          address.column > Number('colNumber' in sheet ? sheet.colNumber : sheet.columnCount))
+      )
+        throw new Error(
+          `Cell ${operation.cell} is outside this sheet. Add a resize command before editing it.`,
+        );
+      return {
+        type: 'UPDATE_CELL',
+        payload: {
+          sheetId: sheet.id,
+          col: address.column - 1,
+          row: address.row - 1,
+          content: operation.content,
+        },
+      };
     });
-    // The browser engine evaluates these commands, preserving styles/charts/etc.
-    const proposal = { kind: 'sheet-changes' as const, version: 1 as const, changes };
+    // Preserve command order: later operations may target newly created sheets,
+    // expanded ranges, charts, or styles from earlier commands in the same batch.
+    const proposal = onlyCells
+      ? {
+          kind: 'sheet-changes' as const,
+          version: 1 as const,
+          changes: operations.map((operation) => ({
+            sheet: operation.sheetId,
+            cell: operation.cell,
+            content: operation.content,
+          })),
+        }
+      : { kind: 'sheet-changes' as const, version: 1 as const, changes: [], commands };
     assertModelWithinLimit(proposal);
     return proposal;
   }
@@ -141,6 +191,22 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
     } else {
       if (model.kind !== 'deck') throw new Error('Slide and element edits require a presentation.');
       switch (operation.op) {
+        case 'deck_restyle': {
+          // Theme every slide without inventing geometry or replacing its content.
+          for (const target of model.slides) {
+            target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
+            for (const item of target.elements) {
+              if (item.type === 'shape') {
+                item.fill = operation.accent;
+                continue;
+              }
+              item.color =
+                item.role === 'title' ? operation.accent : operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+              item.fontSize ??= item.role === 'title' ? 28 : 16;
+            }
+          }
+          break;
+        }
         case 'slide_insert':
           operation.slide.elements.forEach(assertFitsCanvas);
           insert(model.slides, operation.slide, operation.afterId);

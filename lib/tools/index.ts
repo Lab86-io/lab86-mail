@@ -14,6 +14,7 @@ import {
   albatrossApplyIntentPlan,
   albatrossApproveAction,
   albatrossCaptureWork,
+  albatrossCompleteWork,
   albatrossCreateProject,
   albatrossCreateRoutine,
   albatrossCreateSprint,
@@ -105,6 +106,7 @@ import {
   documentList,
   documentPublishGoogle,
   documentSuggestChanges,
+  spreadsheetCapabilitiesTool,
 } from './documents';
 import { cloudFileSearch, googleFileImport } from './files';
 import { googleDocumentEdit, googleDocumentGet } from './google-documents';
@@ -201,6 +203,7 @@ import {
   uiToast,
 } from './ui-tools';
 import { browserbaseFetch, browserbaseSearch } from './web';
+import { wordDocumentCreate, wordDocumentEdit, wordDocumentGet } from './word-documents';
 
 const allTools: AnyTool[] = [
   mcpSearch,
@@ -283,9 +286,13 @@ const allTools: AnyTool[] = [
   getTrackedThreadTool,
   documentCreate,
   documentEdit,
+  wordDocumentCreate,
+  wordDocumentGet,
+  wordDocumentEdit,
   documentList,
   documentGet,
   documentSuggestChanges,
+  spreadsheetCapabilitiesTool,
   documentApplyInstruction,
   documentPublishGoogle,
   documentExport,
@@ -349,6 +356,7 @@ const allTools: AnyTool[] = [
   albatrossListSprints,
   albatrossPreviewUndoUnresolved,
   albatrossGetWorkContext,
+  albatrossCompleteWork,
   albatrossRecordProgress,
   albatrossReplanWork,
   albatrossSplitWork,

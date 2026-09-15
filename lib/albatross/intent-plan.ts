@@ -26,6 +26,7 @@ import { type AnyTool, invokeTool } from '@/lib/tools/registry';
 import { browserbaseFetch, browserbaseSearch } from '@/lib/tools/web';
 import { type OutcomeContract, proposeContract } from './contract';
 import { shapePlans } from './shape-policy';
+import { assertWorkOpen } from './work-lifecycle';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from './work-shape';
 import { assignStableActionKeys, shouldComposeWorkBrief } from './work-v2';
 
@@ -916,6 +917,7 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
     intentId: input.intentId,
   });
   const intent = workbench.intent;
+  assertWorkOpen(intent);
 
   // The shape policy: a list, a practice, a monitor, or a routine has no plan.
   // The Work is ready as it is. No model call, no plan row, no steps.

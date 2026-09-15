@@ -76,6 +76,9 @@ export const TOOL_GROUPS = {
       'document_apply_instruction',
       'document_publish_google',
       'document_export',
+      'word_document_create',
+      'word_document_get',
+      'word_document_edit',
     ],
   },
   board_admin: {
