@@ -404,3 +404,79 @@ export function redoHistory<T>(history: EditHistory<T>): EditHistory<T> {
   const [present, ...future] = history.future;
   return { past: [...history.past, history.present], present, future };
 }
+
+/** One element of one slide, or undefined. */
+export function findElement(
+  model: AnyDeckModel,
+  slideId: string,
+  elementId: string,
+): DeckElement | undefined {
+  return lift(model)
+    .slides.find((slide) => slide.id === slideId)
+    ?.elements.find((element) => element.id === elementId);
+}
+
+/** A readable kind name for the inspector. */
+export function elementLabel(element: DeckElement): string {
+  switch (element.type) {
+    case 'text':
+      return 'Text';
+    case 'shape':
+      return 'Shape';
+    case 'line':
+      return 'Line';
+    case 'image':
+      return 'Image';
+    case 'chart':
+      return 'Chart';
+  }
+}
+
+/** Copy an element onto the same slide, a little lower and to the right, and put it on top. */
+export function duplicateElement(
+  model: AnyDeckModel,
+  slideId: string,
+  elementId: string,
+  createId: () => string = createDeckId,
+): { model: DeckModel; elementId: string } {
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  const source = slide?.elements.find((element) => element.id === elementId);
+  if (!slide || !source || slide.elements.length >= 300) return { model: deck, elementId: '' };
+  const copy = clampElement({ ...source, id: createId(), x: source.x + 2, y: source.y + 2 } as DeckElement);
+  return {
+    model: updateSlide(deck, slideId, { elements: [...slide.elements, copy] }),
+    elementId: copy.id,
+  };
+}
+
+/** The slide with one element's box replaced; used for the live drag preview. Pure. */
+export function slideWithElementBounds(
+  slide: DeckSlide,
+  elementId: string,
+  bounds: ElementBounds & { flip?: boolean },
+): DeckSlide {
+  return {
+    ...slide,
+    elements: slide.elements.map((element) =>
+      element.id === elementId ? ({ ...element, ...bounds } as DeckElement) : element,
+    ),
+  };
+}
+
+/** Set or clear the slide background image. */
+export function setSlideBackgroundImage(
+  model: AnyDeckModel,
+  slideId: string,
+  image: DeckSlide['backgroundImage'] | null,
+): DeckModel {
+  const deck = lift(model);
+  const slide = deck.slides.find((candidate) => candidate.id === slideId);
+  if (!slide) return deck;
+  const { backgroundImage: _dropped, ...rest } = slide;
+  const next: DeckSlide = image ? { ...rest, backgroundImage: image } : rest;
+  return withSlides(
+    deck,
+    deck.slides.map((candidate) => (candidate.id === slideId ? next : candidate)),
+  );
+}

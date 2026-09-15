@@ -1,6 +1,6 @@
 'use client';
 
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode, PointerEvent as ReactPointerEvent, Ref } from 'react';
 import { deckFontStack, deckTextSlot } from '@/lib/documents/deck-versions';
 import type { DeckElementV2, DeckSlideV2, DeckTheme } from '@/lib/documents/model';
 import { fontSizeForCanvas, pointsForCanvas, slideColor } from './deck-model';
@@ -102,36 +102,74 @@ export function elementStyle(element: DeckElementV2): CSSProperties {
   return base;
 }
 
+/**
+ * A line fills its box corner to corner. A flat box (height 0) or an upright
+ * box (width 0) has no area, so the SVG for those is positioned around the
+ * box edge with the stroke's own thickness; otherwise nothing would paint.
+ */
 function LineArt({ element }: { element: Extract<DeckElementV2, { type: 'line' }> }) {
   const flat = element.height === 0;
   const upright = element.width === 0;
-  const dash = element.stroke.dash === 'dash' ? '3 2' : element.stroke.dash === 'dot' ? '1 1.5' : undefined;
+  const strokeWidth = pointsForCanvas(element.stroke.width);
+  const dashPattern =
+    element.stroke.dash === 'dash' ? [3, 2] : element.stroke.dash === 'dot' ? [1, 1.5] : undefined;
+  const lineProps = {
+    stroke: slideColor(element.stroke.color, '#17202A'),
+    strokeLinecap: 'butt' as const,
+    vectorEffect: 'non-scaling-stroke' as const,
+    style: {
+      strokeWidth,
+      ...(dashPattern
+        ? {
+            strokeDasharray: dashPattern
+              .map((unit) => pointsForCanvas(unit * element.stroke.width))
+              .join(' '),
+          }
+        : {}),
+    },
+  };
+  if (flat || upright) {
+    const style: CSSProperties = flat
+      ? {
+          position: 'absolute',
+          left: 0,
+          width: '100%',
+          top: `calc(${strokeWidth} / -2)`,
+          height: strokeWidth,
+          minHeight: '1px',
+          overflow: 'visible',
+        }
+      : {
+          position: 'absolute',
+          top: 0,
+          height: '100%',
+          left: `calc(${strokeWidth} / -2)`,
+          width: strokeWidth,
+          minWidth: '1px',
+          overflow: 'visible',
+        };
+    return (
+      <svg className="deck-line" data-line={flat ? 'flat' : 'upright'} aria-hidden="true" style={style}>
+        <line
+          x1={flat ? '0' : '50%'}
+          y1={flat ? '50%' : '0'}
+          x2={flat ? '100%' : '50%'}
+          y2={flat ? '50%' : '100%'}
+          {...lineProps}
+        />
+      </svg>
+    );
+  }
   return (
     <svg
       className="deck-line"
+      data-line="diagonal"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
       aria-hidden="true"
       style={{ overflow: 'visible' }}
     >
-      <line
-        x1={0}
-        y1={flat ? 50 : element.flip ? 100 : 0}
-        x2={upright ? 0 : 100}
-        y2={flat ? 50 : element.flip ? 0 : 100}
-        stroke={slideColor(element.stroke.color, '#17202A')}
-        strokeWidth={element.stroke.width}
-        strokeDasharray={
-          dash
-            ? dash
-                .split(' ')
-                .map((v) => Number(v) * element.stroke.width)
-                .join(' ')
-            : undefined
-        }
-        vectorEffect="non-scaling-stroke"
-        style={{ strokeWidth: pointsForCanvas(element.stroke.width) }}
-      />
+      <line x1={0} y1={element.flip ? 100 : 0} x2={100} y2={element.flip ? 0 : 100} {...lineProps} />
     </svg>
   );
 }
@@ -383,6 +421,11 @@ export function SlideSurface({
   onEdit,
   readOnly = false,
   children,
+  editing,
+  onTextChange,
+  onEditEnd,
+  onElementPointerDown,
+  textFieldRef,
 }: {
   slide: DeckSlideV2;
   theme: DeckTheme;
@@ -392,6 +435,13 @@ export function SlideSurface({
   onEdit?: (id: string) => void;
   readOnly?: boolean;
   children?: ReactNode;
+  /** Text element edited in place; a textarea replaces its box. */
+  editing?: string | null;
+  onTextChange?: (id: string, text: string) => void;
+  onEditEnd?: () => void;
+  /** Press on an element; the editor turns it into a drag. */
+  onElementPointerDown?: (id: string, event: ReactPointerEvent<HTMLElement>) => void;
+  textFieldRef?: Ref<HTMLTextAreaElement>;
 }) {
   const label = (element: DeckElementV2, index: number) =>
     element.type === 'text'
@@ -422,7 +472,28 @@ export function SlideSurface({
         />
       ) : null}
       {slide.elements.map((element, index) =>
-        interactive ? (
+        interactive && editing === element.id && element.type === 'text' ? (
+          <textarea
+            key={element.id}
+            ref={textFieldRef}
+            className="deck-element"
+            data-element-id={element.id}
+            data-element-type="text"
+            data-editing="true"
+            aria-label={`${label(element, index)} text`}
+            style={elementStyle(element)}
+            value={element.text}
+            onChange={(event) => onTextChange?.(element.id, event.target.value)}
+            onBlur={() => onEditEnd?.()}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' || (event.key === 'Enter' && (event.metaKey || event.ctrlKey))) {
+                event.preventDefault();
+                event.stopPropagation();
+                onEditEnd?.();
+              }
+            }}
+          />
+        ) : interactive ? (
           <button
             key={element.id}
             type="button"
@@ -433,7 +504,9 @@ export function SlideSurface({
             aria-pressed={selected === element.id}
             disabled={readOnly}
             data-selected={selected === element.id}
+            data-locked={element.locked ? 'true' : undefined}
             style={elementStyle(element)}
+            onPointerDown={(event) => onElementPointerDown?.(element.id, event)}
             onClick={() => onSelect?.(element.id)}
             onFocus={() => onSelect?.(element.id)}
             onDoubleClick={() => onEdit?.(element.id)}

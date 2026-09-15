@@ -5,7 +5,8 @@ import { useState } from 'react';
 import { PresentationEditor } from '@/components/files/editors/PresentationEditor';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
 import { type DeckDirection, hiringDeck, referenceDeck } from '@/lib/documents/deck-fixtures';
-import type { AlbatrossDocumentModel } from '@/lib/documents/model';
+import { upgradeDeckModel } from '@/lib/documents/deck-versions';
+import { type AlbatrossDocumentModel, createDefaultDocumentModel } from '@/lib/documents/model';
 
 /* Dev-only harness: the reference decks through the real slide renderer.
  *   ?deck=lakeshore (default) | hiring
@@ -13,24 +14,49 @@ import type { AlbatrossDocumentModel } from '@/lib/documents/model';
  *   ?slide=2            one slide, full viewport width (screenshots)
  *   ?sheet=1            contact sheet, three across
  *   ?editor=1           the real PresentationEditor around the fixture
+ *   ?rich=0             editor with version 2 authoring off (text and rect shapes only)
+ *   ?deck=legacy        a fresh version 1 deck, to check the gate on old decks
  * Not linked from anywhere; 404s outside development. */
 export default function DeckPreviewPage() {
   if (process.env.NODE_ENV === 'production') notFound();
   return <DeckPreviewInner />;
 }
 
+/** A version 1 deck as the app creates it today, with a little content. */
+function legacyDeck() {
+  const model = createDefaultDocumentModel('deck', 'legacy');
+  if (model.kind !== 'deck' || model.version !== 1) throw new Error('Expected a version 1 deck.');
+  model.slides[0].title = 'Quarterly review';
+  model.slides[0].elements[0].text = 'Quarterly review';
+  model.slides[0].elements[1].text = 'What changed, what is next.';
+  return model;
+}
+
 function DeckPreviewInner() {
   const params = useSearchParams();
   const direction = (params.get('direction') === 'signal' ? 'signal' : 'editorial') as DeckDirection;
-  const deck = params.get('deck') === 'hiring' ? hiringDeck(direction) : referenceDeck(direction);
+  const deckParam = params.get('deck');
+  const stored =
+    deckParam === 'hiring'
+      ? hiringDeck(direction)
+      : deckParam === 'legacy'
+        ? legacyDeck()
+        : referenceDeck(direction);
+  // The editor takes the stored form (either version); the preview views draw the lifted deck.
+  const deck = upgradeDeckModel(stored);
+  const rich = params.get('rich') !== '0';
   const only = Number(params.get('slide'));
   const sheet = params.get('sheet') === '1';
   const editor = params.get('editor') === '1';
-  const [model, setModel] = useState<AlbatrossDocumentModel>(deck);
+  const [model, setModel] = useState<AlbatrossDocumentModel>(stored);
   if (editor) {
     return (
       <div className="h-dvh">
-        <PresentationEditor model={model.kind === 'deck' ? model : deck} onChange={setModel} />
+        <PresentationEditor
+          model={model.kind === 'deck' ? model : stored}
+          onChange={setModel}
+          richAuthoring={rich}
+        />
       </div>
     );
   }

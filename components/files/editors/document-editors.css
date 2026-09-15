@@ -53,12 +53,20 @@
     display: block;
   }
 }
+/* Presentation editor shell: filmstrip, stage, inspector. Compact chrome on
+   app tokens; the slide inside keeps its own theme. Under 900px the strip
+   runs across the top and the inspector becomes a section under the stage. */
 .deck-editor-workspace {
   container-type: inline-size;
   container-name: deckeditor;
 }
+.deck-editor-workspace[data-dragging="true"] {
+  user-select: none;
+  cursor: grabbing;
+}
 .deck-workspace-body {
   flex-direction: column;
+  overflow-y: auto;
 }
 .deck-filmstrip {
   height: 112px;
@@ -68,16 +76,60 @@
 .deck-thumbnail {
   width: 128px;
 }
-.deck-canvas-padding {
+.deck-thumbnail-art {
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.08);
+}
+.deck-stage {
+  flex: 0 0 auto;
+  background: var(--color-bg-subtle);
+}
+.deck-stage-inner {
+  max-width: 1040px;
+  margin: 0 auto;
   padding: 12px;
 }
-@container deckeditor (min-width: 700px) {
+.deck-slide-frame {
+  position: relative;
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 1px rgb(15 23 42 / 0.06),
+    0 1px 2px rgb(15 23 42 / 0.08),
+    0 12px 32px rgb(15 23 42 / 0.1);
+}
+.deck-notes {
+  display: block;
+  margin-top: 14px;
+}
+.deck-notes-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.deck-inspector {
+  flex: 0 0 auto;
+  border-color: var(--color-border);
+  border-top-width: 1px;
+  background: var(--color-bg);
+}
+.deck-inspector-body {
+  max-width: 520px;
+}
+@container deckeditor (min-width: 900px) {
   .deck-workspace-body {
     flex-direction: row;
+    overflow: hidden;
+  }
+  .deck-stage {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
   }
   .deck-filmstrip {
     height: auto;
-    width: 144px;
+    width: 128px;
     flex-direction: column;
     overflow-y: auto;
     border-bottom-width: 0;
@@ -86,9 +138,369 @@
   .deck-thumbnail {
     width: 100%;
   }
-  .deck-canvas-padding {
+  .deck-stage-inner {
+    padding: 20px;
+  }
+  .deck-inspector {
+    width: 264px;
+    border-top-width: 0;
+    border-left-width: 1px;
+    overflow-y: auto;
+  }
+  .deck-inspector-body {
+    max-width: none;
+  }
+}
+@container deckeditor (min-width: 1200px) {
+  .deck-filmstrip {
+    width: 152px;
+  }
+  .deck-stage-inner {
     padding: 24px;
   }
+  .deck-inspector {
+    width: 280px;
+  }
+}
+
+/* Inspector: label left, control right, sections separated by hairlines. */
+.deck-inspector-body {
+  padding: 4px 0 24px;
+}
+.deck-inspector-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.deck-inspector-badge {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.deck-inspector-section {
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.deck-inspector-section:last-child {
+  border-bottom: 0;
+}
+.deck-inspector-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.deck-inspector-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+.deck-inspector-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+.deck-inspector-body > .deck-inspector-note {
+  padding: 10px 14px 0;
+}
+.deck-inspector-error {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--color-danger);
+}
+.deck-field {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 32px;
+  margin-top: 4px;
+}
+.deck-field-label {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.deck-field-control {
+  min-width: 0;
+}
+.deck-field-hint {
+  grid-column: 2;
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.deck-field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+}
+.deck-field-pair .deck-field {
+  grid-template-columns: 44px minmax(0, 1fr);
+}
+.deck-field-pair .deck-field-label {
+  font-size: 11px;
+}
+.deck-number {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.deck-number input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.deck-number[data-unit] input {
+  padding-right: 26px;
+}
+.deck-number input::-webkit-outer-spin-button,
+.deck-number input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.deck-number-unit {
+  position: absolute;
+  right: 8px;
+  font-size: 10.5px;
+  color: var(--color-text-faint);
+  pointer-events: none;
+}
+.deck-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.deck-color input[type="text"] {
+  padding: 0 6px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.deck-color-swatch {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-detail);
+  background: var(--color-field);
+  cursor: pointer;
+}
+.deck-color-swatch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.deck-color-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.deck-color-swatch::-webkit-color-swatch {
+  border: 0;
+  border-radius: 2px;
+}
+.deck-field-action {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-detail);
+  background: var(--color-control);
+}
+.deck-field-action:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+.deck-field-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.deck-choice {
+  display: inline-flex;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-detail);
+  background: var(--color-control);
+}
+.deck-choice-item {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-radius: 3px;
+}
+.deck-choice-item[aria-pressed="true"] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-border-strong);
+}
+.deck-choice-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.deck-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.deck-theme-presets {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.deck-theme-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  background: var(--color-control);
+}
+.deck-theme-preset:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+.deck-theme-preset[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.deck-theme-preset:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.deck-theme-swatches {
+  display: inline-flex;
+  gap: 3px;
+}
+.deck-theme-swatches span {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 0.12);
+}
+.deck-theme-preset-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.deck-theme-preset-fonts {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.deck-focal {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-detail);
+  background: var(--color-bg-muted);
+  cursor: crosshair;
+  touch-action: none;
+}
+.deck-focal:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.deck-focal img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.deck-focal-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.4);
+  pointer-events: none;
+}
+
+/* Selection overlay: sits on the slide frame, so edge handles are not clipped. */
+.deck-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.deck-selection {
+  position: absolute;
+  outline: 1.5px solid var(--color-accent);
+  outline-offset: 0;
+}
+.deck-selection[data-locked="true"] {
+  outline-style: dashed;
+}
+.deck-overlay-line {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.deck-overlay-line line {
+  stroke: var(--color-accent);
+  stroke-width: 1.5px;
+  opacity: 0.7;
+}
+.deck-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid var(--color-accent);
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.25);
+  pointer-events: auto;
+  touch-action: none;
+}
+.deck-handle[data-handle="start"],
+.deck-handle[data-handle="end"] {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+.deck-guide {
+  position: absolute;
+  background: var(--color-accent);
+  opacity: 0.85;
+}
+.deck-guide[data-axis="x"] {
+  top: -8px;
+  bottom: -8px;
+  width: 1px;
+}
+.deck-guide[data-axis="y"] {
+  left: -8px;
+  right: -8px;
+  height: 1px;
 }
 .doc-rich-text .ProseMirror p {
   margin: 0 0 0.65em;
@@ -175,6 +587,10 @@
 .deck-slide [role="button"].deck-element {
   cursor: pointer;
   text-align: left;
+  touch-action: none;
+}
+.deck-slide button.deck-element[data-locked="true"] {
+  cursor: default;
 }
 .deck-slide .deck-element:focus-visible {
   outline: 2px solid var(--color-accent);
@@ -213,6 +629,12 @@
 }
 .deck-slide .deck-element[data-element-type="line"] {
   min-height: 0;
+}
+/* A flat or upright line has a zero side; a halo gives it something to press. */
+.deck-slide button.deck-element[data-element-type="line"]::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .deck-slide .deck-image {
   display: block;
