@@ -1,10 +1,12 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
+import { upgradeDeckModel } from './deck-versions';
 import { assertGoogleFileEditable, GoogleDocumentFidelityError } from './google-fidelity';
 import { googleModelWriteLimitation } from './google-write-policy';
 import {
   type AlbatrossDocumentModel,
   type AlbatrossDocumentRecord,
-  type DeckElement,
+  type DeckElementV2,
+  type DeckTheme,
   type DocumentKind,
   parseDocumentModel,
   type SheetGridModel,
@@ -314,47 +316,151 @@ async function syncGoogleSheet(accessToken: string, fileId: string, model: Sheet
   );
 }
 
-function slideElementRequests(slideId: string, element: DeckElement, index: number) {
-  const objectId = googleObjectId(element.id, `_${index}`);
-  const width = (element.width / 100) * 720;
-  const height = (element.height / 100) * 405;
-  const createShape = {
-    createShape: {
-      objectId,
-      shapeType: element.type === 'shape' ? 'RECTANGLE' : 'TEXT_BOX',
-      elementProperties: {
-        pageObjectId: slideId,
-        size: {
-          width: { magnitude: width, unit: 'PT' },
-          height: { magnitude: height, unit: 'PT' },
-        },
-        transform: {
-          scaleX: 1,
-          scaleY: 1,
-          translateX: (element.x / 100) * 720,
-          translateY: (element.y / 100) * 405,
-          unit: 'PT',
-        },
-      },
-    },
+const GOOGLE_SLIDE_WIDTH_PT = 720;
+const GOOGLE_SLIDE_HEIGHT_PT = 405;
+
+function googleBox(element: { x: number; y: number; width: number; height: number }) {
+  return {
+    width: (element.width / 100) * GOOGLE_SLIDE_WIDTH_PT,
+    height: (element.height / 100) * GOOGLE_SLIDE_HEIGHT_PT,
+    translateX: (element.x / 100) * GOOGLE_SLIDE_WIDTH_PT,
+    translateY: (element.y / 100) * GOOGLE_SLIDE_HEIGHT_PT,
   };
-  const requests: Record<string, any>[] = [createShape];
-  if (element.text) requests.push({ insertText: { objectId, text: element.text, insertionIndex: 0 } });
-  if (element.text) {
+}
+
+/**
+ * One version 2 element as Google Slides requests. Text and shapes map
+ * directly; lines and https images have native forms; charts become a text
+ * box with their data so nothing is silently lost (Slides charts need a
+ * linked Sheet).
+ */
+function slideElementRequests(slideId: string, element: DeckElementV2, index: number, theme: DeckTheme) {
+  const objectId = googleObjectId(element.id, `_${index}`);
+  const box = googleBox(element);
+  const elementProperties = {
+    pageObjectId: slideId,
+    size: {
+      width: { magnitude: Math.max(box.width, 1), unit: 'PT' },
+      height: { magnitude: Math.max(box.height, 1), unit: 'PT' },
+    },
+    transform: { scaleX: 1, scaleY: 1, translateX: box.translateX, translateY: box.translateY, unit: 'PT' },
+  };
+  const requests: Record<string, any>[] = [];
+  const textBox = (
+    text: string,
+    style: { fontSize: number; bold: boolean; italic?: boolean; color: string },
+  ) => {
+    requests.push({ createShape: { objectId, shapeType: 'TEXT_BOX', elementProperties } });
+    if (!text) return;
+    requests.push({ insertText: { objectId, text, insertionIndex: 0 } });
     requests.push({
       updateTextStyle: {
         objectId,
         style: {
-          fontSize: { magnitude: element.fontSize || (element.role === 'title' ? 28 : 16), unit: 'PT' },
-          bold: element.role === 'title',
-          foregroundColor: {
-            opaqueColor: { rgbColor: hexToRgb(element.color || '#17202A') },
-          },
+          fontSize: { magnitude: style.fontSize, unit: 'PT' },
+          bold: style.bold,
+          italic: Boolean(style.italic),
+          foregroundColor: { opaqueColor: { rgbColor: hexToRgb(style.color) } },
         },
         textRange: { type: 'ALL' },
-        fields: 'fontSize,bold,foregroundColor',
+        fields: 'fontSize,bold,italic,foregroundColor',
       },
     });
+  };
+  if (element.type === 'text') {
+    const size = element.fontSize || (element.role === 'title' ? 28 : element.role === 'number' ? 64 : 16);
+    textBox(element.text, {
+      fontSize: size,
+      bold:
+        (element.fontWeight ?? (element.role === 'title' || element.role === 'number' ? 650 : 400)) >= 600,
+      italic: element.italic,
+      color: element.color || theme.colors.ink,
+    });
+    if (element.align && element.text) {
+      requests.push({
+        updateParagraphStyle: {
+          objectId,
+          style: {
+            alignment: element.align === 'center' ? 'CENTER' : element.align === 'right' ? 'END' : 'START',
+          },
+          textRange: { type: 'ALL' },
+          fields: 'alignment',
+        },
+      });
+    }
+  } else if (element.type === 'shape') {
+    requests.push({
+      createShape: {
+        objectId,
+        shapeType:
+          element.shape === 'ellipse'
+            ? 'ELLIPSE'
+            : element.shape === 'roundRect'
+              ? 'ROUND_RECTANGLE'
+              : 'RECTANGLE',
+        elementProperties,
+      },
+    });
+    requests.push({
+      updateShapeProperties: {
+        objectId,
+        shapeProperties: {
+          shapeBackgroundFill: {
+            solidFill: { color: { rgbColor: hexToRgb(element.fill || theme.colors.surface) } },
+          },
+          outline: element.stroke
+            ? {
+                outlineFill: { solidFill: { color: { rgbColor: hexToRgb(element.stroke.color) } } },
+                weight: { magnitude: element.stroke.width, unit: 'PT' },
+              }
+            : { propertyState: 'NOT_RENDERED' },
+        },
+        fields: 'shapeBackgroundFill,outline',
+      },
+    });
+  } else if (element.type === 'line') {
+    requests.push({
+      createLine: {
+        objectId,
+        lineCategory: 'STRAIGHT',
+        elementProperties: {
+          ...elementProperties,
+          transform: {
+            scaleX: 1,
+            scaleY: element.flip ? -1 : 1,
+            translateX: box.translateX,
+            translateY: element.flip ? box.translateY + box.height : box.translateY,
+            unit: 'PT',
+          },
+        },
+      },
+    });
+    requests.push({
+      updateLineProperties: {
+        objectId,
+        lineProperties: {
+          lineFill: { solidFill: { color: { rgbColor: hexToRgb(element.stroke.color) } } },
+          weight: { magnitude: element.stroke.width, unit: 'PT' },
+        },
+        fields: 'lineFill,weight',
+      },
+    });
+  } else if (element.type === 'image') {
+    if (element.src?.startsWith('https://')) {
+      requests.push({ createImage: { objectId, url: element.src, elementProperties } });
+    } else {
+      textBox(`[Image: ${element.alt || element.assetId}]`, {
+        fontSize: 12,
+        bold: false,
+        color: theme.colors.muted,
+      });
+    }
+  } else if (element.type === 'chart') {
+    const lines = element.series.map(
+      (series) =>
+        `${series.name}: ${element.categories.map((c, i) => `${c} ${series.values[i] ?? ''}${element.unit ?? ''}`).join(', ')}`,
+    );
+    textBox(lines.join('\n'), { fontSize: 12, bold: false, color: theme.colors.ink });
   }
   return requests;
 }
@@ -380,13 +486,14 @@ async function syncGoogleDeck(
   const requests: Record<string, any>[] = (current.slides || []).map((slide: any) => ({
     deleteObject: { objectId: slide.objectId },
   }));
-  model.slides.forEach((slide, slideIndex) => {
+  const deck = upgradeDeckModel(model);
+  deck.slides.forEach((slide, slideIndex) => {
     const slideId = googleObjectId(slide.id, `_${slideIndex}`);
     requests.push({
       createSlide: { objectId: slideId, slideLayoutReference: { predefinedLayout: 'BLANK' } },
     });
     slide.elements.forEach((element, index) => {
-      requests.push(...slideElementRequests(slideId, element, index));
+      requests.push(...slideElementRequests(slideId, element, index, deck.theme));
     });
   });
   await googleJson(

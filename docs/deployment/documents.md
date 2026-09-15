@@ -53,3 +53,9 @@ The live verification scripts use synthetic data and a private development `.env
 `scripts/verify-google-working-copy-live.ts` expects an owner/connection selection in private `/tmp/chat-doc-google-connections.json`. It creates synthetic Docs/Sheets/Slides, verifies save/reopen and stale-version refusal, and moves only those newly created files to Trash. It never edits an existing user file.
 
 Google↔Office conversion can alter provider-specific features. The original identity and sharing stay in Google, and Albatross retains working-copy versions for recovery; these are not a claim of lossless conversion of every Google feature.
+
+## Themed editor chrome
+
+`OFFICE_THEMED_CHROME` gates the compact, themed Collabora chrome with the Albatross controls. It defaults on in staging and off in production; an explicit `true` or `false` wins. The server decides once per session (`chrome.enabled` on the session object). The client then adds `ui_defaults` and `css_variables` to the editor URL and posts the hide and insert messages after the document loads. The toolbar icon is served from `/office/albatross-toolbar.svg` on the app origin. The control map, the dark-mode rule and the unsupported host messages are in `docs/albatross-document-editor-controls.md`.
+
+Live check: `OFFICE_THEMED_CHROME=true bun scripts/verify-collabora-live.ts` after the prepare script. It also proves the themed chrome and writes screenshots to `/tmp/collabora-chrome/`. Without the variable the script checks the plain chrome only.

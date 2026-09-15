@@ -282,7 +282,7 @@ describe('toolActivityLine — teach tools', () => {
   test('running lines carry the ellipsis and running state', () => {
     expect(toolActivityLine('corpus_search', { query: 'cardhunt.com' }, 'input-available')).toEqual({
       state: 'running',
-      text: 'Searching your mail for “cardhunt.com”…',
+      text: 'Searching mail and connected sources for “cardhunt.com”…',
     });
     expect(toolActivityLine('area_create', { name: 'StatPearls' }, 'input-streaming').text).toBe(
       'Creating area StatPearls…',
@@ -294,9 +294,9 @@ describe('toolActivityLine — teach tools', () => {
       toolActivityLine('corpus_search', { query: 'cardhunt.com' }, 'output-available', {
         items: [1, 2, 3],
       }).text,
-    ).toBe('Searched your mail for “cardhunt.com” — 3 results');
+    ).toBe('Searched for “cardhunt.com” — 3 mail results, 0 connected results');
     expect(toolActivityLine('corpus_search', {}, 'output-available', { items: [1] }).text).toBe(
-      'Searched your mail — 1 result',
+      'Searched — 1 mail result, 0 connected results',
     );
     expect(toolActivityLine('area_create', { name: 'StatPearls' }, 'output-available', { ok: true })).toEqual(
       { state: 'done', text: 'Created area StatPearls' },

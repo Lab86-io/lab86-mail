@@ -276,7 +276,32 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       failed: 'Failed to load more tools',
     };
   },
-  corpus_search: searchSentences('your mail', 'Mail search failed'),
+  corpus_search: (args, output) => {
+    const sentences = searchSentences(
+      args.includeConnectedTools === false ? 'your mail' : 'mail and connected sources',
+      'Search failed',
+    )(args, output);
+    if (!Array.isArray(output.items)) return sentences;
+    const mail = output.items.filter((item) => item?.source !== 'mcp').length;
+    const connected = output.items.length - mail;
+    const scope = str(args.query) ? ` for “${str(args.query)}”` : '';
+    const failures = Array.isArray(output.errors) ? output.errors.length : 0;
+    return {
+      ...sentences,
+      done: `Searched${scope} — ${mail} mail result${mail === 1 ? '' : 's'}, ${connected} connected result${connected === 1 ? '' : 's'}${failures ? '; some searches failed' : ''}`,
+    };
+  },
+  mcp_search: (args, output) =>
+    searchSentences(str(args.server) || 'connected sources', 'Connected search failed')(args, output),
+  mcp_list_items: (args, output) => {
+    const source = str(args.server) || 'connected sources';
+    const count = resultCount(output);
+    return {
+      running: `Loading recent items from ${source}`,
+      done: `Loaded recent items from ${source}${count == null ? '' : ` — ${count} result${count === 1 ? '' : 's'}`}`,
+      failed: `Loading items from ${source} failed`,
+    };
+  },
   corpus_count: fixed('Counting matching mail', 'Counted the matching mail', 'Mail count failed'),
   thread_timeline: fixed(
     'Reading the thread history',

@@ -1728,6 +1728,34 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId']),
 
+  // Owned images a presentation may reference. The stored URL is stable for
+  // the life of the file, so a deck can keep `src` beside `assetId`.
+  documentAssets: defineTable({
+    userId: v.string(),
+    storageId: v.id('_storage'),
+    mime: v.string(),
+    size: v.number(),
+    width: v.number(),
+    height: v.number(),
+    sha256: v.string(),
+    createdAt: v.number(),
+    attribution: v.optional(
+      v.object({
+        title: v.string(),
+        artist: v.string(),
+        date: v.string(),
+        credit: v.string(),
+        source: v.string(),
+        sourceUrl: v.string(),
+        license: v.string(),
+        style: v.optional(v.string()),
+      }),
+    ),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_user_hash', ['userId', 'sha256']),
+
   agentUploads: defineTable({
     userId: v.string(),
     storageId: v.id('_storage'),

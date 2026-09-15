@@ -1,0 +1,167 @@
+# Albatross editor: implementation plan for milestones B to E
+
+Date: 2026-09-15. Follows `docs/albatross-editor-milestone-a-2026-09-15.md`. Branch
+`claude/editor-milestone-a`, worktree `/home/jjalangtry/repos/lab86-mail-editor`.
+Delivery: one pull request into `staging`, merged after CI and review pass.
+
+## Assumptions stated up front
+
+1. **Visual checks in production use Browserbase.** The app connects a Playwright client to
+   a Browserbase session over CDP. No Chromium ships in the Railway image. Local runs use the
+   installed Playwright Chromium. Keys are `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID`.
+2. **Delivery is a pull request into `staging`.** The branch already sits on `origin/staging`.
+   Jakob's uncommitted purge in the main checkout will need a rebase after the merge.
+3. **Native apps ship the read-only version 2 preview this round.** iOS and macOS open a
+   rich deck as a text projection with **Open full editor**. A native canvas for version 2
+   is a later milestone.
+4. **Flags.** `OFFICE_THEMED_CHROME` and `DECK_V2_AUTHORING`. Both default on in staging
+   and off in production until the staging release is verified.
+
+## Waves
+
+### Wave 1: shared layer (Claude)
+
+- `lib/documents/editor-flags.ts`: the two flags.
+- `lib/documents/deck-quality.ts`: pure checks on a version 2 deck. Off-canvas, unintended
+  overlap, copy that cannot fit its box, type under 10 pt, contrast under 3:1 for display
+  and 4.5:1 for body, missing image sources, more than 90 words on a slide. Decorative
+  elements may sit under content. `repairDeck` clamps geometry and steps font sizes down,
+  bounded to three passes.
+- `lib/documents/deck-render.ts`: static HTML for a deck with packaged fonts, and
+  `renderDeckSlides` through Playwright, local or Browserbase. Returns one PNG per slide.
+- `public/fonts/`: Fraunces and Geist woff2 files with their licenses.
+- Deck assets: Convex table `documentAssets`, `app/api/documents/assets` upload route with
+  type and size validation, owner checks, and `{ assetId, src, aspect }` in the response.
+- `lib/documents/collabora-chrome.ts`: the URL parameters, the light and dark variable
+  maps, and the post-load message list. Pure functions with tests.
+
+### Wave 2: three workstreams in parallel, disjoint files
+
+**B. Document editor** (`lib/documents/collabora.ts`, `components/files/CollaboraFrame.tsx`,
+`components/files/OfficeEditor.tsx`, `tests/collabora*.test.ts`, docs)
+
+- Session URL carries `ui_defaults` and `css_variables` from the app theme.
+- After `Document_Loaded`: hide the menubar, hide save and print by command, insert the
+  Albatross button, and send the light document theme under a dark application theme.
+- Title row: back, title, save status, Save, Download, History, All tools, Albatross.
+- **All tools** switches to the notebookbar live and back.
+- Feature map document: where every previous control remains reachable.
+- Live verification script extended for the themed chrome.
+
+**C. Slide editor** (`components/files/editors/PresentationEditor.tsx`, `deck-model.ts`,
+`document-editors.css`, `tests/document-editor-models.test.ts`, new inspector files)
+
+- Layout: filmstrip left, canvas center, inspector right, notes under the canvas.
+- Canvas: drag to move, handles to resize, snap guides to edges and centers, arrow nudges.
+- Inspector by selection: text typography, shape fill and stroke, line stroke, image fit and
+  focal point and replace, chart type and data and colors. Layer order and delete.
+- Insert: text, shape, line, image through the assets route, chart.
+- Deck theme panel: palette and font pairs, applied deck-wide with per-slide edits kept.
+- Everything survives save, reopen, undo, redo, duplicate, reorder and export.
+
+**D. Designed generation** (`lib/documents/presentation-design.ts`, `lib/documents/ai.ts`,
+`lib/documents/edits.ts` restyle, `lib/tools/documents.ts`, tests)
+
+- Art-direction brief: audience, purpose, tone, palette, font pair, imagery, and one
+  visual role per slide from a curated set of eleven compositions.
+- Deterministic composer from the brief to version 2 slides, using the reference geometry.
+- Restyle: theme, palette, fonts and layout scope change; facts, charts, notes, order and
+  locked elements stay. Writes a real revision through the existing conflict protection.
+- Quality loop: `checkDeck`, bounded repair, then a render check when a browser is
+  available. Failure surfaces as a recoverable error, never a half-saved deck.
+- Tool descriptions updated so the assistant applies explicit restyle requests directly.
+
+### Wave 3: acceptance and release (Claude)
+
+- Full typecheck, lint, test run, and the coverage gate.
+- Screenshots of the editor, generated decks and the themed document editor.
+- Live Collabora verification against staging with the real frame.
+- PPTX opened in PowerPoint on the Mac, slides exported to PNG, compared with the web.
+- iOS and macOS builds on the Mac; native tests.
+- Pull request into `staging`, review findings fixed, merge, staging smoke check.
+
+## Outcome (2026-09-15)
+
+Every wave landed on this branch. Verification is listed in the pull request.
+
+### Wave 1
+
+- `lib/documents/deck-quality.ts`: checks and bounded repair. The reference decks pass
+  with no errors after the accent moved to `#AE4B2B` and muted to `#5E5A51`.
+- `lib/documents/deck-render.ts`: self-contained HTML with inlined fonts, local or
+  Browserbase browser, one PNG per slide. Optical size pinned to match the canvas.
+- Owned images: `convex/documentAssets.ts`, `lib/documents/deck-asset-store.ts`,
+  `POST /api/documents/assets`, `GET /api/documents/assets/[assetId]`. Signature-checked,
+  bounded, hashed, purged with the account.
+- `lib/documents/editor-flags.ts`, `lib/documents/rich-docx-fixture.ts`,
+  `scripts/cleanup-office-verification.ts`.
+
+### Wave 2
+
+- B: `lib/documents/collabora-chrome.ts`, themed `CollaboraFrame`, compact title row with
+  **All tools** and Albatross in `OfficeEditor`, controls map in
+  `docs/albatross-document-editor-controls.md`, live verification against staging
+  including a rich Word file and dark chrome.
+- C: `PresentationEditor` with drag, resize, snap guides, inline text, contextual
+  inspectors for text, shape, line, image and chart, insert menu with image upload,
+  deck theme panel. Flat lines now paint on the canvas.
+- D: `presentation-compositions.ts` with eleven compositions, the version 2 brief and
+  composer, quality loop with one repair call, restyle by theme or by theme and layout,
+  tool descriptions.
+
+### Not in this round
+
+- Owned assets are not yet passed into generation; images enter through the editor.
+- The PowerPoint visual check could not run from a remote shell on the Mac (sandbox
+  blocks saving). LibreOffice rendering matched the canvas. Someone at the Mac can
+  open `/tmp/deck-render/lakeshore-editorial.pptx` and compare.
+- A native canvas for version 2 decks. iOS and macOS show the read-only preview and
+  open the web editor.
+- The Insert menu is proven in Chromium, not in the JSDOM suite.
+- A custom accent hue does not reach the Collabora chrome; it uses the default tokens.
+
+## Second round (2026-09-15): native canvas, owned assets, artwork
+
+Jakob asked for three additions after the first round: a native canvas, owned
+assets in generation, and artwork from the museum collections the app already uses.
+
+### Native canvas
+
+- `apps/ios/Lab86Mail/Core/Documents/DeckV2Model.swift`: an editable version 2 model
+  with an `extra` bag at every level, so a round trip through the native app keeps
+  every field it does not know. Unknown deck and sheet versions are refused.
+- `apps/ios/Lab86Mail/Features/Files/DeckSlideView.swift`: one renderer for text,
+  shapes, lines, images and charts (Swift Charts), shared by thumbnails, the canvas and
+  presentation mode. Theme fonts map to the system serif, sans and mono designs.
+- `apps/ios/Lab86Mail/Features/Files/NativeDeckV2Editor.swift`: filmstrip, canvas with
+  move and resize, inline text, inspector, slide actions, theme presets, undo, and a
+  presentation view. Picture replacement and chart data link to the full editor.
+- 26 native tests pass on the iPhone simulator; the macOS target builds.
+
+### Artwork
+
+- `lib/documents/deck-art.ts`: search over the curated pool (409 public-domain pieces
+  from The Met, Cleveland, SMK and the National Gallery of Art) by style, words and
+  theme hue, plus live search of The Met, Cleveland, the Art Institute of Chicago and
+  SMK. Imports are bounded, re-encoded, palette-analyzed and stored as owned assets
+  with attribution. Only museum image hosts are fetched.
+- `GET /api/documents/artworks`, `POST /api/documents/artworks/import`.
+- The editor's Artwork panel: search, style chips, "Search museums too", place on
+  slide or use as background, credit in the notes.
+- The deck theme carries `imagery { mode, styles, subject }`.
+
+### Owned assets and artwork in generation
+
+- `lib/documents/deck-upload-assets.ts`: chat uploads become owned deck assets through
+  the same signature, size and hash checks. `document_create` accepts
+  `imageUploadIds` (up to eight) and `artwork: 'auto' | 'none'`.
+- `lib/documents/deck-imagery.ts`: plans which slides take a painting (cover, statements,
+  image slides, quotes, the close), searches the pool first and the museums when
+  `DECK_ART_LIVE` is set, imports at most four per deck, and never fails a generation.
+  Uploads take the image slots first.
+- Compositions: cover with the painting on the right half, statement with the painting
+  ghosted under an ink veil, image slides with the painting in the image box, quote beside
+  a left-third painting, close with an art strip. Credits sit on the slide and in the notes.
+- Restyle: `imagery: 'paintings'` hangs artwork on a deck that had none; `imagery: 'none'`
+  removes artwork and keeps user images. Theme colors are validated before palette math.
+- Sample: a harbor dredging plan in the gallery.

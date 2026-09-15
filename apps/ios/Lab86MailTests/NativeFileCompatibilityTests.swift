@@ -44,6 +44,66 @@ struct NativeFileCompatibilityTests {
         #expect(AlbatrossDocumentModel(json: model.json) == model)
     }
 
+    @Test func richDeckRoundTripPreservesEveryVersionTwoField() throws {
+        let raw = try json(##"{"kind":"deck","version":2,"activeSlideId":"cover","futureDeckField":{"a":[1,"b",null]},"theme":{"name":"Editorial","futureThemeField":true,"colors":{"background":"#F4F1EA","surface":"#E7E1D3","ink":"#1E2A38","muted":"#6F6A60","accent":"#B5502F","accentInk":"#FFFFFF","futureColor":"#123456"},"fonts":{"display":{"family":"Fraunces","exportFamily":"Georgia","futureFontField":1},"body":{"family":"Geist"},"mono":{"family":"Geist Mono","fallback":"monospace"},"futureFontsField":"x"}},"slides":[{"id":"cover","title":"The Lakeshore Trail","notes":"Open warmly.","futureSlideField":[true],"backgroundImage":{"assetId":"bg","src":"/art/fallback-1.jpg","opacity":0.4,"focal":{"x":0.2,"y":0.8,"futureFocal":1},"futureBackgroundField":"k"},"elements":[{"id":"t","type":"text","x":6,"y":24,"width":42,"height":40,"text":"The Lakeshore Trail","role":"title","fontSize":68,"fontWeight":500,"lineHeight":0.96,"valign":"top","name":"Cover title","groupId":"g1","locked":true,"overlapAllowed":true,"rotation":-3,"opacity":0.9,"italic":false,"align":"left","letterSpacing":-0.02,"font":"display","color":"#1E2A38","fill":"#E7E1D3","futureTextField":"keep"},{"id":"i","type":"image","x":52,"y":0,"width":48,"height":100,"assetId":"a1","src":"/art/fallback-3.jpg","alt":"Painted valley","fit":"cover","focal":{"x":0.5,"y":0.55},"aspect":1.5,"radius":8,"source":"Albatross art","decorative":true},{"id":"l","type":"line","x":6,"y":12,"width":5,"height":0,"flip":true,"stroke":{"color":"#B5502F","width":1.5,"dash":"dot","futureStrokeField":2}},{"id":"s","type":"shape","x":10,"y":10,"width":5,"height":5,"shape":"roundRect","radius":14,"fill":"#FFFFFF","stroke":{"color":"#1E2A38","width":0.75}},{"id":"c","type":"chart","x":40,"y":38,"width":54,"height":50,"chart":"column","categories":["Q1","Q2"],"series":[{"name":"Spend","values":[180,240],"futureSeriesField":"s"}],"colors":["#AE4B2B"],"legend":false,"values":true,"unit":"k","source":"Report","futureField":{"nested":[1,true]}},{"id":"u","type":"hologram","x":1,"y":1,"width":2,"height":2,"beam":"wide"}]},{"id":"second","title":"","elements":[]}]}"##)
+        let model = try #require(AlbatrossDocumentModel(json: raw))
+        guard case .deckV2(let deck) = model else { Issue.record("Must not flatten a v2 deck into v1"); return }
+        #expect(model.json == raw)
+        #expect(model.kind == .deck)
+        #expect(!model.requiresWebEditor)
+        #expect(deck.activeSlideID == "cover")
+        #expect(deck.theme.name == "Editorial")
+        #expect(deck.theme.fonts.mono?.family == "Geist Mono")
+        #expect(deck.slides.count == 2)
+        #expect(deck.slides[0].elements.map(\.readableText).filter { !$0.isEmpty } == ["The Lakeshore Trail", "Painted valley", "Spend: Q1 180, Q2 240"])
+        #expect(deck.slides[0].elements.count == 6)
+        #expect(deck.slides[0].notes == "Open warmly.")
+        #expect(deck.slides[0].backgroundImage?.opacity == 0.4)
+        #expect(deck.slides[0].elements[0].locked == true)
+        #expect(deck.slides[0].elements[0].groupID == "g1")
+        #expect(deck.slides[0].elements[0].extra["futureTextField"] == .string("keep"))
+        #expect(deck.slides[0].elements[5].content == .unknown(type: "hologram"))
+        #expect(deck.extra["futureDeckField"] != nil)
+        #expect(AlbatrossDocumentModel(json: model.json) == model)
+        // The same deck after a native edit still carries every unknown field.
+        var edited = deck
+        edited.updateElement("c") {
+            if case .chart(var chart) = $0.content {
+                chart.legend = true
+                $0.content = .chart(chart)
+            }
+        }
+        let editedJSON = AlbatrossDocumentModel.deckV2(edited).json
+        #expect(editedJSON["slides"]?[0]?["elements"]?[4]?["futureField"] == raw["slides"]?[0]?["elements"]?[4]?["futureField"])
+        #expect(editedJSON["slides"]?[0]?["elements"]?[4]?["legend"] == .bool(true))
+        #expect(editedJSON["futureDeckField"] == raw["futureDeckField"])
+    }
+
+    @Test func referenceDeckRoundTripsUnchanged() throws {
+        let raw = try json(DeckFixtures.referenceEditorial)
+        let model = try #require(AlbatrossDocumentModel(json: raw))
+        guard case .deckV2(let deck) = model else { Issue.record("Reference deck must decode as version 2"); return }
+        #expect(deck.slides.count == 6)
+        #expect(deck.theme.colors.accent == "#AE4B2B")
+        #expect(model.json == raw)
+    }
+
+    @Test func invalidRichDeckDoesNotFallBackToDestructiveLegacyEditing() throws {
+        for payload in [
+            #"{"kind":"deck","version":2,"slides":[{"id":"a","elements":[]}]}"#,
+            #"{"kind":"deck","version":2,"theme":{"colors":{}},"slides":[]}"#,
+            // Duplicate slide ids break list identity.
+            ##"{"kind":"deck","version":2,"activeSlideId":"a","theme":{"colors":{"background":"#FFFFFF","surface":"#FFFFFF","ink":"#000000","muted":"#000000","accent":"#000000","accentInk":"#FFFFFF"},"fonts":{"display":{"family":"Geist"},"body":{"family":"Geist"}}},"slides":[{"id":"a","title":"","elements":[]},{"id":"a","title":"","elements":[]}]}"##,
+            // An element without geometry.
+            ##"{"kind":"deck","version":2,"activeSlideId":"a","theme":{"colors":{"background":"#FFFFFF","surface":"#FFFFFF","ink":"#000000","muted":"#000000","accent":"#000000","accentInk":"#FFFFFF"},"fonts":{"display":{"family":"Geist"},"body":{"family":"Geist"}}},"slides":[{"id":"a","title":"","elements":[{"id":"t","type":"text","text":"x"}]}]}"##,
+            // A version this build does not know is never flattened.
+            #"{"kind":"deck","version":3,"activeSlideId":"a","slides":[{"id":"a","title":"","elements":[]}]}"#,
+            #"{"kind":"sheet","version":3,"activeSheetId":"s","sheets":[{"id":"s","name":"S","rowCount":1,"columnCount":1,"cells":{}}]}"#,
+        ] {
+            #expect(AlbatrossDocumentModel(json: try json(payload)) == nil, "\(payload.prefix(60))")
+        }
+    }
+
     @Test func invalidWorkbookDoesNotFallBackToDestructiveLegacyEditing() throws {
         for payload in [
             #"{"kind":"sheet","version":2,"engine":"unknown","sheets":[{"id":"a"}]}"#,

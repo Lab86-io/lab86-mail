@@ -1,19 +1,25 @@
 import { z } from 'zod';
+import { deckModelForSave, upgradeDeckModel } from './deck-versions';
 import {
   type AlbatrossDocumentModel,
-  deckModelSchema,
+  type DeckTheme,
+  deckElementV2Schema,
+  deckSlideV2Schema,
   docModelSchema,
   parseDocumentModel,
   type SuggestionPayload,
 } from './model';
+import { type CompositionArtwork, FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
+import { deckPaletteColorsSchema, restyleDeck } from './presentation-design';
 import { assertModelWithinLimit, parseCellAddress, sheetChangeSchema } from './sheet-workbook';
 import { spreadsheetCommandSchema, validateSpreadsheetCommand } from './spreadsheet-commands';
 
 const id = z.string().min(1).max(200);
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const block = docModelSchema.shape.blocks.element;
 const blockPatch = z.object(block.shape).omit({ id: true }).partial().strict();
-const slide = deckModelSchema.shape.slides.element;
-const element = slide.shape.elements.element;
+const slide = deckSlideV2Schema;
+const element = deckElementV2Schema;
 function assertFitsCanvas(item: z.infer<typeof element>) {
   if (item.x + item.width > 100 || item.y + item.height > 100)
     throw new Error('The element must fit inside the slide canvas.');
@@ -30,13 +36,28 @@ export const documentEditOperationSchema = z.discriminatedUnion('op', [
   z
     .object({
       op: z.literal('deck_restyle'),
-      theme: z.enum(['dark', 'light']),
-      accent: z
-        .string()
-        .regex(/^#[0-9a-fA-F]{6}$/)
-        .default('#7c83ff'),
+      /** Named palette or a custom six-color set. Omit to keep the current colors. */
+      palette: z.union([z.enum(PALETTE_NAMES), deckPaletteColorsSchema]).optional(),
+      /** serif: Fraunces display with Geist text. sans: Geist throughout. Omit to keep the current fonts. */
+      fontPair: z.enum(FONT_PAIR_NAMES).optional(),
+      /** theme: colors and fonts only. theme-and-layout: also recompose every slide; facts, charts, notes and order stay. */
+      scope: z.enum(['theme', 'theme-and-layout']).default('theme'),
+      /** Elements kept exactly as they are, in addition to elements marked locked. */
+      lockedElementIds: z.array(id).max(500).optional(),
+      /** paintings: hang credited public-domain paintings on slides without an image. none: remove the paintings; the user's images stay. */
+      imagery: z.enum(['paintings', 'none']).optional(),
+      /** Legacy form: dark or light with one accent. Kept for older callers. */
+      theme: z.enum(['dark', 'light']).optional(),
+      accent: hexColor.optional(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      (value) =>
+        value.theme || value.palette || value.fontPair || value.imagery || value.scope === 'theme-and-layout',
+      {
+        message: 'deck_restyle needs a palette, a fontPair, imagery, a layout scope, or the legacy theme.',
+      },
+    ),
   z.object({ op: z.literal('slide_insert'), slide, ...position }).strict(),
   z
     .object({
@@ -92,10 +113,24 @@ function validateIdentity(model: AlbatrossDocumentModel) {
   } else unique(model.version === 2 ? model.workbook.sheets : model.sheets);
 }
 
+/** Resources an edit may need that the operation itself cannot carry. */
+export interface DocumentEditContext {
+  /** Credited paintings by slide id for a deck_restyle with imagery paintings, resolved by the caller. */
+  artworks?: Partial<Record<string, CompositionArtwork>>;
+  /** The deck-wide imagery record that goes with those paintings. */
+  imageryTheme?: NonNullable<DeckTheme['imagery']>;
+}
+
 /** All operations validate on a private copy before any persistence happens. */
-export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unknown): SuggestionPayload {
+export function prepareDocumentEdits(
+  source: AlbatrossDocumentModel,
+  input: unknown,
+  context: DocumentEditContext = {},
+): SuggestionPayload {
   const operations = documentEditsSchema.parse(input);
-  const model = structuredClone(parseDocumentModel(source));
+  const parsed = parseDocumentModel(source);
+  // Slide edits run on version 2; a deck stored as version 1 keeps that shape when it can.
+  const model = structuredClone(parsed.kind === 'deck' ? upgradeDeckModel(parsed) : parsed);
   validateIdentity(model);
   if (
     model.kind === 'sheet' &&
@@ -192,19 +227,45 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
       if (model.kind !== 'deck') throw new Error('Slide and element edits require a presentation.');
       switch (operation.op) {
         case 'deck_restyle': {
-          // Theme every slide without inventing geometry or replacing its content.
-          for (const target of model.slides) {
-            target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
-            for (const item of target.elements) {
-              if (item.type === 'shape') {
-                item.fill = operation.accent;
-                continue;
+          if (operation.theme) {
+            // Legacy form: theme every slide without inventing geometry or replacing its content.
+            const accent = operation.accent ?? '#7c83ff';
+            const ink = operation.theme === 'dark' ? '#f3f4f6' : '#111827';
+            model.theme = {
+              ...model.theme,
+              colors: {
+                ...model.theme.colors,
+                background: operation.theme === 'dark' ? '#111827' : '#ffffff',
+                ink,
+                accent,
+              },
+            };
+            for (const target of model.slides) {
+              target.background = operation.theme === 'dark' ? '#111827' : '#ffffff';
+              for (const item of target.elements) {
+                if (item.type === 'shape') {
+                  item.fill = accent;
+                  continue;
+                }
+                if (item.type !== 'text') continue;
+                item.color = item.role === 'title' ? accent : ink;
+                item.fontSize ??= item.role === 'title' ? 28 : 16;
               }
-              item.color =
-                item.role === 'title' ? operation.accent : operation.theme === 'dark' ? '#f3f4f6' : '#111827';
-              item.fontSize ??= item.role === 'title' ? 28 : 16;
             }
+            break;
           }
+          // Palette, fonts and optionally layout change; facts, charts, notes, order and locked elements stay.
+          const restyled = restyleDeck(model, {
+            ...(operation.palette ? { palette: operation.palette } : {}),
+            ...(operation.fontPair ? { fontPair: operation.fontPair } : {}),
+            scope: operation.scope,
+            ...(operation.lockedElementIds ? { lockedElementIds: operation.lockedElementIds } : {}),
+            ...(operation.imagery ? { imagery: operation.imagery } : {}),
+            ...(context.artworks ? { artworks: context.artworks } : {}),
+            ...(context.imageryTheme ? { imageryTheme: context.imageryTheme } : {}),
+          });
+          model.theme = restyled.theme;
+          model.slides = restyled.slides;
           break;
         }
         case 'slide_insert':
@@ -241,7 +302,9 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
     }
   }
   validateIdentity(model);
-  const validated = parseDocumentModel(model);
+  const validated = parseDocumentModel(
+    model.kind === 'deck' && parsed.kind === 'deck' ? deckModelForSave(model, parsed.version) : model,
+  );
   assertModelWithinLimit(validated);
   return validated;
 }

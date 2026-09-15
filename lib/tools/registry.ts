@@ -14,6 +14,7 @@ export interface ToolContext {
   chatId?: string;
   runId?: string;
   toolExecutionKey?: string;
+  abortSignal?: AbortSignal;
   // IANA timezone for interpreting naive wall-clock timestamps in tool args.
   userTimezone?: string;
 }

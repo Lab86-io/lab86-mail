@@ -1,6 +1,6 @@
 import Foundation
 
-enum JSONValue: Codable, Equatable, Sendable {
+enum JSONValue: Codable, Hashable, Sendable {
     case object([String: JSONValue])
     case array([JSONValue])
     case string(String)
@@ -89,6 +89,11 @@ enum JSONValue: Codable, Equatable, Sendable {
     }
 
     subscript(key: String) -> JSONValue? { objectValue?[key] }
+
+    subscript(index: Int) -> JSONValue? {
+        guard let values = arrayValue, values.indices.contains(index) else { return nil }
+        return values[index]
+    }
 
     static func strings(_ values: [String]) -> JSONValue {
         .array(values.map(JSONValue.string))
