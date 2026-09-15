@@ -1,4 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { isThemedOfficeChromeEnabled } from './editor-flags';
 import { OfficeError, signOfficeToken, verifyOfficeToken } from './office-security';
 import { getOfficeFile, getOfficeSession, type OfficeFile, requireOffice } from './office-service';
 
@@ -14,7 +15,17 @@ export function __setCollaboraDepsForTest(overrides: Partial<typeof defaultDepen
   dependencies = { ...defaultDependencies, ...overrides };
 }
 
-export async function startCollaboraSession(userId: string, document: OfficeFile) {
+/**
+ * The session the client needs to open the editor. `chrome.enabled` is the
+ * server's decision on the themed chrome; the client applies the URL
+ * parameters and the post-load messages only when it is true. `host` lets a
+ * caller pass the request host so staging detection can use it.
+ */
+export async function startCollaboraSession(
+  userId: string,
+  document: OfficeFile,
+  options: { host?: string | null } = {},
+) {
   const config = dependencies.requireOffice();
   const response = await dependencies.fetch(`${config.server}/hosting/discovery`, {
     signal: AbortSignal.timeout(15_000),
@@ -73,6 +84,8 @@ export async function startCollaboraSession(userId: string, document: OfficeFile
     editorUrl: target.toString(),
     accessToken: token,
     accessTokenTtl: session.expiresAt,
+    extension: document.extension,
+    chrome: { enabled: isThemedOfficeChromeEnabled(options.host) },
   };
 }
 
