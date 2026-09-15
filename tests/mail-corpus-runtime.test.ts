@@ -6,6 +6,7 @@ import schema from '../convex/schema';
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
   '../convex/mailCorpus.ts': () => import('../convex/mailCorpus'),
+  '../convex/albatross.ts': () => import('../convex/albatross'),
 };
 
 const SECRET = 'mail-corpus-runtime-secret';
@@ -62,6 +63,142 @@ async function ingest(t: Harness, messages: Record<string, unknown>[], extra: Re
     ...extra,
   });
 }
+
+describe('incoming Area mail', () => {
+  test('a reply brings an old verified thread back into the bounded Area inbox immediately', async () => {
+    const runtime = newHarness();
+    await ingest(runtime, [message()]);
+    const { areaId, linkId } = await runtime.run(async (ctx) => {
+      const areaId = await ctx.db.insert('areas', {
+        userId: USER,
+        name: 'Work',
+        kind: 'project',
+        status: 'active',
+        createdAt: TS,
+        updatedAt: TS,
+      });
+      const linkId = await ctx.db.insert('areaArtifactLinks', {
+        userId: USER,
+        areaId,
+        artifactKind: 'mailThread',
+        artifactId: 'thread_1',
+        accountId: scope.accountId,
+        role: 'supporting',
+        status: 'verified',
+        sourceRefs: [],
+        confirmationRefs: [{ kind: 'userConfirmation', id: 'file-here', confirmedBy: USER, confirmedAt: TS }],
+        createdAt: TS,
+        updatedAt: TS,
+      });
+      for (let index = 0; index < 95; index += 1) {
+        const providerThreadId = `newer-thread-${index}`;
+        await ctx.db.insert('mailCorpusThreads', {
+          userId: USER,
+          accountId: scope.accountId,
+          grantId: scope.grantId,
+          provider: 'google',
+          providerThreadId,
+          subject: providerThreadId,
+          fromAddress: 'sender@example.com',
+          lastDate: TS + index + 1,
+          snippet: '',
+          labels: ['inbox'],
+          unread: false,
+          yearMonth: '2026-07',
+          createdAt: TS,
+          updatedAt: TS + index + 1,
+        });
+        await ctx.db.insert('areaArtifactLinks', {
+          userId: USER,
+          areaId,
+          artifactKind: 'mailThread',
+          artifactId: providerThreadId,
+          accountId: scope.accountId,
+          role: 'supporting',
+          status: 'candidate',
+          sourceRefs: [],
+          confirmationRefs: [],
+          createdAt: TS,
+          updatedAt: TS + index + 1,
+        });
+      }
+      return { areaId, linkId };
+    });
+    const queryArgs = { internalSecret: SECRET, userId: USER, areaId };
+    const before = await runtime.query(api.albatross.areaHome, queryArgs);
+    expect(before.mail.some((row) => row.providerThreadId === 'thread_1')).toBe(false);
+    const confirmed = await runtime.run((ctx) => ctx.db.get(linkId));
+    const reply = message({ providerMessageId: 'reply_1', receivedAt: TS + 1000, subject: 'Fresh reply' });
+    await ingest(runtime, [reply]);
+    const after = await runtime.query(api.albatross.areaHome, queryArgs);
+    expect(after.mail[0]).toMatchObject({
+      providerThreadId: 'thread_1',
+      latestMessageId: 'reply_1',
+      subject: 'Fresh reply',
+      unread: true,
+    });
+    expect(after.mail).toHaveLength(30);
+    const refreshed = await runtime.run((ctx) => ctx.db.get(linkId));
+    expect(refreshed?.updatedAt).toBeGreaterThan(confirmed!.updatedAt);
+    expect({ ...refreshed, updatedAt: confirmed!.updatedAt }).toEqual(confirmed);
+    const thread = await runtime.run((ctx) =>
+      ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_account_thread', (query) =>
+          query.eq('accountId', scope.accountId).eq('providerThreadId', 'thread_1'),
+        )
+        .unique(),
+    );
+    expect(thread).toMatchObject({ llmPending: true, areaRoutingPending: true });
+    await ingest(runtime, [reply]);
+    await ingest(runtime, [message({ providerMessageId: 'backfill', receivedAt: TS - 1000 })]);
+    expect(await runtime.run((ctx) => ctx.db.get(linkId))).toEqual(refreshed);
+    expect(await runtime.run((ctx) => ctx.db.query('areaReindexRuns').collect())).toEqual([]);
+  });
+
+  test('refreshes only active links for the same owner, account and thread', async () => {
+    const runtime = newHarness();
+    await ingest(runtime, [message()]);
+    const links = await runtime.run(async (ctx) => {
+      const areaId = await ctx.db.insert('areas', {
+        userId: USER,
+        name: 'Work',
+        kind: 'project',
+        status: 'active',
+        createdAt: TS,
+        updatedAt: TS,
+      });
+      const variants = [
+        { status: 'candidate' as const },
+        { status: 'rejected' as const },
+        { status: 'verified' as const, accountId: 'account_2' },
+        { status: 'verified' as const, userId: 'other_user' },
+        { status: 'verified' as const, artifactId: 'other_thread' },
+      ];
+      return Promise.all(
+        variants.map((variant) =>
+          ctx.db.insert('areaArtifactLinks', {
+            userId: USER,
+            areaId,
+            artifactKind: 'mailThread',
+            artifactId: 'thread_1',
+            accountId: scope.accountId,
+            role: 'supporting',
+            sourceRefs: [],
+            confirmationRefs: [],
+            createdAt: TS,
+            updatedAt: TS,
+            ...variant,
+          }),
+        ),
+      );
+    });
+    await ingest(runtime, [message({ providerMessageId: 'reply_1', receivedAt: TS + 1000 })]);
+    const updated = await runtime.run((ctx) => Promise.all(links.map((id) => ctx.db.get(id))));
+    expect(updated[0]?.updatedAt).toBeGreaterThan(TS);
+    for (const unchanged of updated.slice(1)) expect(unchanged?.updatedAt).toBe(TS);
+  });
+});
 
 describe('sync state machine', () => {
   test('markSyncState upserts and preserves fields a later patch does not mention', async () => {

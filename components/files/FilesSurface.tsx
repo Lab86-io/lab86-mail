@@ -849,20 +849,8 @@ export function FilesSurface() {
         {...({ webkitdirectory: '' } as any)}
       />
 
-      {/* Two bars. The header names the surface and holds search and the two
-          verbs; the toolbar below holds where you are and how the list reads. */}
-      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] p-3 @min-[680px]/files:grid-cols-[auto_minmax(160px,1fr)_auto_auto] @min-[680px]/files:px-4">
-        <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-tight">Files</h1>
-          <p className="hidden truncate text-[11.5px] text-[var(--color-text-muted)] @min-[680px]/files:block">
-            {deferredSearch
-              ? 'Library names, plus drive names and content, account-wide'
-              : location.kind === 'all'
-                ? 'Your library and every connected drive'
-                : `Files in ${location.label}`}
-          </p>
-        </div>
-        <label className="relative col-span-3 row-start-2 block min-w-0 @min-[680px]/files:col-span-1 @min-[680px]/files:col-start-2 @min-[680px]/files:row-start-1">
+      <header className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-content)] p-3 @min-[680px]/files:px-4">
+        <label className="relative block min-w-0">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input
             aria-label="Search files"

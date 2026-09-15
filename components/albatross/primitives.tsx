@@ -11,23 +11,19 @@ import {
 } from '@/lib/albatross/work-state';
 import { cn } from '@/lib/utils';
 
-/**
- * State reads by shape and weight, not by colour. Needs-you is raised, waiting
- * is dashed, finished recedes. Red belongs to errors only.
- */
 export function StateChip({ state, className }: { state: WorkStateKey; className?: string }) {
   return (
     <span
       data-state={state}
       className={cn(
-        'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none',
+        'shrink-0 rounded-ui px-2 py-1 text-[11px] leading-none',
         state === 'needs_you'
-          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)]'
+          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
           : state === 'waiting' || state === 'unresolved'
-            ? 'border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]'
+            ? 'border border-dashed border-[var(--color-accent-2)] bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'
             : state === 'done' || state === 'released' || state === 'archived'
-              ? 'text-[var(--color-text-faint)]'
-              : 'border border-[var(--color-border)] text-[var(--color-text-muted)]',
+              ? 'bg-[var(--color-surface-well)] text-[var(--color-text-muted)]'
+              : 'bg-[var(--color-accent-3-soft)] text-[var(--color-accent-3)]',
         className,
       )}
     >
@@ -151,6 +147,19 @@ export interface AlbatrossRowData extends WorkStateInput {
   openQuestions: number;
 }
 
+export function AlbatrossList({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <ul
+      className={cn(
+        'surface-card rounded-card p-1 [&>li+li]:relative [&>li+li]:before:pointer-events-none [&>li+li]:before:absolute [&>li+li]:before:inset-x-4 [&>li+li]:before:top-0 [&>li+li]:before:h-px [&>li+li]:before:bg-[var(--color-list-divider)]',
+        className,
+      )}
+    >
+      {children}
+    </ul>
+  );
+}
+
 export function albatrossTitle(item: { title: string | null; rawText: string }): string {
   const title = (item.title || '').trim();
   if (title) return title;
@@ -170,7 +179,7 @@ export function AlbatrossRow({ item, onOpen }: { item: AlbatrossRowData; onOpen:
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-start gap-3 px-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
+        'flex w-full items-start gap-3 rounded-ui px-4 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-accent)]',
         prominent ? 'py-4' : 'py-3',
       )}
     >

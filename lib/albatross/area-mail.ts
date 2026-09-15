@@ -2,6 +2,7 @@ import type { AlbatrossConfirmationRef } from '@/convex/albatrossModel';
 
 export interface AreaMailListRow {
   providerThreadId: string;
+  latestMessageId?: string | null;
   accountId: string;
   subject: string;
   fromAddress: string;
@@ -14,16 +15,26 @@ export function areaMailRowKey(row: Pick<AreaMailListRow, 'accountId' | 'provide
   return `${row.accountId}:${row.providerThreadId}`;
 }
 
+export function areaMailRowVersion(row: Pick<AreaMailListRow, 'lastDate' | 'latestMessageId'>) {
+  return `${row.lastDate}:${row.latestMessageId || ''}`;
+}
+
 export function filterAreaMailRows<T extends AreaMailListRow>(
   rows: T[],
-  input: { query?: string; unreadOnly?: boolean },
+  input: { query?: string; unreadOnly?: boolean; hiddenVersions?: ReadonlyMap<string, string> },
 ) {
   const query = (input.query || '').trim().toLowerCase();
-  return rows.filter((row) => {
-    if (input.unreadOnly && !row.unread) return false;
-    if (!query) return true;
-    return `${row.fromAddress} ${row.subject} ${row.snippet}`.toLowerCase().includes(query);
-  });
+  return rows
+    .filter((row) => {
+      if (input.hiddenVersions?.get(areaMailRowKey(row)) === areaMailRowVersion(row)) return false;
+      if (input.unreadOnly && !row.unread) return false;
+      if (!query) return true;
+      return `${row.fromAddress} ${row.subject} ${row.snippet}`.toLowerCase().includes(query);
+    })
+    .sort(
+      (left, right) =>
+        right.lastDate - left.lastDate || areaMailRowKey(left).localeCompare(areaMailRowKey(right)),
+    );
 }
 
 export function selectedVisibleAreaMailRows<T extends AreaMailListRow>(rows: T[], selectedKeys: string[]) {

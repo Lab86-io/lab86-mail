@@ -87,6 +87,9 @@ export function joinWithMore(items: string[], limit = 3): string {
 
 /** "Google Doc" from a Google MIME type, else the kind or the MIME subtype. */
 export function fileKindLabel(kind?: string, mimeType?: string): string {
+  if (kind === 'doc') return 'Document';
+  if (kind === 'deck') return 'Presentation';
+  if (kind === 'sheet') return 'Spreadsheet';
   if (kind) return kind;
   const mime = (mimeType || '').toLowerCase();
   if (mime.includes('google-apps.document')) return 'Google Doc';

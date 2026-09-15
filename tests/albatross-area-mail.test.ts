@@ -5,6 +5,7 @@ import {
   areaMailMoveConfirmation,
   areaMailMoveReason,
   areaMailRowKey,
+  areaMailRowVersion,
   filterAreaMailRows,
   selectedVisibleAreaMailRows,
 } from '../lib/albatross/area-mail';
@@ -43,6 +44,23 @@ describe('Area mail inbox', () => {
     expect(selectedVisibleAreaMailRows(visible, [areaMailRowKey(rows[0]), areaMailRowKey(rows[1])])).toEqual([
       rows[0],
     ]);
+  });
+
+  test('reorders incoming replies without mutating the subscribed rows', () => {
+    const incoming = [rows[0], { ...rows[1], lastDate: 3, unread: true }];
+    expect(filterAreaMailRows(incoming, {})).toEqual([incoming[1], incoming[0]]);
+    expect(incoming[0]).toBe(rows[0]);
+    expect(filterAreaMailRows(incoming, { unreadOnly: true })[0]).toBe(incoming[1]);
+  });
+
+  test('hides only the archived version of a thread, not a new incoming reply', () => {
+    const hiddenVersions = new Map([[areaMailRowKey(rows[0]), areaMailRowVersion(rows[0])]]);
+    expect(filterAreaMailRows(rows, { hiddenVersions })).toEqual([rows[1]]);
+    const reply = { ...rows[0], lastDate: 3 };
+    expect(filterAreaMailRows([rows[1], reply], { hiddenVersions })).toEqual([reply, rows[1]]);
+    expect(filterAreaMailRows([{ ...rows[0], accountId: 'account-b' }], { hiddenVersions })).toHaveLength(1);
+    const sameTimeReply = { ...rows[0], latestMessageId: 'new-message' };
+    expect(filterAreaMailRows([sameTimeReply], { hiddenVersions })).toEqual([sameTimeReply]);
   });
 
   test('mints an explicit user confirmation for a filing correction', () => {

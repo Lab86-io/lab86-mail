@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "streamdown/styles.css";
+@import "../components/ai-elements/chat-surfaces.css";
 
 /* Tell Tailwind to scan streamdown's compiled JS so its utility classes are
    included in the generated CSS. Required for Streamdown to render properly. */
@@ -157,7 +158,9 @@
   /* Working surfaces are opaque. Elevation is reserved for floating UI;
      list rules have their own role instead of locally weakening borders. */
   --color-canvas: var(--color-bg);
-  --color-content: var(--color-bg-elevated);
+  --color-content: var(--color-bg);
+  --color-workspace-frame: color-mix(in oklab, var(--color-accent) 16%, var(--color-bg));
+  --color-workspace-border: color-mix(in oklab, var(--color-accent) 36%, var(--color-border));
   --color-list-divider: color-mix(in oklab, var(--color-border) 82%, var(--color-text-faint));
   --shadow-pop: 0 18px 44px rgb(15 23 42 / 0.14), 0 4px 12px rgb(15 23 42 / 0.08);
 
@@ -190,6 +193,35 @@
 @utility rounded-ui {
   border-radius: var(--radius-ui);
   corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-card {
+  border-radius: var(--radius-card);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-panel {
+  border-radius: var(--radius-panel);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility rounded-overlay {
+  border-radius: var(--radius-overlay);
+  corner-shape: var(--corner-shape-ui);
+}
+@utility surface-card {
+  border: 1px solid var(--surface-border, var(--color-border));
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-soft);
+}
+@utility surface-accent {
+  --surface-accent: var(--color-accent);
+  --surface-border: color-mix(in oklab, var(--surface-accent) 38%, var(--color-border));
+}
+@utility surface-accent-2 {
+  --surface-accent: var(--color-accent-2);
+  --surface-border: color-mix(in oklab, var(--surface-accent) 38%, var(--color-border));
+}
+@utility surface-accent-3 {
+  --surface-accent: var(--color-accent-3);
+  --surface-border: color-mix(in oklab, var(--surface-accent) 38%, var(--color-border));
 }
 @utility rounded {
   border-radius: var(--radius-ui);
@@ -936,7 +968,7 @@
 
   .app-paper {
     isolation: isolate;
-    background-color: var(--color-bg);
+    background-color: var(--color-workspace-frame);
     background-image: none;
   }
   .report-paper {
@@ -979,15 +1011,7 @@
    palette. */
 :root,
 :root.dark {
-  /* The rail is a translucent panel so the shared background wash shows through
-     it (delineated by its border, same wash). Always a bit see-through (8%),
-     more as the "Rail wash" slider (--wash-opacity) rises. At slider 0 over a
-     bg with no wash this is visually identical to the old opaque rail. */
-  --rail-bg: color-mix(
-    in oklab,
-    var(--color-bg),
-    transparent calc((0.08 + var(--wash-opacity, 0) * 0.34) * 100%)
-  );
+  --rail-bg: var(--color-workspace-frame);
   --sidebar: var(--color-bg);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);

@@ -145,7 +145,7 @@ export const ToolContent = ({ className, ...props }: ToolContentProps) => (
 );
 
 const Pre = ({ children }: { children: string }) => (
-  <pre className="corner-smooth max-h-64 overflow-auto rounded-[var(--radius-sm)] bg-[var(--color-bg-subtle)] p-2.5 font-mono text-[11px] leading-relaxed text-[var(--color-text)]">
+  <pre className="corner-smooth max-h-64 overflow-auto rounded-ui bg-[var(--color-bg-subtle)] p-2.5 font-mono text-[11px] leading-relaxed text-[var(--color-text)]">
     {children}
   </pre>
 );

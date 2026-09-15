@@ -98,7 +98,7 @@ function Chip({ children, tone = 'muted' }: { children: string; tone?: 'muted' |
   return (
     <span
       className={cn(
-        'inline-flex h-[17px] shrink-0 items-center rounded-[5px] border px-1.5 text-[10.5px] leading-none whitespace-nowrap',
+        'inline-flex h-[17px] shrink-0 items-center rounded-ui border px-1.5 text-[10.5px] leading-none whitespace-nowrap',
         tone === 'tier' &&
           'border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-text)] font-medium',
         tone === 'muted' && 'border-[var(--color-border)] text-[var(--color-text-muted)]',
@@ -275,7 +275,7 @@ export function ModelPicker({
                       data-status={model.status}
                       aria-selected={isSelected}
                       className={cn(
-                        'corner-smooth flex items-center gap-1.5 rounded-[7px] px-2 py-1.5 text-[13px]',
+                        'flex items-center gap-1.5 rounded-ui px-2 py-1.5 text-[13px]',
                         'data-[selected=true]:bg-[var(--color-bg-muted)] data-[selected=true]:text-[var(--color-text)]',
                         legacy && 'text-[var(--color-text-muted)]',
                       )}
@@ -307,7 +307,7 @@ export function ModelPicker({
                   value={`custom:${customCandidate}`}
                   onSelect={() => choose(customCandidate)}
                   data-model-id={customCandidate}
-                  className="corner-smooth flex items-center gap-2 rounded-[7px] px-2 py-1.5 text-[13px] data-[selected=true]:bg-[var(--color-bg-muted)]"
+                  className="flex items-center gap-2 rounded-ui px-2 py-1.5 text-[13px] data-[selected=true]:bg-[var(--color-bg-muted)]"
                 >
                   <span className="min-w-0 flex-1 truncate">
                     Use <span className="font-mono text-[12px]">{customCandidate}</span> as typed

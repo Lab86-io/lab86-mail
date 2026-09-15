@@ -342,6 +342,23 @@ export const upsertCorpusBatch = mutation({
           ...classified,
           createdAt: ts,
         });
+      if (existing?.latestMessageId !== patch.latestMessageId || patch.lastDate > existing.lastDate) {
+        const areaLinks = await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_account_artifact', (query) =>
+            query
+              .eq('userId', args.userId)
+              .eq('accountId', args.accountId)
+              .eq('artifactKind', 'mailThread')
+              .eq('artifactId', providerThreadId),
+          )
+          .collect();
+        for (const link of areaLinks) {
+          if (link.status === 'verified' || link.status === 'candidate') {
+            await ctx.db.patch(link._id, { updatedAt: ts });
+          }
+        }
+      }
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the

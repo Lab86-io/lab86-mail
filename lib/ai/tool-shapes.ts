@@ -109,6 +109,7 @@ export interface WorkRow {
 export interface FileRow {
   connectionId: string;
   fileId: string;
+  documentId?: string;
   name: string;
   kind?: string;
   source?: string;
@@ -1186,18 +1187,29 @@ const MAPPERS: Record<string, Mapper> = {
   google_file_import: (input, output, tool) =>
     documentShape(tool, input, output, output.existing ? 'existing' : 'imported'),
   document_list: (input, output, tool) => {
-    const documents = asArray(output.documents);
-    if (!documents.length) return null;
-    return textShape(
-      tool,
-      input,
-      output,
-      'Documents',
-      documents
-        .map((row) => str(row.title))
-        .filter(Boolean)
-        .join('\n'),
-    );
+    const items: FileRow[] = asArray(output.documents).flatMap((row) => {
+      const documentId = str(row.documentId);
+      return documentId
+        ? [
+            {
+              connectionId: 'albatross',
+              fileId: documentId,
+              documentId,
+              name: str(row.title) || 'Document',
+              kind: str(row.kind) || undefined,
+              actions: [{ kind: 'open_document' as const, documentId }],
+            },
+          ]
+        : [];
+    });
+    return items.length
+      ? {
+          kind: 'files',
+          ...base(tool, input, output, 'Documents'),
+          items: items.slice(0, SHAPE_LIST_LIMIT),
+          actions: [],
+        }
+      : null;
   },
   cloud_file_search: (input, output, tool) => {
     const items: FileRow[] = asArray(output.files)

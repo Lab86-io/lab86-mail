@@ -64,6 +64,7 @@ function WorkLogComponent({ rows: inputRows, finished, renderRich, now = Date.no
   return (
     <ChainOfThought
       data-slot="work-log"
+      className="assistant-work-log surface-card surface-accent-3 rounded-card p-2.5"
       data-state={header.running ? 'working' : header.failed ? 'failed' : finished ? 'finished' : 'done'}
       open={open}
       onOpenChange={(next) => {
@@ -124,7 +125,7 @@ function WorkLogRowView({ row, renderRich }: { row: WorkLogRow; renderRich?: Ren
           ) : null}
           {content != null ? (
             <ToolContent forceMount className="data-[state=closed]:hidden">
-              <div className="pt-1.5">{content}</div>
+              <div className="assistant-tool-result pt-1.5">{content}</div>
             </ToolContent>
           ) : null}
         </Tool>

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
 import { ReviewBatch } from '@/components/albatross/Forgiveness';
 import { LaterShelf } from '@/components/albatross/LaterShelf';
-import { AlbatrossRow } from '@/components/albatross/primitives';
+import { AlbatrossList, AlbatrossRow } from '@/components/albatross/primitives';
 import { api } from '@/convex/_generated/api';
 import { reviewBatch, type WorkShape } from '@/lib/albatross/forgiveness';
 import { isDormant, laterShelf, type WorkHorizon } from '@/lib/albatross/horizon';
@@ -129,10 +129,10 @@ export function AlbatrossesSurface() {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col">
+    <section className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
       {/* The header shares the measure of the list below it. A title that starts
           somewhere the content does not is a page that looks assembled. */}
-      <header className="border-b border-[var(--color-border)] px-5 py-3">
+      <header className="border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 py-3">
         <div className="mx-auto max-w-3xl">
           <div className="flex items-baseline justify-between gap-3">
             <h1 className="font-serif text-[17px] font-semibold tracking-tight">Albatrosses</h1>
@@ -205,13 +205,13 @@ export function AlbatrossesSurface() {
                 <p className="text-[12px] text-[var(--color-text-faint)]">{WORK_STATE_HINT[group.key]}</p>
                 <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
               </div>
-              <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+              <AlbatrossList>
                 {group.items.map((item) => (
                   <li key={item._id}>
                     <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
                   </li>
                 ))}
-              </ul>
+              </AlbatrossList>
             </div>
           ))}
 

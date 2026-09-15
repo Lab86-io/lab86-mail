@@ -53,9 +53,11 @@ describe('shared control surfaces', () => {
     const card = renderToStaticMarkup(<Card>Content</Card>);
     expect(card).toContain('shadow-none');
     expect(card).toContain('corner-smooth');
-    expect(card).toContain('rounded-[var(--radius-panel)]');
+    expect(card).toContain('rounded-card');
     const squareCard = renderToStaticMarkup(<Card className="rounded-none">Content</Card>);
-    expect(squareCard).not.toContain('rounded-[var(--radius-panel)]');
+    expect(squareCard).not.toContain('rounded-card');
+    expect(cn('rounded-overlay', 'rounded-none')).toBe('rounded-none');
+    expect(cn('rounded-panel', 'rounded-ui')).toBe('rounded-ui');
     expect(cn('rounded-xl', 'rounded-ui')).toBe('rounded-ui');
     expect(cn('rounded-ui', 'rounded-none')).toBe('rounded-none');
     expect(cn('rounded-ui', 'rounded-t-none')).toBe('rounded-ui rounded-t-none');

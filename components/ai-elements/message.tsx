@@ -189,7 +189,7 @@ export const MessageBranchSelector = ({ className, from, ...props }: MessageBran
 
   return (
     <ButtonGroup
-      className="[&>*:not(:first-child)]:rounded-l-[var(--radius-ui-corner)] [&>*:not(:last-child)]:rounded-r-[var(--radius-ui-corner)]"
+      className="[&>*:not(:first-child)]:rounded-l-ui [&>*:not(:last-child)]:rounded-r-ui"
       orientation="horizontal"
       {...props}
     />

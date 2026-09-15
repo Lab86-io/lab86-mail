@@ -1,6 +1,7 @@
 'use client';
 
 import { Search } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { CAPTURE_BUTTON_LABEL } from '@/components/albatross/IntentCapture';
 import { buttonVariants } from '@/components/ui/button';
@@ -153,9 +154,11 @@ export function AssistantLauncher({
   }, [rotating, rotateMs, phrases.length]);
 
   return (
-    <button
+    <motion.button
       type="button"
       onClick={() => onOpen(phrases[phraseIndex % phrases.length])}
+      layout={reduceMotion ? false : 'size'}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
@@ -169,13 +172,13 @@ export function AssistantLauncher({
       data-phrase={phraseIndex}
       className="assistant-launcher"
     >
+      <kbd className="control-key assistant-launcher__key" aria-hidden>
+        {shortcut}
+      </kbd>
       <span className="assistant-launcher__copy" aria-hidden>
         <span className="assistant-launcher__eyebrow">{context || 'Ask Albatross'}</span>
         <LetterSwap phrases={phrases} index={phraseIndex % phrases.length} reduceMotion={reduceMotion} />
       </span>
-      <kbd className="control-key assistant-launcher__key" aria-hidden>
-        {shortcut}
-      </kbd>
-    </button>
+    </motion.button>
   );
 }

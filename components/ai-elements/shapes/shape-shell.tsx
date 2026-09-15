@@ -34,7 +34,7 @@ export function ShapeShell({
     <div
       data-slot="shape-card"
       className={cn(
-        'corner-smooth w-full min-w-0 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-text)] shadow-[var(--shadow-soft)]',
+        'surface-card surface-accent-2 rounded-card corner-smooth w-full min-w-0 overflow-hidden text-[var(--color-text)]',
         className,
       )}
     >
@@ -231,7 +231,7 @@ export function ActionBar({
           }}
           placeholder="A note about this sender"
           aria-label="Note about this sender"
-          className="corner-smooth min-w-0 flex-1 rounded-[var(--radius-xs)] border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-1 text-[12px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-accent)]"
+          className="corner-smooth min-w-0 flex-1 rounded-ui border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 py-1 text-[12px] text-[var(--color-text)] outline-none focus-visible:border-[var(--color-accent)]"
         />
         <button
           type="button"

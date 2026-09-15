@@ -41,11 +41,11 @@ function DayPicker({ className, classNames, showOutsideDays = true, ...props }: 
 
         day: cn(
           'h-9 w-9 text-center text-sm p-0 relative',
-          '[&:has([aria-selected].day-range-end)]:rounded-r-[var(--radius-ui-corner)]',
+          '[&:has([aria-selected].day-range-end)]:rounded-r-ui',
           '[&:has([aria-selected].day-outside)]:bg-accent/50',
           '[&:has([aria-selected])]:bg-accent',
-          'first:[&:has([aria-selected])]:rounded-l-[var(--radius-ui-corner)]',
-          'last:[&:has([aria-selected])]:rounded-r-[var(--radius-ui-corner)]',
+          'first:[&:has([aria-selected])]:rounded-l-ui',
+          'last:[&:has([aria-selected])]:rounded-r-ui',
           'focus-within:relative focus-within:z-20',
           defaultClassNames.day,
         ),

@@ -8,6 +8,7 @@ import { NarrativeProse } from '../../components/narrative/NarrativeProse';
 import { FrameGallery } from '../../components/report/brief-canvas/FrameGallery';
 import { AppShell } from '../../components/shell/AppShell';
 import { useClientStore } from '../../lib/client-state';
+import { AlbatrossStylesPreview } from './albatross-styles-preview';
 import {
   previewFiles,
   previewNarrative,
@@ -16,6 +17,7 @@ import {
   previewWeather,
   previewWorkspace,
 } from './app-preview-data';
+import { chatStyleDocuments, chatStyleMessages } from './chat-style-data';
 import { previewBriefResponseEvents } from './preview-brief-response';
 
 (globalThis as any).__appPreviewQueryResults = previewQueryResults;
@@ -140,6 +142,8 @@ globalThis.fetch = (async (input, init) => {
     return Response.json({ ok: true, result: { custom: [] } });
   if (url.pathname === '/api/nylas/status') return Response.json({ accounts: [account] });
   if (url.pathname === '/api/chats') {
+    if (url.searchParams.get('id') === 'style-chat')
+      return Response.json({ ok: true, session: { messages: chatStyleMessages } });
     if (init?.method === 'POST')
       requests.push({ path: url.pathname, body: JSON.parse(String(init.body || '{}')) });
     return Response.json({ sessions: [] });
@@ -171,6 +175,13 @@ globalThis.fetch = (async (input, init) => {
     });
   }
   if (url.pathname === '/api/office') return Response.json({ ok: true, enabled: false, files: [] });
+  const chatDocument = chatStyleDocuments.find(
+    (item) => url.pathname === `/api/documents/${item.documentId}`,
+  );
+  if (chatDocument && new URLSearchParams(location.search).get('previewError') === chatDocument.documentId)
+    return Response.json({ ok: false }, { status: 404 });
+  if (chatDocument && (!init?.method || init.method === 'GET'))
+    return Response.json({ ok: true, document: { ...chatDocument, sourceRefs: [], suggestions: [] } });
   const previewFile = previewFiles.find((item) => url.pathname === `/api/documents/${item.documentId}`);
   if (previewFile && (!init?.method || init.method === 'GET'))
     return Response.json({
@@ -233,10 +244,10 @@ if (!(window as any).__previewInitialized)
     account: 'fixture',
     primaryAccount: 'fixture',
     railOpen: true,
-    aiBarOpen: false,
-    assistantPresentation: 'corner',
-    lastChatId: null,
-    lastChatAt: null,
+    aiBarOpen: new URLSearchParams(location.search).get('review') === 'chat',
+    assistantPresentation: new URLSearchParams(location.search).get('review') === 'chat' ? 'split' : 'corner',
+    lastChatId: new URLSearchParams(location.search).get('review') === 'chat' ? 'style-chat' : null,
+    lastChatAt: new URLSearchParams(location.search).get('review') === 'chat' ? Date.now() : null,
   });
 (window as any).__previewInitialized = true;
 (window as any).__previewQueryClient ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -246,7 +257,9 @@ const previewRoot = (window as any).__previewRoot;
 previewRoot.render(
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
     <QueryClientProvider client={client}>
-      {new URLSearchParams(location.search).get('review') === 'frames' ? (
+      {new URLSearchParams(location.search).get('review') === 'styles' ? (
+        <AlbatrossStylesPreview />
+      ) : new URLSearchParams(location.search).get('review') === 'frames' ? (
         <FrameGallery />
       ) : new URLSearchParams(location.search).get('review') === 'controls' ? (
         <main className="min-h-screen bg-[var(--color-bg)] p-4 font-display text-[var(--color-text)]">

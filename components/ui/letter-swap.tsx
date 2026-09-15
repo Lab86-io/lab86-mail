@@ -31,9 +31,6 @@ function AnimatedPhrase({ phrase }: { phrase: string }) {
   );
 }
 
-/** A quiet letter roll informed by Chamaac's Text Loop and Dancing Letters.
- * The caller owns the idle timer. A fixed measuring grid keeps all phrases
- * the same width; only the visible line transitions inside that footprint. */
 export function LetterSwap({
   phrases,
   index,
@@ -46,11 +43,13 @@ export function LetterSwap({
   const phrase = phrases[index] || '';
   return (
     <span className="assistant-launcher__phrases" aria-hidden>
-      {phrases.map((text) => (
-        <span key={text} className="assistant-launcher__measure">
-          {text}
-        </span>
-      ))}
+      <span className="assistant-launcher__measure">
+        {Array.from(phrase).map((letter, position) => (
+          <span key={position} className="inline-block whitespace-pre">
+            {letter}
+          </span>
+        ))}
+      </span>
       {reduceMotion ? (
         <span className="assistant-launcher__phrase" data-active="true">
           {phrase}

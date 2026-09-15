@@ -90,8 +90,10 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
   const sheet = variant === 'sheet' && !threadFullscreen;
   const shellOuter = cn('flex h-full flex-col', sheet && 'p-2');
   const shellInner = cn(
-    'corner-smooth flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]',
-    sheet && 'rounded-[var(--radius-control)] border border-[var(--color-border)] shadow-[var(--shadow-pop)]',
+    'corner-smooth flex min-h-0 flex-1 flex-col overflow-hidden',
+    sheet
+      ? 'rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-pop)]'
+      : 'bg-[var(--color-content)]',
   );
   const setThreadFullscreen = useClientStore((s) => s.setThreadFullscreen);
   const queryClient = useQueryClient();
@@ -465,7 +467,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
         // GitHub-projects-style side panel: full height, flush to the right
         // edge (squared), rounded on the left, sliding in from the right.
         threadFullscreen &&
-          'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-[var(--radius-ui-corner)] border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
+          'fixed inset-y-0 right-0 z-[80] h-auto w-[calc(100vw-24px)] overflow-hidden rounded-l-ui border-l border-[var(--color-border)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]',
       )}
     >
       <div className={cn('@container relative', shellInner)}>

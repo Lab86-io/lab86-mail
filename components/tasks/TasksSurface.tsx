@@ -1693,7 +1693,7 @@ function CardPanel({
         role="dialog"
         aria-modal="true"
         aria-label={card.title}
-        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-[var(--radius-ui-corner)] border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
+        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-ui border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
         initial={{ opacity: 0.3, x: 72 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 56 }}

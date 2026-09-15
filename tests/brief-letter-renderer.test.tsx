@@ -98,7 +98,7 @@ describe('the daily letter', () => {
     const kickers = [...html.matchAll(/data-brief-letter-kicker[^>]*class="([^"]*)"[^>]*>([^<]+)<\/span>/g)];
     expect(kickers.map((match) => match[2])).toEqual(['Answer', 'Today', 'Know']);
     for (const match of kickers) {
-      expect(match[1]).toContain('--color-accent-2');
+      expect(match[1]).toContain('--surface-accent');
       expect(match[2]).not.toMatch(/\d/);
     }
     expect(html).not.toContain('replies owed');

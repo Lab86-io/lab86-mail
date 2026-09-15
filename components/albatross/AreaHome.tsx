@@ -43,7 +43,7 @@ import {
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { groupWork, type WorkListItem } from '@/components/albatross/AlbatrossesSurface';
-import { AlbatrossRow } from '@/components/albatross/primitives';
+import { AlbatrossList, AlbatrossRow } from '@/components/albatross/primitives';
 import { InboxThreadRow, type ThreadRow } from '@/components/inbox/Inbox';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { OptionList } from '@/components/tool-ui/option-list';
@@ -93,7 +93,12 @@ import {
   taskRowMeta,
   workNeedsYouRows,
 } from '@/lib/albatross/area-home';
-import { areaMailRowKey, filterAreaMailRows, selectedVisibleAreaMailRows } from '@/lib/albatross/area-mail';
+import {
+  areaMailRowKey,
+  areaMailRowVersion,
+  filterAreaMailRows,
+  selectedVisibleAreaMailRows,
+} from '@/lib/albatross/area-mail';
 import { isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import { WORK_STATE_HINT, WORK_STATE_LABEL } from '@/lib/albatross/work-state';
 import { callTool } from '@/lib/api-client';
@@ -111,6 +116,7 @@ import { cn } from '@/lib/utils';
 
 interface AreaMailRow {
   providerThreadId: string;
+  latestMessageId?: string | null;
   accountId: string;
   subject: string;
   fromAddress: string;
@@ -683,7 +689,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
               composing={home.livingBrief.status === 'generating' || artifactRefreshing}
             />
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
-              <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+              <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-ui border border-[var(--color-border)]/80 bg-[var(--color-surface-float)]/95 p-1 pr-2 shadow-[var(--shadow-soft)] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setSelectedAreaId(null)}
@@ -697,7 +703,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 <span className="mx-0.5 h-4 w-px bg-[var(--color-border)]" aria-hidden />
                 <AreaWorkButton onOpen={() => setAreaView('albatrosses')} compact />
               </div>
-              <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+              <div className="pointer-events-auto flex items-center gap-1 rounded-ui border border-[var(--color-border)]/80 bg-[var(--color-surface-float)]/95 p-1 shadow-[var(--shadow-soft)] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => {
@@ -722,7 +728,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 </button>
                 <a
                   href="/settings?tab=areas"
-                  className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)]"
+                  className="rounded-ui px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)]"
                 >
                   Manage
                 </a>
@@ -930,7 +936,7 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
   const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);
   const pendingKeysRef = useRef(new Set<string>());
   const [pendingKeys, setPendingKeys] = useState<string[]>([]);
-  const [hiddenKeys, setHiddenKeys] = useState<string[]>([]);
+  const [hiddenVersions, setHiddenVersions] = useState<ReadonlyMap<string, string>>(() => new Map());
   const setSelectedThread = useClientStore((state) => state.setSelectedThread);
   const setThreadAccount = useClientStore((state) => state.setThreadAccount);
   const selectedThreadId = useClientStore((state) => state.selectedThreadId);
@@ -938,12 +944,8 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
   const destinations = (areas || []).filter((area) => area._id !== home.area._id);
   const rowByKey = useMemo(() => new Map(home.mail.map((row) => [areaMailRowKey(row), row])), [home.mail]);
   const visibleRows = useMemo(
-    () =>
-      filterAreaMailRows(
-        home.mail.filter((row) => !hiddenKeys.includes(areaMailRowKey(row))),
-        { query: search },
-      ),
-    [hiddenKeys, home.mail, search],
+    () => filterAreaMailRows(home.mail, { query: search, hiddenVersions }),
+    [hiddenVersions, home.mail, search],
   );
   const visibleKeys = useMemo(() => visibleRows.map(areaMailRowKey), [visibleRows]);
   const visibleKeySet = useMemo(() => new Set(visibleKeys), [visibleKeys]);
@@ -1038,7 +1040,13 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
           results[index]?.status === 'fulfilled' ? [operation.key] : [],
         );
         const failed = results.length - succeeded.length;
-        setHiddenKeys((current) => [...new Set([...current, ...succeeded])]);
+        setHiddenVersions((current) => {
+          const next = new Map(current);
+          for (const { key, row } of operations) {
+            if (succeeded.includes(key)) next.set(key, areaMailRowVersion(row));
+          }
+          return next;
+        });
         setSelectedKeys((current) => current.filter((key) => !succeeded.includes(key)));
         if (succeeded.length) {
           toast.success(`${action === 'archive_thread' ? 'Archived' : 'Trashed'} ${succeeded.length}`);
@@ -1053,7 +1061,7 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
-      <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-2.5">
+      <header className="flex min-h-13 items-center gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-content)] px-4 py-2.5">
         <Inbox className="size-4 text-[var(--color-text-muted)]" aria-hidden />
         <div className="min-w-0">
           <h2 className="truncate text-[14px] font-semibold">Area inbox</h2>
@@ -1061,8 +1069,8 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
         </div>
       </header>
       <section className="flex min-h-0 flex-1 flex-col bg-[var(--color-bg)] p-2 sm:p-3">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-soft)]">
-          <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-ui border border-[var(--color-border)] bg-[var(--color-content)]">
+          <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-content)] px-3 py-2.5">
             <div className="flex items-center gap-2">
               <InputGroup className="flex-1">
                 <InputGroupAddon>
@@ -1663,7 +1671,7 @@ function AreaArtifactCanvas({
       />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3">
-        <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 pr-2 shadow-sm backdrop-blur-md">
+        <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-ui border border-[var(--color-border)]/80 bg-[var(--color-surface-float)]/95 p-1 pr-2 shadow-[var(--shadow-soft)] backdrop-blur-md">
           <button
             type="button"
             onClick={onAllAreas}
@@ -1678,7 +1686,7 @@ function AreaArtifactCanvas({
           <AreaWorkButton onOpen={onOpenAlbatrosses} compact />
         </div>
 
-        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)]/80 bg-[var(--color-bg-elevated)]/90 p-1 shadow-sm backdrop-blur-md">
+        <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-ui border border-[var(--color-border)]/80 bg-[var(--color-surface-float)]/95 p-1 shadow-[var(--shadow-soft)] backdrop-blur-md">
           <span
             className={cn(
               'hidden max-w-44 truncate px-2 text-[10.5px] sm:block',
@@ -1709,7 +1717,7 @@ function AreaArtifactCanvas({
           </button>
           <a
             href="/settings?tab=areas"
-            className="rounded-full px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
+            className="rounded-ui px-2.5 py-1 text-[11.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
           >
             Manage
           </a>
@@ -1758,7 +1766,7 @@ function AreaArtifactUnavailable({
       >
         Areas
       </button>
-      <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-sm">
+      <div className="absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-ui border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1 shadow-[var(--shadow-soft)]">
         <AreaWorkButton onOpen={onOpenAlbatrosses} compact />
       </div>
       <div className="relative m-auto max-w-lg px-8 text-center">
@@ -2695,7 +2703,7 @@ function AreaIndexStatusPill({ status }: { status?: AreaIndexStatusData }) {
     <span
       title={title}
       className={cn(
-        'hidden max-w-[230px] shrink truncate rounded-full border px-2 py-0.5 text-[11px] leading-5 min-[900px]:inline-flex',
+        'hidden max-w-[230px] shrink truncate rounded-ui border px-2 py-0.5 text-[11px] leading-5 min-[900px]:inline-flex',
         toneClass,
       )}
     >
@@ -2784,13 +2792,13 @@ function AreaAlbatrosses({
                 <h2 className="font-serif text-[15px] font-semibold">{WORK_STATE_LABEL[group.key]}</h2>
                 <p className="text-[12px] text-[var(--color-text-faint)]">{WORK_STATE_HINT[group.key]}</p>
               </div>
-              <ul className="divide-y divide-[var(--color-border)]/60 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+              <AlbatrossList>
                 {group.items.map((item) => (
                   <li key={item._id}>
                     <AlbatrossRow item={item} onOpen={() => setSelectedWorkId(item._id)} />
                   </li>
                 ))}
-              </ul>
+              </AlbatrossList>
             </div>
           ))}
         </div>

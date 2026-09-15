@@ -55,7 +55,7 @@ export function DayRibbon({
           {allDay.map((event) => (
             <li
               key={event._id}
-              className="rounded-md border-l-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-accent)]"
+              className="rounded-card border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--color-accent)]"
             >
               {event.title}
               <span className="ml-1.5 font-normal opacity-70">all day</span>
@@ -108,7 +108,7 @@ export function DayRibbon({
                 // The leading bar reads as a spine down the day: it separates
                 // what somebody expects of you from open air before any word is
                 // read.
-                'absolute inset-x-1 z-[1] overflow-hidden rounded-lg border border-l-2 border-[var(--color-border)] border-l-[var(--color-accent)] bg-[var(--color-bg-elevated)] px-2.5 shadow-[var(--shadow-soft)]',
+                'surface-card surface-accent absolute inset-x-1 z-[1] overflow-hidden rounded-card px-2.5',
                 block.compact ? 'flex items-center gap-2 py-0' : 'py-1.5',
               )}
               style={{ top: `${block.top * 100}%`, height: `${block.height * 100}%` }}
