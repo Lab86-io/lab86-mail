@@ -6,6 +6,7 @@
       "**/*",
       "!**/.next",
       "!**/node_modules",
+      "!**/.claude",
       "!**/data",
       "!next-env.d.ts",
       "!convex/_generated",

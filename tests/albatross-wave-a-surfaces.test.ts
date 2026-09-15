@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awakeWork, shelfWork, type WorkListItem } from '../components/albatross/AlbatrossesSurface';
 import { sameHorizon, visibleHorizon } from '../components/albatross/WorkDetail';
-import { IMPORTANT_MAIL_MAX, nextMoveWhen, TODAY_EMPTY_LINE } from '../components/report/TodaySurface';
 
 const repoRoot = join(import.meta.dir, '..');
 const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8');
@@ -24,55 +23,6 @@ const row = (over: Partial<WorkListItem>): WorkListItem => ({
   updatedAt: 1,
   createdAt: 1,
   ...over,
-});
-
-describe('Today keeps four regions and nothing else', () => {
-  test('the source holds the plate, the capacity line, the next move, the mail, and the day', () => {
-    const today = read('components/report/TodaySurface.tsx');
-    const order = [
-      '<BriefMasthead',
-      'My day changed',
-      'title="Do this next"',
-      'title="Important mail"',
-      'title="Your day"',
-      '{brief}',
-    ];
-    const positions = order.map((marker) => today.indexOf(marker));
-    expect(positions.every((position) => position >= 0)).toBe(true);
-    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
-    for (const gone of [
-      'ReEntry',
-      'ReviewBatch',
-      'MissedMovesRecoverySection',
-      'Needs you',
-      'Ongoing practices',
-      'Waiting, not forgotten',
-      'Get this off my mind',
-      'Evening check-in',
-      'DailyCheckin',
-    ]) {
-      expect(today).not.toContain(gone);
-    }
-  });
-
-  test('the empty column reads one line, and the mail stops at four', () => {
-    expect(TODAY_EMPTY_LINE).toBe('Nothing is scheduled. The day is yours.');
-    expect(IMPORTANT_MAIL_MAX).toBe(4);
-    expect(read('components/report/TodaySurface.tsx')).toContain('.slice(0, IMPORTANT_MAIL_MAX)');
-  });
-
-  test('the next move line says when', () => {
-    expect(nextMoveWhen({ phase: 'active', scheduledStartAt: NOW })).toBe('Now');
-    expect(nextMoveWhen({ phase: 'unscheduled', scheduledStartAt: null })).toBeNull();
-    expect(nextMoveWhen({ phase: 'upcoming', scheduledStartAt: null })).toBeNull();
-    expect(nextMoveWhen({ phase: 'upcoming', scheduledStartAt: NOW + 3_600_000 })).toMatch(/\d/);
-  });
-
-  test('Today passes its own clock to the dormant checks', () => {
-    const today = read('components/report/TodaySurface.tsx');
-    expect(today).toContain('needsYouToday(rows, approvals || [], nowMs)');
-    expect(today).toContain('openWork(rows, nowMs)');
-  });
 });
 
 describe('the Work page splits awake and dormant Work', () => {

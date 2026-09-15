@@ -4,8 +4,7 @@ import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import { scheduleNarrativeSource } from './narrative';
 
-// Operation log backing the AI's act-then-undo trust model (see
-// docs/productivity-platform-spec.md). Writes come from the Next server
+// Operation log backing the AI's act-then-undo trust model. Writes come from the Next server
 // (internal secret); the change-set UI reads live via Clerk identity.
 
 async function requireUserId(ctx: QueryCtx) {

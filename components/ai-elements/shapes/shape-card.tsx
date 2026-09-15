@@ -1,6 +1,6 @@
 'use client';
 
-// One view per shape kind (docs/chat-agentic-pass.md, section 3). The card
+// One view per shape kind. The card
 // owns the action status for its rows so an outcome ("Archived") shows in
 // place and the used action disables, with no navigation and no toast.
 

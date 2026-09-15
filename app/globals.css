@@ -1115,7 +1115,7 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Chat text reveal (docs/chat-agentic-pass.md, section 4).
+   Chat text reveal.
    The word motion is the route chip flip: rise from 6px below with opacity
    0 to its place, 150ms, cubic-bezier(0.165, 0.84, 0.44, 1). Streamdown
    writes `--sd-animation: sd-rise` and reads this keyframe. The leading

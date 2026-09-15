@@ -9,8 +9,6 @@ let result: {
   provider: { provider: string; primary: string; fast: string };
   primary: string;
   fast: string;
-  primaryError: string | null;
-  fastError: string | null;
 };
 beforeAll(() => {
   const child = Bun.spawnSync({
@@ -19,11 +17,9 @@ beforeAll(() => {
       '-e',
       `
       const client = await import('./lib/ai/client.ts');
-      const failure = (fn) => { try { fn(); return null; } catch (error) { return error.message; } };
       console.log(JSON.stringify({
         hasAi: client.hasAi(), provider: client.describeProvider(),
         primary: client.OPENAI_PRIMARY_MODEL, fast: client.OPENAI_FAST_MODEL,
-        primaryError: failure(client.primaryModel), fastError: failure(client.fastModel),
       }));
     `,
     ],
@@ -45,10 +41,5 @@ describe('ai/client provider resolution without keys', () => {
   test('the default model ids resolve to strings', () => {
     expect(typeof result.primary).toBe('string');
     expect(typeof result.fast).toBe('string');
-  });
-
-  test('primaryModel / fastModel throw a clear error when nothing is configured', () => {
-    expect(result.primaryError).toMatch(/No AI provider configured/);
-    expect(result.fastError).toMatch(/No AI provider configured/);
   });
 });

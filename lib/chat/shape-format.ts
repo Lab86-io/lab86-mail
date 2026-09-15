@@ -1,4 +1,4 @@
-// Display formatting for shape cards (docs/chat-agentic-pass.md, section 3).
+// Display formatting for shape cards.
 // Pure functions so the cards stay thin and the rules are testable.
 
 const DAY_MS = 24 * 60 * 60 * 1000;

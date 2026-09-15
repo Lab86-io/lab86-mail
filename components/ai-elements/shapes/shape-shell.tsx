@@ -1,7 +1,6 @@
 'use client';
 
-// The shared pieces of every shape card (docs/chat-agentic-pass.md, section
-// 3): the paper surface, a dense list row in the mail-list typography, and
+// The shared pieces of every shape card: the paper surface, a dense list row in the mail-list typography, and
 // the action bar. The bar shows at most two text actions (primary first) and
 // puts the rest behind a "More" menu. A mutation writes its outcome in place
 // in the accent-3 status voice and disables the row's other mutations; it

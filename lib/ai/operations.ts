@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { getAiRequestContext } from './context';
 
-// Act-then-undo framework (docs/productivity-platform-spec.md): every mutating
+// Act-then-undo framework: every mutating
 // productivity tool records the operation it applied together with a
 // declarative inverse. Undo claims the row in Convex first (so double-clicks
 // can't run an inverse twice), then dispatches to the executor registered for

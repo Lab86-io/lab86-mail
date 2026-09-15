@@ -9,8 +9,7 @@
 // evidence, deliberately capped so a noisy mailbox can't become the center of
 // gravity.
 //
-// Research (Albatross contract — research before code, Opus 2026-07-11; full
-// notes in docs/albatross-area-brief-v2-research.md):
+// Research references for the Area Brief:
 // - Mobbin/Asana project overview (0f8c5ba7, 140afee3, 91b6ac7f): a generated
 //   AI summary is the page thesis and coexists with a live state pill + a
 //   freshness signal; the absent state offers "Generate summary", never faked.

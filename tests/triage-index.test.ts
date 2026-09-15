@@ -4,9 +4,7 @@ import {
   triageHandoffForMailItem,
   withDocumentSuggestion,
 } from '../lib/brief/triage-index';
-import { enforceDailyBriefHandoffCoverage } from '../lib/mail/daily-brief-handoff';
 import { compositionFromReport } from '../lib/shared/brief-composition';
-import type { BriefDocumentV2 } from '../lib/shared/brief-document';
 import type { DailyReport, DailyReportItem } from '../lib/shared/types';
 
 const NOW = Date.parse('2026-07-24T12:00:00Z');
@@ -86,7 +84,7 @@ describe('canonical SBAR triage index', () => {
     expect(handoff.situation).toHaveLength(500);
   });
 
-  test('makes deterministic and model-authored briefs project the same merged index', () => {
+  test('makes deterministic briefs project the merged index', () => {
     const report = reportFixture();
     report.handoffs = buildTriageHandoffIndex(report);
 
@@ -95,24 +93,6 @@ describe('canonical SBAR triage index', () => {
     const digest = composition.blocks.find((block) => block.type === 'handoff_digest');
     expect(digest?.items).toHaveLength(4);
     expect(digest?.items.find((item) => item.sourceRefs.length > 1)?.recommendations).toHaveLength(2);
-
-    const repaired = enforceDailyBriefHandoffCoverage(emptyDocument(), report);
-    const entityRegion = repaired.regions.find((region) => region.id === 'needs-you-required');
-    expect(entityRegion?.tree.kind).toBe('group');
-    if (!entityRegion || entityRegion.tree.kind !== 'group') {
-      throw new Error('Expected required handoff group');
-    }
-    const entityList = entityRegion.tree.children.find((node) => node.kind === 'entity_list');
-    expect(entityList?.kind).toBe('entity_list');
-    if (!entityList || entityList.kind !== 'entity_list') {
-      throw new Error('Expected handoff entity list');
-    }
-    expect(entityList.items).toHaveLength(3);
-    expect(
-      entityList.items.some(
-        (item) => item.handoff?.itemCount === 2 && item.handoff.recommendations.length === 2,
-      ),
-    ).toBe(true);
   });
 
   test('never turns a non-HTTPS connected URL into an executable brief action', () => {
@@ -228,83 +208,6 @@ describe('canonical SBAR triage index', () => {
     expect(full.actions.some((action) => action.action === 'create_document')).toBe(false);
   });
 
-  test('retains only exact connected and work navigation proposals', () => {
-    const report = reportFixture();
-    report.handoffs = buildTriageHandoffIndex(report);
-    const connected = report.handoffs.find((handoff) => handoff.kind === 'connected');
-    const areaWork = report.handoffs.find((handoff) =>
-      handoff.items.some((item) => item.sourceKey === 'work:project:project-1'),
-    );
-    if (!connected || !areaWork) throw new Error('Expected connected and work handoffs');
-    const document: BriefDocumentV2 = {
-      ...emptyDocument(),
-      regions: [
-        {
-          id: 'authored',
-          summary: 'Authored actions',
-          tree: {
-            kind: 'entity_list',
-            emphasis: 'standard',
-            tone: 'neutral',
-            variant: 'rows',
-            items: [
-              {
-                ref: connected.primaryRef,
-                framing: {},
-                actions: [
-                  {
-                    action: 'open_url',
-                    label: 'Exact connected URL',
-                    payload: { url: 'https://github.com/lab86/mail/pull/86' },
-                    style: 'primary',
-                  },
-                  {
-                    action: 'open_url',
-                    label: 'Different URL',
-                    payload: { url: 'https://example.test/not-grounded' },
-                    style: 'primary',
-                  },
-                  {
-                    action: 'open_url',
-                    label: 'Insecure URL',
-                    payload: { url: 'http://github.com/lab86/mail/pull/86' },
-                    style: 'primary',
-                  },
-                ],
-              },
-              {
-                ref: areaWork.items.find((item) => item.ref.kind === 'work')!.ref,
-                framing: {},
-                actions: [
-                  {
-                    action: 'open_work',
-                    label: 'Exact work',
-                    payload: { workId: 'project-1', areaId: 'area-lab86' },
-                    style: 'primary',
-                  },
-                  {
-                    action: 'open_work',
-                    label: 'Wrong work',
-                    payload: { workId: 'project-other', areaId: 'area-lab86' },
-                    style: 'primary',
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      ],
-    };
-
-    const repaired = enforceDailyBriefHandoffCoverage(document, report);
-    const json = JSON.stringify(repaired);
-    expect(json.match(/https:\/\/github\.com\/lab86\/mail\/pull\/86/g)).toHaveLength(1);
-    expect(json).not.toContain('not-grounded');
-    expect(json).not.toContain('http://github.com');
-    expect(json.match(/"workId":"project-1"/g)).toHaveLength(1);
-    expect(json).not.toContain('project-other');
-  });
-
   test('paginates a busy deterministic fallback without dropping indexed handoffs', () => {
     const report = reportFixture();
     const seed = buildTriageHandoffIndex(report)[0];
@@ -328,40 +231,8 @@ describe('canonical SBAR triage index', () => {
     );
     expect(digestBlocks).toHaveLength(2);
     expect(digestBlocks.map((block) => block.items.length)).toEqual([20, 5]);
-
-    const repaired = enforceDailyBriefHandoffCoverage(emptyDocument(), report);
-    const required = repaired.regions.find((region) => region.id === 'needs-you-required');
-    if (!required || required.tree.kind !== 'group') {
-      throw new Error('Expected paginated required handoffs');
-    }
-    const counts = required.tree.children.flatMap((node) =>
-      node.kind === 'entity_list' ? [node.items.length] : [],
-    );
-    expect(counts).toEqual([24, 1]);
   });
 });
-
-function emptyDocument(): BriefDocumentV2 {
-  return {
-    version: 2,
-    title: 'Daily Brief',
-    summary: 'Summary',
-    generatedAt: NOW,
-    regions: [
-      {
-        id: 'lead',
-        summary: 'Lead',
-        tree: {
-          kind: 'text',
-          emphasis: 'standard',
-          tone: 'neutral',
-          role: 'lede',
-          text: 'Start here.',
-        },
-      },
-    ],
-  };
-}
 
 function reportFixture(): DailyReport {
   const thread = threadItem();

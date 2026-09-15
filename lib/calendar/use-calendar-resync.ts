@@ -11,7 +11,7 @@ import {
 
 // The client side of `POST /api/calendar/resync`. One hook owns three
 // things: the view-open kick (mount and window focus), the manual and pull
-// kicks, and the state the SyncLine and the header sentence read.
+// kicks, and the state the calendar sync status reads.
 
 export type CalendarResyncClientReason = 'view_open' | 'pull' | 'manual_http';
 
@@ -149,7 +149,7 @@ export interface UseCalendarResyncInput {
 export interface UseCalendarResync {
   // The header sentence.
   line: string;
-  // True while a kicked or server-started sync runs. Drives the SyncLine.
+  // True while a kicked or server-started sync runs. Drives the sync status.
   active: boolean;
   // True while a request is in flight.
   busy: boolean;

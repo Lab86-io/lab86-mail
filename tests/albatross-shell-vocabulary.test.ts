@@ -2,8 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-// The taste rules in docs/albatross-voice-and-style.md are not advisory. Before
-// this round the tree carried 54 upper-case micro-labels across 19 files, three
+// Before the vocabulary cleanup, the tree carried 54 upper-case micro-labels across 19 files, three
 // different formats for machine confidence, and words like "classifier" in a
 // primary empty state. These tests are the enforcement.
 
@@ -149,18 +148,10 @@ describe('Mail tells the truth when nothing is connected', () => {
 });
 
 describe('Today puts responsibility above decoration', () => {
-  test('the surface leads with the next move, and carries no stack of Work', () => {
-    const today = read('components/report/TodaySurface.tsx');
-    expect(today.indexOf('Do this next')).toBeLessThan(today.indexOf('Your day'));
-    expect(today).not.toContain('Needs you');
-    expect(today).not.toContain('Waiting, not forgotten');
-    expect(today).not.toContain('Ongoing practices');
-    expect(today).not.toContain('weather');
-  });
-
-  test('the brief is a section of Today, not the whole of it', () => {
+  test('the shell routes Today to the Daily Brief', () => {
     const shell = read('components/shell/AppShell.tsx');
     expect(shell).toContain('<Today />');
+    expect(read('components/report/Today.tsx')).toContain('return <DailyReport />;');
     expect(shell).not.toContain('<DailyReport />');
   });
 

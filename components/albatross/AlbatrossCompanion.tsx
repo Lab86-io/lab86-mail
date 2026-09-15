@@ -113,11 +113,6 @@ export function AlbatrossCompanion() {
     );
   }
 
-  const _openContext = () => {
-    const areaId = row!.routine?.areaId || row!.project?.areaId;
-    openContext(row!.work ? String(row!.work._id) : null, areaId ? String(areaId) : null);
-  };
-
   if (!row) return null;
 
   const submit = async () => {

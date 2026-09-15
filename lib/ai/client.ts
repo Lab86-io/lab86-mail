@@ -56,23 +56,6 @@ function pickFastModel() {
 export const OPENAI_PRIMARY_MODEL = pickPrimaryModel();
 export const OPENAI_FAST_MODEL = pickFastModel();
 
-export function primaryModel() {
-  // OpenRouter only speaks Chat Completions reliably across its backends; the
-  // Responses API tool-call format (which @ai-sdk/openai uses by default)
-  // breaks on its Azure provider for tool follow-ups.
-  if (openrouter) return openrouter.chat(OPENAI_PRIMARY_MODEL);
-  if (openai) return openai(OPENAI_PRIMARY_MODEL);
-  if (anthropic) return anthropic('claude-sonnet-4-6');
-  throw new Error('No AI provider configured. Set OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.');
-}
-
-export function fastModel() {
-  if (openrouter) return openrouter.chat(OPENAI_FAST_MODEL);
-  if (openai) return openai(OPENAI_FAST_MODEL);
-  if (anthropic) return anthropic('claude-haiku-4-5-20251001');
-  throw new Error('No AI provider configured.');
-}
-
 export function hasAi() {
   return Boolean(openrouter || openai || anthropic);
 }

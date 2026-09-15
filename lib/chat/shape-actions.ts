@@ -1,4 +1,4 @@
-// Shape action execution (docs/chat-agentic-pass.md, section 3).
+// Shape action execution.
 //
 // One ShapeAction maps to either a navigation through the client store or a
 // mutation through the tool registry. The dependencies are injected so the

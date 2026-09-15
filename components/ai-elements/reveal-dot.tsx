@@ -1,4 +1,4 @@
-// The leading indicator (docs/chat-agentic-pass.md, section 4): a 6px accent
+// The leading indicator: a 6px accent
 // dot that pulses on a 1.2s cycle. It sits after the last revealed word of a
 // streaming reply (as a ::after on the `.chat-reveal` container) and, as this
 // element, at the work log header while a tool runs. The `.reveal-dot` rule

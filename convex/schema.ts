@@ -1959,7 +1959,7 @@ export default defineSchema({
     .index('by_user_document_status', ['userId', 'documentId', 'status', 'createdAt'])
     .index('by_user_suggestion', ['userId', 'suggestionId']),
 
-  // Kanban (docs/productivity-platform-spec.md M2). Boards are shareable:
+  // Kanban. Boards are shareable:
   // memberships carry roles, and a publicToken exposes a read-only view with
   // no account. Cards keep provenance back to the email/chat that spawned
   // them. Ordering is fractional (midpoint insertion, renumber on exhaustion)

@@ -1,4 +1,4 @@
-// Result shapes for chat tool calls (docs/chat-agentic-pass.md, section 3).
+// Result shapes for chat tool calls.
 //
 // The agent stream follows every tool result with a `data-tool-shape` part
 // built here. Web, iOS, and macOS render one view per shape kind and execute

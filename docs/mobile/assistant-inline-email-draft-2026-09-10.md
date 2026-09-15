@@ -3,7 +3,7 @@
 Date: 2026-09-10. Owner: Claude (apps/ios, iOS + macOS); Codex finish pass
 explicitly authorized by the user for this round after Claude's session quota.
 Part of the accepted
-workspace round (`docs/research/workspace-round-2026-09-10.md`, "Native email").
+workspace round (historical research is available in Git history).
 
 Final finish status: **424 macOS tests, 452 iPhone simulator tests plus two
 rendered XCTest cases, and an unsigned iPhone-device SDK build pass on the
