@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { DocumentGenerationError, generateDocumentProposal } from '@/lib/documents/ai';
 import { createDocumentSuggestion, getDocument, updateDocument } from '@/lib/documents/service';
+import { DocumentTooLargeError } from '@/lib/documents/sheet-workbook';
 import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
@@ -126,6 +127,9 @@ export function createDocumentAiPost(deps: DocumentAiDependencies = defaultDepen
           { ok: false, error: error.issues[0]?.message || 'Invalid request.' },
           { status: 400 },
         );
+      }
+      if (error instanceof DocumentTooLargeError) {
+        return NextResponse.json({ ok: false, error: error.message }, { status: 413 });
       }
       if (error instanceof DocumentGenerationError) {
         deps.reportUnexpectedError('[document-ai] Invalid model output:', error);

@@ -1,5 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+
+export function resolveAgentRunId(messageId: unknown, continuation = false): string | null {
+  if (typeof messageId !== 'string' || !messageId) return continuation ? null : randomUUID();
+  return /^[A-Za-z0-9_-]{1,180}$/.test(messageId)
+    ? messageId
+    : `message_${createHash('sha256').update(messageId).digest('hex')}`;
+}
 
 export function toolExecutionKey(name: string, args: unknown): string {
   const canonical = (value: any): any =>
@@ -91,22 +98,25 @@ export async function readRecoveryContext(userId: string, runId: string, read = 
   const records = await read<any[]>((api as any).agentExecution.readRun, { userId, runId });
   const identifier = (value: unknown) =>
     typeof value === 'string' && /^[a-zA-Z0-9_:-]{1,256}$/.test(value) ? value : undefined;
-  return records.length
-    ? `Server execution checkpoint metadata for this request:\n${JSON.stringify(
-        records.map((row) => ({
-          tool: identifier(row.toolName),
-          status: ['running', 'succeeded', 'failed', 'unknown'].includes(row.status) ? row.status : 'unknown',
-          documentId: identifier(
-            row.effect?.documentId ?? row.output?.documentId ?? row.output?.document?.documentId,
-          ),
-          suggestionId: identifier(row.effect?.suggestionId),
-          revision: Number.isSafeInteger(row.effect?.revision ?? row.output?.revision)
-            ? (row.effect?.revision ?? row.output?.revision)
-            : undefined,
-        })),
-      ).slice(
-        0,
-        90_000,
-      )}\nContinue the user's outstanding request. Preserve successful work. Reread the affected source for running/unknown calls before any write; a lost response does not prove failure. Do not duplicate saved edits or proposals.`
+  const payload = [];
+  let size = 2;
+  for (const row of [...records].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))) {
+    const metadata = {
+      tool: identifier(row.toolName),
+      status: ['running', 'succeeded', 'failed', 'unknown'].includes(row.status) ? row.status : 'unknown',
+      documentId: identifier(
+        row.effect?.documentId ?? row.output?.documentId ?? row.output?.document?.documentId,
+      ),
+      suggestionId: identifier(row.effect?.suggestionId),
+      revision: Number.isSafeInteger(row.effect?.revision ?? row.output?.revision)
+        ? (row.effect?.revision ?? row.output?.revision)
+        : undefined,
+    };
+    size += JSON.stringify(metadata).length + (payload.length ? 1 : 0);
+    if (size > 90_000) break;
+    payload.push(metadata);
+  }
+  return payload.length
+    ? `Server execution checkpoint metadata for this request:\n${JSON.stringify(payload)}\nContinue the user's outstanding request. Preserve successful work. Reread the affected source for running/unknown calls before any write; a lost response does not prove failure. Do not duplicate saved edits or proposals.`
     : '';
 }

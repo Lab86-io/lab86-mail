@@ -484,6 +484,7 @@ export const createCard = mutation({
       typeof args.source?.intentId === 'string'
         ? ctx.db.normalizeId('albatrossIntents', args.source.intentId)
         : null;
+    if (typeof args.source?.intentId === 'string' && !sourceWorkId) throw new Error('Work not found.');
     if (sourceWorkId) {
       const work = await ctx.db.get(sourceWorkId);
       if (!work || work.userId !== userId) throw new Error('Work not found.');

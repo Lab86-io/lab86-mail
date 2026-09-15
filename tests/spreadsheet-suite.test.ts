@@ -13,6 +13,38 @@ import { applySpreadsheetChanges } from '../lib/documents/spreadsheet-server';
 import { changes, chart, sheetId, suiteCommands } from '../scripts/fixtures/spreadsheet-suite-plan';
 
 describe('full Odoo spreadsheet tools', () => {
+  test('mixed edits can update a sheet created earlier in the same batch', async () => {
+    const source = createDefaultDocumentModel('sheet', 'suite');
+    const operations = [
+      {
+        op: 'spreadsheet_command',
+        command: { type: 'CREATE_SHEET', payload: { sheetId: 'new-sheet', position: 1, name: 'New sheet' } },
+      },
+      { op: 'cell_update', sheetId: 'new-sheet', cell: 'A1', content: '42' },
+    ];
+    const proposal = prepareDocumentEdits(source, operations);
+    const result = await applySpreadsheetChanges(source, proposal as any);
+    expect(result.workbook.sheets.find((sheet) => sheet.id === 'new-sheet')?.cells?.A1).toBe('42');
+    expect(() => prepareDocumentEdits(source, [...operations].reverse())).toThrow('Unknown item ID');
+  });
+
+  test('image reads reject remote, active-content and oversized URLs before loading', async () => {
+    for (const path of [
+      'https://example.com/private',
+      'file:///etc/passwd',
+      'data:image/svg+xml;base64,PHN2Zy8+',
+      'javascript:alert(1)',
+    ])
+      await expect(spreadsheetImageStore.getFile(path)).rejects.toThrow('supported embedded image');
+    await expect(
+      spreadsheetImageStore.getFile(`data:image/png;base64,${'A'.repeat(600_000)}`),
+    ).rejects.toThrow('400 KB');
+    await expect(
+      spreadsheetImageStore.getFile(
+        `data:image/png;base64,${btoa('x'.repeat(MAX_SPREADSHEET_IMAGE_BYTES + 1))}`,
+      ),
+    ).rejects.toThrow('400 KB');
+  });
   test('inserted images persist as workbook-owned bytes and unsafe or oversized files are refused', async () => {
     const image = new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/png' });
     const path = await spreadsheetImageStore.upload(image);

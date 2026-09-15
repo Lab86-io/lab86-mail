@@ -12,6 +12,82 @@ import {
 import { fullWordEdits, png } from '../scripts/fixtures/word-suite-plan';
 
 describe('full Word DOCX packages', () => {
+  test('replacing default headers and footers reuses their package parts without stale notes', async () => {
+    const original = await Packer.toBuffer(
+      new Document({
+        sections: [
+          {
+            headers: { default: new Header({ children: [new Paragraph('Old header')] }) },
+            footers: { default: new Footer({ children: [new Paragraph('Old footer')] }) },
+            children: [new Paragraph('Body')],
+          },
+        ],
+      }),
+    );
+    const first = await editWordPackage(original, [
+      { op: 'set_header_footer', area: 'header', text: 'First header' },
+      { op: 'set_header_footer', area: 'footer', text: 'First footer' },
+    ]);
+    const second = await editWordPackage(first, [
+      { op: 'set_header_footer', area: 'header', text: 'Final header' },
+      { op: 'set_header_footer', area: 'footer', text: 'Final footer' },
+    ]);
+    const before = await JSZip.loadAsync(original);
+    const after = await JSZip.loadAsync(second);
+    expect(Object.keys(after.files).sort()).toEqual(Object.keys(before.files).sort());
+    expect(await after.file('word/_rels/document.xml.rels')!.async('string')).toBe(
+      (await before.file('word/_rels/document.xml.rels')!.async('string')).replace(/^<\?xml[^>]*\?>/, ''),
+    );
+    expect((await readWordPackage(second)).notes.map((note) => note.text)).toEqual(
+      expect.arrayContaining(['Final header', 'Final footer']),
+    );
+    expect(JSON.stringify((await readWordPackage(second)).notes)).not.toMatch(/Old|First/);
+  });
+
+  test('formatting inserts run and paragraph properties in canonical schema order', async () => {
+    const bytes = await createWordPackage('Title', [
+      {
+        op: 'format_text',
+        paragraphs: [0],
+        bold: true,
+        italic: true,
+        strike: true,
+        underline: true,
+        font: 'Arial',
+        size: 14,
+        color: '112233',
+        highlight: 'yellow',
+      },
+      {
+        op: 'format_paragraph',
+        paragraphs: [0],
+        alignment: 'center',
+        heading: 1,
+        lineSpacing: 1.5,
+        pageBreakBefore: true,
+      },
+    ]);
+    const zip = await JSZip.loadAsync(bytes);
+    const dom = new JSDOM(await zip.file('word/document.xml')!.async('string'), {
+      contentType: 'application/xml',
+    });
+    const doc = dom.window.document;
+    for (const [tag, expected] of [
+      ['rPr', ['rFonts', 'b', 'i', 'strike', 'color', 'sz', 'highlight', 'u']],
+      ['pPr', ['pStyle', 'pageBreakBefore', 'spacing', 'jc']],
+    ] as const) {
+      const node = doc.getElementsByTagNameNS(
+        'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+        tag,
+      )[0];
+      expect(
+        Array.from(node.children)
+          .map((child) => child.localName)
+          .filter((name) => (expected as readonly string[]).includes(name)),
+      ).toEqual([...expected]);
+    }
+    dom.window.close();
+  });
   test('creates rich content, tables, images, comments, headers, footers and page layout that survive reopening', async () => {
     const bytes = await createWordPackage('Quarterly update', fullWordEdits);
     const result = await readWordPackage(bytes);

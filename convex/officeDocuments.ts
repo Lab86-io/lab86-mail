@@ -310,7 +310,7 @@ export const coordinateEdit = mutation({
         aiEdit: {
           id: args.requestId,
           targetSessionId: lock.sessionId,
-          expiresAt: now() + 120_000,
+          expiresAt: now() + 300_000,
           state: 'requested',
         },
       });
@@ -328,6 +328,7 @@ export const coordinateEdit = mutation({
     await ctx.db.patch(document._id, {
       aiEdit: {
         ...previous,
+        ...(args.action === 'prepare' ? { expiresAt: now() + 300_000 } : {}),
         state: args.action === 'prepare' ? 'prepared' : args.action === 'complete' ? 'complete' : 'failed',
       },
     });

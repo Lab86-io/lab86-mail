@@ -92,6 +92,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_user_run_key', ['userId', 'runId', 'key'])
+    .index('by_user_run_created', ['userId', 'runId', 'createdAt'])
     .index('by_user', ['userId']),
   users: defineTable({
     clerkUserId: v.string(),

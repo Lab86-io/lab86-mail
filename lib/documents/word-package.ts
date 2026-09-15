@@ -147,11 +147,29 @@ function property(parent: Element, name: string, attrs: Record<string, string | 
   let node = child(parent, name);
   if (!node) {
     node = element(parent.ownerDocument, name);
-    parent.append(node);
+    // Canonical WordprocessingML property order; retain unrelated existing nodes.
+    const order = propertyOrder[parent.localName] || [];
+    const position = order.indexOf(name);
+    const next =
+      position < 0
+        ? undefined
+        : Array.from(parent.children).find(
+            (entry) => entry.namespaceURI === W && order.indexOf(entry.localName) > position,
+          );
+    parent.insertBefore(node, next || null);
   }
   for (const [key, value] of Object.entries(attrs)) node.setAttributeNS(W, `w:${key}`, String(value));
   return node;
 }
+
+const propertyOrder: Record<string, string[]> = {
+  rPr: 'rStyle rFonts b bCs i iCs caps smallCaps strike dstrike outline shadow emboss imprint noProof snapToGrid vanish webHidden color spacing w kern position sz szCs highlight u effect bdr shd fitText vertAlign rtl cs em lang eastAsianLayout specVanish oMath rPrChange'.split(
+    ' ',
+  ),
+  pPr: 'pStyle keepNext keepLines pageBreakBefore framePr widowControl numPr suppressLineNumbers pBdr shd tabs suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct autoSpaceDE autoSpaceDN bidi adjustRightInd snapToGrid spacing ind contextualSpacing mirrorIndents suppressOverlap jc textDirection textAlignment textboxTightWrap outlineLvl divId cnfStyle rPr sectPr pPrChange'.split(
+    ' ',
+  ),
+};
 function properties(parent: Element, name: string) {
   let node = child(parent, name);
   if (!node) {
@@ -406,16 +424,31 @@ export async function editWordPackage(bytes: Uint8Array, input: WordEdit[]) {
         });
         insert(table, edit.after);
       } else if (edit.op === 'set_header_footer') {
-        const target = `${edit.area}-${crypto.randomUUID()}.xml`;
-        const path = `word/${target}`;
+        const properties = section();
+        const previous = Array.from(properties.children).find(
+          (node) =>
+            node.localName === `${edit.area}Reference` && node.getAttributeNS(W, 'type') === 'default',
+        );
+        const rels = await relationships();
+        const relationship = Array.from(rels.documentElement.children).find(
+          (node) =>
+            node.getAttribute('Id') === previous?.getAttributeNS(R, 'id') &&
+            node.getAttribute('Type') === `${R}/${edit.area}`,
+        );
+        const target = relationship?.getAttribute('Target') || `${edit.area}-${crypto.randomUUID()}.xml`;
+        if (
+          relationship?.getAttribute('TargetMode') === 'External' ||
+          !/^(?:\/word\/)?[\w-]+\.xml$/.test(target)
+        )
+          throw new OfficeError('The header or footer target cannot be edited safely.');
+        const path = target.startsWith('/word/') ? target.slice(1) : `word/${target}`;
         const content = await part(path, edit.area === 'header' ? 'hdr' : 'ftr', W);
-        content.documentElement.append(paragraph(content, edit.text));
-        const id = await addRelationship(edit.area, target);
+        content.documentElement.replaceChildren(paragraph(content, edit.text));
+        const id = relationship?.getAttribute('Id') || (await addRelationship(edit.area, target));
         await addContentType(
           path,
           `application/vnd.openxmlformats-officedocument.wordprocessingml.${edit.area}+xml`,
         );
-        const properties = section();
         for (const node of Array.from(properties.children))
           if (node.localName === `${edit.area}Reference` && node.getAttributeNS(W, 'type') === 'default')
             node.remove();

@@ -188,7 +188,8 @@ export const createProject = mutation({
     if (args.sourceIntentId) {
       const id = ctx.db.normalizeId('albatrossIntents', args.sourceIntentId);
       const work = id ? await ctx.db.get(id) : null;
-      if (work?.userId === userId) assertWorkOpen(work);
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
     }
     const externalId = bounded(args.externalId, 160);
     const existing = await projectByExternalId(ctx, userId, externalId);
@@ -497,7 +498,8 @@ export const enqueueApproval = mutation({
     if (args.intentId) {
       const id = ctx.db.normalizeId('albatrossIntents', args.intentId);
       const work = id ? await ctx.db.get(id) : null;
-      if (work?.userId === userId) assertWorkOpen(work);
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
     }
     if (args.projectId) await requireProject(ctx, args.projectId, userId);
     if (args.sprintId) await requireSprint(ctx, args.sprintId, userId);
@@ -641,7 +643,8 @@ export const claimApproval = mutation({
     if (approval.intentId) {
       const id = ctx.db.normalizeId('albatrossIntents', approval.intentId);
       const work = id ? await ctx.db.get(id) : null;
-      if (work?.userId === userId) assertWorkOpen(work);
+      if (!work || work.userId !== userId) throw new Error('Work not found.');
+      assertWorkOpen(work);
     }
     const ts = now();
     await ctx.db.patch(args.approvalId, { status: 'claiming', updatedAt: ts });

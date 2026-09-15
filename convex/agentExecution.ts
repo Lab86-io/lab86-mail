@@ -62,7 +62,8 @@ export const readRun = query({
     requireInternalSecret(args.internalSecret);
     return ctx.db
       .query('agentToolExecutions')
-      .withIndex('by_user_run_key', (q) => q.eq('userId', args.userId).eq('runId', args.runId))
+      .withIndex('by_user_run_created', (q) => q.eq('userId', args.userId).eq('runId', args.runId))
+      .order('desc')
       .take(100);
   },
 });

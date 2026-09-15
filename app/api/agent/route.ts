@@ -6,7 +6,7 @@ import {
 } from 'ai';
 import { after, type NextRequest } from 'next/server';
 import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
-import { readRecoveryContext } from '@/lib/ai/execution';
+import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
@@ -196,6 +196,9 @@ export async function POST(req: NextRequest) {
         : []),
     ];
     const latestUser = [...prepared.messages].reverse().find((message) => message.role === 'user');
+    const runId = resolveAgentRunId(latestUser?.id, body.continuation === true);
+    if (!runId)
+      return Response.json({ error: 'Continuation requires the original user message ID.' }, { status: 400 });
     // Every pre-flight read is independent of the others, so they run together:
     // the model call waits for the slowest one, not for the sum.
     const [areaDiscoveryContext, attachedContexts, modelMessages] = await Promise.all([
@@ -221,10 +224,6 @@ export async function POST(req: NextRequest) {
         .then(convertToModelMessages)
         .then(sanitizeToolPairs),
     ]);
-    const runId =
-      typeof latestUser?.id === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(latestUser.id)
-        ? latestUser.id
-        : crypto.randomUUID();
     const recovery = body.continuation === true ? await readRecoveryContext(user.userId, runId) : '';
     const stream = await runAgent({
       runId,

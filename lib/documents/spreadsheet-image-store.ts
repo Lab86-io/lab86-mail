@@ -17,6 +17,13 @@ export const spreadsheetImageStore = {
     /* Prior versions retain their images. */
   },
   async getFile(path: string): Promise<Blob> {
+    if (path.length > Math.ceil(MAX_SPREADSHEET_IMAGE_BYTES / 3) * 4 + 80)
+      throw new Error('Choose an image smaller than 400 KB to fit in this workbook.');
+    const match = /^data:(image\/[^;]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(path);
+    if (!match || !imageType.test(match[1])) throw new Error('Choose a supported embedded image.');
+    const bytes = atob(match[2]);
+    if (bytes.length > MAX_SPREADSHEET_IMAGE_BYTES)
+      throw new Error('Choose an image smaller than 400 KB to fit in this workbook.');
     const response = await fetch(path);
     if (!response.ok) throw new Error('The spreadsheet image could not be loaded.');
     return response.blob();

@@ -710,7 +710,7 @@ export function activeToolsForStep(
 async function streamAgentTurn(
   writer: UiStreamWriter,
   options: AgentStreamOptions,
-): Promise<{ steps: any[]; failed: boolean }> {
+): Promise<{ steps: any[]; failed: boolean; aborted: boolean }> {
   const feature = 'agent';
   const runtimes = await resolveAgentRuntimes({ userId: options.userId, speed: 'primary', feature });
   const promptCacheKey = options.userId ? `agent:${options.userId}` : undefined;
@@ -775,7 +775,7 @@ async function streamAgentTurn(
         aborted: !!options.signal?.aborted,
         error: outcome.error ? safeAuthErrorText(outcome.error) : undefined,
       });
-      return { steps, failed: !!outcome.error || !!options.signal?.aborted };
+      return { steps, failed: !!outcome.error, aborted: !!options.signal?.aborted };
     }
 
     lastError = outcome.error ?? new Error(`empty completion (${finishReason})`);
@@ -903,7 +903,11 @@ export async function runAgent({
                 streamAgentTurn(writer, { runId, userId, system, messages, tools, toolGroups, signal }),
               );
               completed = outcome.steps;
-              writer.write({ type: 'finish', finishReason: outcome.failed ? 'error' : 'stop' });
+              writer.write(
+                outcome.aborted
+                  ? { type: 'abort' }
+                  : { type: 'finish', finishReason: outcome.failed ? 'error' : 'stop' },
+              );
             } catch (err: any) {
               if (signal?.aborted) {
                 writer.write({ type: 'abort' });

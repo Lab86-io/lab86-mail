@@ -154,3 +154,23 @@ test('an already cancelled request never starts model generation', async () => {
   expect(primary.doStreamCalls).toHaveLength(0);
   expect(steps).toEqual([]);
 });
+
+test('cancelling after partial content produces an abort, not a failure finish', async () => {
+  const abort = new AbortController();
+  const primary = new MockLanguageModelV3({
+    doStream: async () => ({
+      stream: new ReadableStream({
+        async start(controller) {
+          for (const chunk of textParts('Partial response')) controller.enqueue(chunk);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          abort.abort();
+          controller.close();
+        },
+      }),
+    }),
+  });
+  const { events } = await run([primary], abort.signal);
+  expect(events).toContainEqual(expect.objectContaining({ type: 'text-delta', delta: 'Partial response' }));
+  expect(events).toContainEqual({ type: 'abort' });
+  expect(events).not.toContainEqual({ type: 'finish', finishReason: 'error' });
+});

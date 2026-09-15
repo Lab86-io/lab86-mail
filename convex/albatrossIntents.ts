@@ -352,7 +352,7 @@ export const updateIntent = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const intent = await requireIntent(ctx, args.intentId, userId);
-    if (isTerminalWork(intent) && (args.status || args.planError !== undefined)) return args.intentId;
+    const terminal = isTerminalWork(intent);
     const ts = now();
     const patch: Record<string, unknown> = { updatedAt: ts };
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
@@ -363,16 +363,17 @@ export const updateIntent = mutation({
       patch.areaAutoAssigned = false;
     }
     if (args.priority !== undefined) patch.priority = Math.min(Math.max(Math.round(args.priority), 1), 3);
-    if (args.status !== undefined) {
+    if (!terminal && args.status !== undefined) {
       patch.status = args.status;
       if (args.status === 'applied') patch.appliedAt = ts;
     }
-    if (args.planError !== undefined) patch.planError = bounded(args.planError, 500) || undefined;
+    if (!terminal && args.planError !== undefined)
+      patch.planError = bounded(args.planError, 500) || undefined;
     await ctx.db.patch(args.intentId, patch);
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     // Completion history (issue #87/#18): only a real transition into 'done'
     // records an event; re-saving an already-done intent does not.
-    if (args.status === 'done' && intent.status !== 'done') {
+    if (!terminal && args.status === 'done' && intent.status !== 'done') {
       await recordCompletionEvent(ctx, {
         userId,
         artifactKind: 'intent',

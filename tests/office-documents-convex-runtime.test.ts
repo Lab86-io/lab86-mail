@@ -58,9 +58,18 @@ describe('binary Office working copies', () => {
     expect(
       await t.mutation(office.coordinateEdit, { ...request, action: 'prepare', sessionId: 'wrong' }),
     ).toMatchObject({ ok: false });
+    const requested = await t.query(office.get, { ...auth, documentId: 'word-ai' });
+    expect(requested.aiEdit.expiresAt - Date.now()).toBeGreaterThan(120_000);
+    await t.run(async (ctx) => {
+      const document = await ctx.db.query('officeDocuments').first();
+      await ctx.db.patch(document!._id, { aiEdit: { ...document!.aiEdit!, expiresAt: Date.now() + 1000 } });
+    });
     expect(
       await t.mutation(office.coordinateEdit, { ...request, action: 'prepare', sessionId: 'editor' }),
     ).toMatchObject({ ok: true });
+    expect(
+      (await t.query(office.get, { ...auth, documentId: 'word-ai' })).aiEdit.expiresAt - Date.now(),
+    ).toBeGreaterThan(120_000);
     expect(
       await t.mutation(office.startSession, {
         ...auth,

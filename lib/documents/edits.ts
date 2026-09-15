@@ -102,11 +102,18 @@ export function prepareDocumentEdits(source: AlbatrossDocumentModel, input: unkn
     (model.version === 2 || operations.some((operation) => operation.op === 'spreadsheet_command'))
   ) {
     const sheets = model.version === 2 ? model.workbook.sheets : model.sheets;
+    const createdSheetIds = new Set<string>();
     const onlyCells = operations.every((operation) => operation.op === 'cell_update');
     const commands = operations.map((operation) => {
-      if (operation.op === 'spreadsheet_command') return validateSpreadsheetCommand(operation.command);
+      if (operation.op === 'spreadsheet_command') {
+        const command = validateSpreadsheetCommand(operation.command);
+        if (command.type === 'CREATE_SHEET') createdSheetIds.add(String(command.payload.sheetId));
+        return command;
+      }
       if (operation.op !== 'cell_update') throw new Error('This operation does not target a spreadsheet.');
-      const sheet = sheets[indexOf(sheets, operation.sheetId)];
+      const sheet = createdSheetIds.has(operation.sheetId)
+        ? { id: operation.sheetId, rowCount: 0, columnCount: 0 }
+        : sheets[indexOf(sheets, operation.sheetId)];
       const address = parseCellAddress(operation.cell)!;
       if (
         onlyCells &&

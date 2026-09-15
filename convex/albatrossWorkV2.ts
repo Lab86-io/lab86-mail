@@ -186,7 +186,7 @@ export const updateWorkState = mutation({
             : work.status,
       // Picking released work back up clears the release, exactly like
       // reopenWork — a revived albatross must not keep a release reason.
-      ...(args.state === 'active' && work.workState === 'released'
+      ...(args.state !== 'archived' && isTerminalWork(work)
         ? {
             releaseReason: undefined,
             releaseProposedBy: undefined,
@@ -1057,6 +1057,7 @@ export const attachProof = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const work = await requireWork(ctx, args.workId, userId);
+    assertWorkOpen(work);
     const ts = now();
     let trust = args.trust;
     if (args.sourceKind === 'mail_thread') {

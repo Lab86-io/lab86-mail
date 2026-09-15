@@ -263,7 +263,7 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
               if (event.key === 'Enter') event.currentTarget.blur();
             }}
             style={{ fieldSizing: 'content' }}
-            className="min-w-0 max-w-full rounded-sm bg-transparent text-sm font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]"
+            className="min-w-0 max-w-full rounded-sm bg-transparent text-base font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)] sm:text-[12px]"
           />
           <DocumentSaveStatus
             applying={aiBusy}

@@ -6,6 +6,7 @@ import {
   checkpointOutput,
   executeCheckpointedTool,
   readRecoveryContext,
+  resolveAgentRunId,
   toolExecutionKey,
 } from '../lib/ai/execution';
 import { buildAlbatrossDailyReportContextFromLive } from '../lib/albatross/daily-report';
@@ -51,6 +52,46 @@ async function seedWork(t: ReturnType<typeof harness>) {
 }
 
 describe('Monro completion', () => {
+  test('project, approval, and card writes reject invalid or unowned Work references', async () => {
+    const t = harness();
+    const foreignId = await seedWork(t);
+    await t.run((ctx) => ctx.db.patch(foreignId, { userId: 'foreign' }));
+    for (const intentId of ['invalid', foreignId]) {
+      await expect(
+        t.mutation(api.albatrossWork.createProject, {
+          ...caller,
+          title: 'Invalid',
+          sourceIntentId: intentId,
+        }),
+      ).rejects.toThrow('Work not found');
+      await expect(
+        t.mutation(api.albatrossWork.enqueueApproval, {
+          ...caller,
+          intentId,
+          kind: 'calendar_invite',
+          title: 'Invalid',
+          toolName: 'calendar_create_event',
+          toolArgs: {},
+        }),
+      ).rejects.toThrow('Work not found');
+      const approvalId = await t.run((ctx) =>
+        ctx.db.insert('albatrossApprovals', {
+          userId: caller.userId,
+          intentId,
+          kind: 'calendar_invite',
+          title: 'Invalid',
+          toolName: 'calendar_create_event',
+          toolArgs: {},
+          status: 'pending',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+      );
+      await expect(t.mutation(api.albatrossWork.claimApproval, { ...caller, approvalId })).rejects.toThrow(
+        'Work not found',
+      );
+    }
+  });
   test('supersedes pending questions and rejects approvals created after completion', async () => {
     const t = harness();
     const workId = await seedWork(t);
@@ -144,6 +185,28 @@ describe('Monro completion', () => {
     const work = await t.run((ctx) => ctx.db.get(workId));
     expect(work).toMatchObject({ workState: 'done', status: 'done', agentState: 'idle' });
     expect(work?.planError).toBeUndefined();
+    await t.mutation(api.albatrossIntents.updateIntent, {
+      ...caller,
+      intentId: workId,
+      title: 'Repaired tire',
+      status: 'planning',
+      planError: 'Late failure',
+    });
+    expect(await t.run((ctx) => ctx.db.get(workId))).toMatchObject({
+      title: 'Repaired tire',
+      status: 'done',
+    });
+    await expect(
+      t.mutation(api.albatrossWorkV2.attachProof, {
+        ...caller,
+        workId,
+        title: 'Late proof',
+        claim: 'Late receipt',
+        sourceKind: 'manual',
+        sourceId: 'late',
+        trust: 'observed',
+      }),
+    ).rejects.toThrow('Reopen');
     await expect(
       t.mutation(api.albatrossWorkV2.completeStep, { ...caller, workId, stepKey: 'late' }),
     ).rejects.toThrow('Reopen');
@@ -199,7 +262,7 @@ describe('Monro completion', () => {
         completedAt: 2,
       });
       const independent = await ctx.db.insert('cards', { ...base, title: 'Other repair' });
-      return { owned, done, independent, projectId };
+      return { owned, done, independent, projectId, boardId, columnId };
     });
     await t.mutation(api.albatrossWorkV2.completeWork, { ...caller, workId, claim: 'Done' });
     expect(await t.run((ctx) => ctx.db.get(ids.owned))).toMatchObject({ retiredByWorkId: workId });
@@ -225,11 +288,29 @@ describe('Monro completion', () => {
       }),
     ).toEqual([]);
     for (const state of ['paused', 'waiting', 'blocked', 'active'] as const) {
+      await t.run((ctx) =>
+        ctx.db.patch(workId, {
+          releaseReason: 'Old release',
+          releasedAt: 1,
+          reviewAt: 2,
+          releaseProposedBy: 'user',
+        }),
+      );
       await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state });
+      expect((await t.run((ctx) => ctx.db.get(workId)))?.releaseReason).toBeUndefined();
       expect((await t.run((ctx) => ctx.db.get(ids.owned)))?.retiredAt).toBeUndefined();
       expect((await t.run((ctx) => ctx.db.get(ids.projectId)))?.status).toBe('active');
       await t.mutation(api.albatrossWorkV2.completeWork, { ...caller, workId, claim: 'Done' });
     }
+    await expect(
+      t.mutation(api.boards.createCard, {
+        ...caller,
+        boardId: ids.boardId,
+        columnId: ids.columnId,
+        title: 'Invalid source',
+        source: { intentId: 'invalid' },
+      }),
+    ).rejects.toThrow('Work not found');
     await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
     expect((await t.run((ctx) => ctx.db.get(ids.owned)))?.retiredAt).toBeUndefined();
     expect((await t.run((ctx) => ctx.db.get(ids.done)))?.completedAt).toBe(2);
@@ -275,6 +356,32 @@ describe('Monro completion', () => {
 });
 
 describe('interrupted deck execution', () => {
+  test('continuation IDs are stable for every message identity and absent identities cannot resume', () => {
+    expect(resolveAgentRunId('normal-id', true)).toBe('normal-id');
+    for (const id of ['user:42', 'message / unicode 🐦', 'x'.repeat(500)]) {
+      expect(resolveAgentRunId(id, true)).toBe(resolveAgentRunId(id));
+      expect(resolveAgentRunId(id)).toMatch(/^message_[a-f0-9]{64}$/);
+    }
+    expect(resolveAgentRunId(undefined, true)).toBeNull();
+    expect(resolveAgentRunId('', true)).toBeNull();
+    expect(resolveAgentRunId(undefined)).toMatch(/^[a-f0-9-]+$/);
+  });
+
+  test('bounded recovery retains complete newest records without cutting JSON', async () => {
+    const rows = Array.from({ length: 150 }, (_, createdAt) => ({
+      createdAt,
+      toolName: 't'.repeat(256),
+      status: 'unknown',
+      effect: { documentId: `d${'x'.repeat(250)}`, suggestionId: 's'.repeat(256), revision: createdAt },
+    }));
+    const context = await readRecoveryContext('owner', 'turn', (async () => rows) as any);
+    const payload = context.split('\n')[1];
+    expect(payload.length).toBeLessThanOrEqual(90_000);
+    const records = JSON.parse(payload);
+    expect(records[0].revision).toBe(149);
+    expect(records.length).toBeLessThan(150);
+    expect(records.at(-1).revision).toBeGreaterThan(0);
+  });
   test('final checkpoints cannot be overwritten by late callbacks', async () => {
     const t = harness();
     for (const status of ['failed', 'succeeded'] as const) {
