@@ -3,7 +3,9 @@
 import { QueryClientContext, useQuery } from '@tanstack/react-query';
 import { FileSpreadsheet, FileText, Presentation } from 'lucide-react';
 import { useContext, useEffect, useRef, useState } from 'react';
+import { SlideSurface } from '@/components/files/editors/SlideRenderer';
 import { documentPreviewPages, type PreviewPage } from '@/lib/documents/preview';
+import './editors/document-editors.css';
 
 export function DocumentPreview({ documentId, kind }: { documentId?: string; kind?: string }) {
   const client = useContext(QueryClientContext);
@@ -69,7 +71,7 @@ export function DocumentPreviewStack({ pages, kind }: { pages: PreviewPage[]; ki
             key={page.id}
             className="chat-file-preview__page rounded-ui"
             data-page={index}
-            data-kind={page.kind}
+            data-kind={page.kind === 'deck-v2' ? 'deck' : page.kind}
             style={page.kind === 'deck' ? { backgroundColor: page.background } : undefined}
           >
             {page.kind === 'doc' ? (
@@ -95,6 +97,8 @@ export function DocumentPreviewStack({ pages, kind }: { pages: PreviewPage[]; ki
                   </tbody>
                 </table>
               </div>
+            ) : page.kind === 'deck-v2' ? (
+              <SlideSurface slide={page.slide} theme={page.theme} readOnly />
             ) : (
               page.elements.map((element) => (
                 <span

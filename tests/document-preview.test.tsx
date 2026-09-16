@@ -2,9 +2,32 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DocumentPreviewStack } from '../components/files/DocumentPreview';
 import { resolveToolShape, SHAPE_LIST_LIMIT } from '../lib/ai/tool-shapes';
+import { referenceDeck } from '../lib/documents/deck-fixtures';
 import { documentPreviewPages, previewDocumentId } from '../lib/documents/preview';
 
 describe('document content previews', () => {
+  test('version 2 decks retain themes, owned images, and charts through the shared slide renderer', () => {
+    const deck = referenceDeck('editorial');
+    const imageSlide = deck.slides.find((slide) =>
+      slide.elements.some((element) => element.type === 'image'),
+    )!;
+    const chartSlide = deck.slides.find((slide) =>
+      slide.elements.some((element) => element.type === 'chart'),
+    )!;
+    const input = { ...deck, slides: [imageSlide, chartSlide] };
+    const before = JSON.stringify(input);
+    const pages = documentPreviewPages(input);
+    expect(pages).toHaveLength(2);
+    expect(pages[0]).toMatchObject({ kind: 'deck-v2', slide: imageSlide, theme: deck.theme });
+    const markup = renderToStaticMarkup(<DocumentPreviewStack pages={pages} kind="deck" />);
+    expect(markup).toContain('data-element-type="image"');
+    expect(markup).toContain('data-element-type="chart"');
+    expect(markup).toContain('--deck-bg:');
+    expect(markup).not.toContain('<button');
+    expect(JSON.stringify(input)).toBe(before);
+    expect(documentPreviewPages({ ...input, theme: null })).toEqual([]);
+  });
+
   test('uses real document blocks, bounds the preview, and escapes markup', () => {
     const pages = documentPreviewPages({
       kind: 'doc',

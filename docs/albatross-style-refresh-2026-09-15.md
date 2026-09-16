@@ -55,7 +55,11 @@ The chat refinement used another Mobbin search: "AI chat conversation with user 
 
 Run the local preview with `ALBATROSS_PREVIEW_PORT=18859 bun run dev:preview`. Set `ALBATROSS_PREVIEW_HOST=100.104.121.93` for access through the tailnet. Set `ALBATROSS_STYLE_PREVIEW_URL=http://100.104.121.93:18859` when the browser check targets that address. `/?review=styles` exposes the Work, Brief, Notifications, and check-in fixtures.
 
-The branch is `codex/albatross-style-refresh`, based on `origin/staging` at `82d6f05`. Changes are local and uncommitted. Web and Convex changes must be released together; no database migration or full-mailbox reindex is required.
+The branch is `codex/albatross-style-refresh`, originally based on staging at `82d6f05`. Staging at `10187e8` was merged before release. All newer staging commits remain in the history. The editor, presentation, artwork, and native files from those commits remain unchanged.
+
+The chat preview supports the new version 2 presentation model through the shared slide renderer. It retains the document theme, images, and charts. Focused tests cover that integration and confirm that preview reads do not change the document model.
+
+Web and Convex changes must be released together. The existing staging workflow deploys both. This change requires no database migration or full-mailbox reindex.
 
 ## Published visual review
 

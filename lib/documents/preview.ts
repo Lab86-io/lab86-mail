@@ -1,5 +1,8 @@
+import { type DeckSlideV2, type DeckTheme, deckModelV2Schema } from './model';
+
 export type PreviewPage =
   | { kind: 'doc'; id: string; blocks: Array<{ id: string; text: string; heading: boolean }> }
+  | { kind: 'deck-v2'; id: string; slide: DeckSlideV2; theme: DeckTheme }
   | {
       kind: 'deck';
       id: string;
@@ -62,6 +65,16 @@ export function documentPreviewPages(value: unknown): PreviewPage[] {
     }));
   }
   if (model.kind === 'deck') {
+    if (model.version === 2) {
+      const parsed = deckModelV2Schema.safeParse({ ...model, slides: records(model.slides).slice(0, 3) });
+      if (!parsed.success) return [];
+      return parsed.data.slides.map((slide) => ({
+        kind: 'deck-v2',
+        id: slide.id,
+        slide,
+        theme: parsed.data.theme,
+      }));
+    }
     return records(model.slides)
       .slice(0, 3)
       .map((slide, slideIndex) => ({
