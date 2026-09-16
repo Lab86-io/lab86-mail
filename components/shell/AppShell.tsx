@@ -244,12 +244,12 @@ export function AppShell({
         open={railOpen}
         onOpenChange={setRailOpen}
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
-        className="relative h-dvh overflow-hidden bg-[var(--color-workspace-frame)]"
+        className="app-paper relative h-dvh overflow-hidden"
       >
         <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen && !isMobile ? <RailResizeHandle /> : null}
-        <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
           <div data-workspace-panel className="workspace-panel">
             <ChatWorkspace mobile={isMobile} clerkEnabled={clerkEnabled} userName={userName}>
               {isMobile ? (

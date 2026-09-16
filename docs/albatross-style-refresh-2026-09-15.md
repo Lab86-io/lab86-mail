@@ -38,6 +38,7 @@ The chat refinement used another Mobbin search: "AI chat conversation with user 
 - Work states, Area controls, and the daily check-in use the existing accent and surface ladder.
 - Work lists share an inset divider component. Cards, panels, and overlays use shared corner roles. Replaced radius literals are removed from their callers.
 - The outer gutter and rail use the same accent tint and depth. The permanent separator and oversized curve are removed. A thin resize guide appears only on hover or drag.
+- The shared shell paints the background wash and grain once, behind both the transparent rail and the page gutter. Separate paint layers no longer change their visible colors. The mobile sidebar also uses the outer background token.
 - User messages have a distinct accent-tinted bubble. Tool groups use shared raised surfaces, full accent borders, and horizontal dividers. The shared result shell uses the custom card corners.
 - Document creation, editing, reading, and lists use one file layout. The left preview shows real document blocks, slide elements, or spreadsheet cells. The page stack opens slightly on hover or keyboard focus. Reduced motion removes the transform.
 - Preview reads use the existing authorized document endpoint and shared editor cache. Offscreen previews wait until near the viewport. Invalidation refreshes previews after edits. No preview operation writes a file.
@@ -51,6 +52,7 @@ The chat refinement used another Mobbin search: "AI chat conversation with user 
 - TypeScript: `bun run typecheck` passes. Biome checks pass with one existing `noImgElement` warning in the assistant attachment preview.
 - Browser: `node scripts/check-albatross-styles-browser.mjs` passes against real components with synthetic data. Checks cover connected controls, complete letter bounds, matching date headers, the continuous outer canvas, custom corners, and surface depth. Notification selection, check-in states, and 320 / 390 / 768px layouts also pass.
 - `node scripts/check-chat-styles-browser.mjs` checks real previews, uniform file rows, cache reuse, live updates, unavailable previews, hover, reduced motion, light/dark themes, and open-file navigation. It also checks 320 / 390 / 768px layouts. `/?review=chat` opens this synthetic conversation in the live app shell.
+- `node scripts/check-rail-canvas-browser.mjs` checks the common paint layer with a full-strength background wash. Screenshot pixels confirm no color seam in light/dark themes, with the rail expanded or collapsed. Grain covers the same shared canvas.
 - Screenshots are written to `/tmp/albatross-style-*.png` by the browser check, including the mail/chat, Files, brief, work rows, notifications, and check-in. No production mail or work actions were performed.
 
 Run the local preview with `ALBATROSS_PREVIEW_PORT=18859 bun run dev:preview`. Set `ALBATROSS_PREVIEW_HOST=100.104.121.93` for access through the tailnet. Set `ALBATROSS_STYLE_PREVIEW_URL=http://100.104.121.93:18859` when the browser check targets that address. `/?review=styles` exposes the Work, Brief, Notifications, and check-in fixtures.

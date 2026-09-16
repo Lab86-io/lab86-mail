@@ -49,6 +49,9 @@ try {
       return {
         rail: style('.rail-wash').backgroundColor,
         frame: style('.app-paper').backgroundColor,
+        sharedCanvas:
+          document.querySelector('.rail-wash').closest('.app-paper') ===
+          document.querySelector('[data-slot="sidebar-wrapper"]'),
         railLine: style('.rail-wash').borderRightWidth,
         curve: getComputedStyle(document.querySelector('.rail-wash'), '::after').content,
         user: style('.assistant-user-bubble').backgroundColor,
@@ -57,7 +60,8 @@ try {
         radius: style('[data-slot="work-log"]').borderRadius,
       };
     });
-    assert.equal(surfaces.rail, surfaces.frame);
+    assert.equal(surfaces.rail, 'rgba(0, 0, 0, 0)');
+    assert.equal(surfaces.sharedCanvas, true);
     assert.equal(surfaces.railLine, '0px');
     assert.equal(surfaces.curve, 'none');
     assert.notEqual(surfaces.user, surfaces.page);

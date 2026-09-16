@@ -546,15 +546,6 @@
     scroll-behavior: smooth;
   }
 
-  /* ONE shared wash. The wash itself lives on the BACKGROUND (.app-paper::before,
-     driven by --bg-wash-opacity); the rail no longer paints its own separate
-     gradient. Instead the rail is a slightly translucent panel (see the
-     translucent --rail-bg below, scaled by the "Rail wash" slider
-     --wash-opacity), so the same background wash bleeds THROUGH it. Because the
-     background wash's accent seed is anchored top-left — right under the
-     left-hand rail — the wash reads as flowing out of the rail and into the
-     content: delineated by the rail's border, but a single shared wash. */
-
   /* Grain belongs to the canvas, never to text, avatars, fields or buttons. */
   .app-paper::after {
     content: "";
@@ -936,14 +927,6 @@
     backdrop-filter: blur(10px) saturate(140%);
   }
 
-  /* Warm paper surface — a sparse dot-grid texture over the (already warm) base
-     background token. `.app-paper` is applied at the shell root so the whole app
-     reads like the Daily Report's paper; `.report-paper` is an alias kept for the
-     report section. In light mode this is now a very quiet cool-paper texture;
-     dark mode keeps the slightly stronger dotted grain. */
-  /* Accent-tinted wash over the main background, driven by its own slider
-     (independent of the rail wash). Sits under content via background-image
-     layering on the same surfaces. */
   .app-paper::before {
     content: "";
     position: absolute;
@@ -1012,7 +995,7 @@
 :root,
 :root.dark {
   --rail-bg: var(--color-workspace-frame);
-  --sidebar: var(--color-bg);
+  --sidebar: var(--color-workspace-frame);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-accent);
   --sidebar-primary-foreground: var(--color-accent-foreground);
@@ -1022,13 +1005,6 @@
   --sidebar-ring: var(--color-accent);
 }
 
-/* The shared Sidebar paints an opaque inner panel (bg-sidebar) on top of the
-   wash gradient, which is drawn on the outer container the .rail-wash class
-   lands on — so the gradient (and theme) never showed. Make that inner panel
-   transparent so the container's --rail-bg + gradient show through. This MUST
-   be unlayered: bg-sidebar is a Tailwind utility in @layer utilities, which
-   beats @layer base — only an unlayered rule overrides it. Scoped to
-   .rail-wash so other Sidebar instances are untouched. */
 .rail-wash [data-slot="sidebar-inner"] {
   background-color: transparent;
 }

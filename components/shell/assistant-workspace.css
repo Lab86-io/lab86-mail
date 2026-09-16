@@ -15,6 +15,7 @@
 
 .rail-wash[data-slot="sidebar-container"] {
   border-inline-end: 0;
+  background-color: transparent;
 }
 
 .rail-resize-outline {

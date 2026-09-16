@@ -90,12 +90,14 @@ try {
       curve: getComputedStyle(element, '::after').content,
       background: getComputedStyle(element).backgroundColor,
       canvas: getComputedStyle(document.querySelector('.app-paper')).backgroundColor,
+      sharedCanvas: element.closest('.app-paper') === document.querySelector('[data-slot="sidebar-wrapper"]'),
       border: getComputedStyle(element).borderRightWidth,
     };
   });
   assert.equal(rail.curve, 'none');
   assert.equal(rail.border, '0px');
-  assert.equal(rail.background, rail.canvas);
+  assert.equal(rail.background, 'rgba(0, 0, 0, 0)');
+  assert.equal(rail.sharedCanvas, true);
   await page.screenshot({ path: '/tmp/albatross-style-frame-dark.png' });
   await page.evaluate(() => document.documentElement.classList.replace('dark', 'light'));
   await page.waitForTimeout(250);
