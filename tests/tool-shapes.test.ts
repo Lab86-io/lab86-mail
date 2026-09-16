@@ -164,6 +164,24 @@ describe('resolveToolShape', () => {
     if (result.kind === 'count') expect(result.label).toContain('from:ada');
   });
 
+  test('mail count cards preserve lower bounds and distinguish indexed counts', () => {
+    expect(shape('corpus_count', {}, { total: 64, approximate: true })).toMatchObject({
+      kind: 'count',
+      value: 64,
+      label: 'or more indexed messages',
+    });
+    expect(shape('corpus_count', { query: 'publisher' }, { total: 0, approximate: true })).toMatchObject({
+      kind: 'count',
+      value: 0,
+      label: 'or more indexed messages matching “publisher”',
+    });
+    expect(shape('corpus_count', {}, { total: 0, approximate: false })).toMatchObject({
+      kind: 'count',
+      value: 0,
+      label: 'indexed messages',
+    });
+  });
+
   test('mail mutations → receipt with an open action and no undo', () => {
     const result = shape('archive_thread', { account: 'acct_1', threadId: 't1' }, { ok: true });
     expect(result.kind).toBe('receipt');

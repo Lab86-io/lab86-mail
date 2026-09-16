@@ -640,7 +640,8 @@ const MAPPERS: Record<string, Mapper> = {
   corpus_count: (input, output, tool) => {
     const value = num(output.total);
     if (value == null) return null;
-    const label = str(input.query) ? `messages matching “${clip(str(input.query), 60)}”` : 'messages';
+    const unit = output.approximate === true ? 'or more indexed messages' : 'indexed messages';
+    const label = str(input.query) ? `${unit} matching “${clip(str(input.query), 60)}”` : unit;
     return { kind: 'count', ...base(tool, input, output, 'Mail count'), value, label, actions: [] };
   },
   calendar_count_events: (input, output, tool) => {

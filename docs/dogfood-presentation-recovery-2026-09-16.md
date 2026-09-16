@@ -17,7 +17,7 @@ The zero-mail claim was also unsupported. Staging sync states report all three a
 - Slide insertion and metadata patches reject unsupported fields. Chat checks inserted slides after applying the whole batch and refuses to save or propose empty slides. A batch may insert a slide and populate it with element operations atomically.
 - Agent guidance explains rendered elements versus brief content and requires complete deck verification. It directs recovery toward correcting the actual brief rather than creating probe files or placeholder slides.
 - The pure slide renderer is shared with the server render check without a client entry directive.
-- Mail counts stream indexed rows within a 4 MB budget and a 1,000-row cap. A bounded scan returns an explicit lower bound. Read failures stay failures; an unknown account cannot become an empty count. Agent guidance requires account sync evidence before explaining indexing limitations.
+- Mail counts stream indexed rows within a 4 MB budget and a 1,000-row cap. A bounded scan returns an explicit lower bound, and its count card says "or more indexed messages." Read failures stay failures; an unknown account cannot become an empty count. Agent guidance requires account sync evidence before explaining indexing limitations.
 
 ## Product research
 
