@@ -73,6 +73,96 @@ const engine = () => ({
 afterEach(() => __setDocumentToolDepsForTest());
 
 describe('deterministic document edits', () => {
+  test('slide inserts and metadata updates reject misplaced brief content instead of discarding it', () => {
+    expect(() =>
+      documentEditsSchema.parse([
+        {
+          op: 'slide_insert',
+          afterId: null,
+          slide: {
+            id: 'slide-8',
+            title: 'Delivery',
+            elements: [],
+            body: 'Real content',
+            items: [{ label: 'Receipts', detail: 'Verified' }],
+          },
+        },
+      ]),
+    ).toThrow('Unrecognized keys');
+    expect(() =>
+      documentEditsSchema.parse([
+        {
+          op: 'slide_update',
+          slideId: 'slide-8',
+          patch: { title: 'Delivery', body: 'Real content' },
+        },
+      ]),
+    ).toThrow('Unrecognized key');
+  });
+
+  test('chat refuses empty inserted slides before saving or proposing, but accepts a populated batch', async () => {
+    const existing = record(referenceDeck('editorial'));
+    const update = mock(async (input: any) => ({
+      ok: true as const,
+      document: { ...existing, model: input.model, currentRevision: 5 },
+    }));
+    const suggest = mock(async () => ({ ok: true, suggestionId: 'proposal' }));
+    __setDocumentToolDepsForTest({
+      getDocument: async () => ({ ...existing, suggestions: [] }),
+      updateDocument: update,
+      createDocumentSuggestion: suggest,
+    });
+    const input = documentEdit.input.parse({
+      documentId: existing.documentId,
+      expectedRevision: 4,
+      mode: 'apply',
+      summary: 'Append delivery',
+      operations: [
+        {
+          op: 'slide_insert',
+          afterId: null,
+          slide: {
+            id: 'new-slide',
+            title: 'Delivery',
+            notes: 'Notes are not visible slide content.',
+            elements: [],
+          },
+        },
+      ],
+    });
+    await expect(documentEdit.handler(input, toolContext())).rejects.toThrow('no visible content');
+    await expect(documentEdit.handler({ ...input, mode: 'review' }, toolContext())).rejects.toThrow(
+      'no visible content',
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(suggest).not.toHaveBeenCalled();
+    const result = await documentEdit.handler(
+      {
+        ...input,
+        operations: [
+          ...input.operations,
+          {
+            op: 'element_upsert',
+            slideId: 'new-slide',
+            element: {
+              id: 'visible',
+              type: 'text',
+              text: 'Delivery verified',
+              role: 'title',
+              x: 6,
+              y: 20,
+              width: 80,
+              height: 20,
+            },
+          },
+        ],
+      },
+      toolContext(),
+    );
+    expect(result.status).toBe('applied');
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
   test('rich runs survive structural edits and are cleared on plain-text replacement', () => {
     const source = doc();
     const rich = {

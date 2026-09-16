@@ -10,6 +10,7 @@ import {
 import { checkDeck } from '../lib/documents/deck-quality';
 import { exportDocument } from '../lib/documents/export';
 import { type AlbatrossDocumentRecord, documentModelText } from '../lib/documents/model';
+import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
 import { harborBrief, retroBrief, VALLEY } from './fixtures/presentation-briefs';
 import { runTool } from './tools/harness';
@@ -49,6 +50,76 @@ afterEach(() => {
 });
 
 describe('presentation creation dogfood', () => {
+  test('a thirteen-slide brief with four-item lists and a chart without callouts saves all slides', async () => {
+    __setDocumentAiDepsForTest({ isDeckV2AuthoringEnabled: () => true });
+    const brief = harborBrief();
+    const list = {
+      role: 'list' as const,
+      title: 'Publishing workflow',
+      kicker: 'Delivery',
+      body: 'The publishing workflow records approvals, validates the source, assembles the package, and checks receipts before completing delivery. Editors can review the supporting evidence and correct individual sections while the delivery history records each completed transfer.',
+      items: Array.from({ length: 4 }, (_, index) => ({
+        label: `Stage ${index + 1}`,
+        detail: 'The recorded evidence confirms this stage completed.',
+      })),
+      notes: 'Source: synthetic test report.',
+      visualRole: 'Workflow stages',
+    };
+    const raw = {
+      ...brief,
+      slides: Array.from({ length: 13 }, (_, index) => ({ ...list, title: `Workflow ${index + 1}` })),
+    };
+    const chart: any = {
+      ...list,
+      role: 'chart',
+      chart: {
+        type: 'column',
+        categories: ['Completed', 'Blocked'],
+        series: [{ name: 'Packages', values: [20, 2] }],
+      },
+    };
+    delete chart.items;
+    raw.slides[10] = chart;
+    const parsed = presentationBriefV2Schema.parse(raw);
+    expect(parsed.slides[10].items).toEqual([]);
+    const proposal = await composeDocumentPresentation({
+      userId: 'owner',
+      instruction: 'Make 13 slides',
+      presentation: parsed,
+      artwork: 'none',
+    });
+    if (proposal.model.kind !== 'deck' || proposal.model.version !== 2) throw new Error('Wrong model');
+    expect(proposal.model.slides).toHaveLength(13);
+    expect(checkDeck(proposal.model).ok).toBe(true);
+    for (const slide of proposal.model.slides) {
+      expect(slide.elements.some((element) => element.type === 'text' && element.text === slide.title)).toBe(
+        true,
+      );
+      if (slide.id !== 'slide-11') {
+        for (const item of list.items)
+          expect(
+            slide.elements.some((element) => element.type === 'text' && element.text === item.label),
+          ).toBe(true);
+      }
+    }
+    const exported = await exportDocument({
+      documentId: 'complete',
+      title: 'Complete',
+      kind: 'deck',
+      model: proposal.model,
+      currentRevision: 1,
+      sourceRefs: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const zip = await JSZip.loadAsync(exported.bytes);
+    for (let number = 1; number <= 13; number += 1) {
+      expect(await zip.file(`ppt/slides/slide${number}.xml`)!.async('string')).toContain(
+        number === 11 ? 'Publishing workflow' : `Workflow ${number}`,
+      );
+    }
+  });
+
   test('version 2 direct creation keeps owned images and design checks without generating again', async () => {
     const generate = mock(async () => {
       throw new Error('must not generate');

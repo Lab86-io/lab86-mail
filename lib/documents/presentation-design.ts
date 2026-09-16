@@ -245,7 +245,7 @@ export const presentationBriefV2Schema = z.object({
         title: z.string().min(1).max(120),
         kicker: z.string().max(40),
         body: z.string().max(320),
-        items: z.array(briefItemSchema).max(4),
+        items: z.array(briefItemSchema).max(4).default([]),
         notes: z.string().max(4000),
         chart: briefChartSchema.nullish(),
         image: briefImageSchema.nullish(),

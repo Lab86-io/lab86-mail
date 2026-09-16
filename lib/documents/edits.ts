@@ -18,7 +18,11 @@ const id = z.string().min(1).max(200);
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const block = docModelSchema.shape.blocks.element;
 const blockPatch = z.object(block.shape).omit({ id: true }).partial().strict();
-const slide = deckSlideV2Schema;
+const slide = deckSlideV2Schema
+  .strict()
+  .describe(
+    'Rendered slide: visible content belongs in elements. title and notes are metadata. Presentation brief fields such as body, items, kicker and chart are not accepted here.',
+  );
 const element = deckElementV2Schema;
 function assertFitsCanvas(item: z.infer<typeof element>) {
   if (item.x + item.width > 100 || item.y + item.height > 100)
@@ -63,7 +67,7 @@ export const documentEditOperationSchema = z.discriminatedUnion('op', [
     .object({
       op: z.literal('slide_update'),
       slideId: id,
-      patch: slide.pick({ title: true, notes: true, background: true }).partial(),
+      patch: slide.pick({ title: true, notes: true, background: true }).partial().strict(),
     })
     .strict(),
   z.object({ op: z.literal('slide_remove'), slideId: id }).strict(),

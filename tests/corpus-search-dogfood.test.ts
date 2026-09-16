@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { toolActivityLine } from '../lib/albatross/teach-ui';
-import { __setCorpusSearchDepsForTest, corpusSearch } from '../lib/tools/corpus';
+import {
+  __setCorpusCountDepsForTest,
+  __setCorpusSearchDepsForTest,
+  corpusCount,
+  corpusSearch,
+} from '../lib/tools/corpus';
 import { runTool } from './tools/harness';
 
 const meeting = {
@@ -17,7 +22,43 @@ const mail = { _id: 'thread-1', subject: 'PubMed feedback', from: 'editor@exampl
 const search = (args = {}) =>
   runTool(corpusSearch.handler, corpusSearch.input.parse({ query: 'subject:pubmed', ...args }));
 
-afterEach(() => __setCorpusSearchDepsForTest());
+afterEach(() => {
+  __setCorpusSearchDepsForTest();
+  __setCorpusCountDepsForTest();
+});
+
+describe('mail counts preserve unknown results', () => {
+  test('a failed account count cannot become a zero total', async () => {
+    __setCorpusCountDepsForTest({
+      isConvexConfigured: () => true,
+      listNylasAccounts: (async () => [{ accountId: 'broken' }, { accountId: 'working' }]) as any,
+      convexQuery: (async (_query: any, args: any) => {
+        if (args.accountId === 'broken') throw new Error('private provider detail');
+        return { count: 12, approximate: false };
+      }) as any,
+    });
+    await expect(runTool(corpusCount.handler, {})).rejects.toThrow('total is unknown');
+  });
+
+  test('unknown accounts are rejected and valid zero counts stay zero', async () => {
+    const query = mock(async () => ({ count: 0, approximate: false }));
+    __setCorpusCountDepsForTest({
+      isConvexConfigured: () => true,
+      listNylasAccounts: (async () => [{ accountId: 'owned' }]) as any,
+      convexQuery: query as any,
+    });
+    await expect(runTool(corpusCount.handler, { account: 'foreign' })).rejects.toThrow(
+      'No matching connected',
+    );
+    expect(query).not.toHaveBeenCalled();
+    expect(await runTool(corpusCount.handler, { account: 'owned', query: 'publisher' })).toEqual({
+      total: 0,
+      approximate: false,
+      accounts: [{ accountId: 'owned', count: 0, approximate: false }],
+    });
+    expect(query.mock.calls[0][1]).toMatchObject({ accountId: 'owned', query: 'publisher' });
+  });
+});
 
 describe('meeting and email research coverage', () => {
   test('Granola-only matches explicitly report zero mail and preserve source identity', async () => {

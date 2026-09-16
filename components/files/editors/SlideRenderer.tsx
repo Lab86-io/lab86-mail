@@ -1,5 +1,3 @@
-'use client';
-
 import type { CSSProperties, ReactNode, PointerEvent as ReactPointerEvent, Ref } from 'react';
 import { deckFontStack, deckTextSlot } from '@/lib/documents/deck-versions';
 import type { DeckElementV2, DeckSlideV2, DeckTheme } from '@/lib/documents/model';

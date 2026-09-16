@@ -9,6 +9,12 @@ import { defineTool } from './registry';
 const mailCorpusApi = (api as any).mailCorpus;
 const defaultSearchDependencies = { listNylasAccounts, searchNylasThreads, convexQuery };
 let searchDependencies = defaultSearchDependencies;
+const defaultCountDependencies = { listNylasAccounts, convexQuery, isConvexConfigured };
+let countDependencies = defaultCountDependencies;
+
+export function __setCorpusCountDepsForTest(overrides: Partial<typeof defaultCountDependencies> = {}) {
+  countDependencies = { ...defaultCountDependencies, ...overrides };
+}
 
 export function __setCorpusSearchDepsForTest(overrides: Partial<typeof defaultSearchDependencies> = {}) {
   searchDependencies = { ...defaultSearchDependencies, ...overrides };
@@ -188,7 +194,7 @@ export const senderProfile = defineTool({
 export const corpusCount = defineTool({
   name: 'corpus_count',
   description:
-    'Count indexed messages matching a query (per account, capped at 1000 → approximate). Use for "how many emails…" questions instead of paging search results.',
+    'Count indexed messages matching a query (per account, bounded by 1000 messages and a read budget; approximate=true means a lower bound). Use for "how many emails…" questions instead of paging search results. A zero count only describes this index and filter; check list_accounts sync status before claiming a mailbox has never synced or has no email.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -199,14 +205,27 @@ export const corpusCount = defineTool({
   }),
   output: z.object({ total: z.number(), approximate: z.boolean(), accounts: z.array(z.any()) }),
   async handler({ query, account, after, before }, ctx) {
-    if (!isConvexConfigured()) throw new Error('Mail index is not available.');
-    const accountIds = account ? [account] : await authedAccountIds(ctx.userId);
+    if (!countDependencies.isConvexConfigured()) throw new Error('Mail index is not available.');
+    const accounts = await countDependencies.listNylasAccounts(ctx.userId);
+    const accountIds = accounts
+      .filter((candidate) => !account || candidate.accountId === account)
+      .map((candidate) => candidate.accountId);
+    if (!accountIds.length) throw new Error('No matching connected mail accounts. Read list_accounts first.');
     const counts = await Promise.all(
       accountIds.map(async (accountId) => {
-        const result = await convexQuery<{ count: number; approximate: boolean }>(
-          mailCorpusApi.countCorpusMessages,
-          { userId: ctx.userId, accountId, query, after, before },
-        ).catch(() => ({ count: 0, approximate: false }));
+        const result = await countDependencies
+          .convexQuery<{ count: number; approximate: boolean }>(mailCorpusApi.countCorpusMessages, {
+            userId: ctx.userId,
+            accountId,
+            query,
+            after,
+            before,
+          })
+          .catch(() => {
+            throw new Error(
+              'Mail count failed. The total is unknown; retry before drawing conclusions about email history.',
+            );
+          });
         return { accountId, ...result };
       }),
     );

@@ -52,6 +52,14 @@ export function defineTool<TArgs extends z.ZodTypeAny, TOut extends z.ZodTypeAny
 
 export type AnyTool = ToolDefinition<any, any>;
 
+function validationIssues(issues: z.core.$ZodIssue[]): z.core.$ZodIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code !== 'invalid_union' || !issue.errors.length) return [issue];
+    const branches = issue.errors.map(validationIssues);
+    return branches.reduce((closest, branch) => (branch.length < closest.length ? branch : closest));
+  });
+}
+
 export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext) {
   return runWithAiRequestContext(
     {
@@ -70,15 +78,18 @@ export async function invokeTool(tool: AnyTool, args: unknown, ctx: ToolContext)
       try {
         parsed = tool.input.parse(args);
       } catch (err: any) {
-        const issue = err?.issues?.[0];
+        const issues = err instanceof z.ZodError ? validationIssues(err.issues) : [];
         console.warn('[agent-tool-validation]', {
           runId: ctx.runId,
           tool: tool.name,
-          issues: err?.issues?.map((entry: any) => ({ path: entry.path, code: entry.code })),
+          issues: issues.map((entry) => ({ path: entry.path, code: entry.code })),
         });
         throw new ToolValidationError(
-          issue
-            ? `Invalid args for ${tool.name}: ${issue.path.join('.')} — ${issue.message}`
+          issues.length
+            ? `Invalid args for ${tool.name}: ${issues
+                .slice(0, 5)
+                .map((issue) => `${issue.path.join('.')} — ${issue.message}`)
+                .join('; ')}`
             : `Invalid args for ${tool.name}`,
         );
       }

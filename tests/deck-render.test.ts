@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { hiringDeck, referenceDeck } from '../lib/documents/deck-fixtures';
-import { checkDeck, repairDeck } from '../lib/documents/deck-quality';
+import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/documents/deck-quality';
 import { availableRenderBrowser, renderDeckHtml } from '../lib/documents/deck-render';
 
 describe('deck render page', () => {
@@ -21,6 +21,30 @@ describe('deck render page', () => {
 });
 
 describe('deck quality checks', () => {
+  test('words wider than a column wrap before overflow is accepted', () => {
+    const element = {
+      id: 'label',
+      type: 'text' as const,
+      role: 'subtitle' as const,
+      text: 'Media completeness',
+      x: 9,
+      y: 34,
+      width: 13,
+      height: 12,
+      fontSize: 24,
+    };
+    expect(estimateTextLines(element)).toBe(3);
+    expect(textFits(element)).toBe(false);
+    const deck = referenceDeck('editorial');
+    deck.slides = [{ id: 'comparison', title: 'Checks', elements: [element] }];
+    const repaired = repairDeck(deck);
+    expect(repaired.report.ok).toBe(true);
+    expect(
+      repaired.model.slides[0].elements[0].type === 'text' && repaired.model.slides[0].elements[0].fontSize,
+    ).toBeLessThan(24);
+    expect(estimateTextLines({ ...element, text: 'abcdefghijklmnopqrstu' })).toBe(3);
+  });
+
   test('the reference decks pass without errors', () => {
     for (const deck of [referenceDeck('editorial'), referenceDeck('signal'), hiringDeck()]) {
       const report = checkDeck(deck);

@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
 import { composeDocumentPresentation, generateDocumentProposal } from '@/lib/documents/ai';
 import { artworksForDeck } from '@/lib/documents/deck-imagery';
+import { checkSlide } from '@/lib/documents/deck-quality';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
+import { upgradeDeckModel } from '@/lib/documents/deck-versions';
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
@@ -503,6 +505,21 @@ export const documentEdit = defineTool({
       }
     }
     const proposedModel = prepareDocumentEdits(document.model, args.operations, context);
+    if (proposedModel.kind === 'deck') {
+      const inserted = new Set(
+        args.operations.flatMap((operation) => (operation.op === 'slide_insert' ? [operation.slide.id] : [])),
+      );
+      const deck = upgradeDeckModel(proposedModel);
+      const blank = deck.slides.filter(
+        (slide) =>
+          inserted.has(slide.id) &&
+          checkSlide(slide, deck.theme).some((issue) => issue.kind === 'empty-slide'),
+      );
+      if (blank.length)
+        throw new Error(
+          `Slides ${blank.map((slide) => slide.id).join(', ')} have no visible content. slide_insert requires visible elements; title and notes are metadata. Add text, image, or chart elements in the same edit. Nothing was saved.`,
+        );
+    }
     if (args.mode !== 'apply') {
       const suggestion = await dependencies.createDocumentSuggestion({
         userId,

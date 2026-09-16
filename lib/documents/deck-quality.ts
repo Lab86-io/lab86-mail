@@ -80,11 +80,14 @@ export function estimateTextLines(element: TextElement) {
     let used = 0;
     let count = 1;
     for (const word of words) {
-      const length = word.length + (used ? 1 : 0);
-      if (used + length > perLine && used > 0) {
+      if (used && used + 1 + word.length > perLine) {
         count += 1;
-        used = word.length;
-      } else used += length;
+        used = 0;
+      }
+      if (word.length > perLine) {
+        count += Math.floor((word.length - 1) / perLine);
+        used = ((word.length - 1) % perLine) + 1;
+      } else used += word.length + (used ? 1 : 0);
     }
     lines += count;
   }

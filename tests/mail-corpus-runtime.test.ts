@@ -465,6 +465,36 @@ describe('corpus reads', () => {
     ).toEqual({ count: 2, approximate: false });
   });
 
+  test('mail counts stop at a byte budget and mark incomplete text/date scans approximate', async () => {
+    const runtime = newHarness();
+    for (let batch = 0; batch < 4; batch += 1) {
+      await ingest(
+        runtime,
+        Array.from({ length: 10 }, (_, index) =>
+          message({
+            providerMessageId: `large-${batch}-${index}`,
+            htmlBody: 'x'.repeat(150_000),
+          }),
+        ),
+      );
+    }
+    const args = { internalSecret: SECRET, userId: USER, accountId: scope.accountId };
+    const result = await runtime.query(api.mailCorpus.countCorpusMessages, args);
+    expect(result.approximate).toBe(true);
+    expect(result.count).toBeGreaterThan(0);
+    expect(result.count).toBeLessThan(40);
+    expect(await runtime.query(api.mailCorpus.countCorpusMessages, { ...args, query: 'giraffe' })).toEqual(
+      result,
+    );
+    expect(
+      await runtime.query(api.mailCorpus.countCorpusMessages, { ...args, query: 'giraffe', after: TS + 1 }),
+    ).toEqual({ count: 0, approximate: true });
+    expect(await runtime.query(api.mailCorpus.countCorpusMessages, { ...args, accountId: 'other' })).toEqual({
+      count: 0,
+      approximate: false,
+    });
+  });
+
   test('listCorpusThreadMessages enforces tenancy in the filter', async () => {
     const t = newHarness();
     await ingest(t, [message()]);

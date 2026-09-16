@@ -1044,7 +1044,7 @@ function composeComparison(content: CompositionContent, options: ComposeSlideOpt
         ...v.display,
       });
     } else {
-      const size = fitTypeSize(item.label, [x + 3, 34, width - 6, 12], 24, 16, {
+      const size = fitTypeSize(item.label, [x + 3, 34, width - 6, 12], count === 4 ? 18 : 24, 16, {
         role: 'subtitle',
         lineHeight: 1.1,
       });
@@ -1074,14 +1074,14 @@ function composeList(content: CompositionContent, options: ComposeSlideOptions):
   kickerLine(s, v, content.kicker, [6, 10, 40, 4.5]);
   sectionTitle(s, v, content.title, [6, 16, 60, 14], 34);
   if (content.body)
-    s.text('body', content.body, [6, 30, 60, 7], {
+    s.text('body', content.body, [6, 30, 88, 9], {
       role: 'body',
       fontSize: 14,
       color: v.c.muted,
       valign: 'top',
     });
   const items = content.items.slice(0, 4);
-  const pitch = 13;
+  const pitch = 12;
   items.forEach((item, i) => {
     const y = 40 + i * pitch;
     s.rule(`rule-${i}`, 6, y, 88, v.c.soft, 1);
