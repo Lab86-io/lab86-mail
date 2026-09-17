@@ -52,6 +52,7 @@ try {
       spacer.style.height = '800px';
       log.append(spacer);
       log.parentElement.scrollTop = log.parentElement.scrollHeight;
+      log.parentElement.dispatchEvent(new Event('scroll')); // Deliver the scroll before simulating another stream chunk.
     });
     await page.waitForFunction(() => {
       const viewport = document.querySelector('[role="log"]').parentElement;
