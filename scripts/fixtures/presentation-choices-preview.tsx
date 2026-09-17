@@ -81,7 +81,25 @@ function Preview() {
     type: 'tool-ask_presentation_choices',
     toolCallId: `${stage}-${history.length}`,
     state: 'input-available',
-    input,
+    input:
+      new URLSearchParams(window.location.search).has('recovery') &&
+      stage === 'storyboard' &&
+      !history.some((part) => part.output.status === 'invalid_presentation_choices')
+        ? {
+            ...input,
+            slides: input.slides!.map((slide) => ({
+              ...slide,
+              takeaway: 'Oversized model response. '.repeat(20),
+            })),
+          }
+        : {
+            ...input,
+            slides: input.slides?.map((slide) => ({
+              ...slide,
+              chart: slide.chart ?? null,
+              table: slide.table ?? null,
+            })),
+          },
   };
   return (
     <main

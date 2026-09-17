@@ -9,8 +9,9 @@ import {
   type PresentationChoiceResult,
   type PresentationDesignChoices,
   presentationBriefChoicesSchema,
-  presentationChoiceInputSchema,
+  presentationChoiceRepair,
   presentationChoiceResultSchema,
+  presentationChoiceSchemaForSession,
   SOURCE_CHOICES,
   type StoryboardSlide,
   THEME_DESCRIPTIONS,
@@ -153,17 +154,54 @@ export function PresentationChoicesPart({
   part: any;
   onResult: (output: Record<string, unknown>) => void;
 }) {
-  const parsed = presentationChoiceInputSchema.safeParse(part.input);
-  if (!parsed.success)
-    return (
-      <div className="presentation-choices" role="status">
-        The presentation choices need another pass. Ask to continue so I can prepare them again.
-      </div>
-    );
+  const parsed = presentationChoiceSchemaForSession().safeParse(part.input);
+  if (
+    !parsed.success ||
+    part.state === 'output-error' ||
+    part.output?.status === 'invalid_presentation_choices'
+  )
+    return <PresentationChoicesRecovery key={part.toolCallId} part={part} onResult={onResult} />;
   const result = presentationChoiceResultSchema.safeParse(part.output);
   if (part.state === 'output-available' && result.success)
     return <PresentationReceipt input={parsed.data} result={result.data} />;
   return <PresentationPicker key={part.toolCallId} input={parsed.data} onResult={onResult} />;
+}
+
+function PresentationChoicesRecovery({
+  part,
+  onResult,
+}: {
+  part: any;
+  onResult: (output: Record<string, unknown>) => void;
+}) {
+  const sent = useRef(false);
+  const [requested, setRequested] = useState(false);
+  const pending = part.state === 'input-available' && !requested;
+  return (
+    <div className="presentation-choices" role="status">
+      <strong>{pending ? 'Let’s repair this slide preview' : 'Slide preview returned for correction'}</strong>
+      <p>
+        Your earlier presentation choices are kept. The agent needs to correct this preview before you can
+        review it.
+      </p>
+      {pending && (
+        <div className="presentation-choice-actions">
+          <button
+            type="button"
+            className="presentation-choice-primary"
+            onClick={() => {
+              if (sent.current) return;
+              sent.current = true;
+              setRequested(true);
+              onResult(presentationChoiceRepair(part.input));
+            }}
+          >
+            Repair these choices
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PresentationReceipt({

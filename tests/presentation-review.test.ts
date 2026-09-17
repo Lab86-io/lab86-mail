@@ -19,6 +19,62 @@ import { harborBrief, passingSlideReviews, poolArtworks } from './fixtures/prese
 
 afterEach(() => __setDocumentAiDepsForTest());
 describe('every-slide presentation review', () => {
+  test('empty draft labels are repaired from supplied copy before composition, even without model review', async () => {
+    const brief = harborBrief();
+    const original = [
+      { label: '', detail: '132 people are recorded in the supplied source.' },
+      { label: '   ', detail: '', meta: 'Archive source' },
+      { label: '', detail: '' },
+      { label: 'Evidence', detail: 'Keep this exact content' },
+    ];
+    brief.slides = [
+      { ...brief.slides[0], role: 'list', body: 'Findings in the provided material.', items: original },
+    ];
+    expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(true);
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async () => {
+        throw new Error('Review temporarily unavailable');
+      }) as any,
+    });
+    const result = await composeDocumentPresentation({
+      userId: 'u',
+      instruction: 'Create one evidence slide',
+      presentation: brief,
+      artwork: 'none',
+    });
+    const model = result.model as any;
+    expect(checkDeck(model).ok).toBe(true);
+    expect(model.slides[0].notes).toContain(JSON.stringify(original));
+    expect(model.slides[0].elements.some((element: any) => element.text === original[0].detail)).toBe(true);
+    expect(model.slides[0].elements.some((element: any) => element.text === 'Archive source')).toBe(true);
+    expect(brief.slides[0].items).toHaveLength(4);
+    const legacy = {
+      title: 'Legacy',
+      summary: 'A source account',
+      palette: 'ink' as const,
+      slides: [
+        {
+          layout: 'columns' as const,
+          title: 'Source account',
+          kicker: '',
+          body: '',
+          notes: '',
+          items: [
+            { label: '', detail: 'Evidence remains visible.' },
+            { label: '', detail: '' },
+          ],
+        },
+      ],
+    };
+    expect(presentationAuthoringSchema.safeParse(legacy).success).toBe(true);
+    const reviewed = await reviewPresentation(legacy, { userId: 'u', instruction: '' }, (async () => {
+      throw new Error('Offline');
+    }) as any);
+    expect(reviewed.brief.slides[0].items).toEqual([
+      { label: 'Evidence remains visible.', detail: 'Evidence remains visible.' },
+    ]);
+  });
   test('oversized preserved source is rejected before review, including JSON escape expansion', async () => {
     const brief = harborBrief();
     brief.slides = [

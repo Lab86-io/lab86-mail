@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   planPresentation,
   presentationEvidenceSchema,
+  presentationPlanningRecoverySchema,
   presentationPlanSchema,
 } from '@/lib/documents/presentation-plan';
 import { defineTool } from './registry';
@@ -22,6 +23,7 @@ export const presentationPlan = defineTool({
     ok: z.boolean(),
     readyToBuild: z.boolean(),
     plan: presentationPlanSchema.optional(),
+    recovery: presentationPlanningRecoverySchema.optional(),
     issues: z.array(z.string()),
     nextStep: z.string(),
   }),
