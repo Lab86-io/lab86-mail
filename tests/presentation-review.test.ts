@@ -102,6 +102,32 @@ describe('every-slide presentation review', () => {
     expect(result.brief.slides[0].notes).toContain(original);
     expect(result.summary).toContain('editorial review was unavailable');
   });
+  test('unreadable table data is never silently truncated or saved as a broken slide', async () => {
+    const brief = harborBrief();
+    brief.slides = [
+      {
+        ...brief.slides[0],
+        role: 'table',
+        table: {
+          headers: ['Label', 'Value', 'Unit', 'Period'],
+          rows: Array.from({ length: 6 }, () => Array(4).fill('W'.repeat(1000))),
+          source: 'Exact supplied data',
+        },
+      },
+    ];
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) =>
+        options.schema === slideReviewSchema
+          ? passingSlideReviews(options)
+          : { object: { fixes: [] } }) as any,
+    });
+    await expect(
+      composeDocumentPresentation({ userId: 'u', instruction: '', presentation: brief, artwork: 'none' }),
+    ).rejects.toThrow('layout check');
+    expect(brief.slides[0].table!.rows[0][0]).toBe('W'.repeat(1000));
+  });
+
   test('cancellation prevents all followup review and repairs', async () => {
     const controller = new AbortController();
     const generate = mock(async () => {
