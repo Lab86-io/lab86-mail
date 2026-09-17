@@ -32,6 +32,7 @@ type AiSettingsResponse = {
   subscriptionsDisabled?: boolean;
   catalog?: CatalogModel[];
   catalogLive?: boolean;
+  defaults?: { normal: string; fast: string };
   savedModels?: { normal: SavedModelSummary; fast: SavedModelSummary };
   usage?: {
     status?: string;
@@ -60,7 +61,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
       const computedProvider = (
         nextMode === 'lab86' ? 'openrouter' : data.settings?.provider || data.key?.provider || 'openrouter'
       ) as Provider;
-      const defaults = defaultModelsFor(computedProvider);
+      const defaults = data.defaults ?? defaultModelsFor(computedProvider);
       setAiMode(nextMode);
       setProvider(computedProvider);
       // The saved id may be a direct vendor id; the picker works on canonical ids.
@@ -83,9 +84,9 @@ export function AiSection({ heading }: { heading: ReactNode }) {
         apiKey: aiMode === 'byok' ? apiKey || undefined : undefined,
       });
     },
-    onSuccess: (data: { unknown?: boolean }) => {
+    onSuccess: () => {
       setApiKey('');
-      toast.success(data?.unknown ? 'AI settings saved with a custom model id' : 'AI settings saved');
+      toast.success('AI settings saved');
       qc.invalidateQueries({ queryKey: ['ai-settings'] });
     },
     onError: (err: any) => toast.error(err?.message || 'Could not save AI settings'),
@@ -141,7 +142,6 @@ export function AiSection({ heading }: { heading: ReactNode }) {
   const effectiveProvider: Provider = aiMode === 'lab86' ? 'openrouter' : provider;
   const serverCatalog = ai?.catalog;
   const catalog = useMemoCatalog(serverCatalog, effectiveProvider);
-  const allowCustomId = effectiveProvider === 'openrouter';
 
   const retired = [
     { slot: 'normal' as const, value: model, set: setModel },
@@ -160,7 +160,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
     // Keep a choice the new key can serve; otherwise fall back to its defaults.
     const keep = (value: string) => {
       const found = findCatalogModel(nextCatalog, value);
-      return found && found.status !== 'unavailable' && found.status !== 'deprecated';
+      return found?.capabilities.vision && found.status !== 'unavailable' && found.status !== 'deprecated';
     };
     setModel((current) => (keep(current) ? current : defaults.normal));
     setFastModel((current) => (keep(current) ? current : defaults.fast));
@@ -287,7 +287,6 @@ export function AiSection({ heading }: { heading: ReactNode }) {
                 value={model}
                 onChange={setModel}
                 catalog={catalog}
-                allowCustomId={allowCustomId}
               />
               <p className="text-[11px] text-[var(--color-text-muted)]">
                 {findCatalogModel(catalog, model)?.note || 'Deep work: planning, drafts, the daily brief.'}
@@ -301,7 +300,6 @@ export function AiSection({ heading }: { heading: ReactNode }) {
                 value={fastModel}
                 onChange={setFastModel}
                 catalog={catalog}
-                allowCustomId={allowCustomId}
               />
               <p className="text-[11px] text-[var(--color-text-muted)]">
                 {findCatalogModel(catalog, fastModel)?.note ||

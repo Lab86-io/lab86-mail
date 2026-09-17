@@ -539,6 +539,11 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Presentation planning failed; retrying needs the gathered evidence',
   ),
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
+  document_review_slides: fixed(
+    'Checking every slide visually',
+    'Finished the slide check',
+    'Slide check failed',
+  ),
   word_document_create: fixed(
     'Creating the Word document',
     'Created the Word document',

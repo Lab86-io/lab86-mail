@@ -13,10 +13,12 @@ import {
   documentGet,
   documentList,
   documentPublishGoogle,
+  documentReviewSlides,
   documentSuggestChanges,
 } from '../lib/tools/documents';
 import { __setCloudFileToolDepsForTest, cloudFileSearch, googleFileImport } from '../lib/tools/files';
 import { poolArtworks } from './fixtures/presentation-briefs';
+import { passingVisualReview } from './fixtures/visual-review';
 import { runTool, toolContext } from './tools/harness';
 
 function record(overrides: Partial<AlbatrossDocumentRecord> = {}): AlbatrossDocumentRecord {
@@ -39,6 +41,58 @@ afterEach(() => {
 });
 
 describe('document tools', () => {
+  test('visual review resumes the same saved presentation and protects concurrent edits', async () => {
+    const deck = record({ kind: 'deck', model: referenceDeck('editorial') });
+    let conflict = false;
+    const save = mock(async (input: any) =>
+      conflict
+        ? { ok: false, code: 'REVISION_CONFLICT' }
+        : { ok: true, document: { ...deck, model: input.model, currentRevision: 3 } },
+    );
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => deck) as any,
+      reviewDeckVisuals: passingVisualReview,
+      updateDocument: save as any,
+    });
+    const result = await runTool(documentReviewSlides.handler, { documentId: deck.documentId });
+    expect(result).toMatchObject({
+      documentId: deck.documentId,
+      revision: 3,
+      visualReview: { status: 'passed', totalSlides: 6 },
+    });
+    expect(save.mock.calls[0][0]).toMatchObject({
+      documentId: deck.documentId,
+      expectedRevision: 2,
+      actor: 'ai',
+    });
+    conflict = true;
+    await expect(runTool(documentReviewSlides.handler, { documentId: deck.documentId })).rejects.toThrow(
+      'changed during visual review',
+    );
+  });
+
+  test('visual review never commits after cancellation and refuses non-presentations', async () => {
+    const save = mock(async () => {
+      throw new Error('Must not save');
+    });
+    const controller = new AbortController();
+    __setDocumentToolDepsForTest({ getDocument: (async () => record()) as any, updateDocument: save });
+    await expect(runTool(documentReviewSlides.handler, { documentId: 'document-1' })).rejects.toThrow(
+      'Presentation not found',
+    );
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => record({ kind: 'deck', model: referenceDeck('editorial') })) as any,
+      updateDocument: save,
+      reviewDeckVisuals: async (model) => {
+        controller.abort(new Error('Stopped'));
+        return passingVisualReview(model);
+      },
+    });
+    await expect(
+      runTool(documentReviewSlides.handler, { documentId: 'document-1' }, { abortSignal: controller.signal }),
+    ).rejects.toThrow('Stopped');
+    expect(save).not.toHaveBeenCalled();
+  });
   test.each([
     documentSuggestChanges,
     documentApplyInstruction,

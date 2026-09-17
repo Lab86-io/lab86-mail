@@ -10,7 +10,7 @@
 // carries context and price as muted columns. The same shape here, in one
 // popover, so the section stays a form and not a catalog page.
 
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Eye } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { ProviderGlyph } from '@/components/settings/ProviderGlyph';
 import {
@@ -34,7 +34,6 @@ import {
   providerForModelId,
   TIER_LABELS,
 } from '@/lib/ai/model-catalog';
-import { isOpenRouterModelId } from '@/lib/ai/model-options';
 import { cn } from '@/lib/utils';
 
 export type ModelPickerProps = {
@@ -42,8 +41,6 @@ export type ModelPickerProps = {
   value: string;
   onChange: (id: string) => void;
   catalog: CatalogModel[];
-  /** OpenRouter accepts any well-formed vendor/model id. */
-  allowCustomId?: boolean;
   disabled?: boolean;
   /** Id for the trigger, so a Label can point at it. */
   id?: string;
@@ -62,6 +59,7 @@ export function pickerRows(
 ): CatalogModel[] {
   const selected = findCatalogModel(catalog, input.value);
   return catalog.filter((model) => {
+    if (!model.capabilities.vision) return false;
     if (model === selected) return model.status !== 'deprecated' && model.status !== 'unavailable';
     if (model.status === 'deprecated' || model.status === 'unavailable') return false;
     if (model.status === 'legacy' && !input.showOlder) return false;
@@ -124,7 +122,7 @@ function RightMeta({ model }: { model: CatalogModel }) {
   const price = formatPricing(model.pricing);
   if (!context && !price) return null;
   return (
-    <span className="ml-auto shrink-0 pl-3 text-right text-[11px] tabular-nums text-[var(--color-text-muted)]">
+    <span className="ml-auto shrink-0 pl-3 text-right hidden sm:inline text-[11px] tabular-nums text-[var(--color-text-muted)]">
       {context ? <span>{context}</span> : null}
       {context && price ? <span className="px-1 text-[var(--color-text-faint)]">·</span> : null}
       {price ? <span title="USD per million tokens, input / output">{price}</span> : null}
@@ -137,7 +135,6 @@ export function ModelPicker({
   value,
   onChange,
   catalog,
-  allowCustomId = false,
   disabled = false,
   id,
   defaultOpen = false,
@@ -147,6 +144,7 @@ export function ModelPicker({
   const [showOlder, setShowOlder] = useState(false);
   const [showAllTiers, setShowAllTiers] = useState(slot === 'normal');
   const [highlighted, setHighlighted] = useState('');
+  const [providerFilter, setProviderFilter] = useState<CatalogProvider | null>(null);
   const noteId = useId();
 
   const selected = findCatalogModel(catalog, value);
@@ -155,18 +153,22 @@ export function ModelPicker({
     [catalog, slot, value, showOlder, showAllTiers],
   );
   const visible = useMemo(() => rows.filter((model) => matchesQuery(model, query)), [rows, query]);
-  const groups = useMemo(() => groupRows(visible), [visible]);
+  const providers = useMemo(() => groupRows(rows), [rows]);
+  const groups = useMemo(
+    () => groupRows(visible.filter((model) => !providerFilter || model.provider === providerFilter)),
+    [visible, providerFilter],
+  );
   const hiddenOlder =
     rows.length !== pickerRows(catalog, { slot, value, showOlder: true, showAllTiers }).length;
   const hasOlder =
     hiddenOlder ||
-    catalog.some((model) => model.status === 'legacy' && (showAllTiers || FAST_TIERS.has(model.tier)));
-  const trimmedQuery = query.trim();
-  const customCandidate =
-    allowCustomId && isOpenRouterModelId(trimmedQuery) && !findCatalogModel(catalog, trimmedQuery)
-      ? trimmedQuery
-      : null;
-  const highlightedModel = findCatalogModel(catalog, highlighted);
+    catalog.some(
+      (model) =>
+        model.capabilities.vision &&
+        model.status === 'legacy' &&
+        (showAllTiers || FAST_TIERS.has(model.tier)),
+    );
+  const highlightedModel = groups.flatMap((group) => group.models).find((model) => model.id === highlighted);
 
   const triggerProvider: CatalogProvider = selected ? selected.provider : providerForModelId(value);
   const triggerName = selected ? selected.name : value || 'Choose a model';
@@ -175,7 +177,7 @@ export function ModelPicker({
       ? 'Retired'
       : TIER_LABELS[selected.tier]
     : value
-      ? 'Custom'
+      ? 'Unavailable'
       : null;
 
   function choose(nextId: string) {
@@ -219,6 +221,11 @@ export function ModelPicker({
           <ChevronDown className="size-3.5 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
         </button>
       </PopoverTrigger>
+      {value && !selected?.capabilities.vision ? (
+        <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+          Choose a model with image support. The app uses its default until you save a new choice.
+        </p>
+      ) : null}
       <PopoverContent
         align="start"
         sideOffset={6}
@@ -241,14 +248,40 @@ export function ModelPicker({
             data-slot="model-picker-input"
             value={query}
             onValueChange={setQuery}
-            placeholder={allowCustomId ? 'Search models, or type a vendor/model id' : 'Search models'}
+            placeholder="Search vision models"
             aria-describedby={noteId}
             className="text-[13px]"
           />
-          <CommandList className="max-h-[360px]">
-            {groups.length === 0 && !customCandidate ? (
+          <div className="border-b border-[var(--color-border)] px-3 py-2">
+            <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+              <Eye className="size-3.5" aria-hidden /> All models support images and slide review
+            </p>
+            <fieldset
+              className="mt-2 flex min-w-0 gap-1 overflow-x-auto border-0 pb-1"
+              aria-label="Filter models by provider"
+            >
+              {[{ provider: null, label: 'All providers' }, ...providers].map((group) => (
+                <button
+                  key={group.provider ?? 'all'}
+                  type="button"
+                  aria-pressed={providerFilter === group.provider}
+                  onClick={() => setProviderFilter(group.provider)}
+                  className={cn(
+                    'shrink-0 rounded-ui border px-2 py-1 text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]',
+                    providerFilter === group.provider
+                      ? 'border-[var(--color-accent)] bg-[var(--color-bg-muted)] text-[var(--color-text)]'
+                      : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+                  )}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </fieldset>
+          </div>
+          <CommandList className="max-h-[320px]">
+            {groups.length === 0 ? (
               <CommandEmpty className="py-8 text-[12.5px] text-[var(--color-text-muted)]">
-                No model matches. {allowCustomId ? 'Type a full vendor/model id to use it as is.' : ''}
+                No vision models match. Try another search or provider.
               </CommandEmpty>
             ) : null}
             {groups.map((group) => (
@@ -285,11 +318,14 @@ export function ModelPicker({
                           <span className={cn('truncate', !legacy && 'font-medium')}>{model.name}</span>
                           <Chip tone="tier">{TIER_LABELS[model.tier]}</Chip>
                           {legacy ? <Chip>Older</Chip> : null}
-                          <span className="hidden items-center gap-1 sm:flex">
+                          <span className="hidden items-center gap-1 md:flex">
                             {capabilityChips(model).map((chip) => (
                               <Chip key={chip}>{chip}</Chip>
                             ))}
                           </span>
+                        </span>
+                        <span className="mt-0.5 block truncate text-[11px] font-normal text-[var(--color-text-muted)]">
+                          {model.note}
                         </span>
                       </span>
                       <RightMeta model={model} />
@@ -301,21 +337,6 @@ export function ModelPicker({
                 })}
               </CommandGroup>
             ))}
-            {customCandidate ? (
-              <CommandGroup heading="Custom id" className="[&_[cmdk-group-heading]]:text-[11px]">
-                <CommandItem
-                  value={`custom:${customCandidate}`}
-                  onSelect={() => choose(customCandidate)}
-                  data-model-id={customCandidate}
-                  className="flex items-center gap-2 rounded-ui px-2 py-1.5 text-[13px] data-[selected=true]:bg-[var(--color-bg-muted)]"
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    Use <span className="font-mono text-[12px]">{customCandidate}</span> as typed
-                  </span>
-                  <Chip>Custom</Chip>
-                </CommandItem>
-              </CommandGroup>
-            ) : null}
           </CommandList>
           <div className="flex min-h-[38px] items-center gap-3 border-t border-[var(--color-border)] px-3 py-1.5 text-[11.5px] text-[var(--color-text-muted)]">
             <p

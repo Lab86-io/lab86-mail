@@ -14,7 +14,13 @@ import {
 } from './budget';
 import { anthropic, openai, openrouter } from './client';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
-import { type CatalogModel, loadRuntimeModelCatalog, resolveSavedModelId } from './model-catalog';
+import {
+  type CatalogModel,
+  defaultModelsFor,
+  findCatalogModel,
+  loadRuntimeModelCatalog,
+  resolveSavedModelId,
+} from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 
 type AiProvider = 'openrouter' | 'openai' | 'anthropic';
@@ -54,6 +60,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_classify: 2000,
   document_generation: 14000,
   presentation_planning: 24000,
+  presentation_visual_review: 3500,
   document_suggestion: 14000,
   // One structured verdict per message: a handful of area ids plus short
   // evidence strings. Deliberately tight — a verdict that needs more room than
@@ -373,6 +380,7 @@ export async function generateTextForCurrentUser(
 // tokens would eat the budget for no accuracy gain (same failure mode as the
 // nano sweep in lib/tools/ai.ts).
 type ObjectGenerationDeps = {
+  loadRuntimeModelCatalog: typeof loadRuntimeModelCatalog;
   resolveAiRuntime: typeof resolveAiRuntime;
   generateObject: typeof generateObject;
   recordUsage: typeof recordUsage;
@@ -402,12 +410,23 @@ export async function generateObjectForCurrentUser<T>(
     reasoningEffort,
     providerOptions,
     narrativeModel,
+    requireVision = false,
     ...rest
   } = options as any;
   const resolveRuntime = objectGenerationDeps.resolveAiRuntime ?? resolveAiRuntime;
   const generateStructuredObject = objectGenerationDeps.generateObject ?? generateObject;
   const recordStructuredUsage = objectGenerationDeps.recordUsage ?? recordUsage;
   const runtime = await resolveRuntime({ userId, speed, feature, narrativeModel });
+  if (requireVision) {
+    const catalog = await (objectGenerationDeps.loadRuntimeModelCatalog ?? loadRuntimeModelCatalog)();
+    const selected = findCatalogModel(catalog, runtime.modelName);
+    if (
+      !selected?.capabilities.vision ||
+      selected.status === 'deprecated' ||
+      selected.status === 'unavailable'
+    )
+      throw new Error('Visual review requires an available model with verified image-input support.');
+  }
   return runWithAiRequestContext({ userId: runtime.userId, agent: 'ai' }, async () => {
     try {
       const result = await generateStructuredObject({
@@ -631,10 +650,20 @@ function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {
-  if (speed === 'primary') return DEFAULT_MODELS[provider].primary;
-  if (speed === 'nano') return DEFAULT_MODELS[provider].nano;
-  if (speed === 'classify') return DEFAULT_MODELS[provider].classify;
-  return DEFAULT_MODELS[provider].fast;
+  const chosen = DEFAULT_MODELS[provider][speed];
+  // Hosted defaults may use GLM or another OpenRouter vendor. A direct key
+  // must still receive a model that its own provider can serve.
+  if (provider !== 'openrouter' && classifyModel(chosen) !== provider)
+    return toDirectModelId(defaultModelsFor(provider)[speed === 'primary' ? 'normal' : 'fast']);
+  return chosen;
+}
+
+/** Settings must display the same deployment defaults the runtime uses. */
+export function configuredAiDefaults(provider: AiProvider) {
+  return {
+    normal: toOpenRouterModelId(modelFor(provider, 'primary')),
+    fast: toOpenRouterModelId(modelFor(provider, 'fast')),
+  };
 }
 
 function assertLab86Budget(

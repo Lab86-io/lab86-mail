@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { defaultModelsFor, loadModelCatalog, providersAvailableFor } from '@/lib/ai/model-catalog';
+import { configuredAiDefaults } from '@/lib/ai/gateway';
+import { loadModelCatalog, providersAvailableFor } from '@/lib/ai/model-catalog';
 import type { Provider } from '@/lib/ai/model-options';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
@@ -35,8 +36,8 @@ export async function GET() {
     mode: settings?.mode ?? 'lab86',
     provider,
     live: loaded.live,
-    catalog: loaded.catalog,
+    catalog: loaded.catalog.filter((model) => model.capabilities.vision),
     providersAvailable: providersAvailableFor(provider),
-    defaults: defaultModelsFor(provider),
+    defaults: configuredAiDefaults(provider),
   });
 }

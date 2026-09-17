@@ -2,11 +2,20 @@ const DEFAULT_TIMEOUT_MS = 75_000;
 const GENERATION_TIMEOUT_MS = 210_000;
 
 export function agentToolTimeoutMs(name: string, args: Record<string, unknown> = {}) {
+  // Composition/editorial repair and image inspection each have bounded
+  // budgets. Allow both to finish before the outer tool cancels its save.
+  if (
+    (name === 'document_create' && (args.presentation || (args.kind === 'deck' && args.instructions))) ||
+    name === 'document_apply_instruction' ||
+    name === 'document_suggest_changes'
+  )
+    return 280_000;
   if (
     name === 'presentation_plan' ||
     name === 'albatross_replan_work' ||
     name === 'document_suggest_changes' ||
     name === 'document_apply_instruction' ||
+    name === 'document_review_slides' ||
     (name === 'document_create' && (args.instructions || args.presentation))
   )
     return GENERATION_TIMEOUT_MS;

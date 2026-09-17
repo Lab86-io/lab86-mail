@@ -37,6 +37,7 @@ import {
   retroBrief,
   VALLEY,
 } from './fixtures/presentation-briefs';
+import { passingVisualReview } from './fixtures/visual-review';
 
 type Box = { x: number; y: number; width: number; height: number; type: string };
 
@@ -267,7 +268,11 @@ describe('presentation design system', () => {
 });
 
 describe('designed generation through the document proposal', () => {
-  const deckV2 = () => __setDocumentAiDepsForTest({ isDeckV2AuthoringEnabled: () => true });
+  const deckV2 = () =>
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      isDeckV2AuthoringEnabled: () => true,
+    });
 
   test('with the flag on, a new deck has a brief call and an every-slide review', async () => {
     const generate = mock(async (options: any) =>
@@ -275,6 +280,7 @@ describe('designed generation through the document proposal', () => {
     );
     deckV2();
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -304,6 +310,7 @@ describe('designed generation through the document proposal', () => {
       },
     }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => false,
       generateObjectForCurrentUser: generate as any,
     });
@@ -326,6 +333,7 @@ describe('designed generation through the document proposal', () => {
       };
     });
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -346,6 +354,7 @@ describe('designed generation through the document proposal', () => {
           : { object: { fixes: [] } },
     );
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: stubborn as any,
     });
@@ -354,43 +363,28 @@ describe('designed generation through the document proposal', () => {
     expect((recovered.model as DeckModelV2).slides[2].notes).toContain(tooLong);
   });
 
-  test('the render check records its count, and a render failure is a note rather than a crash', async () => {
-    process.env.DECK_RENDER_CHECK = 'true';
-    const render = mock(async (model: DeckModelV2) =>
-      model.slides.map((slide, index) => ({ slideId: slide.id, index, png: Buffer.alloc(0) })),
-    );
+  test('final composition is always visually reviewed and retains a draft when review is incomplete', async () => {
+    const review = mock(async (model: DeckModelV2) => ({
+      model,
+      report: {
+        status: 'needs_review' as const,
+        totalSlides: model.slides.length,
+        checkedSlideIds: [],
+        repairedSlideIds: [],
+        issues: [{ slideId: model.slides[0].id, description: 'Review could not finish.' }],
+      },
+    }));
     __setDocumentAiDepsForTest({
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
-      availableRenderBrowser: () => 'local',
-      renderDeckSlides: render as any,
+      reviewDeckVisuals: review,
     });
     const proposal = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
-    expect(proposal.summary).toContain('rendered: 8');
-    expect(render.mock.calls[0][1]).toMatchObject({ browser: 'local' });
-
-    __setDocumentAiDepsForTest({
-      isDeckV2AuthoringEnabled: () => true,
-      generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
-      availableRenderBrowser: () => 'browserbase',
-      renderDeckSlides: (async () => {
-        throw new Error('Browserbase session failed (503).');
-      }) as any,
-    });
-    const degraded = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
-    expect(degraded.summary).toContain('render check did not complete');
-    expect(degraded.model).toMatchObject({ version: 2 });
-
-    delete process.env.DECK_RENDER_CHECK;
-    const skipped = mock(() => 'local' as const);
-    __setDocumentAiDepsForTest({
-      isDeckV2AuthoringEnabled: () => true,
-      generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
-      availableRenderBrowser: skipped,
-    });
-    const plain = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
-    expect(plain.summary).not.toContain('rendered');
-    expect(skipped).not.toHaveBeenCalled();
+    expect(review).toHaveBeenCalledTimes(1);
+    expect((review.mock.calls[0][0] as DeckModelV2).slides).toHaveLength(8);
+    expect(proposal.visualReview?.status).toBe('needs_review');
+    expect(proposal.summary).toContain('Draft saved; visual review needs attention');
+    expect(proposal.model).toMatchObject({ version: 2 });
   });
 
   test('a new deck hangs planned paintings; a resolver failure or an empty result degrades to typography', async () => {
@@ -403,6 +397,7 @@ describe('designed generation through the document proposal', () => {
       }),
     );
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: resolve as any,
@@ -437,6 +432,7 @@ describe('designed generation through the document proposal', () => {
       }),
     );
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: one as any,
@@ -446,6 +442,7 @@ describe('designed generation through the document proposal', () => {
 
     const none = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: none as any,
@@ -456,6 +453,7 @@ describe('designed generation through the document proposal', () => {
     expect((plain.model as DeckModelV2).theme.imagery).toBeUndefined();
 
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: (async () => {
@@ -473,6 +471,7 @@ describe('designed generation through the document proposal', () => {
     // artwork none never plans; a brief that declines imagery never plans either.
     const untouched = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: untouched as any,
@@ -485,6 +484,7 @@ describe('designed generation through the document proposal', () => {
     });
     expect(off.summary).toContain('The dredging plan for the outer harbor.');
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
       resolveDeckImagery: untouched as any,
@@ -496,6 +496,7 @@ describe('designed generation through the document proposal', () => {
 
   test('a slide count outside the request is refused before anything composes', async () => {
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
     });

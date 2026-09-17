@@ -16,6 +16,7 @@ import {
   slideReviewSchema,
 } from '../lib/documents/presentation-review';
 import { harborBrief, passingSlideReviews, poolArtworks } from './fixtures/presentation-briefs';
+import { passingVisualReview } from './fixtures/visual-review';
 
 afterEach(() => __setDocumentAiDepsForTest());
 describe('every-slide presentation review', () => {
@@ -32,6 +33,7 @@ describe('every-slide presentation review', () => {
     ];
     expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(true);
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => {
         throw new Error('Review temporarily unavailable');
@@ -123,6 +125,7 @@ describe('every-slide presentation review', () => {
     ];
     expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(true);
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) =>
         options.schema === slideReviewSchema
@@ -176,6 +179,7 @@ describe('every-slide presentation review', () => {
         return result;
       });
       __setDocumentAiDepsForTest({
+        reviewDeckVisuals: passingVisualReview,
         isDeckV2AuthoringEnabled: () => true,
         generateObjectForCurrentUser: generate as any,
       });
@@ -292,6 +296,7 @@ describe('every-slide presentation review', () => {
       'The research, operations and customer experience teams across the North American and European offices, together with the executive steering committee and their regional implementation partners for 2026';
     const generate = mock(async (options: any) => passingSlideReviews(options));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -350,6 +355,7 @@ describe('every-slide presentation review', () => {
     brief.slides[4].notes = 'Source: https://example.test/verified-report';
     expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(true);
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) => {
         if (options.schema !== slideReviewSchema) return { object: { fixes: [] } };
@@ -420,6 +426,7 @@ describe('every-slide presentation review', () => {
       },
     ];
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) =>
         options.schema === slideReviewSchema

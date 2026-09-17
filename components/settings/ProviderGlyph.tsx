@@ -15,6 +15,8 @@ const STROKE = {
 
 function paths(provider: CatalogProvider) {
   switch (provider) {
+    case 'zai':
+      return <path d="M5 6h14L5 18h14" {...STROKE} />;
     case 'openai':
       return (
         <>
