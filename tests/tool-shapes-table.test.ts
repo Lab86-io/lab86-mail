@@ -37,6 +37,18 @@ const card = { cardId: 'card_1', boardId: 'b1', title: 'Task', dueAt: 1_789_000_
 const opOk = { ok: true, operationId: 'op_1' };
 
 const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
+  [
+    'document_review_slides',
+    { documentId: 'deck-1' },
+    {
+      ok: true,
+      documentId: 'deck-1',
+      revision: 3,
+      visualReview: { status: 'passed' },
+      summary: 'Visually checked all slides.',
+    },
+    'document',
+  ],
   ['search_threads', { account: 'acct_1', query: 'q' }, { items: [thread] }, 'threads'],
   ['list_smart_category', { account: 'acct_1', category: 'Codes' }, { items: [thread] }, 'threads'],
   ['recent_threads', {}, { threads: [thread] }, 'threads'],

@@ -26,6 +26,24 @@ const live = [
 ];
 
 describe('model catalog and runtime choices', () => {
+  test('omitted choices resolve verified defaults and unknown direct models are refused', () => {
+    for (const provider of ['openai', 'anthropic', 'openrouter'] as const) {
+      const catalog = buildModelCatalog({ provider });
+      for (const slot of ['normal', 'fast'] as const)
+        expect(validateModelChoice({ provider, slot, catalog })).toMatchObject({ ok: true, unknown: false });
+    }
+    expect(
+      validateModelChoice({
+        provider: 'openai',
+        slot: 'normal',
+        value: 'imaginary-model',
+        catalog: buildModelCatalog(),
+      }),
+    ).toMatchObject({ ok: false });
+    expect(findCatalogModel(buildModelCatalog(), 'anthropic/claude-haiku-4-5-20251001')?.id).toBe(
+      'anthropic/claude-haiku-4.5',
+    );
+  });
   test('merges live models, pricing, and capabilities; excludes batch and image-only routes', () => {
     const catalog = buildModelCatalog({ live });
     expect(findCatalogModel(catalog, 'gpt-5.5')).toMatchObject({
@@ -68,7 +86,7 @@ describe('model catalog and runtime choices', () => {
     );
     expect(
       validateModelChoice({ provider: 'openrouter', slot: 'normal', value: 'vendor/custom', catalog }),
-    ).toMatchObject({ ok: true, unknown: true });
+    ).toMatchObject({ ok: false });
     expect(
       validateModelChoice({ provider: 'openrouter', slot: 'normal', value: 'invalid', catalog }).ok,
     ).toBe(false);
@@ -94,5 +112,50 @@ describe('model catalog and runtime choices', () => {
     expect(
       settingsModelFor('primary', { ...settings, provider: 'openai', model: 'openai/gpt-5.5' }, catalog),
     ).toBe('gpt-5.5');
+  });
+
+  test('vision support is verified across providers and text-only saved choices use configured defaults', () => {
+    const catalog = buildModelCatalog({
+      live: [
+        {
+          id: 'z-ai/glm-5.3-flash',
+          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+        },
+        {
+          id: 'vendor/vision-model',
+          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+        },
+        {
+          id: 'vendor/text-model',
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+        },
+      ],
+    });
+    for (const value of ['z-ai/glm-5.3-flash', 'vendor/vision-model'])
+      expect(validateModelChoice({ provider: 'openrouter', slot: 'normal', value, catalog })).toMatchObject({
+        ok: true,
+      });
+    for (const value of ['vendor/text-model', 'vendor/unknown']) {
+      expect(validateModelChoice({ provider: 'openrouter', slot: 'fast', value, catalog })).toMatchObject({
+        ok: false,
+      });
+      expect(resolveSavedModelId(value, 'openrouter', catalog)).toBeUndefined();
+    }
+    expect(findCatalogModel(catalog, 'z-ai/glm-5.3-flash')).toMatchObject({
+      provider: 'zai',
+      providerLabel: 'Z.ai',
+      tier: 'fast',
+    });
+    const metadataChanged = buildModelCatalog({
+      live: [{ id: 'z-ai/glm-5.3-flash', architecture: { input_modalities: ['text'] } }],
+    });
+    expect(
+      validateModelChoice({
+        provider: 'openrouter',
+        slot: 'normal',
+        value: 'z-ai/glm-5.3-flash',
+        catalog: metadataChanged,
+      }).ok,
+    ).toBe(false);
   });
 });

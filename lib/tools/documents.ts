@@ -5,6 +5,11 @@ import { artworksForDeck } from '@/lib/documents/deck-imagery';
 import { checkSlide } from '@/lib/documents/deck-quality';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
 import { upgradeDeckModel } from '@/lib/documents/deck-versions';
+import {
+  deckVisualReportSchema,
+  reviewDeckVisuals,
+  visualReviewSummary,
+} from '@/lib/documents/deck-visual-review';
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
@@ -51,6 +56,7 @@ const defaultDependencies = {
   listDocuments,
   publishDocumentToGoogle,
   recordOperation,
+  reviewDeckVisuals,
   updateDocument,
 };
 
@@ -111,6 +117,7 @@ export const documentCreate = defineTool({
     openPath: z.string(),
     googleUrl: z.string().optional(),
     publishError: z.string().optional(),
+    visualReview: deckVisualReportSchema.optional(),
     /** Plain notes on uploads that were skipped. */
     notes: z.array(z.string()).optional(),
   }),
@@ -174,6 +181,8 @@ export const documentCreate = defineTool({
     let publishError: string | undefined;
     if (args.publishToGoogle) {
       try {
+        if (proposal?.visualReview?.status === 'needs_review')
+          throw new Error('Draft saved. Finish its visual review before publishing to Google.');
         ctx.abortSignal?.throwIfAborted();
         google = await dependencies.publishDocumentToGoogle({
           userId,
@@ -196,6 +205,7 @@ export const documentCreate = defineTool({
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       googleUrl: google?.webUrl,
       publishError,
+      ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
       ...(notes.length ? { notes } : {}),
     };
   },
@@ -384,6 +394,55 @@ export const documentApplyInstruction = defineTool({
       title: result.document.title,
       revision: result.document.currentRevision,
       summary: proposal.summary,
+      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    };
+  },
+});
+
+export const documentReviewSlides = defineTool({
+  name: 'document_review_slides',
+  description:
+    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Saves repairs with revision conflict protection; never recreates the presentation.',
+  category: 'documents',
+  mutating: true,
+  input: z.object({ documentId: z.string().min(1) }),
+  output: z.object({
+    ok: z.boolean(),
+    documentId: z.string(),
+    revision: z.number(),
+    visualReview: deckVisualReportSchema,
+    summary: z.string(),
+    openPath: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    ctx.abortSignal?.throwIfAborted();
+    const document = await dependencies.getDocument(userId, args.documentId);
+    if (!document || document.model.kind !== 'deck') throw new Error('Presentation not found.');
+    const reviewed = await dependencies.reviewDeckVisuals(upgradeDeckModel(document.model), {
+      userId,
+      abortSignal: ctx.abortSignal,
+    });
+    ctx.abortSignal?.throwIfAborted();
+    const summary = visualReviewSummary(reviewed.report).trim();
+    const saved = await dependencies.updateDocument({
+      userId,
+      documentId: document.documentId,
+      expectedRevision: document.currentRevision,
+      model: reviewed.model,
+      reason: summary,
+      actor: 'ai',
+    });
+    if (!saved.ok)
+      throw new Error(
+        'The presentation changed during visual review. Read the latest revision and review it again.',
+      );
+    return {
+      ok: true,
+      documentId: document.documentId,
+      revision: saved.document.currentRevision,
+      visualReview: reviewed.report,
+      summary,
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
     };
   },

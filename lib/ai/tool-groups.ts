@@ -74,6 +74,7 @@ export const TOOL_GROUPS = {
     tools: [
       'document_suggest_changes',
       'document_apply_instruction',
+      'document_review_slides',
       'document_publish_google',
       'document_export',
       'word_document_create',

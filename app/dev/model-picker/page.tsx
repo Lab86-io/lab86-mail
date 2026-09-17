@@ -31,6 +31,7 @@ const LIVE_FIXTURE: OpenRouterLiveModel[] = [
   'google/gemini-3.5-flash-lite',
   'google/gemini-3.1-flash-lite',
   'x-ai/grok-4.3',
+  'z-ai/glm-5.3-flash',
   'deepseek/deepseek-v4-pro',
   'deepseek/deepseek-v4-flash',
   'moonshotai/kimi-k2.6',
@@ -54,28 +55,15 @@ function ModelPickerPreviewInner() {
       <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Normal model</span>
-          <ModelPicker
-            slot="normal"
-            value={model}
-            onChange={setModel}
-            catalog={catalog}
-            allowCustomId
-            defaultOpen
-          />
+          <ModelPicker slot="normal" value={model} onChange={setModel} catalog={catalog} defaultOpen />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Fast model</span>
-          <ModelPicker
-            slot="fast"
-            value={fastModel}
-            onChange={setFastModel}
-            catalog={catalog}
-            allowCustomId
-          />
+          <ModelPicker slot="fast" value={fastModel} onChange={setFastModel} catalog={catalog} />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Retired saved model</span>
-          <ModelPicker slot="normal" value={retired} onChange={setRetired} catalog={catalog} allowCustomId />
+          <ModelPicker slot="normal" value={retired} onChange={setRetired} catalog={catalog} />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Anthropic key only</span>

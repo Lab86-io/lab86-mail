@@ -238,147 +238,152 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
       </svg>
     );
   }
-  const max = Math.max(1, ...element.series.flatMap((series) => series.values));
-  const padLeft = 30;
-  // Value labels sit above the tallest mark, so the plot leaves room for them.
-  const padTop = element.values ? 8 + labelSize + 4 : 8;
-  const padBottom = 18 + legendHeight;
-  const plotW = width - padLeft - 8;
+  const horizontal = element.chart === 'bar';
+  const allValues = element.series.flatMap((series) => series.values);
+  const min = Math.min(0, ...allValues);
+  const max = Math.max(0, ...allValues);
+  const span = max - min || 1;
+  const padLeft = horizontal
+    ? Math.min(135, Math.max(40, Math.max(...element.categories.map((label) => label.length)) * 4.6 + 10))
+    : 38;
+  const padTop = element.values ? 22 : 8;
+  const padBottom = 22 + legendHeight;
+  const padRight = horizontal && element.values ? 45 : 12;
+  const plotW = width - padLeft - padRight;
   const plotH = Math.max(10, height - padBottom - padTop);
-  const ticks = [0, 0.5, 1];
+  const valuePosition = (value: number) =>
+    horizontal ? padLeft + ((value - min) / span) * plotW : padTop + plotH - ((value - min) / span) * plotH;
+  const zero = valuePosition(0);
+  const ticks = [min, min + span / 2, min + span];
   const grid = ticks.map((tick) => (
     <g key={tick}>
       <line
-        x1={padLeft}
-        x2={padLeft + plotW}
-        y1={padTop + plotH - tick * plotH}
-        y2={padTop + plotH - tick * plotH}
+        x1={horizontal ? valuePosition(tick) : padLeft}
+        x2={horizontal ? valuePosition(tick) : padLeft + plotW}
+        y1={horizontal ? padTop : valuePosition(tick)}
+        y2={horizontal ? padTop + plotH : valuePosition(tick)}
         stroke="var(--deck-muted)"
         strokeWidth={0.5}
         strokeDasharray={tick === 0 ? undefined : '2 2'}
-        opacity={tick === 0 ? 0.9 : 0.5}
+        opacity={0.5}
       />
       <text
-        x={padLeft - 4}
-        y={padTop + plotH - tick * plotH + 3}
+        x={horizontal ? valuePosition(tick) : padLeft - 4}
+        y={horizontal ? padTop + plotH + 12 : valuePosition(tick) + 3}
         fontSize={labelSize - 1}
-        textAnchor="end"
+        textAnchor={horizontal ? 'middle' : 'end'}
         fill="var(--deck-muted)"
         fontFamily="var(--deck-body)"
       >
-        {Math.round(max * tick)}
+        {Number(tick.toPrecision(3))}
         {unit}
       </text>
     </g>
   ));
-  const groups = element.categories.length;
-  const slot = plotW / groups;
+  const slot = (horizontal ? plotH : plotW) / element.categories.length;
+  const categoryPosition = (index: number) => (horizontal ? padTop : padLeft) + slot * (index + 0.5);
   const marks: ReactNode[] = [];
-  const categoryKey = (index: number) => `${element.categories[index] ?? 'c'}-${index}`;
-  if (element.chart === 'line') {
-    for (const [seriesIndex, series] of element.series.entries()) {
-      const points = series.values
-        .map((value, index) => `${padLeft + slot * (index + 0.5)},${padTop + plotH - (value / max) * plotH}`)
-        .join(' ');
+  for (const [seriesIndex, series] of element.series.entries()) {
+    const seriesColor = colors[seriesIndex % colors.length];
+    if (element.chart === 'line') {
       marks.push(
         <polyline
-          key={series.name}
-          points={points}
+          key={`line-${seriesIndex}`}
+          points={series.values
+            .map((value, index) => `${categoryPosition(index)},${valuePosition(value)}`)
+            .join(' ')}
           fill="none"
-          stroke={colors[seriesIndex % colors.length]}
+          stroke={seriesColor}
           strokeWidth={2}
           strokeLinejoin="round"
           strokeLinecap="round"
         />,
       );
-      for (const [index, value] of series.values.entries())
-        marks.push(
-          <circle
-            key={`${series.name}-${categoryKey(index)}`}
-            cx={padLeft + slot * (index + 0.5)}
-            cy={padTop + plotH - (value / max) * plotH}
-            r={2.5}
-            fill={colors[seriesIndex % colors.length]}
-          />,
-        );
     }
-  } else {
-    const barW = (slot * 0.6) / element.series.length;
-    for (const [seriesIndex, series] of element.series.entries()) {
-      for (const [index, value] of series.values.entries()) {
-        const h = (Math.max(0, value) / max) * plotH;
-        const x = padLeft + slot * index + slot * 0.2 + barW * seriesIndex;
+    for (const [index, value] of series.values.entries()) {
+      const position = valuePosition(value);
+      const thickness = (slot * 0.6) / element.series.length;
+      const across = (horizontal ? padTop : padLeft) + slot * index + slot * 0.2 + thickness * seriesIndex;
+      const key = `${seriesIndex}-${index}`;
+      if (element.chart === 'line') {
+        marks.push(
+          <circle key={key} cx={categoryPosition(index)} cy={position} r={2.5} fill={seriesColor} />,
+        );
+      } else {
         marks.push(
           <rect
-            key={`${series.name}-${categoryKey(index)}`}
-            x={x}
-            y={padTop + plotH - h}
-            width={barW - 1}
-            height={h}
-            fill={colors[seriesIndex % colors.length]}
+            key={key}
+            data-chart-mark={horizontal ? 'bar' : 'column'}
+            data-value={value}
+            x={horizontal ? Math.min(zero, position) : across}
+            y={horizontal ? across : Math.min(zero, position)}
+            width={horizontal ? Math.abs(position - zero) : Math.max(0.5, thickness - 1)}
+            height={horizontal ? Math.max(0.5, thickness - 1) : Math.abs(position - zero)}
+            fill={seriesColor}
           />,
         );
-        if (element.values)
-          marks.push(
-            <text
-              key={`${series.name}-${categoryKey(index)}-v`}
-              x={x + (barW - 1) / 2}
-              y={padTop + plotH - h - 3}
-              fontSize={labelSize}
-              textAnchor="middle"
-              fill="var(--deck-ink)"
-              fontFamily="var(--deck-body)"
-            >
-              {value}
-              {unit}
-            </text>,
-          );
       }
+      if (element.values)
+        marks.push(
+          <text
+            key={`${key}-value`}
+            x={
+              horizontal
+                ? position + (value < 0 ? -4 : 4)
+                : element.chart === 'line'
+                  ? categoryPosition(index)
+                  : across + thickness / 2
+            }
+            y={horizontal ? across + thickness / 2 + 3 : position + (value < 0 ? 11 : -4)}
+            fontSize={labelSize}
+            textAnchor={horizontal ? (value < 0 ? 'end' : 'start') : 'middle'}
+            fill="var(--deck-ink)"
+            fontFamily="var(--deck-body)"
+          >
+            {value}
+            {unit}
+          </text>,
+        );
     }
   }
-  const labels = element.categories.map((category, index) => (
-    <text
-      key={labelKey(category, index)}
-      x={padLeft + slot * (index + 0.5)}
-      y={padTop + plotH + 11}
-      fontSize={labelSize}
-      textAnchor="middle"
-      fill="var(--deck-ink)"
-      fontFamily="var(--deck-body)"
-    >
-      {category}
-    </text>
-  ));
-  const legend = showLegend
-    ? element.series.map((series, index) => (
-        <g
-          key={seriesKey(series.name, index)}
-          transform={`translate(${padLeft + index * 80}, ${height - 5})`}
-        >
-          <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
-          <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
-            {series.name}
-          </text>
-        </g>
-      ))
-    : null;
-  const content = (
-    <>
-      {grid}
-      {marks}
-      {labels}
-      {legend}
-    </>
-  );
   return (
     <svg className="deck-chart" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      {element.chart === 'bar' ? (
-        <g transform={`rotate(90 ${width / 2} ${width / 2}) scale(1 -1) translate(0 ${-height})`}>
-          {content}
-        </g>
-      ) : (
-        content
-      )}
+      {grid}
+      <line
+        x1={horizontal ? zero : padLeft}
+        x2={horizontal ? zero : padLeft + plotW}
+        y1={horizontal ? padTop : zero}
+        y2={horizontal ? padTop + plotH : zero}
+        stroke="var(--deck-muted)"
+        strokeWidth={0.75}
+      />
+      {marks}
+      {element.categories.map((category, index) => (
+        <text
+          key={labelKey(category, index)}
+          x={horizontal ? padLeft - 6 : categoryPosition(index)}
+          y={horizontal ? categoryPosition(index) + 3 : padTop + plotH + 12}
+          fontSize={labelSize}
+          textAnchor={horizontal ? 'end' : 'middle'}
+          fill="var(--deck-ink)"
+          fontFamily="var(--deck-body)"
+        >
+          {category}
+        </text>
+      ))}
+      {showLegend
+        ? element.series.map((series, index) => (
+            <g
+              key={seriesKey(series.name, index)}
+              transform={`translate(${padLeft + index * (plotW / element.series.length)}, ${height - 5})`}
+            >
+              <rect width={8} height={8} y={-7} fill={colors[index % colors.length]} />
+              <text x={12} fontSize={labelSize} fill="var(--deck-ink)" fontFamily="var(--deck-body)">
+                {series.name}
+              </text>
+            </g>
+          ))
+        : null}
     </svg>
   );
 }
@@ -532,6 +537,7 @@ export function SlideSurface({
           <div
             key={element.id}
             className="deck-element"
+            data-element-id={element.id}
             data-element-type={element.type}
             style={elementStyle(element)}
           >

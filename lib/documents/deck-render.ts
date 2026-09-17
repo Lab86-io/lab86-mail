@@ -123,15 +123,18 @@ export interface RenderedSlide {
   slideId: string;
   index: number;
   png: Buffer;
+  /** Browser-measured clipping supplements (and cannot be waived by) vision. */
+  issues?: { elementId: string; description: string }[];
 }
 
 export interface RenderDeckOptions extends RenderDeckHtmlOptions {
   /** `local` launches the installed Playwright Chromium; `browserbase` connects over CDP. */
   browser?: 'local' | 'browserbase';
   timeoutMs?: number;
+  abortSignal?: AbortSignal;
 }
 
-async function connectBrowser(kind: 'local' | 'browserbase') {
+async function connectBrowser(kind: 'local' | 'browserbase', abortSignal?: AbortSignal) {
   const { chromium } = await import('playwright-core');
   if (kind === 'browserbase') {
     const apiKey = process.env.BROWSERBASE_API_KEY;
@@ -140,14 +143,27 @@ async function connectBrowser(kind: 'local' | 'browserbase') {
     const response = await fetch('https://api.browserbase.com/v1/sessions', {
       method: 'POST',
       headers: { 'x-bb-api-key': apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ projectId }),
-      signal: AbortSignal.timeout(30_000),
+      body: JSON.stringify({ projectId, timeout: 180, keepAlive: false }),
+      signal: abortSignal
+        ? AbortSignal.any([abortSignal, AbortSignal.timeout(30_000)])
+        : AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(`Browserbase session failed (${response.status}).`);
     const session = (await response.json()) as { connectUrl?: string; id: string };
     if (!session.connectUrl) throw new Error('Browserbase returned no connect URL.');
-    const browser = await chromium.connectOverCDP(session.connectUrl);
-    return { browser, close: () => browser.close() };
+    try {
+      const browser = await chromium.connectOverCDP(session.connectUrl, { timeout: 20_000 });
+      return { browser, close: () => browser.close() };
+    } catch (error) {
+      // A failed CDP handshake must not leave a paid remote session running.
+      await fetch(`https://api.browserbase.com/v1/sessions/${session.id}`, {
+        method: 'POST',
+        headers: { 'x-bb-api-key': apiKey, 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId, status: 'REQUEST_RELEASE' }),
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => undefined);
+      throw error;
+    }
   }
   const browser = await chromium.launch({
     args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
@@ -174,11 +190,17 @@ export async function renderDeckSlides(
   model: DeckModelV2,
   options: RenderDeckOptions = {},
 ): Promise<RenderedSlide[]> {
+  options.abortSignal?.throwIfAborted();
   const kind = options.browser ?? availableRenderBrowser();
   if (!kind) throw new Error('No render browser is available.');
   const html = await renderDeckHtml(model, options);
-  const { browser, close } = await dependencies.connectBrowser(kind);
+  const { browser, close } = await dependencies.connectBrowser(kind, options.abortSignal);
+  const cancel = () => {
+    void close().catch(() => undefined);
+  };
+  options.abortSignal?.addEventListener('abort', cancel, { once: true });
   try {
+    options.abortSignal?.throwIfAborted();
     const context = await browser.newContext({
       viewport: { width: RENDER_WIDTH, height: RENDER_HEIGHT },
       deviceScaleFactor: 1,
@@ -187,15 +209,58 @@ export async function renderDeckSlides(
     page.setDefaultTimeout(options.timeoutMs ?? 60_000);
     await page.setContent(html, { waitUntil: 'load' });
     await page.evaluate(() => (document as any).fonts?.ready);
+    // A load event also fires for failed images. Never approve a screenshot
+    // missing the artwork or graph the user will see in the actual deck.
+    const brokenImages = await page.evaluate(
+      () => Array.from(document.images).filter((image) => !image.complete || image.naturalWidth === 0).length,
+    );
+    if (brokenImages) throw new Error('Slide images did not finish loading.');
     await page.waitForTimeout(150);
+    const measured = await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>('.slide-frame')).map((frame) => ({
+        slideId: frame.dataset.slideId,
+        issues: Array.from(frame.querySelectorAll<HTMLElement>('[data-element-type="text"]')).flatMap(
+          (box) => {
+            const text = box.querySelector('.deck-text');
+            if (!text?.textContent?.trim()) return [];
+            // Measure laid-out line boxes. Range rectangles include unused
+            // font ascent/descent (especially serif titles with tight leading)
+            // and falsely report readable headings as clipped.
+            const content = text.getBoundingClientRect();
+            const bounds = box.getBoundingClientRect();
+            const clipped =
+              content.bottom > bounds.bottom + 2 ||
+              content.top < bounds.top - 2 ||
+              content.left < bounds.left - 2 ||
+              content.right > bounds.right + 2;
+            return clipped
+              ? [
+                  {
+                    elementId: box.dataset.elementId!,
+                    description:
+                      'The browser measures text outside its visible box. Enlarge or reposition the box to display the complete text.',
+                  },
+                ]
+              : [];
+          },
+        ),
+      })),
+    );
     const rendered: RenderedSlide[] = [];
     for (const [index, slide] of model.slides.entries()) {
+      options.abortSignal?.throwIfAborted();
       const png = await page.locator(`[data-slide-index="${index}"]`).screenshot({ type: 'png' });
-      rendered.push({ slideId: slide.id, index, png });
+      rendered.push({
+        slideId: slide.id,
+        index,
+        png,
+        issues: measured?.find((item) => item.slideId === slide.id)?.issues ?? [],
+      });
     }
     await context.close();
     return rendered;
   } finally {
+    options.abortSignal?.removeEventListener('abort', cancel);
     await close().catch(() => undefined);
   }
 }

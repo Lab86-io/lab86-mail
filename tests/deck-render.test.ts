@@ -4,6 +4,50 @@ import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/docum
 import { availableRenderBrowser, renderDeckHtml } from '../lib/documents/deck-render';
 
 describe('deck render page', () => {
+  test('horizontal bars keep upright labels and signed data on the correct side of zero', async () => {
+    const model = referenceDeck('editorial');
+    model.slides = [
+      {
+        id: 'chart-test',
+        title: 'Signed values',
+        elements: [
+          {
+            id: 'chart',
+            type: 'chart',
+            chart: 'bar',
+            x: 10,
+            y: 10,
+            width: 80,
+            height: 70,
+            categories: ['Loss', 'Gain'],
+            series: [{ name: 'Net', values: [-50, 100] }],
+            values: true,
+          },
+        ],
+      },
+    ];
+    const html = await renderDeckHtml(model);
+    expect(html).not.toContain('scale(1 -1)');
+    expect(html).not.toContain('rotate(90');
+    expect(html).toContain('data-chart-mark="bar" data-value="-50"');
+    expect(html).toContain('data-chart-mark="bar" data-value="100"');
+    const { JSDOM } = await import('jsdom');
+    const document = new JSDOM(html).window.document;
+    const bars = [...document.querySelectorAll('[data-chart-mark="bar"]')];
+    const [loss, gain] = bars.map((bar) => ({
+      x: Number(bar.getAttribute('x')),
+      width: Number(bar.getAttribute('width')),
+      height: Number(bar.getAttribute('height')),
+    }));
+    expect(loss.x + loss.width).toBeCloseTo(gain.x);
+    expect(gain.width).toBeCloseTo(loss.width * 2);
+    expect(bars.every((bar) => Number(bar.getAttribute('height')) > 0)).toBe(true);
+    expect(
+      [...document.querySelectorAll('text')]
+        .filter((text) => ['Loss', 'Gain'].includes(text.textContent ?? ''))
+        .every((text) => !text.getAttribute('transform')),
+    ).toBe(true);
+  });
   test('inlines the packaged fonts and one frame per slide with absolute asset paths', async () => {
     const html = await renderDeckHtml(referenceDeck('editorial'), {
       assetOrigin: 'https://mail-staging.lab86.io',
@@ -109,6 +153,76 @@ describe('deck quality checks', () => {
 });
 
 describe('deck slide rendering', () => {
+  test('measures actual text clipping and closes the browser when images fail or work is cancelled', async () => {
+    const { __setDeckRenderDepsForTest, renderDeckSlides } = await import('../lib/documents/deck-render');
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    let broken = false;
+    let clipped = true;
+    let closed = 0;
+    const box = {
+      dataset: { elementId: 'body' },
+      querySelector: () => ({
+        textContent: 'Evidence',
+        getBoundingClientRect: () => ({ top: 10, bottom: clipped ? 35 : 20, left: 0, right: 100 }),
+      }),
+      getBoundingClientRect: () => ({ top: 10, bottom: 20, left: 0, right: 100 }),
+    };
+    const document = {
+      fonts: { ready: Promise.resolve() },
+      get images() {
+        return [{ complete: true, naturalWidth: broken ? 0 : 100 }];
+      },
+      querySelectorAll: () => [{ dataset: { slideId: 'h-cover' }, querySelectorAll: () => [box] }],
+      createRange: () => ({
+        selectNodeContents() {},
+        getBoundingClientRect: () => ({ top: 10, bottom: 35, left: 0, right: 100 }),
+      }),
+    };
+    const page = {
+      setDefaultTimeout() {},
+      async setContent() {},
+      async evaluate(fn: () => unknown) {
+        return fn();
+      },
+      async waitForTimeout() {},
+      locator: () => ({ screenshot: async () => Buffer.from('pixels') }),
+    };
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: document });
+    __setDeckRenderDepsForTest({
+      connectBrowser: async () =>
+        ({
+          browser: { newContext: async () => ({ newPage: async () => page, close: async () => {} }) },
+          close: async () => {
+            closed++;
+          },
+        }) as any,
+    });
+    try {
+      const deck = hiringDeck();
+      deck.slides[0].id = 'h-cover';
+      const images = await renderDeckSlides(deck, { browser: 'local' });
+      expect(images[0].issues).toEqual([
+        { elementId: 'body', description: expect.stringContaining('outside its visible box') },
+      ]);
+      clipped = false;
+      const clean = await renderDeckSlides(deck, { browser: 'local' });
+      // The glyph Range still extends past the box, but the actual line fits.
+      expect(clean[0].issues).toEqual([]);
+      broken = true;
+      await expect(renderDeckSlides(deck, { browser: 'local' })).rejects.toThrow('images did not finish');
+      expect(closed).toBe(3);
+      const controller = new AbortController();
+      controller.abort(new Error('Stopped'));
+      await expect(
+        renderDeckSlides(deck, { browser: 'local', abortSignal: controller.signal }),
+      ).rejects.toThrow('Stopped');
+      expect(closed).toBe(3);
+    } finally {
+      __setDeckRenderDepsForTest();
+      if (previous) Object.defineProperty(globalThis, 'document', previous);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
   test('drives a browser page per slide and always closes it', async () => {
     const { __setDeckRenderDepsForTest, renderDeckSlides } = await import('../lib/documents/deck-render');
     const events: string[] = [];

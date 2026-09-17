@@ -4,9 +4,42 @@ import {
   agentProviderOptions,
   generateObjectForCurrentUser,
 } from '../lib/ai/gateway';
+import { buildModelCatalog } from '../lib/ai/model-catalog';
 
 describe('structured AI gateway', () => {
   afterEach(() => __setObjectGenerationDepsForTest());
+
+  test('vision calls forward images to GLM through OpenRouter and reject text-only or unverified runtimes', async () => {
+    let modelName = 'z-ai/glm-5.3-flash';
+    const sent: any[] = [];
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () => ({
+        userId: 'u',
+        source: 'byok',
+        provider: 'openrouter',
+        modelName,
+        model: 'selected-glm',
+      }),
+      loadRuntimeModelCatalog: async () => buildModelCatalog(),
+      generateObject: (async (request: any) => {
+        sent.push(request);
+        return { object: {}, usage: {} };
+      }) as any,
+      recordUsage: async () => undefined,
+    });
+    const messages = [
+      { role: 'user', content: [{ type: 'image', image: Buffer.from('slide'), mediaType: 'image/png' }] },
+    ];
+    const options = { schema: {}, feature: 'presentation_visual_review', requireVision: true, messages };
+    await generateObjectForCurrentUser(options);
+    expect(sent[0]).toMatchObject({ model: 'selected-glm', maxOutputTokens: 3500, messages });
+    expect(sent[0]).not.toHaveProperty('requireVision');
+    for (const id of ['deepseek/deepseek-v4-pro', 'vendor/unverified']) {
+      modelName = id;
+      await expect(generateObjectForCurrentUser(options)).rejects.toThrow('verified image-input');
+    }
+    expect(sent).toHaveLength(1);
+  });
 
   test('agent cache and reasoning options follow the provider transport', () => {
     const direct = agentProviderOptions({ provider: 'openai' } as any, 'agent:owner');

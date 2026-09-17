@@ -6,22 +6,16 @@ import {
   B2C_MONTHLY_PRICE_USD,
   resolveAiBudgetPolicy,
 } from '@/lib/ai/budget';
+import { configuredAiDefaults } from '@/lib/ai/gateway';
 import {
   buildModelCatalog,
   catalogProviderFor,
-  defaultModelsFor,
   loadModelCatalog,
   providersAvailableFor,
   savedModelSummary,
   validateModelChoice,
 } from '@/lib/ai/model-catalog';
-import {
-  fetchOpenRouterCatalog,
-  OPENROUTER_DEFAULT_FAST_MODEL,
-  OPENROUTER_DEFAULT_PRIMARY_MODEL,
-  openRouterModelOptionsFrom,
-  type Provider,
-} from '@/lib/ai/model-options';
+import { fetchOpenRouterCatalog, openRouterModelOptionsFrom, type Provider } from '@/lib/ai/model-options';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import {
@@ -59,8 +53,8 @@ export async function GET() {
   const settings = state.settings || {
     mode: requireOpenRouter ? 'byok' : 'lab86',
     provider: 'openrouter',
-    model: OPENROUTER_DEFAULT_PRIMARY_MODEL,
-    fastModel: OPENROUTER_DEFAULT_FAST_MODEL,
+    model: configuredAiDefaults('openrouter').normal,
+    fastModel: configuredAiDefaults('openrouter').fast,
     enabled: true,
   };
   const catalogProvider = catalogProviderFor(settings, state.key?.provider);
@@ -91,16 +85,20 @@ export async function GET() {
     subscriptionsDisabled: isSubscriptionServiceDisabled(),
     modelOptions: {
       openrouter: {
-        primary: openrouterModelOptions.primary,
-        fast: openrouterModelOptions.fast,
+        primary: openrouterModelOptions.primary.filter((option) =>
+          catalog.some((model) => model.id === option.id && model.capabilities.vision),
+        ),
+        fast: openrouterModelOptions.fast.filter((option) =>
+          catalog.some((model) => model.id === option.id && model.capabilities.vision),
+        ),
         live: openrouterModelOptions.live,
       },
     },
-    catalog,
+    catalog: catalog.filter((model) => model.capabilities.vision),
     catalogLive: fetched.live,
     catalogProvider,
     providersAvailable: providersAvailableFor(catalogProvider),
-    defaults: defaultModelsFor(catalogProvider),
+    defaults: configuredAiDefaults(catalogProvider),
     savedModels: {
       normal: savedModelSummary(settings.model, catalog, catalogProvider),
       fast: savedModelSummary(settings.fastModel, catalog, catalogProvider),
@@ -228,17 +226,24 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
       console.error('[ai-settings] failed to load the model catalog', err);
       return { catalog: buildModelCatalog({ provider: validationProvider }), live: false, liveData: [] };
     });
+    const compatibleChoice = (slot: 'normal' | 'fast', saved: string | undefined, explicit: unknown) => {
+      if (typeof explicit === 'string' && explicit.trim()) return saved;
+      const checked = saved
+        ? validateModelChoice({ provider: validationProvider, slot, value: saved, catalog })
+        : undefined;
+      return checked?.ok ? checked.id : configuredAiDefaults(validationProvider)[slot];
+    };
     const normalChoice = validateModelChoice({
       provider: validationProvider,
       slot: 'normal',
-      value: requestedModel,
+      value: compatibleChoice('normal', requestedModel, body.model),
       catalog,
     });
     if (!normalChoice.ok) return NextResponse.json({ ok: false, error: normalChoice.error }, { status: 400 });
     const fastChoice = validateModelChoice({
       provider: validationProvider,
       slot: 'fast',
-      value: requestedFastModel,
+      value: compatibleChoice('fast', requestedFastModel, body.fastModel),
       catalog,
     });
     if (!fastChoice.ok) return NextResponse.json({ ok: false, error: fastChoice.error }, { status: 400 });

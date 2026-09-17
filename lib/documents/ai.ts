@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
-import { envFlag } from '@/lib/hosted/controls';
 import {
   artworksBySlideIndex,
   artworksForDeck,
@@ -10,8 +9,8 @@ import {
   resolveDeckImagery,
 } from './deck-imagery';
 import { type DeckIssue, repairDeck } from './deck-quality';
-import { availableRenderBrowser, renderDeckSlides } from './deck-render';
-import { deckModelsEqual } from './deck-versions';
+import { deckModelForSave, deckModelsEqual, upgradeDeckModel } from './deck-versions';
+import { type DeckVisualReport, reviewDeckVisuals, visualReviewSummary } from './deck-visual-review';
 import { isDeckV2AuthoringEnabled } from './editor-flags';
 import { type DocumentEditContext, prepareDocumentEdits } from './edits';
 import {
@@ -64,8 +63,7 @@ import { applySpreadsheetChanges } from './spreadsheet-server';
 
 const defaultDependencies = {
   generateObjectForCurrentUser,
-  availableRenderBrowser,
-  renderDeckSlides,
+  reviewDeckVisuals,
   isDeckV2AuthoringEnabled,
   resolveDeckImagery,
   artworksForDeck,
@@ -118,6 +116,7 @@ const sheetChangesOutputSchema = z
   .refine((value) => value.changes.length + (value.commands?.length || 0) > 0);
 
 export interface DocumentProposal {
+  visualReview?: DeckVisualReport;
   title: string;
   summary: string;
   model: AlbatrossDocumentModel | SheetChangeSet;
@@ -245,9 +244,8 @@ function issueList(issues: DeckIssue[]) {
 /**
  * Quality loop: review every slide, compose, repair with bounded model calls,
  * preserve overflow in notes and check again. A deck
- * that still fails is never returned. The render check runs only when a
- * browser is available and DECK_RENDER_CHECK is set; its failure is a note in
- * the summary, not a failure of the generation.
+ * that still fails is never returned. Image review follows composition and
+ * all copy repairs so it inspects the final slides.
  */
 async function finishComposedDeck(
   input: DeckGenerationInput,
@@ -335,27 +333,12 @@ async function finishComposedDeck(
       `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
     );
   input.abortSignal?.throwIfAborted();
-  let summary = `${brief.summary}${art.note}${reviewed.summary}`;
-  if (envFlag('DECK_RENDER_CHECK')) {
-    const browser = dependencies.availableRenderBrowser();
-    if (browser) {
-      try {
-        const rendered = await dependencies.renderDeckSlides(repaired.model, {
-          browser,
-          ...(process.env.NEXT_PUBLIC_APP_URL ? { assetOrigin: process.env.NEXT_PUBLIC_APP_URL } : {}),
-        });
-        summary = `${summary} (rendered: ${rendered.length})`;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'unknown error';
-        summary = `${summary} (render check did not complete: ${message.slice(0, 200)})`;
-      }
-    }
-  }
+  const summary = `${brief.summary}${art.note}${reviewed.summary}`;
   return { brief, model: repaired.model, summary };
 }
 
 /** Review every page, repair copy and layout, then compose the researched content. */
-export async function composeDocumentPresentation(
+async function composeDocumentPresentationDraft(
   input: DeckGenerationInput & { presentation: PresentationBrief | PresentationBriefV2 },
 ): Promise<DocumentProposal> {
   input.abortSignal?.throwIfAborted();
@@ -466,7 +449,7 @@ async function proposeDeckRestyle(input: {
   return { title: input.current.title, summary: `${classification.data.summary}${note}`, model };
 }
 
-export async function generateDocumentProposal(input: {
+async function generateDocumentProposalDraft(input: {
   userId: string;
   userEmail?: string;
   userName?: string;
@@ -586,4 +569,32 @@ Preserve accurate supplied facts, never invent citations or claim provider-side 
       cause: error,
     });
   }
+}
+
+/** Review final pixels for both new presentations and AI edits/restyles. */
+async function visuallyReviewedProposal(
+  input: { userId: string; abortSignal?: AbortSignal },
+  proposal: DocumentProposal,
+): Promise<DocumentProposal> {
+  if (proposal.model.kind !== 'deck' || proposal.visualReview) return proposal;
+  const result = await dependencies.reviewDeckVisuals(upgradeDeckModel(proposal.model), input);
+  input.abortSignal?.throwIfAborted();
+  return {
+    ...proposal,
+    model: deckModelForSave(result.model, proposal.model.version),
+    visualReview: result.report,
+    summary: proposal.summary + visualReviewSummary(result.report),
+  };
+}
+
+export async function composeDocumentPresentation(
+  input: Parameters<typeof composeDocumentPresentationDraft>[0],
+): Promise<DocumentProposal> {
+  return visuallyReviewedProposal(input, await composeDocumentPresentationDraft(input));
+}
+
+export async function generateDocumentProposal(
+  input: Parameters<typeof generateDocumentProposalDraft>[0],
+): Promise<DocumentProposal> {
+  return visuallyReviewedProposal(input, await generateDocumentProposalDraft(input));
 }

@@ -34,6 +34,7 @@ import {
   updateDocument,
 } from '../lib/documents/service';
 import { api } from '../lib/hosted/convex';
+import { passingVisualReview } from './fixtures/visual-review';
 
 const documentsApi = (api as any).documents;
 
@@ -68,7 +69,10 @@ describe('document AI proposal service', () => {
       palette: 'ink',
       slides: [{ layout: 'cover', title: 'A release', kicker: '', body: '', items: [], notes: '' }],
     };
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: (async () => ({ object: brief })) as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      generateObjectForCurrentUser: (async () => ({ object: brief })) as any,
+    });
     await expect(
       generateDocumentProposal({ userId: 'user-1', kind: 'deck', instruction: 'Create six slides' }),
     ).rejects.toThrow('incomplete design');
@@ -83,6 +87,7 @@ describe('document AI proposal service', () => {
     if (result.model.kind === 'deck') expect(result.model.slides[0].background).toBe('#182C40');
     if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing content';
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       generateObjectForCurrentUser: (async () => ({
         object: { title: 'Release', summary: 'Done', model: current.model },
       })) as any,
@@ -101,6 +106,7 @@ describe('document AI proposal service', () => {
     const current = documentRecord('deck');
     if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing slide content';
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       generateObjectForCurrentUser: (async () => ({
         object: { title: current.title, summary: 'Filled in six slides', model: current.model },
       })) as any,
@@ -149,7 +155,10 @@ describe('document AI proposal service', () => {
         },
       };
     });
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: generated as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      generateObjectForCurrentUser: generated as any,
+    });
 
     const doc = await generateDocumentProposal({
       userId: 'user-1',
@@ -185,6 +194,7 @@ describe('document AI proposal service', () => {
 
   test('rejects model output that does not match the requested document kind', async () => {
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
       generateObjectForCurrentUser: (async () => ({
         object: {
           title: 'Wrong model',

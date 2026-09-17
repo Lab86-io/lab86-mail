@@ -197,6 +197,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'spreadsheet_capabilities',
   'document_suggest_changes',
   'document_apply_instruction',
+  'document_review_slides',
   'document_publish_google',
   'document_export',
   'cloud_file_search',

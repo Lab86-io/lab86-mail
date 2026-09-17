@@ -28,6 +28,7 @@ export type CatalogProvider =
   | 'qwen'
   | 'meta'
   | 'mistral'
+  | 'zai'
   | 'other';
 
 export type CatalogTier = 'flagship' | 'balanced' | 'fast' | 'nano';
@@ -87,6 +88,7 @@ export const PROVIDER_ORDER: CatalogProvider[] = [
   'qwen',
   'meta',
   'mistral',
+  'zai',
   'other',
 ];
 
@@ -100,6 +102,7 @@ export const PROVIDER_LABELS: Record<CatalogProvider, string> = {
   qwen: 'Qwen',
   meta: 'Meta',
   mistral: 'Mistral',
+  zai: 'Z.ai',
   other: 'Other',
 };
 
@@ -339,6 +342,19 @@ const CURATED: CuratedModel[] = [
     releasedAt: '2026-04-30',
     capabilities: { reasoning: true, tools: true, vision: true, pdf: true },
   },
+  // Z.ai: OpenRouter image + text inputs, structured output and tools (2026-09-17).
+  {
+    id: 'z-ai/glm-5.3-flash',
+    name: 'GLM-5.3 Flash',
+    family: 'glm-flash',
+    version: '5.3',
+    tier: 'fast',
+    recommendedFor: ['normal', 'fast'],
+    note: 'Fast multimodal reasoning, image review, and long-context agent tasks.',
+    contextTokens: 1_310_720,
+    releasedAt: '2026-08-26',
+    capabilities: { reasoning: true, tools: true, vision: true, pdf: false },
+  },
   // DeepSeek
   {
     id: 'deepseek/deepseek-v4-pro',
@@ -450,6 +466,7 @@ const CURATED: CuratedModel[] = [
 ];
 
 const PROVIDER_BY_PREFIX: Record<string, CatalogProvider> = {
+  'z-ai': 'zai',
   openai: 'openai',
   anthropic: 'anthropic',
   google: 'google',
@@ -677,7 +694,10 @@ export function findCatalogModel(catalog: CatalogModel[], value?: string | null)
     .replace(/-20\d{6}$/, '');
   if (!needle) return undefined;
   return catalog.find(
-    (model) => model.id.toLowerCase() === needle || model.directId.toLowerCase() === needle,
+    (model) =>
+      model.id.toLowerCase() === needle ||
+      model.directId.toLowerCase() === needle ||
+      `${model.id.split('/')[0]}/${model.directId}`.toLowerCase() === needle,
   );
 }
 
@@ -752,6 +772,10 @@ export function resolveSavedModelId(
   catalog = staticModelCatalog(),
 ) {
   const resolution = resolveSavedModel(savedId, catalog, { provider });
+  // Old text-only/custom settings use the configured platform/vendor default.
+  // Never forward an unverifiable model choice to an image-capable workflow.
+  if (!resolution.known || !(resolution.replacement ?? resolution.model)?.capabilities.vision)
+    return undefined;
   if (resolution.deprecated && !resolution.replacement)
     throw new Error('The selected model is retired. Choose another model in AI settings.');
   if (
@@ -768,8 +792,8 @@ export type ModelChoiceValidation =
 
 /**
  * Validate a posted model choice for a provider. Returns the id to persist:
- * canonical for OpenRouter, direct for a vendor key. Unknown OpenRouter ids
- * are accepted when they are well formed and flagged `unknown`.
+ * canonical for OpenRouter, direct for a vendor key. Image-input support must
+ * be verified by live metadata or the curated catalog; unknown ids are refused.
  */
 export function validateModelChoice(input: {
   provider: Provider;
@@ -788,6 +812,8 @@ export function validateModelChoice(input: {
     if (resolution.deprecated && !resolution.replacement)
       return { ok: false, error: 'This model is retired. Choose an available model.' };
     const target = resolution.replacement ?? resolution.model!;
+    if (!target.capabilities.vision)
+      return { ok: false, error: 'Choose a model with verified image-input support for slide review.' };
     if (
       target.status === 'unavailable' ||
       (input.provider !== 'openrouter' && target.provider !== input.provider)
@@ -808,7 +834,10 @@ export function validateModelChoice(input: {
     if (!isOpenRouterModelId(value)) {
       return { ok: false, error: `${value} is not a valid OpenRouter model id (vendor/model).` };
     }
-    return { ok: true, id: value, unknown: true };
+    return {
+      ok: false,
+      error: 'Image-input support could not be verified. Choose a model from the catalog.',
+    };
   }
   return {
     ok: false,
