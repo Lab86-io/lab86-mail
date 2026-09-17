@@ -22,6 +22,7 @@ type PendingReceipt = {
   id: string;
   fireAt: number;
   undoSeconds: number;
+  status?: 'preparing' | 'pending' | 'cancelled';
 };
 
 export type DurableComposeDraft = {
@@ -38,13 +39,14 @@ export type DurableComposeDraft = {
   draftId?: string | null;
 };
 
-export type DurablePendingSend = PendingReceipt & {
+export type DurablePendingSend = Omit<PendingReceipt, 'status'> & {
   draft: DurableComposeDraft;
-  status?: 'pending' | 'sent' | 'failed' | 'cancelled' | 'unknown';
+  status?: 'preparing' | 'sending' | 'pending' | 'sent' | 'failed' | 'cancelled' | 'unknown';
 };
 
 type PendingSendContextValue = {
-  registerPendingSend: (receipt: PendingReceipt, draft: DurableComposeDraft) => Promise<void>;
+  registerPendingSend: (receipt: PendingReceipt, draft: DurableComposeDraft) => Promise<boolean>;
+  cancelPendingSend: (id: string) => Promise<boolean>;
 };
 
 const PendingSendContext = createContext<PendingSendContextValue | null>(null);
@@ -116,6 +118,7 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
     await Promise.all(
       [...recordsRef.current.values()].map(async (record) => {
         if (checking.current.has(record.id) || cancellingRef.current.has(record.id)) return;
+        if (record.status === 'preparing') return;
         if (record.status === 'failed' || record.status === 'cancelled') return;
         checking.current.add(record.id);
         try {
@@ -144,7 +147,7 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
             void queryClient.invalidateQueries({ queryKey: ['search'] });
             toast.success('Message sent');
             fireSendEffect();
-          } else if (['pending', 'unknown', 'failed', 'cancelled'].includes(result.status)) {
+          } else if (['pending', 'sending', 'unknown', 'failed', 'cancelled'].includes(result.status)) {
             const updated = { ...record, status: result.status };
             recordsRef.current.set(record.id, updated);
             publish();
@@ -167,7 +170,10 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       for (const record of stored) {
         if (!removed.current.has(record.id) && !recordsRef.current.has(record.id)) {
-          recordsRef.current.set(record.id, record);
+          recordsRef.current.set(record.id, {
+            ...record,
+            status: record.status === 'preparing' ? 'unknown' : record.status,
+          });
         }
       }
       publish();
@@ -204,18 +210,20 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
 
   const registerPendingSend = useCallback(
     async (receipt: PendingReceipt, draft: DurableComposeDraft) => {
-      const record: DurablePendingSend = { ...receipt, draft, status: 'pending' };
+      if (removed.current.has(receipt.id)) return false;
+      const record: DurablePendingSend = { ...receipt, draft, status: receipt.status || 'pending' };
       recordsRef.current.set(receipt.id, record);
       publish();
       // Storage must not delay the user's opportunity to undo a short window.
       void saveRecord(record).catch(() => undefined);
+      return true;
     },
     [publish],
   );
 
   const undo = useCallback(
     async (record: DurablePendingSend) => {
-      if (cancellingRef.current.has(record.id)) return;
+      if (cancellingRef.current.has(record.id)) return false;
       cancellingRef.current.add(record.id);
       setCancelling(new Set(cancellingRef.current));
       try {
@@ -226,8 +234,10 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
           signal: AbortSignal.timeout(10_000),
         });
         const result = await response.json().catch(() => null);
-        if (response.ok && result?.undone) restore(record);
-        else toast.error(result?.error || 'Could not cancel this send. Checking its status…');
+        if (response.ok && result?.undone) {
+          restore(record);
+          return true;
+        } else toast.error(result?.error || 'Could not cancel this send. Checking its status…');
       } catch {
         toast.error('Could not reach the server. Cancellation is not confirmed.');
       } finally {
@@ -235,11 +245,30 @@ export function PendingSendProvider({ children }: { children: ReactNode }) {
         setCancelling(new Set(cancellingRef.current));
         void reconcile();
       }
+      return false;
     },
     [reconcile, restore],
   );
 
-  const value = useMemo(() => ({ registerPendingSend }), [registerPendingSend]);
+  const cancelPendingSend = useCallback(
+    async (id: string) => {
+      const record = recordsRef.current.get(id);
+      if (record) {
+        const cancelled = await undo(record);
+        if (!cancelled && recordsRef.current.has(id)) {
+          recordsRef.current.set(id, { ...record, status: 'unknown' });
+          publish();
+        }
+        return cancelled;
+      }
+      return removed.current.has(id);
+    },
+    [undo, publish],
+  );
+  const value = useMemo(
+    () => ({ registerPendingSend, cancelPendingSend }),
+    [registerPendingSend, cancelPendingSend],
+  );
   return (
     <PendingSendContext.Provider value={value}>
       {children}

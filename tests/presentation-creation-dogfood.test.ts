@@ -12,7 +12,7 @@ import { exportDocument } from '../lib/documents/export';
 import { type AlbatrossDocumentRecord, documentModelText } from '../lib/documents/model';
 import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
-import { harborBrief, retroBrief, VALLEY } from './fixtures/presentation-briefs';
+import { harborBrief, passingSlideReviews, retroBrief, VALLEY } from './fixtures/presentation-briefs';
 import { runTool } from './tools/harness';
 
 const presentation = {
@@ -51,7 +51,10 @@ afterEach(() => {
 
 describe('presentation creation dogfood', () => {
   test('a thirteen-slide brief with four-item lists and a chart without callouts saves all slides', async () => {
-    __setDocumentAiDepsForTest({ isDeckV2AuthoringEnabled: () => true });
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
     const brief = harborBrief();
     const list = {
       role: 'list' as const,
@@ -120,10 +123,8 @@ describe('presentation creation dogfood', () => {
     }
   });
 
-  test('version 2 direct creation keeps owned images and design checks without generating again', async () => {
-    const generate = mock(async () => {
-      throw new Error('must not generate');
-    });
+  test('version 2 direct creation reviews all slides while keeping owned images and design checks', async () => {
+    const generate = mock(async (options: any) => passingSlideReviews(options)) as any;
     const artwork = mock(async () => {
       throw new Error('must not fetch artwork');
     });
@@ -154,11 +155,11 @@ describe('presentation creation dogfood', () => {
         (element: any) => element.type === 'image' && element.assetId === VALLEY.assetId,
       ),
     ).toBe(true);
-    expect(generate).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
     expect(artwork).not.toHaveBeenCalled();
   });
 
-  test('direct version 2 content refuses overflowing copy without another model call', async () => {
+  test('direct version 2 content repairs overflow even when editorial service is unavailable', async () => {
     const generate = mock(async () => {
       throw new Error('must not generate');
     });
@@ -168,10 +169,15 @@ describe('presentation creation dogfood', () => {
     });
     const brief = retroBrief();
     brief.slides[2].items[0].detail = 'from the launch brief '.repeat(7).trim();
-    await expect(
-      composeDocumentPresentation({ userId: 'owner', instruction: '', presentation: brief, artwork: 'none' }),
-    ).rejects.toThrow('layout check');
-    expect(generate).not.toHaveBeenCalled();
+    const proposal = await composeDocumentPresentation({
+      userId: 'owner',
+      instruction: '',
+      presentation: brief,
+      artwork: 'none',
+    });
+    expect(checkDeck(proposal.model as any).ok).toBe(true);
+    expect((proposal.model as any).slides[2].notes).toContain(brief.slides[2].items[0].detail);
+    expect(generate).toHaveBeenCalled();
   });
 
   test('direct version 2 content respects the authoring rollout flag', async () => {
@@ -286,10 +292,10 @@ describe('presentation creation dogfood', () => {
     ).toBe(true);
   });
 
-  test('generation gets a longer deadline while direct creation and reads stay bounded', () => {
+  test('generation and reviewed briefs get a longer deadline while reads stay bounded', () => {
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck' })).toBe(210_000);
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck', presentation })).toBe(
-      75_000,
+      210_000,
     );
     expect(agentToolTimeoutMs('document_create')).toBe(75_000);
     expect(agentToolTimeoutMs('document_get')).toBe(75_000);

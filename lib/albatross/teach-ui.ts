@@ -527,6 +527,11 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     failed: 'Triaging the thread failed',
   }),
   draft_reply: fixed('Drafting a reply', 'Drafted a reply for your review', 'Drafting the reply failed'),
+  presentation_plan: fixed(
+    'Planning the evidence and visuals for every slide',
+    'Planned the presentation slides',
+    'Presentation planning failed; retrying needs the gathered evidence',
+  ),
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
   word_document_create: fixed(
     'Creating the Word document',

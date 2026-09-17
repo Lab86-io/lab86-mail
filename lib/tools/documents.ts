@@ -9,8 +9,8 @@ import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } f
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
 import {
-  presentationBriefSchema,
-  presentationBriefV2Schema,
+  presentationAuthoringSchema,
+  presentationAuthoringV2Schema,
   presentationSlideCountMatches,
 } from '@/lib/documents/presentation-design';
 import {
@@ -63,7 +63,7 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through the existing design and layout checks without another model call. Prefer the version 2 brief with audience, purpose, tone, palette (editorial or signal), fontPair (serif or sans), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none keeps slides typographic. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through review of every slide and bounded copy/layout repair. Prefer the version 2 brief with audience, purpose, tone, palette (editorial or signal), fontPair (serif or sans), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, table, process, comparison, list, quote, close. Chart slides take typed categories/series; table slides take headers/rows/source and compose editable cells. Call presentation_plan with gathered evidence first, execute its calculation and visual tool steps, then create the deck. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none keeps slides typographic. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
   input: z
@@ -74,10 +74,10 @@ export const documentCreate = defineTool({
       sourceContext: z.string().max(40_000).optional(),
       sourceRefs: z.array(sourceRefSchema).max(100).optional(),
       presentation: z
-        .union([presentationBriefV2Schema, presentationBriefSchema])
+        .union([presentationAuthoringV2Schema, presentationAuthoringSchema])
         .optional()
         .describe(
-          'Finished presentation content for kind=deck; composed and saved directly without AI generation. Put source detail and citations in speaker notes.',
+          'Finished presentation content for kind=deck; reviewed slide by slide, repaired and composed before saving. Put source detail and citations in speaker notes.',
         ),
       publishToGoogle: z.boolean().default(false),
       googleConnectionId: z.string().max(500).optional(),
@@ -131,6 +131,9 @@ export const documentCreate = defineTool({
       ? await dependencies.composeDocumentPresentation({
           userId,
           instruction: args.instructions || '',
+          sourceContext: args.sourceContext,
+          userEmail: ctx.userEmail || undefined,
+          userName: ctx.userName || undefined,
           presentation: args.presentation,
           assets,
           artwork: args.artwork,
@@ -150,6 +153,7 @@ export const documentCreate = defineTool({
           })
         : null;
     ctx.abortSignal?.throwIfAborted();
+    if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
     const document = await dependencies.createDocument({
       userId,
       kind: args.kind,

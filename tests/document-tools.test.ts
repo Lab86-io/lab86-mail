@@ -439,11 +439,13 @@ describe('document tools', () => {
       artwork: 'none',
       assets: [{ assetId: 'asset-1', src: 'https://owned/asset-1' }],
     });
-    expect(result).toMatchObject({ ok: true, notes: ['brief.pdf is not an image and was skipped.'] });
+    expect(result).toMatchObject({ ok: true });
+    expect(result.notes).toContain('brief.pdf is not an image and was skipped.');
+    expect(result.notes).toContain('Six slides. Added 2 public-domain paintings with credits.');
     expect(documentCreate.description).toContain('imageUploadIds');
     expect(documentCreate.description).not.toMatch(/\bAI\b/);
 
-    // Uploads on a text document are noted and never read; without uploads the field stays absent.
+    // Uploads on a text document are noted and never read; presentation review notes remain visible even without uploads.
     uploads.mockClear();
     proposal.mockClear();
     const memo = await runTool(
@@ -459,7 +461,7 @@ describe('document tools', () => {
       { kind: 'deck', title: 'Plain', instructions: 'Draft' },
       toolContext(),
     );
-    expect(plain.notes).toBeUndefined();
+    expect(plain.notes).toContain('Six slides. Added 2 public-domain paintings with credits.');
     expect(proposal.mock.calls[1][0]).not.toHaveProperty('artwork');
   });
 
