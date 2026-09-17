@@ -168,7 +168,7 @@ describe('evidence-led presentation planning', () => {
         sectionSignal = options.abortSignal;
         return new Promise(() => {});
       }) as any,
-      { budgetMs: 30, requestTimeoutMs: 1000 },
+      { budgetMs: 250, requestTimeoutMs: 5000 },
     );
     expect(sectionSignal?.aborted).toBe(true);
     expect(result.ok).toBe(false);

@@ -147,6 +147,9 @@ describe('guided presentation preferences', () => {
     const large = save({ ok: true, plan: 'x'.repeat(128001) });
     expect(large.output).toMatchObject({ ok: false, readyToBuild: false, outputOmitted: true });
     expect(large.input.evidence).toEqual(['Retained source']);
+    const unicode = { ok: true, plan: '界'.repeat(50000) };
+    expect(JSON.stringify(unicode).length).toBeLessThan(128000);
+    expect(save(unicode).output).toMatchObject({ ok: false, readyToBuild: false, outputOmitted: true });
   });
   test('optional provider nulls preserve data and restore confirmed storyboard choices', () => {
     const input = {

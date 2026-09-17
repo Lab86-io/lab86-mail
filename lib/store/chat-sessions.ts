@@ -61,7 +61,15 @@ export function compactMessage(message: any): any {
               : toolPartName(part) === 'presentation_plan'
                 ? MAX_PRESENTATION_PLAN_BYTES
                 : MAX_PART_JSON_BYTES;
-          if (part.output !== undefined && JSON.stringify(part.output).length <= limit) {
+          const serialized = part.output === undefined ? undefined : JSON.stringify(part.output);
+          // Measure the new plan budget in actual storage bytes. Keep existing
+          // receipt/text limits unchanged so older Unicode answers still restore.
+          if (
+            serialized !== undefined &&
+            (toolPartName(part) === 'presentation_plan'
+              ? new TextEncoder().encode(serialized).length
+              : serialized.length) <= limit
+          ) {
             compact.output = part.output;
           } else if (part.state === 'output-available') {
             compact.output =
