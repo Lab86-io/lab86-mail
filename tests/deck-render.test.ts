@@ -55,9 +55,7 @@ describe('deck render page', () => {
     expect(valueLabel.hasAttribute('textLength')).toBe(true);
     // Numeric values and their unit suffix must have a clear gap from the
     // category to their left.
-    const valueLeft =
-      Number(valueLabel.getAttribute('x')) -
-      Number(valueLabel.getAttribute('textLength'));
+    const valueLeft = Number(valueLabel.getAttribute('x')) - Number(valueLabel.getAttribute('textLength'));
     expect(valueLeft - categoryRight).toBeGreaterThan(6);
     expect(bars.every((bar) => Number(bar.getAttribute('height')) > 0)).toBe(true);
     expect(
