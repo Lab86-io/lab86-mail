@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
+import { withToolTimeout } from '@/lib/ai/tool-timeout';
 import { envFlag } from '@/lib/hosted/controls';
 import {
   artworksBySlideIndex,
@@ -29,7 +30,6 @@ import {
 } from './model';
 import { buildDeckTheme, type CompositionArtwork, type CompositionAsset } from './presentation-compositions';
 import {
-  applyCopyRepairs,
   briefFieldForElement,
   composePresentation,
   composePresentationV2,
@@ -39,13 +39,20 @@ import {
   PRESENTATION_DESIGN_GUIDANCE_V2,
   type PresentationBrief,
   type PresentationBriefV2,
-  presentationBriefSchema,
-  presentationBriefV2Schema,
+  presentationAuthoringSchema,
+  presentationAuthoringV2Schema,
   presentationSlideCountMatches,
   RESTYLE_CLASSIFIER_GUIDANCE,
   restyleClassificationSchema,
   restyleOperationFor,
 } from './presentation-design';
+import {
+  copyFields,
+  fitSlideCopy,
+  preservesNumericClaims,
+  replaceSlideCopy,
+  reviewPresentation,
+} from './presentation-review';
 import { MAX_SHEET_CHANGES, sheetChangeSchema, workbookText } from './sheet-workbook';
 import {
   spreadsheetCapabilities,
@@ -236,8 +243,8 @@ function issueList(issues: DeckIssue[]) {
 }
 
 /**
- * Quality loop for a composed deck: check, bounded repair, one optional model
- * call that shortens copy that still does not fit, then a final check. A deck
+ * Quality loop: review every slide, compose, repair with bounded model calls,
+ * preserve overflow in notes and check again. A deck
  * that still fails is never returned. The render check runs only when a
  * browser is available and DECK_RENDER_CHECK is set; its failure is a note in
  * the summary, not a failure of the generation.
@@ -246,10 +253,10 @@ async function finishComposedDeck(
   input: DeckGenerationInput,
   initial: PresentationBriefV2,
   art: DeckArtworkSelection = { note: '' },
-  allowCopyGeneration = true,
 ): Promise<{ brief: PresentationBriefV2; model: DeckModelV2; summary: string }> {
   input.abortSignal?.throwIfAborted();
-  let brief = initial;
+  const reviewed = await reviewPresentation(initial, input, dependencies.generateObjectForCurrentUser);
+  const brief = reviewed.brief;
   const slideIds = brief.slides.map((_, index) => `slide-${index + 1}`);
   const compose = () =>
     repairDeck(
@@ -261,7 +268,7 @@ async function finishComposedDeck(
       }),
     );
   let repaired = compose();
-  if (!repaired.report.ok) {
+  for (let attempt = 0; attempt < 2 && !repaired.report.ok; attempt++) {
     const targets: { slideId: string; field: string; text: string; problem: string }[] = [];
     for (const issue of repaired.report.issues) {
       if (issue.severity !== 'error') continue;
@@ -273,32 +280,58 @@ async function finishComposedDeck(
           targets.push({ slideId: issue.slideId, field, text: element.text, problem: issue.message });
       }
     }
-    if (targets.length && allowCopyGeneration) {
-      const { object } = await dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        feature: 'document_generation',
-        abortSignal: input.abortSignal,
-        speed: 'primary',
-        maxOutputTokens: 4_000,
-        schema: copyRepairSchema,
-        system: COPY_REPAIR_GUIDANCE,
-        prompt: JSON.stringify(targets),
-      });
-      const fixes = copyRepairSchema.safeParse(object);
-      if (fixes.success) {
-        brief = applyCopyRepairs(brief, slideIds, fixes.data.fixes);
-        repaired = compose();
+    if (targets.length) {
+      try {
+        const { object } = await withToolTimeout(
+          (signal) =>
+            dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
+              userId: input.userId,
+              userEmail: input.userEmail,
+              userName: input.userName,
+              feature: 'document_generation',
+              abortSignal: signal,
+              speed: 'primary',
+              maxOutputTokens: 4_000,
+              schema: copyRepairSchema,
+              system: COPY_REPAIR_GUIDANCE,
+              prompt: JSON.stringify(targets),
+            }),
+          'presentation_copy_repair',
+          { timeoutMs: 20_000, signal: input.abortSignal },
+        );
+        const fixes = copyRepairSchema.safeParse(object);
+        if (fixes.success) {
+          for (const fix of fixes.data.fixes) {
+            const slide = brief.slides[slideIds.indexOf(fix.slideId)];
+            const field = slide && copyFields(slide, true).find((field) => field.field === fix.field);
+            if (slide && field && preservesNumericClaims(field.text, fix.text))
+              replaceSlideCopy(slide, fix.field, fix.text);
+          }
+          for (const slide of brief.slides) fitSlideCopy(slide);
+          repaired = compose();
+        }
+      } catch {
+        input.abortSignal?.throwIfAborted();
       }
     }
-    if (!repaired.report.ok)
-      throw new DocumentGenerationError(
-        `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
-      );
   }
+  // If a critique service fails or copy still overflows, progressively extract
+  // readable visible copy, retaining every original field in speaker notes.
+  for (let pass = 0; pass < 4 && !repaired.report.ok; pass++) {
+    const failing = new Set(
+      repaired.report.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.slideId),
+    );
+    brief.slides.forEach((slide, index) => {
+      if (failing.has(slideIds[index])) fitSlideCopy(slide, 0.65 ** (pass + 1));
+    });
+    repaired = compose();
+  }
+  if (!repaired.report.ok)
+    throw new DocumentGenerationError(
+      `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
+    );
   input.abortSignal?.throwIfAborted();
-  let summary = `${brief.summary}${art.note}`;
+  let summary = `${brief.summary}${art.note}${reviewed.summary}`;
   if (envFlag('DECK_RENDER_CHECK')) {
     const browser = dependencies.availableRenderBrowser();
     if (browser) {
@@ -317,25 +350,31 @@ async function finishComposedDeck(
   return { brief, model: repaired.model, summary };
 }
 
-/** Compose finished content through the existing layout checks, without another model call. */
+/** Review every page, repair copy and layout, then compose the researched content. */
 export async function composeDocumentPresentation(
   input: DeckGenerationInput & { presentation: PresentationBrief | PresentationBriefV2 },
 ): Promise<DocumentProposal> {
   input.abortSignal?.throwIfAborted();
   const brief = input.presentation;
-  if (!('audience' in brief))
-    return { title: brief.title, summary: brief.summary, model: composePresentation(brief) };
+  if (!('audience' in brief)) {
+    const reviewed = await reviewPresentation(brief, input, dependencies.generateObjectForCurrentUser);
+    return {
+      title: brief.title,
+      summary: brief.summary + reviewed.summary,
+      model: composePresentation(reviewed.brief),
+    };
+  }
   if (!dependencies.isDeckV2AuthoringEnabled())
     throw new DocumentGenerationError(
       'Version 2 presentation authoring is disabled. Use the legacy presentation brief.',
     );
   const art = await selectDeckArtworks(input, brief);
-  const finished = await finishComposedDeck(input, brief, art, false);
+  const finished = await finishComposedDeck(input, brief, art);
   input.abortSignal?.throwIfAborted();
   return { title: brief.title, summary: finished.summary, model: finished.model };
 }
 
-/** New deck on the version 2 model: one model call for the brief, the composer, the quality loop. */
+/** New deck: generate an evidence-grounded brief, review every page, then compose and repair. */
 async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentProposal> {
   const { object } = await dependencies.generateObjectForCurrentUser({
     userId: input.userId,
@@ -345,7 +384,7 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
     abortSignal: input.abortSignal,
     speed: 'primary',
     maxOutputTokens: 14_000,
-    schema: presentationBriefV2Schema,
+    schema: presentationAuthoringV2Schema,
     system: PRESENTATION_DESIGN_GUIDANCE_V2,
     prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}${
       input.assets?.length
@@ -355,7 +394,7 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
   });
   let brief: PresentationBriefV2;
   try {
-    brief = presentationBriefV2Schema.parse(object);
+    brief = presentationAuthoringV2Schema.parse(object);
   } catch (error) {
     throw new DocumentGenerationError('The presentation generator returned an incomplete design.', {
       cause: error,
@@ -452,17 +491,17 @@ export async function generateDocumentProposal(input: {
       abortSignal: input.abortSignal,
       speed: 'primary',
       maxOutputTokens: 14_000,
-      schema: presentationBriefSchema,
+      schema: presentationAuthoringSchema,
       system: PRESENTATION_DESIGN_GUIDANCE,
       prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
     });
     try {
-      const brief = presentationBriefSchema.parse(object);
+      const brief = presentationAuthoringSchema.parse(object);
       if (!presentationSlideCountMatches(input.instruction, brief.slides.length))
         throw new DocumentGenerationError(
           `The generator returned ${brief.slides.length} slides outside the requested count constraints. No incomplete deck was saved.`,
         );
-      return { title: brief.title, summary: brief.summary, model: composePresentation(brief) };
+      return composeDocumentPresentation({ ...input, presentation: brief });
     } catch (error) {
       throw new DocumentGenerationError('The presentation generator returned an incomplete design.', {
         cause: error,

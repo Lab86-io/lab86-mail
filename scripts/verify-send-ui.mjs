@@ -59,6 +59,41 @@ try {
     'PASS actual composer honors preference; idle clock; immediate Undo restores without a delayed wipe',
   );
 
+  const reply = await setup('?seconds=10&delay=5000');
+  await reply.clock.install();
+  await reply.evaluate(() =>
+    window.sendPreview.state().openComposeReply({
+      mode: 'reply',
+      threadId: 'thread-1',
+      messageId: 'message-1',
+      account: 'sender@example.test',
+      prefill: { subject: 'Reply countdown', body: 'Keep my reply' },
+    }),
+  );
+  await reply.getByRole('button', { name: 'Send', exact: true }).click();
+  await notice(reply, 'Reply countdown').waitFor();
+  assert.match(await notice(reply, 'Reply countdown').innerText(), /Preparing send/);
+  await notice(reply, 'Reply countdown').getByRole('button', { name: 'Undo send' }).click();
+  await reply.clock.fastForward(6000);
+  assert.equal(await reply.locator('textarea:not([aria-hidden])').inputValue(), 'Keep my reply');
+  assert.equal((await counts(reply)).effectCount, 0);
+  console.log('PASS actual reply Send shows immediate Undo and preserves reply after late acknowledgment');
+
+  const slow = await setup('?seconds=10&delay=5000');
+  await slow.clock.install();
+  await slow.getByRole('button', { name: 'New message', exact: true }).click();
+  await slow.getByRole('button', { name: 'Send', exact: true }).click();
+  const preparing = notice(slow, 'The launch is ready');
+  await preparing.waitFor();
+  assert.match(await preparing.innerText(), /Preparing send/);
+  await preparing.getByRole('button', { name: 'Undo send' }).click();
+  await preparing.waitFor({ state: 'detached' });
+  await slow.clock.fastForward(6000);
+  assert.equal(await preparing.count(), 0);
+  assert.equal(await slow.locator('textarea:not([aria-hidden])').inputValue(), 'Let’s make it happen.');
+  assert.equal((await counts(slow)).effectCount, 0);
+  console.log('PASS toast appears before server response; early Undo survives late acknowledgment');
+
   for (const mode of ['new', 'reply', 'reply_all', 'forward']) {
     await register(page, mode, 30, mode);
     await notice(page, mode).getByRole('button', { name: 'Undo send' }).click();

@@ -429,6 +429,7 @@ export const deleteUserCascade = mutation({
     // mailbox, so they drain through the scheduled purge instead.
     const userTables = [
       'connectedAccounts',
+      'mailOutbox',
       'providerGrants',
       'nylasOAuthStates',
       'aiSettings',
@@ -487,6 +488,8 @@ export const deleteUserCascade = mutation({
       const rows = await rowsByUser(ctx, table, args.userId);
       counts[table] = rows.length;
       for (const row of rows) {
+        if (table === 'mailOutbox' && 'payloadId' in row && row.payloadId)
+          await ctx.storage.delete(row.payloadId);
         if (table === 'documents' && 'importSource' in row && row.importSource) {
           // The preserved workbook belongs to this document's owner. Remove
           // its private bytes before deleting the only storage reference.

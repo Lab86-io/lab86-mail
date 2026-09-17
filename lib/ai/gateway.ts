@@ -53,6 +53,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_local: 300,
   albatross_classify: 2000,
   document_generation: 14000,
+  presentation_planning: 24000,
   document_suggestion: 14000,
   // One structured verdict per message: a handful of area ids plus short
   // evidence strings. Deliberately tight — a verdict that needs more room than
@@ -389,7 +390,7 @@ export async function generateObjectForCurrentUser<T>(
     feature?: string;
     speed?: AiSpeed;
     userId?: string | null;
-    reasoningEffort?: 'none' | 'minimal' | 'low';
+    reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   },
 ): Promise<{ object: T }> {
   const {

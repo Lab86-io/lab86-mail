@@ -30,8 +30,13 @@ globalThis.fetch = (async (input, init) => {
       return Response.json({ ok: true, scheduled: { sendAt: Number(form.get('sendAt')) } });
     const undoSeconds = Number(form.get('undoSeconds') || 0);
     if (!undoSeconds) return Response.json({ ok: true, sent: { account: 'sender@example.test' } });
-    const receipt = { id: crypto.randomUUID(), fireAt: Date.now() + undoSeconds * 1_000, undoSeconds };
+    const receipt = {
+      id: String(form.get('pendingId') || crypto.randomUUID()),
+      fireAt: Date.now() + undoSeconds * 1_000,
+      undoSeconds,
+    };
     receipts.set(receipt.id, receipt);
+    if (params.has('delay')) await new Promise((resolve) => setTimeout(resolve, Number(params.get('delay'))));
     return Response.json({ ok: true, pending: receipt });
   }
   if (path === '/api/compose/undo') {

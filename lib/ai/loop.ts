@@ -4,7 +4,6 @@ import {
   createUIMessageStreamResponse,
   jsonSchema,
   type ModelMessage,
-  stepCountIs,
   streamText,
 } from 'ai';
 import { z } from 'zod';
@@ -190,6 +189,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'tasks_attach_link',
   'tasks_attach_file',
   'tasks_attach_calendar_event_link',
+  'presentation_plan',
   'document_create',
   'document_list',
   'document_get',
@@ -690,6 +690,16 @@ export function activeToolsForStep(
   return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]);
 }
 
+/** A planned deck needs room for research, workbook calculations, composition and verification. */
+export function agentStepLimit(steps: ReadonlyArray<{ content?: unknown }>) {
+  const presentation = steps.some(
+    (step) =>
+      Array.isArray(step.content) &&
+      step.content.some((part) => part?.type === 'tool-call' && part.toolName === 'presentation_plan'),
+  );
+  return presentation ? 40 : 20;
+}
+
 /**
  * Run the agent turn as a live stream. Walks the runtime chain: a runtime that
  * fails (or finishes empty) before any content was forwarded is dropped and
@@ -719,7 +729,7 @@ async function streamAgentTurn(
       abortSignal: options.signal,
       // Multi-step flows (fetch a file → store → attach → send) need headroom
       // beyond the old 6-step cap.
-      stopWhen: stepCountIs(20),
+      stopWhen: ({ steps }) => steps.length >= agentStepLimit(steps),
       // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
       // that OpenRouter 402s on); leaves room for reasoning + a reply.
       maxOutputTokens: maxOutputTokensForFeature(feature),

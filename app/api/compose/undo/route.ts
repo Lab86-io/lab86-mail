@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { stopNylasScheduledMessage } from '@/lib/nylas/provider';
+import { cancelOutbox } from '@/lib/send/outbox';
 import {
   cancelPending,
   getPendingStatus,
@@ -12,9 +13,10 @@ import { writeAudit } from '@/lib/store/audit';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const defaultDependencies = { requireCurrentUser, stopNylasScheduledMessage, writeAudit };
+const defaultDependencies = { requireCurrentUser, stopNylasScheduledMessage, writeAudit, cancelOutbox };
 
-export function createComposeUndoPost(deps = defaultDependencies) {
+export function createComposeUndoPost(overrides: Partial<typeof defaultDependencies> = {}) {
+  const deps = { ...defaultDependencies, ...overrides };
   return async function POST(req: NextRequest) {
     let body: any = {};
     try {
@@ -25,6 +27,10 @@ export function createComposeUndoPost(deps = defaultDependencies) {
 
     try {
       const user = await deps.requireCurrentUser();
+      if (pendingId.startsWith('outbox:')) {
+        const undone = await deps.cancelOutbox(user.userId, pendingId);
+        return NextResponse.json({ ok: true, undone });
+      }
       // Pending ids are minted as `${userId}:${uuid}` — only the owner cancels.
       if (!pendingId.startsWith(`${user.userId}:`)) {
         return NextResponse.json({ ok: false, error: 'not found' }, { status: 404 });

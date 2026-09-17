@@ -2,7 +2,7 @@ import { contrastRatio, textFits } from './deck-quality';
 import type { DeckElementV2, DeckModelV2, DeckSlideV2, DeckTheme } from './model';
 
 /**
- * The eleven slide compositions of the presentation design system, composed
+ * The slide compositions of the presentation design system, composed
  * deterministically from content. Geometry, type scale and spacing copy the
  * reference deck in `deck-fixtures.ts` number for number; a test keeps the two
  * within half a percent. Long copy steps the type down by rule, never past
@@ -16,6 +16,7 @@ export const COMPOSITION_ROLES = [
   'image-right',
   'metrics',
   'chart',
+  'table',
   'process',
   'comparison',
   'list',
@@ -277,6 +278,7 @@ export interface CompositionContent {
   items: CompositionItem[];
   notes?: string;
   chart?: CompositionChart;
+  table?: { headers: string[]; rows: string[][]; source?: string | null };
   image?: CompositionImage;
   /** Cover foot line, e.g. who the deck is for. */
   footer?: string;
@@ -893,6 +895,54 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
 }
 
+/** Editable table cells, using the same typography and rules as the deck. */
+function composeTable(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
+  const v = voice(options.theme);
+  const s = new Slide('table', options);
+  kickerLine(s, v, content.kicker, [6, 7, 88, 4.5]);
+  sectionTitle(s, v, content.title, [6, 14, 88, 14], 34);
+  if (content.body)
+    s.text('body', content.body, [6, 29, 88, 8], {
+      role: 'body',
+      fontSize: 14,
+      color: v.c.muted,
+      valign: 'top',
+    });
+  if (content.table) {
+    const { headers, rows, source } = content.table;
+    const width = 88 / headers.length;
+    const rowHeight = Math.min(8, 48 / (rows.length + 1));
+    headers.forEach((header, column) => {
+      s.text(`table-header-${column}`, header, [6 + column * width, 39, width - 2, rowHeight - 1], {
+        role: 'subtitle',
+        fontSize: 12,
+        fontWeight: 600,
+        color: v.c.accent,
+        align: column > 0 && rows.every((row) => /^[-+\d$€£]/.test(row[column])) ? 'right' : 'left',
+        valign: 'middle',
+      });
+    });
+    s.rule('table-header-rule', 6, 39 + rowHeight - 0.5, 88, v.c.ink);
+    rows.forEach((row, index) => {
+      const y = 39 + (index + 1) * rowHeight;
+      row.forEach((cell, column) => {
+        s.text(`table-cell-${index}-${column}`, cell, [6 + column * width, y, width - 2, rowHeight - 1], {
+          role: 'body',
+          fontSize: 12,
+          color: v.c.ink,
+          valign: 'middle',
+          align: column > 0 && /^[-+\d$€£]/.test(cell) ? 'right' : 'left',
+        });
+      });
+      s.rule(`table-rule-${index}`, 6, y + rowHeight - 0.5, 88, v.c.muted, 0.4);
+    });
+    if (source)
+      s.text('source', source, [6, 90, 76, 5], { role: 'caption', fontSize: 10.5, color: v.c.muted });
+  }
+  pageNumber(s, options, v.c.muted);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+}
+
 function composeChart(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
   if (!content.chart) return composeMetrics({ ...content, role: 'metrics' }, options);
   const v = voice(options.theme);
@@ -1252,6 +1302,8 @@ export function composeSlide(content: CompositionContent, options: ComposeSlideO
       return composeImageSide(content, options, 'right');
     case 'metrics':
       return composeMetrics(content, options);
+    case 'table':
+      return composeTable(content, options);
     case 'chart':
       return composeChart(content, options);
     case 'process':

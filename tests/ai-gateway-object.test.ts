@@ -75,6 +75,34 @@ describe('structured AI gateway', () => {
     expect(usage[0].slice(1)).toEqual(['albatross_area_route', { inputTokens: 10, outputTokens: 2 }, true]);
   });
 
+  test('presentation planning forwards high effort with a bounded output budget', async () => {
+    let sent: any;
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () =>
+        ({
+          userId: 'planner',
+          source: 'lab86',
+          provider: 'openai',
+          modelName: 'gpt-5.5',
+          model: 'resolved',
+        }) as any,
+      generateObject: (async (request: any) => {
+        sent = request;
+        return { object: {}, usage: {} };
+      }) as any,
+      recordUsage: async () => undefined,
+    });
+    await generateObjectForCurrentUser({
+      userId: 'planner',
+      schema: {},
+      feature: 'presentation_planning',
+      speed: 'primary',
+      reasoningEffort: 'high',
+    });
+    expect(sent.providerOptions.openai.reasoningEffort).toBe('high');
+    expect(sent.maxOutputTokens).toBe(24000);
+  });
+
   test('preserves caller provider options and records/rethrows failed generation', async () => {
     const usage: any[] = [];
     const runtime = {

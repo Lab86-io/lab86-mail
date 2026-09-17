@@ -18,18 +18,24 @@ export function PendingSendToast({
 }) {
   const remaining = Math.max(0, record.fireAt - now);
   const seconds = Math.ceil(remaining / 1_000);
-  const canUndo = (record.status === 'pending' || record.status === 'unknown') && seconds > 0;
+  const preparing = record.status === 'preparing';
+  const canUndo =
+    preparing ||
+    ((record.status === 'pending' || record.status === 'unknown') &&
+      (seconds > 0 || record.id.startsWith('outbox:')));
   const recoverable = record.status === 'failed' || record.status === 'cancelled';
   const progress = Math.min(1, remaining / Math.max(1, record.undoSeconds * 1_000));
   const label = cancelling
     ? 'Cancelling send…'
-    : canUndo
-      ? 'Ready to send'
-      : recoverable
-        ? record.status === 'failed'
-          ? 'Send failed'
-          : 'Send cancelled'
-        : 'Confirming send…';
+    : preparing
+      ? 'Preparing send…'
+      : canUndo
+        ? 'Ready to send'
+        : recoverable
+          ? record.status === 'failed'
+            ? 'Send failed'
+            : 'Send cancelled'
+          : 'Confirming send…';
 
   return (
     <section

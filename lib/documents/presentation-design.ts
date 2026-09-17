@@ -229,6 +229,20 @@ const briefImageSchema = z.object({
   assetId: z.string().max(200).nullish(),
 });
 
+export const briefTableSchema = z
+  .object({
+    headers: z.array(z.string().min(1).max(40)).min(2).max(4),
+    rows: z
+      .array(z.array(z.string().max(60)).min(2).max(4))
+      .min(1)
+      .max(6),
+    source: z.string().max(200).nullish(),
+  })
+  .refine((table) => table.rows.every((row) => row.length === table.headers.length), {
+    message: 'Each row needs one cell per header.',
+    path: ['rows'],
+  });
+
 export const presentationBriefV2Schema = z.object({
   title: z.string().min(1).max(120),
   summary: z.string().min(1).max(1000),
@@ -248,6 +262,7 @@ export const presentationBriefV2Schema = z.object({
         items: z.array(briefItemSchema).max(4).default([]),
         notes: z.string().max(4000),
         chart: briefChartSchema.nullish(),
+        table: briefTableSchema.nullish(),
         image: briefImageSchema.nullish(),
         visualRole: z.string().max(200),
       }),
@@ -257,12 +272,52 @@ export const presentationBriefV2Schema = z.object({
 });
 export type PresentationBriefV2 = z.infer<typeof presentationBriefV2Schema>;
 
+// Authoring copy is reviewed before compact layout budgets are enforced.
+// Structure stays bounded; a paragraph over 320 characters is repairable input.
+const authoringCopy = {
+  title: z.string().min(1).max(2000),
+  kicker: z.string().max(1000),
+  body: z.string().max(8000),
+  notes: z.string().max(12000),
+};
+export const presentationAuthoringSchema = presentationBriefSchema.extend({
+  slides: z
+    .array(
+      presentationBriefSchema.shape.slides.element.extend({
+        ...authoringCopy,
+        items: z.array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) })).max(3),
+      }),
+    )
+    .min(1)
+    .max(30),
+});
+export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
+  slides: z
+    .array(
+      presentationBriefV2Schema.shape.slides.element.extend({
+        ...authoringCopy,
+        items: z
+          .array(
+            briefItemSchema.extend({
+              label: z.string().min(1).max(1000),
+              detail: z.string().max(4000),
+              meta: z.string().max(1000).nullish(),
+            }),
+          )
+          .max(4)
+          .default([]),
+      }),
+    )
+    .min(1)
+    .max(30),
+});
+
 export const PRESENTATION_DESIGN_GUIDANCE_V2 = `Design a complete presentation as 16:9 slides. Return finished slide copy and an art-direction brief, not instructions to create them.
 The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. imagery holds the subject words for public-domain paintings that fit the topic, for example "harbor, ships, dusk"; write "none" when the deck should stay typographic. Palettes: editorial (warm paper, ink navy, rust accent) or signal (cool paper, near-black ink, electric blue). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces display with Geist text) or sans (Geist throughout). Editorial with serif is the default.
 Every slide has one composition role. cover: title, kicker, one-sentence body, optional image. statement: one sentence that carries the slide, optional support line. image-left and image-right: kicker, title, body, up to three short facts as items, an image request. metrics: title and up to three numbers as items (label is the number, detail is what it measures) with chart data. chart: title, body and chart data; items are up to three callouts. process: title and two to four steps as items (label is the step, meta is the date, detail is one sentence). comparison: title and two to four sides as items. list: title and two to four items. quote: the quote as the title, the attribution as the body. close: title, two to four asks as items, a contact line as the body.
 Vary the roles across the deck; use at least four different roles in a deck of five or more slides. Open with a cover and end with a close. Use metrics or chart only when the grounding material supplies the numbers. Never invent numbers; use metrics only when the grounding material supplies them. Never invent citations.
 Image requests need alt text and a subject. Only set assetId to an asset id listed in the grounding material. Never reference an outside image address; a slide without an owned image composes as typography.
-Respect the requested slide count. Write short headlines, concise labels and details that fit their limits. Speaker notes carry sources, nuance, exact dates with time zones and the fuller explanation. Each slide holds real content, never placeholders or a restatement of the request. Only attribute events to a date when source timestamps support it. Plain language, no emoji.`;
+Use role table for precise comparisons with headers (2–4), rows (1–6), and a source caption. Use real chart data for trends or numerical comparisons. Choose a visual that proves the slide takeaway; never invent data or substitute prose for a chart. Respect the requested slide count. Write short headlines, concise labels and details that fit their limits. Speaker notes carry sources, nuance, exact dates with time zones and the fuller explanation. Each slide holds real content, never placeholders or a restatement of the request. Only attribute events to a date when source timestamps support it. Plain language, no emoji.`;
 
 /** The compositions that hang a painting when no owned image takes the slot. */
 export const ARTWORK_ROLES: readonly CompositionRole[] = [
@@ -323,6 +378,7 @@ export function briefToContents(brief: PresentationBriefV2, options: ComposePres
       items: briefItems(slide.items),
       ...(slide.notes.trim() ? { notes: slide.notes } : {}),
       ...(slide.chart ? { chart: briefChart(slide.chart) } : {}),
+      ...(slide.table ? { table: slide.table } : {}),
       ...(slide.image ? { image: { alt: slide.image.alt, ...(asset ? { asset } : {}) } } : {}),
       ...(artwork ? { artwork } : {}),
       ...(slide.role === 'cover' && brief.audience.trim()
@@ -332,7 +388,7 @@ export function briefToContents(brief: PresentationBriefV2, options: ComposePres
   });
 }
 
-/** The brief composed into a version 2 deck through the eleven compositions. */
+/** The brief composed into a version 2 deck through the designed compositions. */
 export function composePresentationV2(
   brief: PresentationBriefV2,
   options: ComposePresentationOptions = {},
@@ -512,6 +568,8 @@ export function extractSlideContent(
   total: number,
   theme: DeckTheme,
 ): ExtractedSlide | null {
+  // Table cells are deliberate grid geometry; preserve it through restyles.
+  if (slide.elements.some((element) => parseSlotName(element.name)?.role === 'table')) return null;
   const ids: Partial<Record<string, string>> = {};
   let role: CompositionRole | null = null;
   let title: string | undefined;
