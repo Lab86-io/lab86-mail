@@ -70,7 +70,8 @@ describe('the imagery plan', () => {
     ]);
     const cover = plan.slots[0];
     expect(cover.slotId).toBe('slot-1');
-    expect(cover.query.text).toBe('landscapes valley lakeshore trail community update autumn 2026');
+    expect(cover.query.text).toBe('valley landscapes lakeshore trail community update autumn 2026');
+    expect(plan.slots.find((slot) => slot.slideIndex === 2)!.query.text.startsWith('hills ')).toBe(true);
     expect(cover.query.styles).toEqual(plan.styles);
     expect(cover.query.accentHue).toBe(plan.accentHue);
     expect(cover.query.count).toBeGreaterThan(1);
