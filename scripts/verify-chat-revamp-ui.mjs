@@ -85,10 +85,16 @@ try {
     await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
     await page.evaluate(() => document.documentElement.classList.add('dark'));
     await page.locator('[data-slot="work-log"]').first().scrollIntoViewIfNeeded();
-    const transitions = await page
-      .locator('[data-slot="work-log"] > button svg')
-      .evaluateAll((icons) => icons.map((icon) => getComputedStyle(icon).transitionDuration));
-    if (!transitions.length || transitions.some((duration) => duration !== '0s'))
+    const transitions = await page.locator('[data-slot="work-log"] > button svg').evaluateAll((icons) =>
+      icons.map((icon) => {
+        const style = getComputedStyle(icon);
+        return { property: style.transitionProperty, duration: style.transitionDuration };
+      }),
+    );
+    if (
+      !transitions.length ||
+      transitions.some(({ property, duration }) => property !== 'none' && duration !== '0s')
+    )
       throw Error('Steps icons animate despite reduced motion');
     await page.screenshot({ path: `/tmp/chat-preview/${name}-dark-reduced-motion.png` });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
