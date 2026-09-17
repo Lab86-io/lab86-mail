@@ -4,7 +4,12 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
   test('runtime provider selection runs with isolated provider fixtures', async () => {
     const child = Bun.spawn([process.execPath, 'test', import.meta.path], {
       cwd: process.cwd(),
-      env: { ...process.env, CHAT_RUNTIME_SELECTION_TEST: '1' },
+      env: {
+        ...process.env,
+        CHAT_RUNTIME_SELECTION_TEST: '1',
+        LAB86_MAIL_OPENAI_MODEL: 'z-ai/glm-5.3-flash',
+        LAB86_MAIL_OPENAI_FAST_MODEL: 'z-ai/glm-5.3-flash',
+      },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -54,6 +59,21 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
     )) as typeof fetch;
   const { resolveAiRuntime } = await import('../lib/ai/gateway');
   describe('actual runtime state resolution', () => {
+    test('a direct OpenAI key uses native defaults when hosted defaults are GLM', async () => {
+      const { defaultModelsFor } = await import('../lib/ai/model-catalog');
+      const { toDirectModelId } = await import('../lib/ai/model-router');
+      state = {
+        settings: { enabled: true, mode: 'byok', provider: 'openai' },
+        key: { provider: 'openai', encryptedKey: 'fixture' },
+      };
+      for (const speed of ['primary', 'fast'] as const) {
+        const result = await resolveAiRuntime({ userId: 'fixture-user', speed, feature: 'agent' });
+        const expected = toDirectModelId(defaultModelsFor('openai')[speed === 'primary' ? 'normal' : 'fast']);
+        expect(result).toMatchObject({ source: 'byok', provider: 'openai', modelName: expected });
+        expect(result.model.modelId).toBe(expected);
+        expect(result.modelName).not.toContain('glm');
+      }
+    });
     for (const provider of ['openrouter', 'openai', 'anthropic'] as const) {
       test(`honors both saved slots with a ${provider} key`, async () => {
         const anthropic = provider === 'anthropic';

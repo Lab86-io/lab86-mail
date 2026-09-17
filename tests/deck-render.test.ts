@@ -4,7 +4,10 @@ import { checkDeck, estimateTextLines, repairDeck, textFits } from '../lib/docum
 import { availableRenderBrowser, renderDeckHtml } from '../lib/documents/deck-render';
 
 describe('deck render page', () => {
-  test('horizontal bars keep upright labels and signed data on the correct side of zero', async () => {
+  test.each([
+    '',
+    ' USD',
+  ])('horizontal bars keep upright, separated labels and signed data (unit: %s)', async (unit) => {
     const model = referenceDeck('editorial');
     model.slides = [
       {
@@ -22,6 +25,7 @@ describe('deck render page', () => {
             categories: ['Loss', 'Gain'],
             series: [{ name: 'Net', values: [-50, 100] }],
             values: true,
+            unit,
           },
         ],
       },
@@ -41,6 +45,18 @@ describe('deck render page', () => {
     }));
     expect(loss.x + loss.width).toBeCloseTo(gain.x);
     expect(gain.width).toBeCloseTo(loss.width * 2);
+    const labels = [...document.querySelectorAll('text')];
+    const category = labels.find((label) => label.textContent === 'Loss')!;
+    const valueLabel = labels.find(
+      (label) => label.textContent === `-50${unit}` && label.getAttribute('text-anchor') === 'end',
+    )!;
+    const categoryRight = Number(category.getAttribute('x'));
+    // Numeric values and their unit suffix must have a clear gap from the
+    // category to their left.
+    const valueLeft =
+      Number(valueLabel.getAttribute('x')) -
+      `-50${unit}`.length * Number(valueLabel.getAttribute('font-size')) * 0.65;
+    expect(valueLeft - categoryRight).toBeGreaterThan(6);
     expect(bars.every((bar) => Number(bar.getAttribute('height')) > 0)).toBe(true);
     expect(
       [...document.querySelectorAll('text')]
