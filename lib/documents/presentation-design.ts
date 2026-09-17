@@ -280,16 +280,26 @@ const authoringCopy = {
   body: z.string().max(8000),
   notes: z.string().max(12000),
 };
+// Leave room below the 50,000-character persisted slide-note limit for
+// preservation labels and artwork credits. Count JSON escaping as well.
+export function fitsPresentationPreservationBudget(slide: object) {
+  return JSON.stringify(slide).length <= 40_000;
+}
+export const PRESENTATION_PRESERVATION_BUDGET_MESSAGE =
+  'A slide may contain at most 40,000 serialized characters of source material so originals fit in speaker notes. Condense this slide or reference a supporting document.';
 export const presentationAuthoringSchema = presentationBriefSchema.extend({
   slides: z
     .array(
-      presentationBriefSchema.shape.slides.element.extend({
-        ...authoringCopy,
-        items: z
-          .array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) }))
-          .max(12)
-          .describe('Aim for at most 3 concise items. Excess draft items are grouped during slide review.'),
-      }),
+      presentationBriefSchema.shape.slides.element
+        .extend({
+          ...authoringCopy,
+          items: z
+            .array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) }))
+            .max(12)
+            .describe('Aim for at most 3 concise items. Excess draft items are grouped during slide review.'),
+        })
+        .refine(fitsPresentationPreservationBudget, PRESENTATION_PRESERVATION_BUDGET_MESSAGE)
+        .describe(PRESENTATION_PRESERVATION_BUDGET_MESSAGE),
     )
     .min(1)
     .max(30),
@@ -297,22 +307,25 @@ export const presentationAuthoringSchema = presentationBriefSchema.extend({
 export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
   slides: z
     .array(
-      presentationBriefV2Schema.shape.slides.element.extend({
-        ...authoringCopy,
-        items: z
-          .array(
-            briefItemSchema.extend({
-              label: z.string().min(1).max(1000),
-              detail: z.string().max(4000),
-              meta: z.string().max(1000).nullish(),
-            }),
-          )
-          .max(12)
-          .describe(
-            'Visible budget: 4 items for lists/process/comparison/metrics/image/close; 3 chart callouts; 1 quote context item; no items for cover/statement/table. Up to 12 draft items can be grouped during review. Put source detail in notes.',
-          )
-          .default([]),
-      }),
+      presentationBriefV2Schema.shape.slides.element
+        .extend({
+          ...authoringCopy,
+          items: z
+            .array(
+              briefItemSchema.extend({
+                label: z.string().min(1).max(1000),
+                detail: z.string().max(4000),
+                meta: z.string().max(1000).nullish(),
+              }),
+            )
+            .max(12)
+            .describe(
+              'Visible budget: 4 items for lists/process/comparison/metrics/image/close; 3 chart callouts; 1 quote context item; no items for cover/statement/table. Up to 12 draft items can be grouped during review. Put source detail in notes.',
+            )
+            .default([]),
+        })
+        .refine(fitsPresentationPreservationBudget, PRESENTATION_PRESERVATION_BUDGET_MESSAGE)
+        .describe(PRESENTATION_PRESERVATION_BUDGET_MESSAGE),
     )
     .min(1)
     .max(30),

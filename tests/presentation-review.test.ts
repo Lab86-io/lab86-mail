@@ -2,9 +2,11 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { __setDocumentAiDepsForTest, composeDocumentPresentation } from '../lib/documents/ai';
 import { compositionArtwork } from '../lib/documents/deck-imagery';
 import { checkDeck } from '../lib/documents/deck-quality';
+import { parseDocumentModel } from '../lib/documents/model';
 import {
   briefFieldForElement,
   composePresentationV2,
+  presentationAuthoringSchema,
   presentationAuthoringV2Schema,
 } from '../lib/documents/presentation-design';
 import {
@@ -17,6 +19,81 @@ import { harborBrief, passingSlideReviews, poolArtworks } from './fixtures/prese
 
 afterEach(() => __setDocumentAiDepsForTest());
 describe('every-slide presentation review', () => {
+  test('oversized preserved source is rejected before review, including JSON escape expansion', async () => {
+    const brief = harborBrief();
+    brief.slides = [
+      {
+        ...brief.slides[0],
+        items: Array.from({ length: 12 }, () => ({ label: 'L'.repeat(1000), detail: 'D'.repeat(4000) })),
+      },
+    ];
+    const parsed = presentationAuthoringV2Schema.safeParse(brief);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.message).toContain('40,000 serialized characters');
+    const generate = mock(async (options: any) => passingSlideReviews(options));
+    await expect(
+      reviewPresentation(brief, { userId: 'u', instruction: '' }, generate as any),
+    ).rejects.toThrow('40,000 serialized characters');
+    expect(generate).not.toHaveBeenCalled();
+    const legacy = {
+      title: 'Large draft',
+      summary: '',
+      palette: 'ink',
+      slides: [
+        { layout: 'columns', title: 'Title', kicker: '', body: '', notes: '', items: brief.slides[0].items },
+      ],
+    };
+    expect(presentationAuthoringSchema.safeParse(legacy).success).toBe(false);
+    brief.slides[0].items = [];
+    brief.slides[0].notes = '\u0000'.repeat(12000);
+    expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(false);
+  });
+  test('large accepted drafts preserve originals once and still satisfy the persisted document schema', async () => {
+    const brief = harborBrief();
+    brief.slides = [
+      {
+        ...brief.slides[0],
+        role: 'list',
+        title: 'L'.repeat(1000),
+        body: 'D'.repeat(1000),
+        kicker: 'K'.repeat(100),
+        notes: 'N'.repeat(4000),
+        items: Array.from({ length: 12 }, () => ({
+          label: 'L'.repeat(1000),
+          detail: 'D'.repeat(1500),
+          meta: 'M'.repeat(100),
+        })),
+      },
+    ];
+    expect(presentationAuthoringV2Schema.safeParse(brief).success).toBe(true);
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) =>
+        options.schema === slideReviewSchema
+          ? passingSlideReviews(options)
+          : { object: { fixes: [] } }) as any,
+    });
+    const proposal = await composeDocumentPresentation({
+      userId: 'u',
+      instruction: '',
+      presentation: brief,
+      artwork: 'none',
+    });
+    const model = proposal.model as any;
+    expect(() => parseDocumentModel(model)).not.toThrow();
+    expect(model.slides[0].notes.length).toBeLessThan(50000);
+    expect(model.slides[0].notes).toContain(JSON.stringify(brief.slides[0].items));
+    expect(model.slides[0].notes.match(/Original title:/g)).toHaveLength(1);
+    expect(model.slides[0].notes).not.toContain('Original items.');
+    const slide = harborBrief().slides[0];
+    slide.notes = 'Original title:\nAn unrelated user note';
+    const original = slide.title;
+    replaceSlideCopy(slide, 'title', 'Intermediate repair');
+    replaceSlideCopy(slide, 'title', 'Final repair');
+    expect(slide.notes).toContain(original);
+    expect(slide.notes).not.toContain('Intermediate repair');
+    expect(slide.notes).toContain('An unrelated user note');
+  });
   test('five to twelve draft items are reviewed in visible groups, with exact evidence and slide count preserved', async () => {
     for (const count of [5, 12]) {
       const brief = harborBrief();
