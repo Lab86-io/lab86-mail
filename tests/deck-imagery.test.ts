@@ -337,6 +337,13 @@ describe('compositions with artwork', () => {
     expect(artworkImages(imageLeft)[0]).toMatchObject({ x: 0, width: 46 });
     expect(bySlot(imageLeft, 'credit')).toMatchObject({ x: 52, width: 33 });
     expect(bySlot(imageLeft, 'title')).toMatchObject({ x: 52 });
+    const data = lakeshoreBrief('signal').slides[3].chart!;
+    expect(elements(lakeshore, 3).find((element) => element.type === 'chart')).toMatchObject({
+      categories: data.categories,
+      series: data.series,
+      unit: data.unit,
+      source: data.source,
+    });
     // The typographic variants are unchanged without artwork.
     const plain = composePresentationV2(lakeshoreBrief('signal'));
     expect(plain.slides[1].background).toBe(plain.theme.colors.accent);

@@ -353,7 +353,7 @@ export function liftToolsForAgent(
             args = {
               ...(args as object),
               presentation,
-              ...(presentationSession.design
+              ...(presentationSession.design?.imagery
                 ? { artwork: presentationSession.design.imagery === 'paintings' ? 'auto' : 'none' }
                 : {}),
             };
@@ -557,7 +557,7 @@ export function liftToolsForAgent(
   });
   lifted[PRESENTATION_CHOICE_TOOL] = aiTool({
     description:
-      'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and imagery), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
+      'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and optional design notes), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Mix relevant artwork, user-provided images, and data visuals as needed; never ask the user to choose a single imagery category for the deck. Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
     // Client tools have no invokeTool validation. Validate here so SDK tool-error
     // results reach the model for repair instead of stranding an unusable card.
     inputSchema: modelInputSchema(presentationChoiceSchemaForSession(presentationSession), true),

@@ -30,7 +30,7 @@ import {
 import { compactMessage } from '../lib/store/chat-sessions';
 import { __setDocumentToolDepsForTest } from '../lib/tools/documents';
 import { presentationPlan } from '../lib/tools/presentations';
-import { harborBrief, retroBrief } from './fixtures/presentation-briefs';
+import { harborBrief, retroBrief, VALLEY } from './fixtures/presentation-briefs';
 import { runTool } from './tools/harness';
 
 const brief = {
@@ -116,6 +116,41 @@ function ready(): PresentationSession {
 afterEach(() => __setDocumentToolDepsForTest());
 
 describe('guided presentation preferences', () => {
+  test('new design receipts omit imagery and allow artwork, owned images and approved data together', async () => {
+    const { imagery: _legacyImagery, ...currentDesign } = design;
+    const input = presentationChoiceInputSchema.parse({ ...part('design').input, imagery: 'none' });
+    expect(input).not.toHaveProperty('imagery');
+    const session = presentationSessionFromMessages(
+      messages([part('brief'), part('design', { design: currentDesign }), part('storyboard')]),
+    );
+    expect(nextPresentationCheckpoint(session)).toBeNull();
+    expect(session.design).toEqual(currentDesign);
+    const uploads = mock(async () => ({ assets: [VALLEY], notes: [] }));
+    const proposal = mock(async (input: any) => {
+      expect(input.assets).toEqual([VALLEY]);
+      expect(input.artwork).toBe('auto');
+      expect(input.presentation.slides[1].chart).toEqual(chart);
+      throw new Error('Mixed visuals reached composition');
+    });
+    __setDocumentToolDepsForTest({ assetsFromUploads: uploads, composeDocumentPresentation: proposal });
+    const draft = harborBrief();
+    draft.slides = Array.from({ length: 3 }, () => structuredClone(draft.slides[0]));
+    await expect(
+      runTool(
+        () =>
+          liftToolsForAgent(undefined, 'UTC', session).document_create.execute({
+            kind: 'deck',
+            title: 'Direction',
+            presentation: draft,
+            artwork: 'auto',
+            imageUploadIds: ['owned-upload'],
+          }),
+        {},
+      ),
+    ).rejects.toThrow('Mixed visuals reached composition');
+    expect(uploads).toHaveBeenCalledTimes(1);
+    expect(proposal).toHaveBeenCalledTimes(1);
+  });
   test('planning recovery survives saved history and oversized plans are never labeled successful', () => {
     const output = {
       ok: false,

@@ -99,7 +99,6 @@ export const presentationChoiceInputSchema = z
     sectionBreaks: optional(z.number().int().min(0).max(4)),
     theme: optional(z.enum(PALETTE_NAMES)),
     fontPair: optional(z.enum(FONT_PAIR_NAMES)),
-    imagery: optional(z.enum(['none', 'provided', 'paintings'])),
     slides: optional(z.array(storyboardSlideSchema).min(3).max(30)),
   })
   .refine((input) => input.stage !== 'storyboard' || Boolean(input.slides?.length), {
@@ -126,7 +125,8 @@ export type PresentationBriefChoices = z.infer<typeof presentationBriefChoicesSc
 export const presentationDesignChoicesSchema = z.object({
   theme: z.enum(PALETTE_NAMES),
   fontPair: z.enum(FONT_PAIR_NAMES),
-  imagery: z.enum(['none', 'provided', 'paintings']),
+  // Read old receipts without making imagery a new, mutually exclusive choice.
+  imagery: z.enum(['none', 'provided', 'paintings']).optional(),
   guidance: text,
 });
 export type PresentationDesignChoices = z.infer<typeof presentationDesignChoicesSchema>;

@@ -240,8 +240,8 @@ function PresentationReceipt({
             fontPair={result.design.fontPair}
           />
           <p>
-            {result.design.theme} · {FONT_DESCRIPTIONS[result.design.fontPair]} ·{' '}
-            {IMAGERY_LABELS[result.design.imagery]}
+            {result.design.theme} · {FONT_DESCRIPTIONS[result.design.fontPair]}
+            {result.design.imagery && ` · ${IMAGERY_LABELS[result.design.imagery]}`}
           </p>
         </>
       )}
@@ -288,7 +288,6 @@ export function PresentationPicker({
   const [design, setDesign] = useState<PresentationDesignChoices>({
     theme: input.theme ?? 'editorial',
     fontPair: input.fontPair ?? 'serif',
-    imagery: input.imagery ?? 'none',
     guidance: '',
   });
   const [visuals, setVisuals] = useState<Record<string, VisualChoice>>(() =>
@@ -300,13 +299,13 @@ export function PresentationPicker({
   const sent = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const slides = input.slides ?? [];
-  const count = input.stage === 'storyboard' ? slides.length + 1 : 3;
+  const count = input.stage === 'storyboard' ? slides.length + 1 : input.stage === 'design' ? 2 : 3;
   const final = step === count - 1;
   const titles =
     input.stage === 'brief'
       ? ['Who is this for?', 'What should I draw from?', 'How should the story flow?']
       : input.stage === 'design'
-        ? ['Choose the mood', 'Find your voice', 'What should the imagery feel like?']
+        ? ['Choose the mood', 'Find your voice']
         : [];
   const currentSlide = input.stage === 'storyboard' ? slides[step] : undefined;
   const title =
@@ -552,28 +551,6 @@ export function PresentationPicker({
                 >
                   <PresentationPreview title={input.title} theme={design.theme} fontPair={fontPair} />
                 </Option>
-              ))}
-            </div>
-          </>
-        )}
-        {input.stage === 'design' && step === 2 && (
-          <>
-            <PresentationPreview title={input.title} theme={design.theme} fontPair={design.fontPair} />
-            <div className="presentation-choice-grid">
-              {(['none', 'provided', 'paintings'] as const).map((imagery) => (
-                <Option
-                  key={imagery}
-                  label={IMAGERY_LABELS[imagery]}
-                  description={
-                    {
-                      none: 'Let the ideas and graphs lead',
-                      provided: 'Use images you share in this conversation',
-                      paintings: 'Find public-domain artwork with credits',
-                    }[imagery]
-                  }
-                  selected={design.imagery === imagery}
-                  onClick={() => setDesign({ ...design, imagery })}
-                />
               ))}
             </div>
             <TextAnswer
