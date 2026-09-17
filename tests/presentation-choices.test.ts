@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { liftToolsForAgent } from '../lib/ai/loop';
 import { createHitlAutoContinueGuard, isHitlToolName } from '../lib/albatross/teach-ui';
-import { checkDeck, contrastRatio } from '../lib/documents/deck-quality';
+import { checkDeck, contrastRatio, textFits } from '../lib/documents/deck-quality';
 import { deckExportFace, deckFontStack } from '../lib/documents/deck-versions';
 import {
   applyPresentationChoices,
@@ -28,7 +28,7 @@ import {
 import { compactMessage } from '../lib/store/chat-sessions';
 import { __setDocumentToolDepsForTest } from '../lib/tools/documents';
 import { presentationPlan } from '../lib/tools/presentations';
-import { harborBrief } from './fixtures/presentation-briefs';
+import { harborBrief, retroBrief } from './fixtures/presentation-briefs';
 import { runTool } from './tools/harness';
 
 const brief = {
@@ -114,6 +114,20 @@ function ready(): PresentationSession {
 afterEach(() => __setDocumentToolDepsForTest());
 
 describe('guided presentation preferences', () => {
+  test('monospace display titles are measured at their actual width and retain the display font slot', () => {
+    const model = composePresentationV2({ ...retroBrief(), fontPair: 'mono' });
+    const title = model.slides[4].elements.find(
+      (element) => element.type === 'text' && element.role === 'title',
+    );
+    expect(title?.type).toBe('text');
+    if (!title || title.type !== 'text') throw new Error('Missing comparison title');
+    expect(title.text).toBe('What we planned against what we got');
+    expect(title.font).not.toBe('mono');
+    expect(title.fontSize).toBeLessThan(38);
+    expect(textFits(title, model.theme)).toBe(true);
+    expect(textFits({ ...title, fontSize: 38 }, model.theme)).toBe(false);
+    expect(checkDeck(model).ok).toBe(true);
+  });
   test('requires complete storyboard inputs and bounded responses', () => {
     expect(
       presentationChoiceInputSchema.safeParse({ presentationId: 'd', title: 'Title', stage: 'storyboard' })
