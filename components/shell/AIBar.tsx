@@ -4,7 +4,7 @@ import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ChatTransport, DefaultChatTransport, type UIMessage } from 'ai';
 import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
-import { motion, useReducedMotion } from 'motion/react';
+import { useReducedMotion } from 'motion/react';
 import {
   createContext,
   memo,
@@ -24,6 +24,18 @@ import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
 import { WorkLog } from '@/components/ai-elements/work-log';
 import {
+  ChatContainer,
+  ChatContainerContent,
+  ChatContainerMessage,
+} from '@/components/odysseyui/chat-container';
+import { MessageBubble, MessageBubbleContent } from '@/components/odysseyui/message-bubble';
+import {
+  ThoughtChain,
+  ThoughtChainContent,
+  ThoughtChainStep,
+  ThoughtChainTrigger,
+} from '@/components/odysseyui/thought-chain';
+import {
   AskHoldComposer,
   type AskHoldComposerProps,
   type DoorRequest,
@@ -34,7 +46,6 @@ import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,12 +56,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { HistoryIcon } from '@/components/ui/history';
 import { Markdown } from '@/components/ui/markdown';
-import { Message } from '@/components/ui/message';
 import { PlusIcon } from '@/components/ui/plus';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ui/reasoning';
 import { RowIcon } from '@/components/ui/row-icon';
-import { ScrollButton } from '@/components/ui/scroll-button';
 import {
   CHAT_FILE_ACCEPT,
   chatUploadPath,
@@ -623,14 +631,6 @@ export function AssistantChat({
     }
   }, [toolSignature, preview, qc]);
 
-  // Message count from the previous commit — messages at or above this index
-  // mounted in this commit (a restored batch gets staggered entrances, a
-  // freshly streamed message floats in immediately).
-  const prevMessageCountRef = useRef(0);
-  useEffect(() => {
-    prevMessageCountRef.current = messages.length;
-  }, [messages.length]);
-
   const send = async (text: string) => {
     const trimmed = text.trim();
     const filesForTurn = pendingFiles;
@@ -777,11 +777,6 @@ export function AssistantChat({
 
   const last = messages[messages.length - 1];
   const waitingForContent = busy && (last?.role !== 'assistant' || !hasVisibleContent(last));
-
-  // Stagger only the batch that mounts together (a restored conversation).
-  // A message appended while chatting has index >= the previous commit's
-  // length, so it springs in immediately with no queued delay.
-  const staggerFloor = prevMessageCountRef.current;
 
   return (
     <section
@@ -975,15 +970,11 @@ export function AssistantChat({
           </div>
         </div>
       ) : (
-        <ChatContainerRoot className="relative flex-1">
+        <ChatContainer className="relative flex-1">
           <ChatContainerContent className="gap-4 px-3.5 py-4">
             <ChatPartContext.Provider value={partHandlers}>
               {messages.map((m, i) => (
-                <MessageFloat
-                  key={m.id}
-                  reduceMotion={reduceMotion}
-                  delay={i < staggerFloor ? 0 : Math.min((i - staggerFloor) * 0.05, 0.3)}
-                >
+                <ChatContainerMessage key={m.id}>
                   <MessageView
                     message={m}
                     streaming={streaming && i === messages.length - 1}
@@ -997,7 +988,7 @@ export function AssistantChat({
                         : undefined
                     }
                   />
-                </MessageFloat>
+                </ChatContainerMessage>
               ))}
             </ChatPartContext.Provider>
             {waitingForContent ? (
@@ -1027,10 +1018,7 @@ export function AssistantChat({
               </div>
             ) : null}
           </ChatContainerContent>
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-            <ScrollButton className="pointer-events-auto shadow-[var(--shadow-pop)]" />
-          </div>
-        </ChatContainerRoot>
+        </ChatContainer>
       )}
 
       {/* Composer: a rounded floating field pinned to the panel bottom —
@@ -1142,28 +1130,6 @@ export function AssistantChat({
   );
 }
 
-// Soft spring entrance for each chat message; instant under reduced motion.
-const MessageFloat = memo(function MessageFloat({
-  delay,
-  reduceMotion,
-  children,
-}: {
-  delay: number;
-  reduceMotion: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <motion.div
-      initial={reduceMotion ? false : { opacity: 0, y: 14, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 460, damping: 38, delay }}
-      className="flex w-full min-w-0 flex-col"
-    >
-      {children}
-    </motion.div>
-  );
-});
-
 const BASE_SUGGESTIONS = [
   'What needs my reply today? Open the most urgent one.',
   'Triage my newest 25 inbox threads',
@@ -1216,8 +1182,8 @@ export const MessageView = memo(
     if (isUser) {
       const text = userTextFromMessage(message);
       return (
-        <Message className="justify-end" data-message-role="user">
-          <div className="assistant-user-bubble surface-card surface-accent rounded-card max-w-[88%] min-w-0 whitespace-pre-wrap break-words px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
+        <MessageBubble from="user">
+          <MessageBubbleContent className="whitespace-pre-wrap">
             {text ? <p>{text}</p> : null}
             {(message.parts || [])
               .filter((part: any) => part.type === 'file' && isChatAttachmentUrl(part.url))
@@ -1242,14 +1208,14 @@ export const MessageView = memo(
                   <span className="break-all">{part.filename || 'Attachment'}</span>
                 </a>
               ))}
-          </div>
-        </Message>
+          </MessageBubbleContent>
+        </MessageBubble>
       );
     }
     const replyText = streaming ? '' : replyTextFromMessage(message);
     return (
-      <Message className="justify-start" data-message-role="assistant">
-        <div className="flex w-full min-w-0 flex-col gap-2">
+      <MessageBubble from="assistant">
+        <MessageBubbleContent className="flex w-full max-w-full flex-col gap-2 bg-transparent px-0 py-0">
           <Thought parts={message.parts || []} streaming={streaming} />
           {groupMessageParts(message.parts || []).map((segment) =>
             segment.kind === 'work-log' ? (
@@ -1273,8 +1239,8 @@ export const MessageView = memo(
               className="-mt-0.5"
             />
           ) : null}
-        </div>
-      </Message>
+        </MessageBubbleContent>
+      </MessageBubble>
     );
   },
   (previous, next) =>
@@ -1301,12 +1267,14 @@ function Thought({ parts, streaming }: { parts: any[]; streaming: boolean }) {
   }, [live, duration]);
   if (!text.trim()) return null;
   return (
-    <Reasoning className="w-full text-[12px] text-[var(--color-text-muted)]">
-      <ReasoningTrigger>{reasoningLabel(live, duration)}</ReasoningTrigger>
-      <ReasoningContent markdown className="mt-1.5">
-        {text}
-      </ReasoningContent>
-    </Reasoning>
+    <ThoughtChain className="w-full">
+      <ThoughtChainStep status={live ? 'active' : 'done'} defaultOpen={false}>
+        <ThoughtChainTrigger>{reasoningLabel(live, duration)}</ThoughtChainTrigger>
+        <ThoughtChainContent>
+          <Markdown className="text-[12px] text-muted-foreground">{text}</Markdown>
+        </ThoughtChainContent>
+      </ThoughtChainStep>
+    </ThoughtChain>
   );
 }
 
@@ -1409,20 +1377,6 @@ const Part = memo(function Part({ part, streaming = false }: { part: any; stream
       >
         {text}
       </Markdown>
-    );
-  }
-  if (type === 'reasoning' || type === 'thinking') {
-    const text = part.text || part.reasoning || '';
-    if (!text.trim()) return null;
-    return (
-      <Reasoning className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2">
-        <ReasoningTrigger className="text-[12px] font-medium text-[var(--color-text-muted)]">
-          Thinking
-        </ReasoningTrigger>
-        <ReasoningContent markdown className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">
-          {text}
-        </ReasoningContent>
-      </Reasoning>
     );
   }
   if (type === 'dynamic-tool' || (typeof type === 'string' && type.startsWith('tool-'))) {

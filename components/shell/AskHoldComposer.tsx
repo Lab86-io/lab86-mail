@@ -3,11 +3,11 @@
 import { ArrowUp, Square } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceCapture, VoiceCaptureButton } from '@/components/albatross/IntentCapture';
+import { PromptInput, PromptInputActions } from '@/components/odysseyui/prompt-input';
 import { HoldLanding } from '@/components/shell/HoldLanding';
 import { RouteChip, RouteTabHint } from '@/components/shell/RouteChip';
 import { type RoutePredictionOptions, useRoutePrediction } from '@/components/shell/useRoutePrediction';
 import { Button } from '@/components/ui/button';
-import { PromptInput, PromptInputActions, PromptInputTextarea } from '@/components/ui/prompt-input';
 import { HOLD_ERROR, type HoldCard } from '@/lib/albatross/capture-client';
 import type { BarRoute } from '@/lib/albatross/route-rules';
 import { cn } from '@/lib/utils';
@@ -167,7 +167,7 @@ export function AskHoldComposer({
       onValueChange('');
       return;
     }
-    // The textarea already stopped the newline on Enter.
+    event.preventDefault();
     if (action === 'send') {
       if (streaming) onStop?.();
       else if (!busy) onSend();
@@ -184,42 +184,36 @@ export function AskHoldComposer({
       <PromptInput
         value={value}
         onValueChange={onValueChange}
-        isLoading={busy}
+        placeholder={placeholder}
+        onKeyDown={onKeyDown}
+        before={before}
         maxHeight={176}
         data-landing={landing ? 'true' : undefined}
-        className={cn(
-          'rounded-ui bg-[var(--color-field)] shadow-none transition-[border-color] duration-[var(--duration-normal)]',
-          landing ? 'border-[var(--color-accent-2)]/35' : 'border-[var(--color-control-border)]',
-        )}
-      >
-        {before}
-        {landing ? (
-          <div className="flex items-start gap-2 px-1 pt-1">
-            <RouteChip route="hold" locked className="mt-1.5 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <HoldLanding
-                text={landing.text}
-                cards={landing.cards}
-                nowMs={now()}
-                reduceMotion={reduceMotion}
-                railTarget={railTarget}
-                onDone={() => {
-                  const cards = landing.cards ?? [];
-                  setLanding(null);
-                  prediction.reset();
-                  onHeld?.(cards);
-                  focusField();
-                }}
-              />
+        className={landing ? 'border-[var(--color-accent-2)]/35' : undefined}
+        field={
+          landing ? (
+            <div className="flex items-start gap-2 px-2 pt-1">
+              <RouteChip route="hold" locked className="mt-1.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <HoldLanding
+                  text={landing.text}
+                  cards={landing.cards}
+                  nowMs={now()}
+                  reduceMotion={reduceMotion}
+                  railTarget={railTarget}
+                  onDone={() => {
+                    const cards = landing.cards ?? [];
+                    setLanding(null);
+                    prediction.reset();
+                    onHeld?.(cards);
+                    focusField();
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        ) : (
-          <PromptInputTextarea
-            placeholder={placeholder}
-            onKeyDown={onKeyDown}
-            className="text-[13px] leading-relaxed text-[var(--color-text)]"
-          />
-        )}
+          ) : undefined
+        }
+      >
         {landing ? null : (
           <PromptInputActions className="justify-between pt-1">
             <div className="flex items-center gap-0.5">
@@ -239,7 +233,7 @@ export function AskHoldComposer({
                 type="button"
                 size="icon-sm"
                 onClick={submit}
-                disabled={!streaming && !canSend}
+                disabled={!streaming && (busy || !canSend)}
                 title={sendLabel}
                 className={cn(
                   'rounded-ui',

@@ -54,10 +54,11 @@ try {
           document.querySelector('[data-slot="sidebar-wrapper"]'),
         railLine: style('.rail-wash').borderRightWidth,
         curve: getComputedStyle(document.querySelector('.rail-wash'), '::after').content,
-        user: style('.assistant-user-bubble').backgroundColor,
+        user: style('[data-message-role="user"] [data-slot="message-bubble-content"]').backgroundColor,
         page: style('.workspace-panel').backgroundColor,
-        shape: style('.assistant-user-bubble').cornerShape,
-        radius: style('[data-slot="work-log"]').borderRadius,
+        userCorner: style('[data-message-role="user"] [data-slot="message-bubble-content"]')
+          .borderBottomRightRadius,
+        thoughtChain: Boolean(document.querySelector('[data-slot="work-log"] [data-slot="thought-chain"]')),
       };
     });
     assert.equal(surfaces.rail, 'rgba(0, 0, 0, 0)');
@@ -65,8 +66,8 @@ try {
     assert.equal(surfaces.railLine, '0px');
     assert.equal(surfaces.curve, 'none');
     assert.notEqual(surfaces.user, surfaces.page);
-    assert.ok(['squircle', 'superellipse(2)'].includes(surfaces.shape));
-    assert.equal(surfaces.radius, '18px');
+    assert.equal(surfaces.userCorner, '4px');
+    assert.equal(surfaces.thoughtChain, true);
     await page.screenshot({ path: `/tmp/albatross-style-chat-results-${theme}.png` });
   }
 
