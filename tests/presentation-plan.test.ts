@@ -1,6 +1,11 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { agentStepLimit, liftToolsForAgent } from '../lib/ai/loop';
-import { type PresentationPlan, planPresentation } from '../lib/documents/presentation-plan';
+import {
+  type PresentationPlan,
+  planPresentation,
+  presentationPlanSchema,
+} from '../lib/documents/presentation-plan';
+import { getTool } from '../lib/tools';
 
 const plan = (): PresentationPlan => ({
   narrative: 'Delivery evidence precedes the decision.',
@@ -85,6 +90,8 @@ describe('evidence-led presentation planning', () => {
   });
   test('tool is callable and researched decks get bounded headroom for actual construction', () => {
     expect(liftToolsForAgent('batch', 'UTC')).toHaveProperty('presentation_plan');
+    for (const name of presentationPlanSchema.shape.slides.element.shape.toolSteps.element.shape.tool.options)
+      expect(getTool(name)).toBeTruthy();
     expect(agentStepLimit([])).toBe(20);
     expect(agentStepLimit([{ content: [{ type: 'tool-call', toolName: 'presentation_plan' }] }])).toBe(40);
   });
