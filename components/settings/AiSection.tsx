@@ -249,7 +249,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
             </div>
             {aiMode === 'lab86' ? (
               <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 AI runs through OpenRouter. Normal handles deep work; fast uses nano by default.
+                Lab86 AI runs through OpenRouter. Normal handles deep work; fast handles quick tasks.
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -279,7 +279,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
                 </div>
               </div>
             )}
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5 sm:col-span-2">
               <Label htmlFor="ai-normal-model">Normal model</Label>
               <ModelPicker
                 id="ai-normal-model"
@@ -292,7 +292,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
                 {findCatalogModel(catalog, model)?.note || 'Deep work: planning, drafts, the daily brief.'}
               </p>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5 sm:col-span-2">
               <Label htmlFor="ai-fast-model">Fast model</Label>
               <ModelPicker
                 id="ai-fast-model"
