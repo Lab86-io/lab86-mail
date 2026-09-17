@@ -55,6 +55,12 @@ describe('document edit result UI', () => {
     expect(fileToolNavigationPath('/?view=files&office=two', 'https://albatross.test/')).toBe(
       '/?view=files&office=two',
     );
+    expect(
+      fileToolNavigationPath('/?view=files&document=one', 'https://albatross.test/native/files?document=old'),
+    ).toBe('/native/files?view=files&document=one');
+    expect(fileToolNavigationPath('/?view=files&office=two', 'https://albatross.test/native/files')).toBe(
+      '/native/files?view=files&office=two',
+    );
     expect(fileToolNavigationPath('https://evil.test/?view=files', 'https://albatross.test/')).toBeNull();
     expect(fileToolNavigationPath('/settings', 'https://albatross.test/')).toBeNull();
     expect(fileToolNavigationPath('/?view=files', 'https://albatross.test/settings')).toBeNull();

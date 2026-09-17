@@ -357,17 +357,23 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
     /// A tagged engine model is never projected into the legacy grid on save.
     case workbook(AlbatrossWorkbookSnapshot)
     case deck(activeSlideID: String, slides: [AlbatrossDeckSlide])
+    /// A version 2 deck: theme plus typed elements. The native canvas edits it
+    /// and every unknown field rides along in the model's extra bags.
+    case deckV2(AlbatrossDeckV2)
 
     init?(json: JSONValue) {
         switch json["kind"]?.stringValue {
         case "doc":
             self = .doc(blocks: (json["blocks"]?.arrayValue ?? []).compactMap(AlbatrossDocBlock.init))
         case "sheet":
-            if json["version"]?.doubleValue == 2 {
+            let version = json["version"]?.doubleValue ?? 1
+            if version == 2 {
                 guard let snapshot = AlbatrossWorkbookSnapshot(json: json) else { return nil }
                 self = .workbook(snapshot)
                 return
             }
+            // A version this build does not know is never flattened into the legacy grid.
+            guard version == 1 else { return nil }
             let sheets = (json["sheets"]?.arrayValue ?? []).compactMap(AlbatrossSheetTab.init)
             guard let first = sheets.first else { return nil }
             self = .sheet(
@@ -375,6 +381,14 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
                 sheets: sheets
             )
         case "deck":
+            let version = json["version"]?.doubleValue ?? 1
+            if version == 2 {
+                guard let deck = AlbatrossDeckV2(json: json) else { return nil }
+                self = .deckV2(deck)
+                return
+            }
+            // A future deck version is never flattened into the version 1 editor.
+            guard version == 1 else { return nil }
             let slides = (json["slides"]?.arrayValue ?? []).compactMap(AlbatrossDeckSlide.init)
             guard let first = slides.first else { return nil }
             self = .deck(
@@ -390,7 +404,7 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
         switch self {
         case .doc: .doc
         case .sheet, .workbook: .sheet
-        case .deck: .deck
+        case .deck, .deckV2: .deck
         }
     }
 
@@ -411,6 +425,8 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
             ])
         case .workbook(let snapshot):
             snapshot.json
+        case .deckV2(let deck):
+            deck.json
         case .deck(let activeSlideID, let slides):
             .object([
                 "kind": .string("deck"),
@@ -422,8 +438,10 @@ enum AlbatrossDocumentModel: Hashable, Sendable {
     }
 
     var requiresWebEditor: Bool {
-        if case .workbook = self { return true }
-        return false
+        switch self {
+        case .workbook: return true
+        case .doc, .sheet, .deck, .deckV2: return false
+        }
     }
 }
 

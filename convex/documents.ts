@@ -55,6 +55,7 @@ export const create = mutation({
     sourceRefs: v.optional(v.array(v.any())),
     reason: v.optional(v.string()),
     importSource: v.optional(importSourceValidator),
+    execution: executionValidator,
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -90,6 +91,10 @@ export const create = mutation({
       reason: args.reason || 'create',
       actor: 'user',
       createdAt: ts,
+    });
+    await recordDocumentEffect(ctx, args.userId, args.execution, {
+      documentId: args.documentId,
+      revision: 1,
     });
     return row;
   },
@@ -288,6 +293,17 @@ export const update = mutation({
     if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
     if (document.currentRevision !== args.expectedRevision) {
       return { ok: false, code: 'REVISION_CONFLICT', document };
+    }
+    // Old native clients decode rich slides as a v1 projection. Even an
+    // ordinary rename sends that projection back. Never let it erase the
+    // theme, images, charts, or fields this client cannot represent.
+    if (
+      args.model !== undefined &&
+      document.kind === 'deck' &&
+      modelVersion(document.model) === 2 &&
+      modelVersion(args.model) !== 2
+    ) {
+      return { ok: false, code: 'RICH_DECK_REQUIRED', document };
     }
     // A grid-only client (older native build, v1 tooling) must not overwrite an
     // engine workbook with its lossy projection; it would silently drop

@@ -1556,6 +1556,7 @@ async function resolveMailLink(ctx: QueryCtx | MutationCtx, userId: string, link
   return {
     linkId: String(link._id),
     providerThreadId: thread.providerThreadId,
+    latestMessageId: thread.latestMessageId ?? null,
     accountId: thread.accountId,
     subject: thread.subject,
     fromAddress: thread.fromAddress,

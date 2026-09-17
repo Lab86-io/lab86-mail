@@ -16,11 +16,11 @@ export function fileToolNavigationPath(value: string, currentHref: string) {
   const current = new URL(currentHref);
   const target = new URL(value, current.origin);
   if (
-    current.pathname !== '/' ||
+    !['/', '/native/files'].includes(current.pathname) ||
     target.origin !== current.origin ||
     target.pathname !== '/' ||
     target.searchParams.get('view') !== 'files'
   )
     return null;
-  return `${target.pathname}${target.search}${target.hash}`;
+  return `${current.pathname}${target.search}${target.hash}`;
 }

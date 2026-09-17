@@ -10,12 +10,14 @@
 // shiki, leaflet, recharts, the weather effect runtime — never weigh down the
 // shell bundle until a card actually renders.
 
-import { ExternalLink, FileSpreadsheet, FileText, Mail, Paperclip, Presentation } from 'lucide-react';
+import { ExternalLink, Mail, Paperclip } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { FileResult } from '@/components/ai-elements/shapes/file-result';
 import { Loader } from '@/components/ui/loader';
 import { emailPreviewThreadTarget } from '@/lib/ai/email-preview-routing';
 import { useClientStore } from '@/lib/client-state';
 import { fileToolNavigationPath } from '@/lib/documents/deep-link';
+import { previewDocumentId } from '@/lib/documents/preview';
 
 function LoadingCard() {
   return (
@@ -251,7 +253,6 @@ export function ToolUiDisplayPart({
     internalOpenPath
   ) {
     const kind = String(output.kind || '');
-    const Icon = kind === 'sheet' ? FileSpreadsheet : kind === 'deck' ? Presentation : FileText;
     const title = String(
       output.title ||
         (toolName === 'document_edit'
@@ -286,26 +287,22 @@ export function ToolUiDisplayPart({
           if (besideChat) state.setAssistantPresentation('split');
           window.dispatchEvent(new Event('lab86-mail:files-navigate'));
         }}
-        className="group flex w-full max-w-[460px] items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 text-left shadow-[var(--shadow-soft)] transition hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-pop)]"
+        className="surface-card surface-accent-2 rounded-card block w-full min-w-0 text-left text-[var(--color-text)] transition hover:border-[var(--color-accent-2)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
       >
-        <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          <Icon className="size-4.5" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-[var(--color-text)]">{title}</span>
-          <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)]">
-            {toolName === 'document_suggest_changes' || output.status === 'proposed'
+        <FileResult
+          title={title}
+          documentId={previewDocumentId(internalOpenPath, output.documentId)}
+          kind={kind}
+          detail={
+            toolName === 'document_suggest_changes' || output.status === 'proposed'
               ? 'Review the suggestion in the editor'
               : output.status === 'applied' || toolName === 'word_document_edit'
                 ? `Saved revision ${output.revision} · Open file`
-                : 'Open the editable file'}
-          </span>
-          {['document_edit', 'google_document_edit'].includes(toolName) &&
-          typeof output.summary === 'string' ? (
-            <span className="mt-1 block text-[11px] text-[var(--color-text-muted)]">{output.summary}</span>
-          ) : null}
-        </span>
-        <ExternalLink className="size-3.5 text-[var(--color-text-faint)] transition group-hover:text-[var(--color-text)]" />
+                : 'Open the editable file'
+          }
+          summary={typeof output.summary === 'string' ? output.summary : undefined}
+          actions={<ExternalLink aria-hidden className="size-3.5 shrink-0 text-[var(--color-accent-2)]" />}
+        />
       </a>
     );
   }

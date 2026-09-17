@@ -2,20 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup as renderMarkup } from 'react-dom/server';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create } from 'react-test-renderer';
 import { CalendarProvider } from '../components/calendar/engine/calendar-context';
 import { CalendarHeader } from '../components/calendar/engine/calendar-header';
 import { DndProvider } from '../components/calendar/engine/dnd-context';
 import { isPendingEvent } from '../components/calendar/engine/helpers';
 import type { IEvent } from '../components/calendar/engine/interfaces';
-import {
-  initialSyncLinePhase,
-  SYNC_LINE_FADE_MS,
-  SYNC_LINE_FINISH_MS,
-  SyncLine,
-  type SyncLineHost,
-  syncLineStyle,
-} from '../components/calendar/SyncLine';
 import { SyncStatus } from '../components/calendar/SyncStatus';
 import {
   PULL_MAX_OFFSET_PX,
@@ -33,124 +25,6 @@ const read = (relative: string) => readFileSync(join(repoRoot, relative), 'utf8'
 const renderToStaticMarkup = (node: React.ReactNode) =>
   renderMarkup(<TooltipProvider>{node}</TooltipProvider>);
 const NOW = 1_800_000_000_000;
-
-function fakeLineHost() {
-  let next = 1;
-  const timers = new Map<number, { callback: () => void; delayMs: number }>();
-  const frames = new Map<number, () => void>();
-  const host: SyncLineHost & {
-    timers: typeof timers;
-    frames: typeof frames;
-    flushFrames(): void;
-    fire(delayMs: number): void;
-  } = {
-    setTimeout: (callback, delayMs) => {
-      const handle = next++;
-      timers.set(handle, { callback, delayMs });
-      return handle;
-    },
-    clearTimeout: (handle) => {
-      timers.delete(handle as number);
-    },
-    requestFrame: (callback) => {
-      const handle = next++;
-      frames.set(handle, callback);
-      return handle;
-    },
-    cancelFrame: (handle) => {
-      frames.delete(handle as number);
-    },
-    timers,
-    frames,
-    flushFrames() {
-      const pending = [...frames.values()];
-      frames.clear();
-      for (const callback of pending) callback();
-    },
-    fire(delayMs) {
-      for (const [handle, timer] of timers) {
-        if (timer.delayMs !== delayMs) continue;
-        timers.delete(handle);
-        timer.callback();
-      }
-    },
-  };
-  return host;
-}
-
-describe('SyncLine', () => {
-  test('phase styles: 0 to 70 percent, hold, then 100 percent and fade', () => {
-    expect(syncLineStyle('hidden')).toEqual({ width: '0%', opacity: 0, transition: 'none' });
-    expect(syncLineStyle('start').width).toBe('0%');
-    expect(syncLineStyle('growing')).toMatchObject({ width: '70%', opacity: 1 });
-    expect(syncLineStyle('growing').transition).toContain('800ms');
-    expect(syncLineStyle('growing').transition).toContain('--ease-enter');
-    expect(syncLineStyle('finishing')).toMatchObject({ width: '100%', opacity: 1 });
-    expect(syncLineStyle('fading')).toMatchObject({ width: '100%', opacity: 0 });
-    expect(syncLineStyle('static')).toEqual({ width: '100%', opacity: 1, transition: 'none' });
-  });
-
-  test('initial phase', () => {
-    expect(initialSyncLinePhase(false, false)).toBe('hidden');
-    expect(initialSyncLinePhase(true, false)).toBe('start');
-    expect(initialSyncLinePhase(true, true)).toBe('static');
-  });
-
-  test('renders a 2 px accent-3 line at the top of the frame', () => {
-    const html = renderToStaticMarkup(<SyncLine active={false} />);
-    expect(html).toContain('data-sync-line');
-    expect(html).toContain('h-0.5');
-    expect(html).toContain('bg-[var(--color-accent-3)]');
-    expect(html).toContain('absolute inset-x-0 top-0');
-    expect(html).toContain('data-phase="hidden"');
-  });
-
-  test('grows on active, then finishes and fades when the sync settles', async () => {
-    const host = fakeLineHost();
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(<SyncLine active={false} host={host} />);
-    });
-    const phase = () => renderer.root.findByType('div').props['data-phase'];
-    expect(phase()).toBe('hidden');
-
-    await act(async () => renderer.update(<SyncLine active host={host} />));
-    expect(phase()).toBe('start');
-    await act(async () => host.flushFrames());
-    expect(phase()).toBe('growing');
-
-    await act(async () => renderer.update(<SyncLine active={false} host={host} />));
-    expect(phase()).toBe('finishing');
-    await act(async () => host.fire(SYNC_LINE_FINISH_MS));
-    expect(phase()).toBe('fading');
-    await act(async () => host.fire(SYNC_LINE_FINISH_MS + SYNC_LINE_FADE_MS));
-    expect(phase()).toBe('hidden');
-  });
-
-  test('a line active at mount still grows', async () => {
-    const host = fakeLineHost();
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(<SyncLine active host={host} />);
-    });
-    await act(async () => host.flushFrames());
-    expect(renderer.root.findByType('div').props['data-phase']).toBe('growing');
-  });
-
-  test('reduced movement: a static line for the sync, then gone', async () => {
-    const host = fakeLineHost();
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(<SyncLine active reduceMotion host={host} />);
-    });
-    const phase = () => renderer.root.findByType('div').props['data-phase'];
-    expect(phase()).toBe('static');
-    expect(host.frames.size).toBe(0);
-    await act(async () => renderer.update(<SyncLine active={false} reduceMotion host={host} />));
-    expect(phase()).toBe('hidden');
-    expect(host.timers.size).toBe(0);
-  });
-});
 
 describe('SyncStatus', () => {
   test('an inline check has the relative status in its accessible tooltip', () => {

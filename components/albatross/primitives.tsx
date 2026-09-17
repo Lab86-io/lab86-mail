@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { type EvidenceLike, evidenceSourceLabel, latestProof, proofSummary } from '@/lib/albatross/proof';
+import { type EvidenceLike, latestProof, proofSummary } from '@/lib/albatross/proof';
 import {
   needsYou,
   WORK_STATE_LABEL,
@@ -11,23 +11,19 @@ import {
 } from '@/lib/albatross/work-state';
 import { cn } from '@/lib/utils';
 
-/**
- * State reads by shape and weight, not by colour. Needs-you is raised, waiting
- * is dashed, finished recedes. Red belongs to errors only.
- */
 export function StateChip({ state, className }: { state: WorkStateKey; className?: string }) {
   return (
     <span
       data-state={state}
       className={cn(
-        'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none',
+        'shrink-0 rounded-ui px-2 py-1 text-[11px] leading-none',
         state === 'needs_you'
-          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)] shadow-[var(--shadow-soft)]'
+          ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
           : state === 'waiting' || state === 'unresolved'
-            ? 'border border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]'
+            ? 'border border-dashed border-[var(--color-accent-2)] bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'
             : state === 'done' || state === 'released' || state === 'archived'
-              ? 'text-[var(--color-text-faint)]'
-              : 'border border-[var(--color-border)] text-[var(--color-text-muted)]',
+              ? 'bg-[var(--color-surface-well)] text-[var(--color-text-muted)]'
+              : 'bg-[var(--color-accent-3-soft)] text-[var(--color-accent-3)]',
         className,
       )}
     >
@@ -53,12 +49,6 @@ export function nextMoveLine(work: WorkStateInput & { openQuestions?: number }):
   if (work.workState === 'done') return 'Finished';
   if (work.nextStep?.trim()) return `Next: ${work.nextStep.trim()}`;
   return 'Albatross is carrying this';
-}
-
-export function NextMove({ work, className }: { work: WorkStateInput; className?: string }) {
-  return (
-    <span className={cn('text-[12px] text-[var(--color-text-muted)]', className)}>{nextMoveLine(work)}</span>
-  );
 }
 
 /**
@@ -149,59 +139,25 @@ export function Fact({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-/**
- * One piece of proof: what it is, where it came from, and when. The stored
- * confidence score stays on the server — it chooses the wording above, and
- * nothing more.
- */
-export function EvidenceCard({ evidence }: { evidence: EvidenceLike }) {
-  const rejected = evidence.trust === 'rejected';
-  return (
-    <li className={cn('flex gap-3 py-3', rejected && 'opacity-55 [&_a]:line-through [&_p]:line-through')}>
-      <span
-        aria-hidden
-        className={cn(
-          'mt-1.5 size-1.5 shrink-0 rounded-full',
-          evidence.trust === 'confirmed'
-            ? 'bg-[var(--color-success)]'
-            : evidence.trust === 'rejected'
-              ? 'bg-[var(--color-border-strong)]'
-              : 'bg-[var(--color-accent)]',
-        )}
-      />
-      <div className="min-w-0 flex-1">
-        {evidence.url ? (
-          <a
-            href={evidence.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[13px] font-medium underline-offset-2 hover:underline"
-          >
-            {evidence.title}
-          </a>
-        ) : (
-          <p className="text-[13px] font-medium">{evidence.title}</p>
-        )}
-        {evidence.summary ? (
-          <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-            {evidence.summary}
-          </p>
-        ) : null}
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">
-          {evidenceSourceLabel(evidence.sourceKind)}
-          {rejected ? ' · ruled out' : ''}
-        </p>
-      </div>
-    </li>
-  );
-}
-
 export interface AlbatrossRowData extends WorkStateInput {
   _id: string;
   title: string | null;
   rawText: string;
   areaName?: string | null;
   openQuestions: number;
+}
+
+export function AlbatrossList({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <ul
+      className={cn(
+        'surface-card rounded-card p-1 [&>li+li]:relative [&>li+li]:before:pointer-events-none [&>li+li]:before:absolute [&>li+li]:before:inset-x-4 [&>li+li]:before:top-0 [&>li+li]:before:h-px [&>li+li]:before:bg-[var(--color-list-divider)]',
+        className,
+      )}
+    >
+      {children}
+    </ul>
+  );
 }
 
 export function albatrossTitle(item: { title: string | null; rawText: string }): string {
@@ -223,7 +179,7 @@ export function AlbatrossRow({ item, onOpen }: { item: AlbatrossRowData; onOpen:
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-start gap-3 px-4 text-left transition-colors hover:bg-[var(--color-bg-subtle)]',
+        'flex w-full items-start gap-3 rounded-ui px-4 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-accent)]',
         prominent ? 'py-4' : 'py-3',
       )}
     >

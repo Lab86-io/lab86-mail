@@ -342,6 +342,23 @@ export const upsertCorpusBatch = mutation({
           ...classified,
           createdAt: ts,
         });
+      if (existing?.latestMessageId !== patch.latestMessageId || patch.lastDate > existing.lastDate) {
+        const areaLinks = await ctx.db
+          .query('areaArtifactLinks')
+          .withIndex('by_user_account_artifact', (query) =>
+            query
+              .eq('userId', args.userId)
+              .eq('accountId', args.accountId)
+              .eq('artifactKind', 'mailThread')
+              .eq('artifactId', providerThreadId),
+          )
+          .collect();
+        for (const link of areaLinks) {
+          if (link.status === 'verified' || link.status === 'candidate') {
+            await ctx.db.patch(link._id, { updatedAt: ts });
+          }
+        }
+      }
     }
 
     // Backfill batches pass an explicit corpusReady boolean and own the
@@ -637,24 +654,30 @@ export const countCorpusMessages = query({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const CAP = 1000;
+    const MAX_READ_BYTES = 4_000_000;
     const text = (args.query || '').trim();
-    if (text) {
-      const rows = await ctx.db
-        .query('mailCorpusMessages')
-        .withSearchIndex('by_search_text', (q) =>
-          q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId),
-        )
-        .take(CAP);
-      const matched = rows.filter((row) => withinReceivedAtBounds(row, args));
-      return { count: matched.length, approximate: rows.length >= CAP && matched.length >= CAP };
+    const rows = text
+      ? ctx.db
+          .query('mailCorpusMessages')
+          .withSearchIndex('by_search_text', (q) =>
+            q.search('searchText', text).eq('userId', args.userId).eq('accountId', args.accountId),
+          )
+      : ctx.db
+          .query('mailCorpusMessages')
+          .withIndex('by_user_account_received', (q) =>
+            applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
+          );
+    let count = 0;
+    let scanned = 0;
+    let readBytes = 0;
+    const encoder = new TextEncoder();
+    for await (const row of rows) {
+      scanned += 1;
+      readBytes += encoder.encode(JSON.stringify(row)).byteLength;
+      if (withinReceivedAtBounds(row, args)) count += 1;
+      if (scanned >= CAP || readBytes >= MAX_READ_BYTES) return { count, approximate: true };
     }
-    const rows = await ctx.db
-      .query('mailCorpusMessages')
-      .withIndex('by_user_account_received', (q) =>
-        applyReceivedAtBounds(q.eq('userId', args.userId).eq('accountId', args.accountId), args),
-      )
-      .take(CAP);
-    return { count: rows.length, approximate: rows.length >= CAP };
+    return { count, approximate: false };
   },
 });
 

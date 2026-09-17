@@ -56,10 +56,10 @@ describe('CodeRabbit Albatross regressions', () => {
 
   test('artifact and answer controls retain their security and accessibility contracts', () => {
     const detail = read('components/albatross/WorkDetail.tsx');
-    const artifactFrame = read('components/albatross/WorkDetailArtifactFrame.tsx');
     const companion = read('components/albatross/AlbatrossCompanion.tsx');
-    expect(artifactFrame).toContain('sandbox="allow-scripts allow-popups"');
-    expect(artifactFrame).not.toContain('allow-popups-to-escape-sandbox');
+    expect(detail).toContain('<BriefCanvas value={document} embedded />');
+    expect(detail).toContain('<LegacyPlanNotice');
+    expect(detail).not.toContain('<iframe');
     expect(detail).not.toContain('aria-label="Answer in your own words"');
     expect(detail).toContain('aria-label="Answer in chat about this Albatross"');
     // Work questions now leave the document for the attached conversation.

@@ -194,7 +194,7 @@ export function TasksSurface() {
       cancelled = true;
     };
   }, [pendingBoardId, pendingCardId, setPendingBoardId, setPendingCardId]);
-  // BoardView portals its view/column/share controls up into this header slot
+  // BoardView portals its view/column controls up into this header slot
   // so they sit inline with the "Tasks" title instead of in a second toolbar row.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
 
@@ -237,7 +237,7 @@ export function TasksSurface() {
             Tasks
           </h1>
           {/* Surface lens: raw board vs. the projects abstraction (text-only,
-              house segmented style — see PlansSurface). */}
+              house segmented style). */}
           <div className="flex shrink-0 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
             {(
               [
@@ -309,7 +309,7 @@ export function TasksSurface() {
               <Plus className="size-3.5" />
             </button>
           </div>
-          {/* BoardView portals its view/column/share controls in here. */}
+          {/* BoardView portals its view/column controls in here. */}
           <div ref={setHeaderSlot} className="flex shrink-0 items-center gap-1.5" />
         </header>
         {navigationError ? (
@@ -473,7 +473,6 @@ function BoardView({
     if (openCardRequest) setOpenCardId(openCardRequest.cardId);
   }, [openCardRequest]);
 
-  const [shareOpen, setShareOpen] = useState(false);
   const [newColumnOpen, setNewColumnOpen] = useState(false);
   const [renameColumn, setRenameColumn] = useState<{ columnId: string; name: string } | null>(null);
   const [createInColumn, setCreateInColumn] = useState<string | null>(null);
@@ -585,9 +584,6 @@ function BoardView({
                     <Plus className="size-3" /> Column
                   </Button>
                 ) : null}
-                {/* Share is hidden: Albatross is a single-person product for
-                    now, so a collaboration control here promises something
-                    that does not exist. The dialog and its API are untouched. */}
               </>,
               headerSlot,
             )
@@ -758,7 +754,6 @@ function BoardView({
         ) : null}
       </AnimatePresence>
 
-      {shareOpen ? <ShareDialog board={board} onClose={() => setShareOpen(false)} /> : null}
       {createInColumn ? (
         <CreateCardDialog
           boardId={board.boardId}
@@ -1698,7 +1693,7 @@ function CardPanel({
         role="dialog"
         aria-modal="true"
         aria-label={card.title}
-        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-[var(--radius-ui-corner)] border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
+        className="fixed inset-y-0 right-0 z-[80] flex h-auto w-[calc(100vw-24px)] flex-col overflow-hidden rounded-l-ui border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[-24px_0_80px_-12px_rgb(0_0_0/0.45)] sm:w-[min(calc(100vw-72px),1280px)]"
         initial={{ opacity: 0.3, x: 72 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: 56 }}
@@ -2182,133 +2177,6 @@ function CardPanel({
       </motion.div>
     </>,
     document.body,
-  );
-}
-
-function ShareDialog({ board, onClose }: { board: BoardPayload; onClose: () => void }) {
-  const inviteMember = useConvexMutation(boardsApi.inviteMember);
-  const removeMember = useConvexMutation(boardsApi.removeMember);
-  const setPublicLink = useConvexMutation(boardsApi.setPublicLink);
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'member' | 'viewer'>('member');
-
-  const publicUrl = board.publicToken ? `${window.location.origin}/b/${board.publicToken}` : null;
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogTitle>Share “{board.title}”</DialogTitle>
-        <DialogDescription className="sr-only">
-          Invite collaborators or manage the public link.
-        </DialogDescription>
-        <div className="space-y-4">
-          <form
-            className="flex items-center gap-2"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (!email.trim()) return;
-              try {
-                await inviteMember({ boardId: board.boardId, email: email.trim(), role });
-                setEmail('');
-                toast.success('Invited — they’ll see the board when they sign in');
-              } catch (err: any) {
-                toast.error(err?.message || 'Could not invite');
-              }
-            }}
-          >
-            <Input
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="email@example.com"
-              className="h-8 flex-1 text-[12.5px]"
-            />
-            <select
-              value={role}
-              onChange={(event) => setRole(event.target.value as 'member' | 'viewer')}
-              className="h-8 rounded-md border border-[var(--color-border)] bg-transparent px-2 text-[12.5px]"
-            >
-              <option value="member">Can edit</option>
-              <option value="viewer">View only</option>
-            </select>
-            <Button type="submit" size="sm" className="h-8 px-3 text-[12.5px]">
-              Invite
-            </Button>
-          </form>
-
-          {board.members.length ? (
-            <ul className="space-y-1.5">
-              {board.members.map((member) => (
-                <li key={member.memberId} className="flex items-center gap-2 text-[12.5px]">
-                  <span className="min-w-0 flex-1 truncate">{member.email}</span>
-                  <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                    {member.role}
-                    {member.status === 'invited' ? ' · invited' : ''}
-                  </Badge>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await removeMember({ boardId: board.boardId, memberId: member.memberId });
-                      } catch (err: any) {
-                        toast.error(err?.message || 'Could not remove');
-                      }
-                    }}
-                    className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[12px] text-[var(--color-text-faint)]">No collaborators yet.</p>
-          )}
-
-          <div className="space-y-2 border-t border-[var(--color-border)] pt-3">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)]">
-                <Link2 className="size-3.5" /> Public read-only link
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-[11.5px]"
-                onClick={async () => {
-                  try {
-                    if (board.publicToken) {
-                      await setPublicLink({ boardId: board.boardId, enabled: false });
-                      toast.success('Public link disabled');
-                    } else {
-                      const token = crypto.randomUUID().replace(/-/g, '');
-                      await setPublicLink({ boardId: board.boardId, enabled: true, token });
-                      toast.success('Public link enabled');
-                    }
-                  } catch (err: any) {
-                    toast.error(err?.message || 'Could not update link');
-                  }
-                }}
-              >
-                {board.publicToken ? 'Disable' : 'Enable'}
-              </Button>
-            </div>
-            {publicUrl ? (
-              <button
-                type="button"
-                className="block w-full truncate rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                onClick={() => {
-                  void navigator.clipboard.writeText(publicUrl);
-                  toast.success('Link copied');
-                }}
-                title="Copy link"
-              >
-                {publicUrl}
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 

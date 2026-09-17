@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var undoSendSeconds: Int?
     @State private var sendingError: String?
     @State private var showsAccountDeletion = false
+    @State private var showsAllSettings = false
 
     private static let undoSendChoices: [(seconds: Int, label: String)] = [
         (0, "Instant (off)"),
@@ -47,6 +48,7 @@ struct SettingsView: View {
                 }
 
                 Section("Personalization") {
+                    Button("All settings") { showsAllSettings = true }
                     NavigationLink("Appearance") { AppearanceSettingsView() }
                     NavigationLink("AI") { AISettingsView() }
                     NavigationLink("Smart Labels") { SmartLabelsSettingsView() }
@@ -108,6 +110,7 @@ struct SettingsView: View {
                     dismiss()
                 }
             }
+            .sheet(isPresented: $showsAllSettings) { NativeWorkspaceView(destination: .settings) }
         }
     }
 

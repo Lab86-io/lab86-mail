@@ -1,4 +1,4 @@
-// Text reveal metering (docs/chat-agentic-pass.md, section 4).
+// Text reveal metering.
 //
 // The stream delivers text in chunks of several words. The client keeps the
 // full buffer and a cursor, and releases one word per tick so the words appear

@@ -191,6 +191,8 @@ describe('globals.css carries the same seeds and derivations', () => {
     );
     expect(css).toContain('--color-surface-well');
     expect(css).toContain('--color-surface-float');
+    expect(css).toContain('--color-content: var(--color-bg);');
+    expect(css).not.toContain('--color-content: var(--color-bg-elevated);');
     // The chord offsets encoded in the presets module stay in sync with the
     // default seeds above.
     expect(rotateHue(DEFAULT_ACCENT_HUE, PALETTE_CHORD.accent2Offset)).toBe(DEFAULT_ACCENT_2_HUE);

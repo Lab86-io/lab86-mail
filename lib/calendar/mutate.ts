@@ -17,8 +17,7 @@ const DEFAULT_CALENDAR_WRITE_TIMEOUT_SECONDS = 20;
 
 // Calendar writes go provider-first (Nylas), then mirror into Convex so the
 // surface updates without waiting for the webhook echo. Every mutation
-// records an aiOperation with a declarative inverse — the act-then-undo
-// contract from docs/productivity-platform-spec.md.
+// records an aiOperation with a declarative inverse for undo.
 
 export interface CreateEventInput {
   userId: string;

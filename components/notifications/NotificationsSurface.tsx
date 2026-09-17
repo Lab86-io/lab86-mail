@@ -277,9 +277,8 @@ export function NotificationsView({
                   onClick={() => openItem(item)}
                   onKeyDown={(event) => onRowKey(event, item.id)}
                   className={cn(
-                    'group flex min-h-20 w-full items-start gap-3 border-l-2 border-transparent px-[18px] py-4 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
-                    selected?.id === item.id &&
-                      'border-l-[var(--color-text-muted)] bg-[var(--color-control)]',
+                    'group flex min-h-20 w-full items-start gap-3 rounded-ui px-5 py-4 text-left transition-colors hover:bg-[var(--color-hover-soft)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
+                    selected?.id === item.id && 'bg-[var(--color-accent-soft)]',
                   )}
                 >
                   <Glyph className="mt-0.5 size-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
@@ -333,28 +332,17 @@ export function NotificationsView({
 
   return (
     <div
-      className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-bg-elevated)]"
+      className="flex h-full min-h-0 min-w-0 flex-col bg-[var(--color-content)]"
       data-notifications-workspace
     >
-      <header className="shrink-0 border-b border-[var(--color-border)] px-5 pb-3 pt-5 sm:px-7">
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-          <div className="min-w-0">
-            <h1 className="font-serif text-[25px] tracking-tight text-[var(--color-text)]">Notifications</h1>
-            <p className="mt-1 text-[12px] text-[var(--color-text-muted)]" aria-live="polite">
-              {isLoading
-                ? 'Finding what needs you…'
-                : `${projection.attention.length} waiting on you · ${projection.unreadUpdates} unread updates`}
-            </p>
-          </div>
-          {onOpenActivity && (
-            <Button variant="ghost" size="sm" onClick={onOpenActivity} className="-mr-2 h-9 shrink-0">
-              Activity history <ArrowUpRight className="size-3.5" aria-hidden />
-            </Button>
-          )}
-        </div>
-        {/* The filter is a row of pressed buttons with live counts, so the
-            shape of the inbox reads before a single row does. */}
-        <fieldset className="-mx-1 mt-3 flex min-w-0 flex-wrap items-center gap-1 border-0 p-0">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 py-3 sm:px-7">
+        <h1 className="font-serif text-[20px] tracking-tight text-[var(--color-text)]">Notifications</h1>
+        <p className="sr-only" aria-live="polite">
+          {isLoading
+            ? 'Finding what needs you…'
+            : `${projection.attention.length} waiting on you · ${projection.unreadUpdates} unread updates`}
+        </p>
+        <fieldset className="flex min-w-0 flex-wrap items-center gap-1 border-0 p-0">
           <legend className="sr-only">Filter notifications</legend>
           {NOTIFICATION_FILTERS.map((filter) => {
             const active = view.filter === filter.value;
@@ -367,15 +355,19 @@ export function NotificationsView({
                 className={cn(
                   'flex h-9 items-center gap-1.5 rounded-ui px-3 text-[12px] transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--color-ring)]',
                   active
-                    ? 'bg-[var(--color-control)] font-medium text-[var(--color-text)] shadow-[var(--shadow-control)]'
+                    ? 'bg-[var(--color-accent-soft)] font-medium text-[var(--color-accent)]'
                     : 'text-[var(--color-text-muted)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)]',
                 )}
               >
                 {filter.label}
                 <span
                   className={cn(
-                    'tabular-nums',
-                    active ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-faint)]',
+                    'min-w-5 rounded-ui px-1.5 py-0.5 text-[10.5px] font-medium tabular-nums',
+                    filter.value === 'question' || filter.value === 'checkin'
+                      ? 'bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'
+                      : filter.value === 'approval'
+                        ? 'bg-[var(--color-accent-3-soft)] text-[var(--color-accent-3)]'
+                        : 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]',
                   )}
                 >
                   {isLoading ? '–' : counts[filter.value]}
@@ -384,6 +376,11 @@ export function NotificationsView({
             );
           })}
         </fieldset>
+        {onOpenActivity && (
+          <Button variant="outline" size="sm" onClick={onOpenActivity} className="ml-auto shrink-0">
+            Activity history <ArrowUpRight className="size-3.5" aria-hidden />
+          </Button>
+        )}
       </header>
       <div className="flex min-h-0 flex-1">
         <div

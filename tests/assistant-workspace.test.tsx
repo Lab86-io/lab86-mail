@@ -293,7 +293,7 @@ if (process.env.ALBATROSS_WORKSPACE_DOM_TEST !== '1') {
       expect(nextLauncherPhrase(0, { idle: true, reduceMotion: false, count: 1 })).toBe(0);
     });
 
-    test('rotates only while idle, keeps every phrase in the same cell, and pauses on focus', async () => {
+    test('sizes to the active phrase, keeps the shortcut first, and pauses rotation on focus', async () => {
       let opened = 0;
       // 250ms is the floor the launcher enforces on any requested cadence.
       const { host } = await mount(
@@ -304,13 +304,20 @@ if (process.env.ALBATROSS_WORKSPACE_DOM_TEST !== '1') {
       expect(button.getAttribute('aria-keyshortcuts')).toBe('Meta+K Control+K');
       expect(button.dataset.rotating).toBe('true');
       expect(button.dataset.phrase).toBe('0');
-      // Every phrase is rendered from the first paint, so width is reserved.
-      expect(host.querySelectorAll('.assistant-launcher__measure').length).toBe(
-        ASSISTANT_LAUNCHER_PHRASES.length,
+      expect(button.firstElementChild?.tagName).toBe('KBD');
+      expect(host.querySelectorAll('.assistant-launcher__measure').length).toBe(1);
+      expect(host.querySelector('.assistant-launcher__measure')?.textContent).toBe(
+        ASSISTANT_LAUNCHER_PHRASES[0],
+      );
+      expect(host.querySelector('.assistant-launcher__measure')?.children.length).toBe(
+        Array.from(ASSISTANT_LAUNCHER_PHRASES[0]).length,
       );
       expect(host.querySelector('[aria-live]')).toBeNull();
       await wait(320);
       expect(button.dataset.phrase).toBe('1');
+      expect(host.querySelector('.assistant-launcher__measure')?.textContent).toBe(
+        ASSISTANT_LAUNCHER_PHRASES[1],
+      );
       expect(button.getAttribute('aria-label')).toBe(ASSISTANT_LAUNCHER_NAME);
       expect(host.querySelectorAll('.assistant-launcher__phrase[data-active="true"]').length).toBe(1);
 

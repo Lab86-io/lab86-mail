@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
+import { runWithAiRequestContext } from '../lib/ai/context';
 import {
   __setDocumentAiDepsForTest,
   DocumentGenerationError,
@@ -203,6 +204,15 @@ describe('document AI proposal service', () => {
 });
 
 describe('document persistence service', () => {
+  test('creation passes the active tool identity to the atomic persistence checkpoint', async () => {
+    const mutation = mock(async (_reference: unknown, _input: any) => documentRecord('deck'));
+    __setDocumentServiceDepsForTest({ convexMutation: mutation as any });
+    await runWithAiRequestContext({ userId: 'user-1', runId: 'run-1', toolExecutionKey: 'key-1' }, () =>
+      createDocument({ userId: 'user-1', kind: 'deck', title: 'PubMed' }),
+    );
+    expect(mutation.mock.calls[0][1].execution).toEqual({ runId: 'run-1', key: 'key-1' });
+  });
+
   test('creates defaults, normalizes titles, and lists parsed records', async () => {
     const mutation = mock(async (_reference: unknown, input: any) => ({
       documentId: input.documentId,

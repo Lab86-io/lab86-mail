@@ -1,5 +1,5 @@
 import { stripEmoji } from '../shared/format';
-import type { DailyReportItem, ReportLane, ThreadInsight, TrackedThread } from '../shared/types';
+import type { ReportLane, ThreadInsight, TrackedThread } from '../shared/types';
 
 const MAX_RECOMMENDATION_LENGTH = 280;
 const GENERIC_RECOMMENDATION = /^(reply|respond|follow[\s-]?up|nudge|review|open|check|handle|act)\.?$/i;
@@ -63,10 +63,6 @@ export function recommendationFor(input: RecommendationInput): string | undefine
 
 export function isActionableLane(lane: unknown): boolean {
   return lane === 'reply_owed' || lane === 'follow_up_owed' || lane === 'tracked';
-}
-
-export function isActionableReportItem(item: Pick<DailyReportItem, 'lane' | 'trackedThreadId'>): boolean {
-  return isActionableLane(item.lane) || Boolean(item.trackedThreadId);
 }
 
 export function recommendationForInsight(

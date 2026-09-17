@@ -43,6 +43,9 @@ describe('chat result display values', () => {
     expect(joinWithMore([' Ann ', 'Bo', '', 'Cy', 'Dee'], 2)).toBe('Ann, Bo +2');
     expect(joinWithMore([' Ann '])).toBe('Ann');
     expect(fileKindLabel('Document')).toBe('Document');
+    expect(fileKindLabel('doc')).toBe('Document');
+    expect(fileKindLabel('deck')).toBe('Presentation');
+    expect(fileKindLabel('sheet')).toBe('Spreadsheet');
     for (const [mime, label] of [
       ['application/vnd.google-apps.document', 'Google Doc'],
       ['application/vnd.google-apps.spreadsheet', 'Google Sheet'],

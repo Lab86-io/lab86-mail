@@ -204,8 +204,8 @@ export function DailyCheckin({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] max-w-xl overflow-y-auto">
-        <DialogTitle className="font-serif text-2xl">Daily check-in</DialogTitle>
+      <DialogContent className="max-h-[88vh] max-w-xl overflow-y-auto border-[var(--color-border-strong)] bg-[var(--color-surface-float)]">
+        <DialogTitle className="font-serif text-2xl text-[var(--color-accent-2)]">Daily check-in</DialogTitle>
         <DialogDescription>
           Save either answer when it is ready. Albatross finishes the slower interpretation in the background.
         </DialogDescription>
@@ -213,8 +213,11 @@ export function DailyCheckin({
           <p className="py-6 text-[12.5px] text-[var(--color-text-muted)]">Preparing today’s check-in…</p>
         ) : (
           <div className="space-y-4">
-            <section className="rounded-xl border border-[var(--color-border)] p-4">
-              <label htmlFor="today-reflection" className="text-[13.5px] font-medium">
+            <section className="surface-card surface-accent-2 rounded-card p-4">
+              <label
+                htmlFor="today-reflection"
+                className="text-[13.5px] font-medium text-[var(--color-accent-2)]"
+              >
                 What did you actually get done today?
               </label>
               <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
@@ -231,10 +234,10 @@ export function DailyCheckin({
                 rows={4}
                 autoFocus
                 placeholder="I shipped…, made progress on…, and didn’t get to…"
-                className="mt-3 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+                className="mt-3 w-full resize-y rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-well)] p-3 text-[13px] leading-relaxed outline-none focus-visible:border-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-soft)]"
               />
               {checkin.candidateItems.length ? (
-                <div className="mt-3 divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
+                <div className="mt-3 space-y-1 rounded-ui bg-[var(--color-surface-well)] p-1">
                   {checkin.candidateItems.slice(0, 12).map((item) => {
                     const key = `${item.kind}:${item.id}`;
                     const active = selected.has(key);
@@ -244,7 +247,10 @@ export function DailyCheckin({
                         type="button"
                         aria-pressed={active}
                         onClick={() => toggle(key)}
-                        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-[var(--color-hover-soft)]"
+                        className={cn(
+                          'flex w-full items-center gap-3 rounded-ui px-3 py-2.5 text-left outline-none hover:bg-[var(--color-hover-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
+                          active && 'bg-[var(--color-accent-soft)]',
+                        )}
                       >
                         <span
                           className={cn(
@@ -257,7 +263,7 @@ export function DailyCheckin({
                           {active ? '✓' : ''}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-[12.5px]">{item.title}</span>
-                        <span className="text-[10.5px] capitalize text-[var(--color-text-faint)]">
+                        <span className="rounded-ui bg-[var(--color-accent-3-soft)] px-2 py-1 text-[10.5px] capitalize text-[var(--color-accent-3)]">
                           {item.kind}
                         </span>
                       </button>
@@ -265,7 +271,7 @@ export function DailyCheckin({
                   })}
                 </div>
               ) : null}
-              <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--surface-border)] pt-3">
                 <SaveFeedback state={reflectionState} error={reflectionError} />
                 <Button
                   size="sm"
@@ -277,8 +283,11 @@ export function DailyCheckin({
               </div>
             </section>
 
-            <section className="rounded-xl border border-[var(--color-border)] p-4">
-              <label htmlFor="tomorrow-intent" className="text-[13.5px] font-medium">
+            <section className="surface-card surface-accent-3 rounded-card p-4">
+              <label
+                htmlFor="tomorrow-intent"
+                className="text-[13.5px] font-medium text-[var(--color-accent-3)]"
+              >
                 What should tomorrow protect?
               </label>
               <p className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">
@@ -294,9 +303,9 @@ export function DailyCheckin({
                 }}
                 rows={3}
                 placeholder="Submit the passport renewal before lunch…"
-                className="mt-3 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-[13px] leading-relaxed outline-none focus:border-[var(--color-accent)]"
+                className="mt-3 w-full resize-y rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-well)] p-3 text-[13px] leading-relaxed outline-none focus-visible:border-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-soft)]"
               />
-              <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--surface-border)] pt-3">
                 <SaveFeedback state={tomorrowState} error={tomorrowError} background />
                 <Button
                   size="sm"
@@ -332,7 +341,7 @@ function SaveFeedback({
   if (error) return <p className="text-[11.5px] text-[var(--color-danger)]">{error} Try again.</p>;
   if (state === 'saved') {
     return (
-      <p className="text-[11.5px] text-[var(--color-text-muted)]">
+      <p className="text-[11.5px] text-[var(--color-success)]">
         {background ? 'Saved. Planning continues in the background.' : 'Saved.'}
       </p>
     );

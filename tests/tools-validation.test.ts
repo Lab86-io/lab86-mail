@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { getTool, listToolMetadata } from '../lib/tools/index';
 import { invokeTool, ToolValidationError } from '../lib/tools/registry';
+import { harborBrief } from './fixtures/presentation-briefs';
 import { toolContext, withToolContext } from './tools/harness';
 
 const SAMPLE_INVALID_ARGS: Record<string, unknown> = {
@@ -27,6 +28,26 @@ const SAMPLE_INVALID_ARGS: Record<string, unknown> = {
 };
 
 describe('tool input validation', () => {
+  test('presentation union errors identify the failing slide fields', async () => {
+    const presentation = harborBrief();
+    presentation.slides[0].body = 'x'.repeat(321);
+    presentation.slides[1].title = 'x'.repeat(121);
+    await expect(
+      invokeTool(
+        getTool('document_create')!,
+        { kind: 'deck', title: 'Invalid', presentation },
+        toolContext(),
+      ),
+    ).rejects.toThrow('presentation.slides.0.body');
+    await expect(
+      invokeTool(
+        getTool('document_create')!,
+        { kind: 'deck', title: 'Invalid', presentation },
+        toolContext(),
+      ),
+    ).rejects.toThrow('presentation.slides.1.title');
+  });
+
   for (const [name, args] of Object.entries(SAMPLE_INVALID_ARGS)) {
     test(`${name} rejects invalid args`, async () => {
       const tool = getTool(name);

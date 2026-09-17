@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { briefDocumentV2Enabled } from '../lib/brief/feature';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '../lib/mail/brief-document-prompt';
 import {
   BRIEF_DOCUMENT_LIMITS,
@@ -15,10 +14,7 @@ import {
 } from '../lib/shared/brief-document-fixtures';
 
 describe('Brief Document v2', () => {
-  test('is opt-in and the generation prompt freezes the native vocabulary', () => {
-    expect(briefDocumentV2Enabled({})).toBe(false);
-    expect(briefDocumentV2Enabled({ BRIEF_DOCUMENT_V2: 'true' })).toBe(true);
-    expect(briefDocumentV2Enabled({ BRIEF_DOCUMENT_V2: '1' })).toBe(true);
+  test('the generation prompt freezes the native vocabulary', () => {
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('place_region');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('finalize_brief');
     expect(BRIEF_DOCUMENT_V2_SYSTEM_PROMPT).toContain('area_open_work');

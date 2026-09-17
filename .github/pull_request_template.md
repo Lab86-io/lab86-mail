@@ -10,27 +10,23 @@
 
 ## Albatross UI Research
 
-For every Albatross UI change, fill in:
+For material Albatross web UI changes, fill in:
 
-- Claude model used:
-- Claude prompt/run:
 - Mobbin references:
 - Browser-based research references:
 - Research/tooling constraints or unavailable tools:
 
-For Albatross UI changes, confirm:
+Follow `AGENTS.md`: Codex owns the web UI; Claude owns the native Apple clients and mobile v1 contract.
 
-- [ ] UI component was not generated directly by ChatGPT/Codex.
-- [ ] UI work was delegated to a full-context Opus `claude -p "{prompt}"` run.
-- [ ] No tiny prompt, no-tool prompt, or lightweight model fallback was used for UI implementation.
-- [ ] Claude prompt named the UI, files, constraints, and requested Mobbin research.
-- [ ] Claude prompt requested browser-based product research.
+- [ ] Existing design system and app density preserved.
 - [ ] PR summary includes Mobbin and browser-based references used.
 
 ## Tests
 
 - [ ] `bun run lint`
 - [ ] `bun run typecheck`
+- [ ] `bun test`
+- [ ] `bun run build`
 - [ ] Focused tests:
 - [ ] Affected integration/regression tests:
 

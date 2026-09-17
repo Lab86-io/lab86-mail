@@ -72,24 +72,3 @@ describe('quiet rail selection in both modes', () => {
     expect(rail.match(/className="rail-selection"/g)).toHaveLength(2);
   });
 });
-
-describe('shine border reduced motion (shine-border.tsx)', () => {
-  const shine = read('components/ui/shine-border.tsx');
-
-  test('reduced motion swaps the animated gradient for a static accent border', () => {
-    // `!` so the class beats the inline backgroundImage; the mask still cuts
-    // the flat fill down to a border.
-    expect(shine).toContain('motion-reduce:bg-none!');
-    expect(shine).toContain('motion-reduce:bg-(--shine-static)');
-    expect(shine).toContain("'--shine-static': Array.isArray(shineColor) ? shineColor[0] : shineColor");
-  });
-
-  test('the animation itself stays motion-safe gated', () => {
-    expect(shine).toContain('motion-safe:animate-shine');
-  });
-
-  test('the border hugs the host radius (rounded-[inherit], inset-0 — no stretched rectangle)', () => {
-    expect(shine).toContain('rounded-[inherit]');
-    expect(shine).toContain('absolute inset-0');
-  });
-});

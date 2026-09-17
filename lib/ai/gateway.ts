@@ -1,6 +1,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, generateText, type ModelMessage, streamText } from 'ai';
+import { generateObject, generateText } from 'ai';
 import { getAiBillingEntitlement } from '@/lib/hosted/billing';
 import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
@@ -551,49 +551,6 @@ function summarizeAiError(err: any) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function streamTextForUser(
-  options: Record<string, any> & {
-    feature?: string;
-    speed?: AiSpeed;
-    userId?: string | null;
-    userEmail?: string | null;
-    userName?: string | null;
-    messages: ModelMessage[];
-  },
-) {
-  const {
-    feature = 'agent',
-    speed = 'fast',
-    userId,
-    userEmail,
-    userName,
-    model: _ignored,
-    maxOutputTokens,
-    onFinish,
-    onError,
-    narrativeModel,
-    ...rest
-  } = options as any;
-  const runtime = await resolveAiRuntime({ userId, speed, feature, narrativeModel });
-  return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, () =>
-    streamText({
-      ...rest,
-      // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
-      // that OpenRouter 402s on); leaves room for reasoning + a reply.
-      maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_STREAM_MAX_TOKENS),
-      model: runtime.model,
-      onFinish: async (event) => {
-        await recordUsage(runtime, feature, event.usage, true);
-        await onFinish?.(event);
-      },
-      onError: async (event) => {
-        await recordUsage(runtime, feature, undefined, false, String(event.error || 'stream failed'));
-        await onError?.(event);
-      },
-    }),
-  );
 }
 
 type RoutedModel = { provider: AiProvider; modelName: string; model: any };

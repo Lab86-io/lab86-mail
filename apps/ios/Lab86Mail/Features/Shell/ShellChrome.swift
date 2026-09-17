@@ -220,6 +220,14 @@ struct ShellToolbarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .toolbar {
+                if environment.navigation.documentRoute == nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("All tools", systemImage: "rectangle.expand.vertical") {
+                            environment.navigation.sheet = .workspace(.current(environment.navigation))
+                        }
+                        .accessibilityIdentifier("workspace.allTools")
+                    }
+                }
                 if includesCompose {
                     ToolbarItem(placement: composePlacement) {
                         Button {

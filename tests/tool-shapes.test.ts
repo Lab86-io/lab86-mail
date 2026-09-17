@@ -29,6 +29,33 @@ const threadRow = (n: number) => ({
 });
 
 describe('resolveToolShape', () => {
+  test('document lists omit rows without an actionable document ID', () => {
+    const result = shape(
+      'document_list',
+      {},
+      {
+        documents: [
+          { title: 'Missing ID' },
+          { documentId: '', title: 'Empty ID' },
+          { documentId: 'doc_1', title: 'Quarterly plan', kind: 'document' },
+        ],
+      },
+    );
+    expect(result.kind).toBe('files');
+    if (result.kind !== 'files') return;
+    expect(result.items).toEqual([
+      {
+        connectionId: 'albatross',
+        fileId: 'doc_1',
+        documentId: 'doc_1',
+        name: 'Quarterly plan',
+        kind: 'document',
+        actions: [{ kind: 'open_document', documentId: 'doc_1' }],
+      },
+    ]);
+    expect(resolveToolShape('document_list', {}, { documents: [{ title: 'Missing ID' }] })).toBeNull();
+  });
+
   test('every mapped tool is a real agent tool', () => {
     for (const name of SHAPED_TOOL_NAMES) {
       expect(
@@ -162,6 +189,24 @@ describe('resolveToolShape', () => {
     );
     expect(result).toMatchObject({ kind: 'count', value: 42 });
     if (result.kind === 'count') expect(result.label).toContain('from:ada');
+  });
+
+  test('mail count cards preserve lower bounds and distinguish indexed counts', () => {
+    expect(shape('corpus_count', {}, { total: 64, approximate: true })).toMatchObject({
+      kind: 'count',
+      value: 64,
+      label: 'or more indexed messages',
+    });
+    expect(shape('corpus_count', { query: 'publisher' }, { total: 0, approximate: true })).toMatchObject({
+      kind: 'count',
+      value: 0,
+      label: 'or more indexed messages matching “publisher”',
+    });
+    expect(shape('corpus_count', {}, { total: 0, approximate: false })).toMatchObject({
+      kind: 'count',
+      value: 0,
+      label: 'indexed messages',
+    });
   });
 
   test('mail mutations → receipt with an open action and no undo', () => {

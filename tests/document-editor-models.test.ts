@@ -1,18 +1,28 @@
 import { describe, expect, test } from 'bun:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   addElement,
   clampElementBounds,
   createHistory,
   deckModelsEqual,
   deleteSlide,
+  duplicateElement,
   duplicateSlide,
+  elementLabel,
+  findElement,
   moveSlide,
   nudgeElement,
   pushHistory,
   redoHistory,
+  reorderElement,
+  setSlideBackgroundImage,
   slideColor,
+  slideWithElementBounds,
   undoHistory,
   updateElement,
+  updateTheme,
+  upgradeDeckModel,
 } from '../components/files/editors/deck-model';
 import {
   docModelsEqual,
@@ -22,6 +32,9 @@ import {
   moveDocBlock,
   normalizeRuns,
 } from '../components/files/editors/doc-rich-text';
+import { SlideSurface } from '../components/files/editors/SlideRenderer';
+import { DECK_THEMES, referenceDeck } from '../lib/documents/deck-fixtures';
+import { deckModelForSave } from '../lib/documents/deck-versions';
 import { createDefaultDocumentModel, parseDocumentModel } from '../lib/documents/model';
 
 describe('rich document model fidelity', () => {
@@ -100,8 +113,10 @@ describe('rich document model fidelity', () => {
 });
 
 describe('presentation edit identity and recovery', () => {
-  const base = createDefaultDocumentModel('deck', 'base');
-  if (base.kind !== 'deck') throw new Error('Expected deck fixture');
+  const stored = createDefaultDocumentModel('deck', 'base');
+  if (stored.kind !== 'deck') throw new Error('Expected deck fixture');
+  // Editors work on the lifted version 2 deck; identity holds there.
+  const base = upgradeDeckModel(stored);
   test('canvas colors match the supported Office export subset', () => {
     expect(slideColor(' a1b2c3 ', '#FFFFFF')).toBe('#A1B2C3');
     expect(slideColor('#a1b2c3', '#FFFFFF')).toBe('#A1B2C3');
@@ -138,7 +153,7 @@ describe('presentation edit identity and recovery', () => {
     const first = base.slides[0].elements[0];
     const changed = updateElement(base, base.activeSlideId, first.id, { text: 'New heading', fontSize: 999 });
     expect(changed.slides[0].title).toBe('New heading');
-    expect(changed.slides[0].elements[0].fontSize).toBe(160);
+    expect(changed.slides[0].elements[0].type === 'text' && changed.slides[0].elements[0].fontSize).toBe(240);
     expect(changed.slides[0].elements[1]).toEqual(base.slides[0].elements[1]);
     expect(deckModelsEqual(changed, base)).toBe(false);
   });
@@ -149,5 +164,137 @@ describe('presentation edit identity and recovery', () => {
     expect(undoHistory(next).present).toBe('before');
     expect(redoHistory(undoHistory(next)).present).toBe('ab');
     expect(createHistory('server revision').past).toEqual([]);
+  });
+});
+
+describe('slide editor helpers on the version 2 deck', () => {
+  const deck = referenceDeck('editorial');
+  test('duplicateElement copies with a fresh id, offset and on top, and clamps to the slide', () => {
+    const copy = duplicateElement(deck, 'cover', 'cover-foot', () => 'copy');
+    const source = findElement(deck, 'cover', 'cover-foot')!;
+    const made = findElement(copy.model, 'cover', 'copy')!;
+    expect(copy.elementId).toBe('copy');
+    expect(made).toMatchObject({
+      type: 'text',
+      text: source.type === 'text' ? source.text : '',
+      x: source.x + 2,
+    });
+    expect(made.y + made.height).toBeLessThanOrEqual(100);
+    expect(copy.model.slides[0].elements.at(-1)?.id).toBe('copy');
+    expect(deck.slides[0].elements.some((element) => element.id === 'copy')).toBe(false);
+    expect(duplicateElement(deck, 'cover', 'missing').elementId).toBe('');
+    expect(elementLabel(made)).toBe('Text');
+    expect(elementLabel(findElement(deck, 'metrics', 'm-chart')!)).toBe('Chart');
+  });
+  test('slideWithElementBounds previews a box without touching the model', () => {
+    const preview = slideWithElementBounds(deck.slides[0], 'cover-title', {
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+    });
+    expect(preview.elements.find((element) => element.id === 'cover-title')).toMatchObject({
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+    });
+    expect(findElement(deck, 'cover', 'cover-title')).toMatchObject({ x: 6, y: 24 });
+    const line = slideWithElementBounds(deck.slides[4], 'p-line', {
+      x: 6,
+      y: 46,
+      width: 77,
+      height: 10,
+      flip: true,
+    });
+    expect(line.elements.find((element) => element.id === 'p-line')).toMatchObject({
+      flip: true,
+      height: 10,
+    });
+  });
+  test('background image set and clear, layer order and theme changes survive the save policy', () => {
+    const withImage = setSlideBackgroundImage(deck, 'close', {
+      assetId: 'asset',
+      src: '/a.png',
+      opacity: 0.4,
+    });
+    expect(withImage.slides[5].backgroundImage).toEqual({ assetId: 'asset', src: '/a.png', opacity: 0.4 });
+    const cleared = setSlideBackgroundImage(withImage, 'close', null);
+    expect('backgroundImage' in cleared.slides[5]).toBe(false);
+    const forward = reorderElement(deck, 'cover', 'cover-image', 1);
+    expect(forward.slides[0].elements[1].id).toBe('cover-image');
+    const themed = updateTheme(
+      updateElement(deck, 'cover', 'cover-title', { fontSize: 40 }),
+      DECK_THEMES.signal,
+    );
+    expect(themed.theme).toEqual(DECK_THEMES.signal);
+    expect(findElement(themed, 'cover', 'cover-title')).toMatchObject({ fontSize: 40 });
+    expect(deckModelForSave(themed, 2)).toBe(themed);
+    // A version 1 deck that gains a rect shape stays version 1; a line makes it version 2 for good.
+    const stored = createDefaultDocumentModel('deck', 'v1');
+    if (stored.kind !== 'deck') throw new Error('Expected deck fixture');
+    const old = upgradeDeckModel(stored);
+    const shaped = addElement(old, old.activeSlideId, 'shape', () => 'rect').model;
+    expect(deckModelForSave(shaped, 1).version).toBe(1);
+    const lined = addElement(old, old.activeSlideId, 'line', () => 'rule').model;
+    expect(deckModelForSave(lined, 1).version).toBe(2);
+  });
+  test('a flat or upright line paints with the stroke thickness around its zero side', () => {
+    const html = renderToStaticMarkup(
+      createElement(SlideSurface, { slide: deck.slides[4], theme: deck.theme }),
+    );
+    const flat = html.match(/<svg class="deck-line" data-line="flat"[^>]*style="([^"]*)"/);
+    expect(flat?.[1]).toContain('height:0.13cqw');
+    expect(flat?.[1]).toContain('min-height:1px');
+    expect(flat?.[1]).toContain('top:calc(0.13cqw / -2)');
+    expect(html).toContain('x2="100%" y2="50%"');
+    const upright = renderToStaticMarkup(
+      createElement(SlideSurface, {
+        theme: deck.theme,
+        slide: {
+          id: 's',
+          title: 's',
+          elements: [
+            {
+              id: 'v',
+              type: 'line',
+              x: 50,
+              y: 10,
+              width: 0,
+              height: 80,
+              stroke: { color: '#000000', width: 2, dash: 'dash' },
+            },
+          ],
+        },
+      }),
+    );
+    const vertical = upright.match(/<svg class="deck-line" data-line="upright"[^>]*style="([^"]*)"/);
+    expect(vertical?.[1]).toContain('width:0.21cqw');
+    expect(vertical?.[1]).toContain('min-width:1px');
+    expect(upright).toContain('x1="50%" y1="0" x2="50%" y2="100%"');
+    expect(upright).toContain('stroke-dasharray:0.63cqw 0.42cqw');
+    const diagonal = renderToStaticMarkup(
+      createElement(SlideSurface, {
+        theme: deck.theme,
+        slide: {
+          id: 's',
+          title: 's',
+          elements: [
+            {
+              id: 'd',
+              type: 'line',
+              x: 10,
+              y: 10,
+              width: 40,
+              height: 40,
+              flip: true,
+              stroke: { color: '#000000', width: 1 },
+            },
+          ],
+        },
+      }),
+    );
+    expect(diagonal).toContain('data-line="diagonal"');
+    expect(diagonal).toContain('y1="100"');
   });
 });

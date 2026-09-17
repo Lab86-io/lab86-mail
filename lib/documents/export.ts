@@ -1,7 +1,9 @@
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import ExcelJS from 'exceljs';
 import pptxgen from 'pptxgenjs';
-import { type AlbatrossDocumentRecord, type DocBlock, sheetGridModel } from './model';
+import { loadDeckAsset } from './deck-assets';
+import { deckExportFace, deckTextSlot, upgradeDeckModel } from './deck-versions';
+import { type AlbatrossDocumentRecord, type DeckElementV2, type DocBlock, sheetGridModel } from './model';
 
 export interface DocumentExport {
   bytes: Uint8Array;
@@ -169,46 +171,197 @@ async function exportSheet(document: AlbatrossDocumentRecord): Promise<DocumentE
   };
 }
 
+const SLIDE_WIDTH_IN = 13.333;
+const SLIDE_HEIGHT_IN = 7.5;
+const DASH: Record<string, 'solid' | 'dash' | 'sysDot'> = { solid: 'solid', dash: 'dash', dot: 'sysDot' };
+
+function inches(element: { x: number; y: number; width: number; height: number }) {
+  return {
+    x: (element.x / 100) * SLIDE_WIDTH_IN,
+    y: (element.y / 100) * SLIDE_HEIGHT_IN,
+    w: (element.width / 100) * SLIDE_WIDTH_IN,
+    h: (element.height / 100) * SLIDE_HEIGHT_IN,
+  };
+}
+
+/** Default type size by role; matches the canvas renderer. */
+export function deckTextSize(element: Extract<DeckElementV2, { type: 'text' }>) {
+  if (element.fontSize) return element.fontSize;
+  switch (element.role) {
+    case 'title':
+      return 28;
+    case 'number':
+      return 64;
+    case 'subtitle':
+      return 20;
+    case 'caption':
+    case 'kicker':
+      return 12;
+    default:
+      return 16;
+  }
+}
+
+/**
+ * Presentation export keeps every element editable in PowerPoint: text stays
+ * text, shapes stay shapes, charts are native charts, images are images. No
+ * slide is flattened to a picture. Rotation, dashes and roundness map directly;
+ * focal-point crops become centered cover crops, the one documented loss.
+ */
 async function exportDeck(document: AlbatrossDocumentRecord): Promise<DocumentExport> {
   if (document.model.kind !== 'deck') throw new Error('Presentation model mismatch.');
+  const model = upgradeDeckModel(document.model);
+  const theme = model.theme;
   const presentation = new pptxgen();
   presentation.author = 'Albatross';
   presentation.subject = document.title;
   presentation.title = document.title;
   presentation.layout = 'LAYOUT_WIDE';
-  for (const source of document.model.slides) {
+  const assets = new Map<string, Promise<string>>();
+  const asset = (src: string) => {
+    if (!assets.has(src))
+      assets.set(
+        src,
+        loadDeckAsset(src).then((loaded) => loaded.data),
+      );
+    return assets.get(src)!;
+  };
+  for (const source of model.slides) {
     const slide = presentation.addSlide();
-    if (source.background) {
-      slide.background = { color: presentationColor(source.background, 'FFFFFF') };
+    slide.background = { color: presentationColor(source.background ?? theme.colors.background, 'FFFFFF') };
+    if (source.backgroundImage?.src) {
+      slide.addImage({
+        data: await asset(source.backgroundImage.src),
+        x: 0,
+        y: 0,
+        w: SLIDE_WIDTH_IN,
+        h: SLIDE_HEIGHT_IN,
+        sizing: { type: 'cover', w: SLIDE_WIDTH_IN, h: SLIDE_HEIGHT_IN },
+        transparency: Math.round((1 - (source.backgroundImage.opacity ?? 1)) * 100),
+      });
     }
     for (const element of source.elements) {
-      const x = (element.x / 100) * 13.333;
-      const y = (element.y / 100) * 7.5;
-      const w = (element.width / 100) * 13.333;
-      const h = (element.height / 100) * 7.5;
-      if (element.type === 'shape') {
-        slide.addShape(presentation.ShapeType.rect, {
-          x,
-          y,
-          w,
-          h,
-          fill: { color: presentationColor(element.fill, 'E8EEF5') },
-          line: { color: presentationColor(element.color, '94A3B8') },
-        });
-      } else {
+      const box = inches(element);
+      const common = { ...box, rotate: element.rotation || 0 };
+      const transparency =
+        element.opacity !== undefined ? Math.round((1 - element.opacity) * 100) : undefined;
+      if (element.type === 'text') {
+        const size = deckTextSize(element);
+        const slot = deckTextSlot(element);
         slide.addText(element.text || '', {
-          x,
-          y,
-          w,
-          h,
-          fontFace: 'Aptos',
-          fontSize: element.fontSize || (element.role === 'title' ? 28 : 16),
-          bold: element.role === 'title',
-          color: presentationColor(element.color, '17202A'),
+          ...common,
+          fontFace: deckExportFace(theme, slot),
+          fontSize: size,
+          bold:
+            (element.fontWeight ?? (element.role === 'title' || element.role === 'number' ? 650 : 400)) >=
+            600,
+          italic: Boolean(element.italic),
+          color: presentationColor(element.color ?? theme.colors.ink, '17202A'),
+          align: element.align ?? 'left',
+          valign: element.valign ?? 'middle',
+          lineSpacingMultiple: element.lineHeight ?? (slot === 'display' ? 1.05 : 1.3),
+          charSpacing: element.letterSpacing ? Math.round(element.letterSpacing * size * 10) / 10 : undefined,
+          ...(element.fill
+            ? { fill: { color: presentationColor(element.fill, 'FFFFFF'), transparency } }
+            : {}),
           margin: 0.08,
-          valign: 'middle',
           breakLine: false,
         });
+      } else if (element.type === 'shape') {
+        const kind =
+          element.shape === 'ellipse'
+            ? presentation.ShapeType.ellipse
+            : element.shape === 'roundRect'
+              ? presentation.ShapeType.roundRect
+              : presentation.ShapeType.rect;
+        slide.addShape(kind, {
+          ...common,
+          fill: { color: presentationColor(element.fill ?? theme.colors.surface, 'E8EEF5'), transparency },
+          line: element.stroke
+            ? {
+                color: presentationColor(element.stroke.color, '94A3B8'),
+                width: element.stroke.width,
+                dashType: DASH[element.stroke.dash ?? 'solid'],
+              }
+            : { color: presentationColor(element.fill ?? theme.colors.surface, 'E8EEF5'), width: 0 },
+          ...(element.shape === 'roundRect' && element.radius ? { rectRadius: element.radius / 72 } : {}),
+        });
+      } else if (element.type === 'line') {
+        slide.addShape(presentation.ShapeType.line, {
+          ...common,
+          flipV: Boolean(element.flip),
+          line: {
+            color: presentationColor(element.stroke.color, '17202A'),
+            width: element.stroke.width,
+            dashType: DASH[element.stroke.dash ?? 'solid'],
+          },
+        });
+      } else if (element.type === 'image') {
+        if (!element.src)
+          throw new Error(`Image "${element.alt || element.id}" has no owned source to export.`);
+        slide.addImage({
+          data: await asset(element.src),
+          ...common,
+          altText: element.alt,
+          sizing: { type: element.fit ?? 'cover', w: box.w, h: box.h },
+          transparency,
+        });
+      } else if (element.type === 'chart') {
+        const type =
+          element.chart === 'line'
+            ? presentation.ChartType.line
+            : element.chart === 'pie'
+              ? presentation.ChartType.pie
+              : element.chart === 'doughnut'
+                ? presentation.ChartType.doughnut
+                : presentation.ChartType.bar;
+        const colors = (
+          element.colors?.length
+            ? element.colors
+            : [theme.colors.accent, theme.colors.ink, theme.colors.muted, theme.colors.surface]
+        ).map((color) => presentationColor(color, '17202A'));
+        const ink = presentationColor(theme.colors.ink, '17202A');
+        const muted = presentationColor(theme.colors.muted, '94A3B8');
+        const body = deckExportFace(theme, 'body');
+        slide.addChart(
+          type,
+          element.series.map((series) => ({
+            name: series.name,
+            labels: element.categories,
+            values: series.values,
+          })),
+          {
+            ...box,
+            barDir: element.chart === 'bar' ? 'bar' : 'col',
+            chartColors: colors,
+            showLegend: element.legend ?? element.series.length > 1,
+            legendPos: 'b',
+            legendColor: ink,
+            legendFontFace: body,
+            showValue: Boolean(element.values),
+            dataLabelColor: ink,
+            dataLabelFontFace: body,
+            dataLabelFontSize: 10,
+            catAxisLabelColor: ink,
+            catAxisLabelFontFace: body,
+            catAxisLabelFontSize: 10,
+            valAxisLabelColor: muted,
+            valAxisLabelFontFace: body,
+            valAxisLabelFontSize: 9,
+            valAxisMaxVal:
+              Math.ceil((Math.max(1, ...element.series.flatMap((series) => series.values)) * 1.1) / 10) * 10,
+            valAxisLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
+            dataLabelFormatCode: element.unit ? `0"${element.unit.replace(/"/g, '')}"` : '0',
+            valGridLine: { color: muted, style: 'dash', size: 0.5 },
+            catGridLine: { style: 'none' },
+            catAxisLineShow: false,
+            valAxisLineShow: false,
+            barGapWidthPct: 60,
+            ...(element.chart === 'pie' || element.chart === 'doughnut'
+              ? { showPercent: false, showLabel: true, dataLabelPosition: 'bestFit' }
+              : {}),
+          },
+        );
       }
     }
     if (source.notes) slide.addNotes(source.notes);

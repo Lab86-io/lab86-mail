@@ -245,7 +245,7 @@ function BriefLeaf({
             node.role === 'lede' && 'font-display text-xl leading-relaxed @[600px]:text-2xl',
             node.role === 'kicker' && 'text-[11px] font-semibold text-[var(--color-accent-2)]',
             node.role === 'body' && 'text-sm leading-relaxed @[600px]:text-[15px]',
-            node.role === 'aside' && 'border-l-2 border-[var(--color-accent-2)] pl-3 text-sm italic',
+            node.role === 'aside' && 'border-y border-[var(--color-accent-2)] py-3 text-sm italic',
             node.role === 'caption' && 'text-xs text-[var(--color-text-muted)]',
             nodeClass(node),
           )}

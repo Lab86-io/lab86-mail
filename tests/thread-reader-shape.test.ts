@@ -20,6 +20,7 @@ describe('one mail surface', () => {
   });
   test('the reader interior is flat — no nested surface rungs', () => {
     expect(thread).not.toContain('surface-float');
+    expect(thread).toContain(": 'bg-[var(--color-content)]'");
   });
   test('the date carries no interaction, so hover actions may cover it', () => {
     // The date renders as a plain span; a button here would swallow the

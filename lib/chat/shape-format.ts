@@ -1,4 +1,4 @@
-// Display formatting for shape cards (docs/chat-agentic-pass.md, section 3).
+// Display formatting for shape cards.
 // Pure functions so the cards stay thin and the rules are testable.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +87,9 @@ export function joinWithMore(items: string[], limit = 3): string {
 
 /** "Google Doc" from a Google MIME type, else the kind or the MIME subtype. */
 export function fileKindLabel(kind?: string, mimeType?: string): string {
+  if (kind === 'doc') return 'Document';
+  if (kind === 'deck') return 'Presentation';
+  if (kind === 'sheet') return 'Spreadsheet';
   if (kind) return kind;
   const mime = (mimeType || '').toLowerCase();
   if (mime.includes('google-apps.document')) return 'Google Doc';

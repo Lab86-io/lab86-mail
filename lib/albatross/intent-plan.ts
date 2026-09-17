@@ -315,22 +315,6 @@ export function parsePlanGeneration(raw: string): PlanGeneration {
   return result.data;
 }
 
-/** Sandboxed srcDoc has an opaque origin: scheme-less hrefs resolve to
- * 0.0.0.0. Force https on bare-domain links and open everything in a new
- * tab via <base> (the render sandbox only grants allow-popups). */
-export function normalizeArtifactLinks(html: string): string {
-  let out = html.replace(/href="(?!https?:|mailto:|tel:|#)([^"]+)"/gi, (match, target) =>
-    /^[\w.-]+\.[a-z]{2,}([/?#]|$)/i.test(target) ? `href="https://${target}"` : match,
-  );
-  out = out.replace(/src="(?!https?:|data:)([^"]+)"/gi, (match, target) =>
-    /^[\w.-]+\.[a-z]{2,}([/?#]|$)/i.test(target) ? `src="https://${target}"` : match,
-  );
-  if (!/<base\s/i.test(out)) {
-    out = out.replace(/<head(\s[^>]*)?>/i, (head) => `${head}\n<base target="_blank">`);
-  }
-  return out;
-}
-
 // A generation that never resolves would otherwise leave its intent in
 // 'planning' with no planError (the wedge a mid-flight deploy causes — see the
 // plan-reconcile cron). Lifted to lib/shared/deadline.ts so the Daily Brief

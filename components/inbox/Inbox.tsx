@@ -181,7 +181,6 @@ export function Inbox() {
   const toggleSelected = useClientStore((s) => s.toggleSelected);
   const clearSelected = useClientStore((s) => s.clearSelected);
   const selectMany = useClientStore((s) => s.selectMany);
-  const railOpen = useClientStore((s) => s.railOpen);
 
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(searchDraft || (query === DEFAULT_QUERY ? '' : query));
@@ -806,19 +805,11 @@ export function Inbox() {
   // separator paints; the reader half closes the rectangle.
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <div
-        data-mail-frame
-        className={cn('flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg-elevated)]')}
-      >
+      <div data-mail-frame className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-content)]">
         {/* Compose, the categories, and the folders live with the mail now,
             not in the product's navigation rail. */}
         <MailNav />
-        <div
-          className={cn(
-            'flex flex-col border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2.5',
-            !railOpen && 'pl-12',
-          )}
-        >
+        <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-content)] px-3 py-2.5">
           <div className="flex items-center gap-2">
             <AccountScopePopover
               accounts={authedAccounts}
@@ -1147,10 +1138,7 @@ function useSenderLogo(email: string): string | null {
 
 export function InboxDateGroup({ label }: { label: string }) {
   return (
-    <div
-      data-mail-date-group
-      className="flex items-baseline gap-2.5 bg-[var(--color-bg-elevated)] px-3 py-2.5"
-    >
+    <div data-mail-date-group className="flex items-baseline gap-2.5 bg-[var(--color-content)] px-3 py-2.5">
       <span className="font-display text-[12.5px] italic leading-none text-[var(--color-text-muted)]">
         {label}
       </span>
@@ -1309,7 +1297,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
       className={cn(
         // No transition on the row itself: the hover highlight is a selection
         // cue, so it must be instant for snappy up/down scanning.
-        'group relative grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2.5 border-b border-[var(--color-list-divider)] px-3 py-2 text-left outline-none last:border-b-0 hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-selected-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
+        'group relative grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-ui px-3 py-2 text-left outline-none after:pointer-events-none after:absolute after:inset-x-3 after:bottom-0 after:h-px after:bg-[var(--color-list-divider)] last:after:hidden hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-selected-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
         active && 'bg-[var(--color-selected-soft)]',
         selected && 'bg-[var(--color-selected-soft)]',
       )}

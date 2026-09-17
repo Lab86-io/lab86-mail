@@ -47,6 +47,10 @@ struct FilesView: View {
         .searchable(text: $query, prompt: "Search files")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Full file library", systemImage: "rectangle.expand.vertical") {
+                    environment.navigation.sheet = .workspace(.files)
+                }
+                .accessibilityIdentifier("files.fullLibrary")
                 Button {
                     showsDriveMenu = true
                 } label: {

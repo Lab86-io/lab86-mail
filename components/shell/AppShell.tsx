@@ -244,12 +244,12 @@ export function AppShell({
         open={railOpen}
         onOpenChange={setRailOpen}
         style={{ '--sidebar-width': `${railWidth}px` } as CSSProperties}
-        className="relative h-dvh overflow-hidden bg-[var(--color-bg)]"
+        className="app-paper relative h-dvh overflow-hidden"
       >
         <Rail clerkEnabled={clerkEnabled} activeViewOverride={bootView ?? undefined} />
         {/* Drag handle to resize the expanded rail; hidden when collapsed to icons. */}
         {railOpen && !isMobile ? <RailResizeHandle /> : null}
-        <main className="app-paper relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="relative flex h-dvh min-w-0 flex-1 flex-col overflow-hidden">
           <div data-workspace-panel className="workspace-panel">
             <ChatWorkspace mobile={isMobile} clerkEnabled={clerkEnabled} userName={userName}>
               {isMobile ? (
@@ -546,20 +546,13 @@ function RailResizeHandle() {
       type="button"
       tabIndex={-1}
       aria-label="Resize navigation rail"
+      data-dragging={dragging || undefined}
       onPointerDown={onPointerDown}
       onDoubleClick={() => setRailWidth(RAIL_DEFAULT)}
       title="Drag to resize · double-click to reset"
       className="group absolute inset-y-0 left-[var(--sidebar-width)] z-20 hidden w-[6px] -translate-x-1/2 cursor-col-resize rounded-none bg-[var(--color-transparent)] p-0 outline-none md:block"
     >
-      <span
-        className={cn(
-          'pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 transition-colors',
-          dragging
-            ? 'w-[2px] bg-[var(--color-accent)]'
-            : 'w-px bg-[var(--color-transparent)] group-hover:bg-[var(--color-accent)]',
-        )}
-        aria-hidden
-      />
+      <span className="rail-resize-outline" aria-hidden />
     </button>
   );
 }
@@ -580,7 +573,7 @@ function ResizeSeparator({ onResizeStateChange }: { onResizeStateChange: (resizi
       }}
       className="group relative w-[6px] shrink-0 cursor-col-resize bg-[var(--color-transparent)] outline-none"
     >
-      <span className="pointer-events-none absolute inset-0 bg-[var(--color-bg-elevated)]" aria-hidden />
+      <span className="pointer-events-none absolute inset-0 bg-[var(--color-content)]" aria-hidden />
       <span
         className="pointer-events-none absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-[var(--color-border)]/70 transition-colors group-hover:bg-[var(--color-accent)] group-data-[separator-state=drag]:w-[2px] group-data-[separator-state=drag]:bg-[var(--color-accent)]"
         aria-hidden

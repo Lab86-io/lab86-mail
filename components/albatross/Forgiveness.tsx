@@ -14,7 +14,6 @@ import {
   type Recovery,
   recoveriesFor,
   recoveryAcknowledgement,
-  reEntryLine,
   reviewHeadline,
   shrinkSuggestion,
 } from '@/lib/albatross/forgiveness';
@@ -323,51 +322,6 @@ export function ReviewBatch({
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-/**
- * Coming back after a while away.
- *
- * The one thing this must never do is present a wall of accumulated overdue
- * work. That feeling is the thing the product exists to remove, and producing
- * it at the exact moment somebody returns would undo everything else.
- */
-export function ReEntry({
-  days,
-  onShowUrgent,
-  onReviewOld,
-  onDismiss,
-}: {
-  days: number;
-  onShowUrgent: () => void;
-  onReviewOld: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-4">
-      <div className="flex items-start gap-3">
-        <AlbatrossMark className="mt-0.5 size-7 shrink-0 text-[var(--color-accent)]" />
-        <div className="min-w-0 flex-1">
-          <h3 className="font-serif text-[15px] font-semibold">{reEntryLine(days)}</h3>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
-            Albatross kept carrying things while you were gone. Nothing is overdue and nothing is waiting for
-            an apology.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <Button type="button" size="sm" onClick={onShowUrgent}>
-              Show only what needs me
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={onReviewOld}>
-              Review what has gone quiet
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={onDismiss}>
-              Just show me today
-            </Button>
-          </div>
-        </div>
-      </div>
     </section>
   );
 }

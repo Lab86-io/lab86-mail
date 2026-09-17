@@ -40,11 +40,3 @@ export function briefActionTier(action: string): BriefActionTier {
 export function isKnownBriefAction(action: string): action is KnownBriefAction {
   return briefActionTier(action) !== 'unknown';
 }
-
-export function isImmediateBriefAction(action: string): action is ImmediateBriefAction {
-  return immediate.has(action);
-}
-
-export function isReviewBriefAction(action: string): action is ReviewBriefAction {
-  return review.has(action);
-}

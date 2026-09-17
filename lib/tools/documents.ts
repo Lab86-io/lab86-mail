@@ -1,9 +1,18 @@
 import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '@/lib/ai/operations';
-import { generateDocumentProposal } from '@/lib/documents/ai';
-import { documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
+import { composeDocumentPresentation, generateDocumentProposal } from '@/lib/documents/ai';
+import { artworksForDeck } from '@/lib/documents/deck-imagery';
+import { checkSlide } from '@/lib/documents/deck-quality';
+import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
+import { upgradeDeckModel } from '@/lib/documents/deck-versions';
+import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
+import {
+  presentationBriefSchema,
+  presentationBriefV2Schema,
+  presentationSlideCountMatches,
+} from '@/lib/documents/presentation-design';
 import {
   archiveDocument,
   createDocument,
@@ -32,8 +41,11 @@ const sourceRefSchema = z.object({
 const defaultDependencies = {
   applySpreadsheetChanges,
   archiveDocument,
+  artworksForDeck,
+  assetsFromUploads,
   createDocument,
   createDocumentSuggestion,
+  composeDocumentPresentation,
   generateDocumentProposal,
   getDocument,
   listDocuments,
@@ -51,18 +63,45 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. Use instructions and sourceContext to generate real content; the result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through the existing design and layout checks without another model call. Prefer the version 2 brief with audience, purpose, tone, palette (editorial or signal), fontPair (serif or sans), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none keeps slides typographic. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
-  input: z.object({
-    kind: z.enum(DOCUMENT_KINDS),
-    title: z.string().min(1).max(500),
-    instructions: z.string().min(1).max(20_000).optional(),
-    sourceContext: z.string().max(40_000).optional(),
-    sourceRefs: z.array(sourceRefSchema).max(100).optional(),
-    publishToGoogle: z.boolean().default(false),
-    googleConnectionId: z.string().max(500).optional(),
-  }),
+  input: z
+    .object({
+      kind: z.enum(DOCUMENT_KINDS),
+      title: z.string().min(1).max(500),
+      instructions: z.string().min(1).max(20_000).optional(),
+      sourceContext: z.string().max(40_000).optional(),
+      sourceRefs: z.array(sourceRefSchema).max(100).optional(),
+      presentation: z
+        .union([presentationBriefV2Schema, presentationBriefSchema])
+        .optional()
+        .describe(
+          'Finished presentation content for kind=deck; composed and saved directly without AI generation. Put source detail and citations in speaker notes.',
+        ),
+      publishToGoogle: z.boolean().default(false),
+      googleConnectionId: z.string().max(500).optional(),
+      imageUploadIds: z.array(z.string().min(1).max(200)).max(MAX_UPLOAD_ASSETS).optional(),
+      artwork: z.enum(['auto', 'none']).optional(),
+    })
+    .superRefine((args, ctx) => {
+      if (args.presentation && args.kind !== 'deck')
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation'],
+          message: 'Presentation content requires kind=deck.',
+        });
+      if (
+        args.presentation &&
+        args.instructions &&
+        !presentationSlideCountMatches(args.instructions, args.presentation.slides.length)
+      )
+        ctx.addIssue({
+          code: 'custom',
+          path: ['presentation', 'slides'],
+          message: 'Slide count does not match the instructions.',
+        });
+    }),
   output: z.object({
     ok: z.boolean(),
     documentId: z.string(),
@@ -72,19 +111,45 @@ export const documentCreate = defineTool({
     openPath: z.string(),
     googleUrl: z.string().optional(),
     publishError: z.string().optional(),
+    /** Plain notes on uploads that were skipped. */
+    notes: z.array(z.string()).optional(),
   }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
-    const proposal = args.instructions
-      ? await dependencies.generateDocumentProposal({
+    ctx.abortSignal?.throwIfAborted();
+    const notes: string[] = [];
+    let assets: Awaited<ReturnType<typeof assetsFromUploads>>['assets'] | undefined;
+    if (args.imageUploadIds?.length) {
+      if (args.kind === 'deck') {
+        const uploads = await dependencies.assetsFromUploads(userId, args.imageUploadIds);
+        assets = uploads.assets;
+        notes.push(...uploads.notes);
+      } else notes.push('Image uploads apply to presentations only and were not used.');
+    }
+    ctx.abortSignal?.throwIfAborted();
+    const proposal = args.presentation
+      ? await dependencies.composeDocumentPresentation({
           userId,
-          userEmail: ctx.userEmail || undefined,
-          userName: ctx.userName || undefined,
-          kind: args.kind,
-          instruction: args.instructions,
-          sourceContext: args.sourceContext,
+          instruction: args.instructions || '',
+          presentation: args.presentation,
+          assets,
+          artwork: args.artwork,
+          abortSignal: ctx.abortSignal,
         })
-      : null;
+      : args.instructions
+        ? await dependencies.generateDocumentProposal({
+            userId,
+            userEmail: ctx.userEmail || undefined,
+            userName: ctx.userName || undefined,
+            kind: args.kind,
+            instruction: args.instructions,
+            sourceContext: args.sourceContext,
+            abortSignal: ctx.abortSignal,
+            ...(assets ? { assets } : {}),
+            ...(args.artwork ? { artwork: args.artwork } : {}),
+          })
+        : null;
+    ctx.abortSignal?.throwIfAborted();
     const document = await dependencies.createDocument({
       userId,
       kind: args.kind,
@@ -105,6 +170,7 @@ export const documentCreate = defineTool({
     let publishError: string | undefined;
     if (args.publishToGoogle) {
       try {
+        ctx.abortSignal?.throwIfAborted();
         google = await dependencies.publishDocumentToGoogle({
           userId,
           document,
@@ -126,6 +192,7 @@ export const documentCreate = defineTool({
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       googleUrl: google?.webUrl,
       publishError,
+      ...(notes.length ? { notes } : {}),
     };
   },
 });
@@ -235,7 +302,9 @@ export const documentSuggestChanges = defineTool({
       instruction: args.instruction,
       current: document,
       sourceContext: args.sourceContext,
+      abortSignal: ctx.abortSignal,
     });
+    ctx.abortSignal?.throwIfAborted();
     const suggestion = await dependencies.createDocumentSuggestion({
       userId,
       documentId: document.documentId,
@@ -288,11 +357,13 @@ export const documentApplyInstruction = defineTool({
       instruction: args.instruction,
       current: document,
       sourceContext: args.sourceContext,
+      abortSignal: ctx.abortSignal,
     });
     const model =
       proposal.model.kind === 'sheet-changes'
         ? await dependencies.applySpreadsheetChanges(document.model, proposal.model)
         : proposal.model;
+    ctx.abortSignal?.throwIfAborted();
     const result = await dependencies.updateDocument({
       userId,
       documentId: document.documentId,
@@ -376,7 +447,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements (use deck_restyle for a consistent dark/light theme across all slides without coordinate generation; element coordinates are percentages 0–100, width/height at least 1), or the full Odoo spreadsheet workbook using IDs and revision from document_get. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, or six custom hex colors), fontPair (serif or sans), scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay), and imagery paintings (credited public-domain paintings on the cover, statement, image, quote and close slides that have no image) or none (paintings removed; the user’s own images stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({
@@ -415,7 +486,40 @@ export const documentEdit = defineTool({
         status: 'conflict' as const,
         summary: 'Nothing changed. Read the latest file and review your edits against its new revision.',
       };
-    const proposedModel = prepareDocumentEdits(document.model, args.operations);
+    const context: DocumentEditContext = {};
+    let artworkNote = '';
+    const wantsPaintings =
+      document.kind === 'deck' &&
+      document.model.kind === 'deck' &&
+      args.operations.some(
+        (operation) => operation.op === 'deck_restyle' && operation.imagery === 'paintings',
+      );
+    if (wantsPaintings && document.model.kind === 'deck') {
+      try {
+        const art = await dependencies.artworksForDeck(document.model, { userId });
+        context.artworks = art.artworks;
+        context.imageryTheme = art.imagery;
+        if (!Object.keys(art.artworks).length) artworkNote = ' No artwork was available for these slides.';
+      } catch {
+        artworkNote = ' Artwork could not be added; the slides stay typographic.';
+      }
+    }
+    const proposedModel = prepareDocumentEdits(document.model, args.operations, context);
+    if (proposedModel.kind === 'deck') {
+      const inserted = new Set(
+        args.operations.flatMap((operation) => (operation.op === 'slide_insert' ? [operation.slide.id] : [])),
+      );
+      const deck = upgradeDeckModel(proposedModel);
+      const blank = deck.slides.filter(
+        (slide) =>
+          inserted.has(slide.id) &&
+          checkSlide(slide, deck.theme).some((issue) => issue.kind === 'empty-slide'),
+      );
+      if (blank.length)
+        throw new Error(
+          `Slides ${blank.map((slide) => slide.id).join(', ')} have no visible content. slide_insert requires visible elements; title and notes are metadata. Add text, image, or chart elements in the same edit. Nothing was saved.`,
+        );
+    }
     if (args.mode !== 'apply') {
       const suggestion = await dependencies.createDocumentSuggestion({
         userId,
@@ -435,7 +539,7 @@ export const documentEdit = defineTool({
         summary:
           proposedModel.kind === 'sheet-changes'
             ? `Not yet applied. Review these workbook changes in the spreadsheet editor: ${args.summary}`
-            : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}`,
+            : `Not yet applied. A reviewable suggestion is ready in Files: ${args.summary}${artworkNote}`,
       };
     }
     const saved = await dependencies.updateDocument({
@@ -461,7 +565,7 @@ export const documentEdit = defineTool({
       revision: saved.document.currentRevision,
       ok: true,
       status: 'applied' as const,
-      summary: args.summary,
+      summary: `${args.summary}${artworkNote}`,
     };
   },
 });

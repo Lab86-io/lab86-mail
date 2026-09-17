@@ -141,3 +141,16 @@
   min-width: 0;
   max-width: 100%;
 }
+.brief-letter-items > .brief-letter-row + .brief-letter-row {
+  position: relative;
+}
+
+.brief-letter-items > .brief-letter-row + .brief-letter-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline: 12px;
+  height: 1px;
+  background: var(--surface-border);
+  pointer-events: none;
+}

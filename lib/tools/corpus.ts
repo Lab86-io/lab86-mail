@@ -7,6 +7,18 @@ import { recallSender } from '../store/memories';
 import { defineTool } from './registry';
 
 const mailCorpusApi = (api as any).mailCorpus;
+const defaultSearchDependencies = { listNylasAccounts, searchNylasThreads, convexQuery };
+let searchDependencies = defaultSearchDependencies;
+const defaultCountDependencies = { listNylasAccounts, convexQuery, isConvexConfigured };
+let countDependencies = defaultCountDependencies;
+
+export function __setCorpusCountDepsForTest(overrides: Partial<typeof defaultCountDependencies> = {}) {
+  countDependencies = { ...defaultCountDependencies, ...overrides };
+}
+
+export function __setCorpusSearchDepsForTest(overrides: Partial<typeof defaultSearchDependencies> = {}) {
+  searchDependencies = { ...defaultSearchDependencies, ...overrides };
+}
 
 // Agent tools over the synced mail corpus. Unlike search_threads (one
 // account per call), these answer the questions the agent actually gets:
@@ -21,7 +33,7 @@ async function authedAccountIds(userId?: string | null): Promise<string[]> {
 export const corpusSearch = defineTool({
   name: 'corpus_search',
   description:
-    'Search across ALL connected accounts at once — mail plus any linked tools (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) the user enabled for search. Each item carries a "source" of "mail" or "mcp". Prefer this over per-account search_threads when the user has not named a specific mailbox.',
+    'Search across ALL connected accounts at once — mail plus any linked tools (GitHub/Granola/Bitbucket/Atlassian/Jira/Slack) the user enabled for search. Each item carries a "source" of "mail" or "mcp". For email research set includeConnectedTools=false and read matching threads. Check sourceCounts and errors: connected-source matches are not email evidence, and failed mail searches do not establish that no mail exists. Prefer this over per-account search_threads when the user has not named a specific mailbox.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -33,48 +45,75 @@ export const corpusSearch = defineTool({
       .describe('Also search linked GitHub/Granola/Bitbucket/Atlassian/Jira/Slack items (default: true).'),
     max: z.number().int().min(1).max(50).default(20),
   }),
-  output: z.object({ items: z.array(z.any()), accountsSearched: z.array(z.string()) }),
+  output: z.object({
+    items: z.array(z.any()),
+    accountsSearched: z.array(z.string()),
+    sourceCounts: z.object({ mail: z.number(), connected: z.number() }),
+    errors: z.array(
+      z.object({ source: z.enum(['mail', 'connected']), account: z.string().optional(), error: z.string() }),
+    ),
+  }),
   async handler({ query, accounts, includeConnectedTools, max }, ctx) {
-    const all = await authedAccountIds(ctx.userId);
+    const all = (await searchDependencies.listNylasAccounts(ctx.userId)).map((account) => account.accountId);
     const targets = accounts?.length ? all.filter((id) => accounts.includes(id)) : all;
     const perAccount = Math.max(5, Math.ceil(max / Math.max(1, targets.length)));
+    const errors: { source: 'mail' | 'connected'; account?: string; error: string }[] = [];
     const [results, mcpRows] = await Promise.all([
       Promise.all(
         targets.map((account) =>
-          searchNylasThreads({ userId: ctx.userId, account, query, max: perAccount })
-            .then((result) =>
-              (result?.items || []).map((item: any) => ({
+          searchDependencies
+            .searchNylasThreads({ userId: ctx.userId, account, query, max: perAccount })
+            .then((result) => {
+              if (!result) throw new Error('Mail account unavailable.');
+              return (result.items || []).map((item: any) => ({
                 ...item,
                 account,
                 source: 'mail',
                 searchTier: result?.searchTier,
                 senderEmail: emailFromHeader(item.fromAddress || item.from || null),
-              })),
-            )
-            .catch(() => []),
+              }));
+            })
+            .catch(() => {
+              errors.push({
+                source: 'mail',
+                account,
+                error:
+                  'Mail search failed. Retry this mailbox before drawing conclusions about its email history.',
+              });
+              return [];
+            }),
         ),
       ),
       // Linked-tool items run through their own search index; gated server-side
       // to connections the user enabled for search.
       includeConnectedTools && ctx.userId
-        ? convexQuery<any[]>((api as any).mcp.searchItems, {
-            userId: ctx.userId,
-            query,
-            limit: max,
-          }).catch(() => [])
+        ? searchDependencies
+            .convexQuery<any[]>((api as any).mcp.searchItems, {
+              userId: ctx.userId,
+              query,
+              limit: max,
+            })
+            .catch(() => {
+              errors.push({ source: 'connected', error: 'Connected-source search failed.' });
+              return [];
+            })
         : Promise.resolve([]),
     ]);
-    if (!targets.length && !mcpRows.length) {
+    if (!targets.length && !mcpRows.length && !errors.length) {
       throw new Error('No connected accounts or tools to search.');
     }
     // Map tool items onto the same recency key the sort already reads.
     const mcpItems = (mcpRows || []).map((row: any) => ({
       source: 'mcp',
+      id: row._id,
+      externalId: row.externalId,
+      connectionId: row.connectionId,
       server: row.server,
       kind: row.kind,
       title: row.title,
       state: row.state ?? null,
       author: row.author ?? null,
+      summary: row.summary ?? null,
       url: row.url ?? null,
       account: row.connectionId,
       lastDate: row.updatedAtSource ?? row.updatedAt ?? null,
@@ -82,7 +121,15 @@ export const corpusSearch = defineTool({
     const merged = [...results.flat(), ...mcpItems]
       .sort((a: any, b: any) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0))
       .slice(0, max);
-    return { items: merged, accountsSearched: targets };
+    return {
+      items: merged,
+      accountsSearched: targets,
+      sourceCounts: {
+        mail: merged.filter((item) => item.source === 'mail').length,
+        connected: merged.filter((item) => item.source === 'mcp').length,
+      },
+      errors,
+    };
   },
 });
 
@@ -147,7 +194,7 @@ export const senderProfile = defineTool({
 export const corpusCount = defineTool({
   name: 'corpus_count',
   description:
-    'Count indexed messages matching a query (per account, capped at 1000 → approximate). Use for "how many emails…" questions instead of paging search results.',
+    'Count indexed messages matching a query (per account, bounded by 1000 messages and a read budget; approximate=true means a lower bound). Use for "how many emails…" questions instead of paging search results. A zero count only describes this index and filter; check list_accounts sync status before claiming a mailbox has never synced or has no email.',
   category: 'mail',
   mutating: false,
   input: z.object({
@@ -158,14 +205,27 @@ export const corpusCount = defineTool({
   }),
   output: z.object({ total: z.number(), approximate: z.boolean(), accounts: z.array(z.any()) }),
   async handler({ query, account, after, before }, ctx) {
-    if (!isConvexConfigured()) throw new Error('Mail index is not available.');
-    const accountIds = account ? [account] : await authedAccountIds(ctx.userId);
+    if (!countDependencies.isConvexConfigured()) throw new Error('Mail index is not available.');
+    const accounts = await countDependencies.listNylasAccounts(ctx.userId);
+    const accountIds = accounts
+      .filter((candidate) => !account || candidate.accountId === account)
+      .map((candidate) => candidate.accountId);
+    if (!accountIds.length) throw new Error('No matching connected mail accounts. Read list_accounts first.');
     const counts = await Promise.all(
       accountIds.map(async (accountId) => {
-        const result = await convexQuery<{ count: number; approximate: boolean }>(
-          mailCorpusApi.countCorpusMessages,
-          { userId: ctx.userId, accountId, query, after, before },
-        ).catch(() => ({ count: 0, approximate: false }));
+        const result = await countDependencies
+          .convexQuery<{ count: number; approximate: boolean }>(mailCorpusApi.countCorpusMessages, {
+            userId: ctx.userId,
+            accountId,
+            query,
+            after,
+            before,
+          })
+          .catch(() => {
+            throw new Error(
+              'Mail count failed. The total is unknown; retry before drawing conclusions about email history.',
+            );
+          });
         return { accountId, ...result };
       }),
     );

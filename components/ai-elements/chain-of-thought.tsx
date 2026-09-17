@@ -190,7 +190,7 @@ export type ChainOfThoughtImageProps = ComponentProps<'div'> & {
 export const ChainOfThoughtImage = memo(
   ({ className, children, caption, ...props }: ChainOfThoughtImageProps) => (
     <div className={cn('mt-2 space-y-2', className)} {...props}>
-      <div className="corner-smooth relative flex max-h-[22rem] items-center justify-center overflow-hidden rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] p-3">
+      <div className="corner-smooth relative flex max-h-[22rem] items-center justify-center overflow-hidden rounded-card bg-[var(--color-bg-subtle)] p-3">
         {children}
       </div>
       {caption && <p className="text-[11.5px] text-[var(--color-text-muted)]">{caption}</p>}

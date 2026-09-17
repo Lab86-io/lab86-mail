@@ -419,7 +419,7 @@ const TABLE: Array<[string, unknown, unknown, ToolShapeKind]> = [
     },
     'document',
   ],
-  ['document_list', {}, { documents: [{ documentId: 'd1', title: 'Memo' }] }, 'text'],
+  ['document_list', {}, { documents: [{ documentId: 'd1', title: 'Memo' }] }, 'files'],
   [
     'cloud_file_search',
     { query: 'q' },

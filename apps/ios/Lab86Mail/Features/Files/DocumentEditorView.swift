@@ -18,6 +18,7 @@ struct DocumentEditorView: View {
     @State private var shareURL: URL?
     @State private var errorMessage: String?
     @State private var loadFailed = false
+    @State private var showsFullEditor = false
 
     let documentID: String
 
@@ -29,10 +30,10 @@ struct DocumentEditorView: View {
                 ContentUnavailableView {
                     Label("Couldn’t open this file", systemImage: "doc.badge.ellipsis")
                 } description: {
-                    Text(errorMessage ?? "Try again, or open the full editor in your browser.")
+                    Text(errorMessage ?? "Try again, or open the full editor.")
                 } actions: {
                     Button("Try again") { Task { await load() } }
-                    if let url = webEditorURL { Link("Open web editor", destination: url) }
+                    Button("Open full editor") { Task { await openFullEditor() } }
                 }
             } else {
                 ProgressView("Opening file…")
@@ -85,9 +86,9 @@ struct DocumentEditorView: View {
                     Label("Albatross", systemImage: "sparkles")
                 }
                 .disabled(draft?.model.requiresWebEditor == true)
-                if let url = webEditorURL {
-                    Link(destination: url) { Label("Open web editor", systemImage: "arrow.up.right.square") }
-                }
+                Button("All editing tools", systemImage: "rectangle.expand.vertical") { Task { await openFullEditor() } }
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("files.allEditingTools")
                 Button {
                     Task { await export() }
                 } label: {
@@ -98,6 +99,16 @@ struct DocumentEditorView: View {
         }
         .task(id: documentID) {
             await load()
+        }
+        .environment(\.openURL, OpenURLAction { url in
+            if url == webEditorURL {
+                Task { await openFullEditor() }
+                return .handled
+            }
+            return .systemAction
+        })
+        .sheet(isPresented: $showsFullEditor, onDismiss: { Task { await load() } }) {
+            NativeWorkspaceView(destination: .document(documentID))
         }
         .onChange(of: draft) { oldValue, newValue in
             guard oldValue != nil, newValue != nil, newValue != persisted else { return }
@@ -174,6 +185,10 @@ struct DocumentEditorView: View {
                 }
             case .workbook(let snapshot):
                 NativeWorkbookPreview(snapshot: snapshot, webEditorURL: webEditorURL)
+            case .deckV2(let deck):
+                NativeDeckV2Editor(deck: deck, webEditorURL: webEditorURL) { next in
+                    updateModel(.deckV2(next))
+                }
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) { active, next in
                     updateModel(.deck(activeSlideID: active, slides: next))
@@ -192,6 +207,11 @@ struct DocumentEditorView: View {
 
     private var webEditorURL: URL? {
         AlbatrossDocumentWebLink.url(baseURL: environment.configuration.apiBaseURL, documentID: documentID)
+    }
+
+    private func openFullEditor() async {
+        guard await saveNow() else { return }
+        showsFullEditor = true
     }
 
     private func updateModel(_ model: AlbatrossDocumentModel) {
@@ -352,6 +372,7 @@ struct GoogleDocumentEditorView: View {
     @State private var saveQueued = false
     @State private var showsAI = false
     @State private var errorMessage: String?
+    @State private var showsFullEditor = false
 
     let route: GoogleDocumentRoute
 
@@ -379,6 +400,8 @@ struct GoogleDocumentEditorView: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("All editing tools", systemImage: "rectangle.expand.vertical") { Task { await openFullEditor() } }
+                    .disabled(isSaving)
                 if isSaving {
                     ProgressView()
                         .controlSize(.small)
@@ -396,10 +419,21 @@ struct GoogleDocumentEditorView: View {
                 } label: {
                     Label("Albatross", systemImage: "sparkles")
                 }
+                .disabled(draft?.model.requiresWebEditor == true)
             }
         }
         .task(id: route.fileID) {
             await load()
+        }
+        .environment(\.openURL, OpenURLAction { url in
+            if url == fullEditorURL {
+                Task { await openFullEditor() }
+                return .handled
+            }
+            return .systemAction
+        })
+        .sheet(isPresented: $showsFullEditor, onDismiss: { Task { await load() } }) {
+            NativeWorkspaceView(destination: .google(route))
         }
         .onChange(of: draft) { oldValue, newValue in
             guard oldValue != nil, newValue != nil, newValue != persisted else { return }
@@ -432,6 +466,8 @@ struct GoogleDocumentEditorView: View {
                 TextField("File name", text: titleBinding)
                     .font(.headline)
                     .textInputAutocapitalization(.sentences)
+                    // A model the native app cannot save keeps its title too.
+                    .disabled(document.model.requiresWebEditor)
                 Spacer(minLength: 0)
                 Label(
                     isSaving ? "Saving" : "Google Drive",
@@ -452,7 +488,11 @@ struct GoogleDocumentEditorView: View {
                     updateModel(.sheet(activeSheetID: $0, sheets: $1))
                 }
             case .workbook(let snapshot):
-                NativeWorkbookPreview(snapshot: snapshot, webEditorURL: document.webURL)
+                NativeWorkbookPreview(snapshot: snapshot, webEditorURL: fullEditorURL)
+            case .deckV2(let deck):
+                NativeDeckV2Editor(deck: deck, webEditorURL: fullEditorURL) {
+                    updateModel(.deckV2($0))
+                }
             case .deck(let activeSlideID, let slides):
                 NativeDeckEditor(activeSlideID: activeSlideID, slides: slides) {
                     updateModel(.deck(activeSlideID: $0, slides: $1))
@@ -481,6 +521,16 @@ struct GoogleDocumentEditorView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private var fullEditorURL: URL? {
+        guard let base = environment.configuration.apiBaseURL else { return nil }
+        return URL(string: NativeWorkspaceDestination.google(route).path, relativeTo: base)?.absoluteURL
+    }
+
+    private func openFullEditor() async {
+        guard await saveNow() else { return }
+        showsFullEditor = true
     }
 
     private func scheduleSave() {

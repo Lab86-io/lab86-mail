@@ -72,6 +72,18 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ docum
     if (!result.ok && result.code === 'NOT_FOUND') {
       return NextResponse.json({ ok: false, error: 'Document not found.' }, { status: 404 });
     }
+    if (!result.ok && result.code === 'RICH_DECK_REQUIRED') {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Update Albatross to edit this presentation. This version cannot preserve its rich slides, so nothing was changed.',
+          code: result.code,
+          document: result.document,
+        },
+        { status: 409 },
+      );
+    }
     if (!result.ok && result.code === 'ENGINE_MODEL_REQUIRED') {
       return NextResponse.json(
         {

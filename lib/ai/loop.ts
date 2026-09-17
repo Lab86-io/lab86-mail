@@ -34,6 +34,7 @@ import {
   enableToolsResult,
 } from './tool-groups';
 import { resolveToolShape, type ToolShape } from './tool-shapes';
+import { agentToolTimeoutMs, withToolTimeout } from './tool-timeout';
 
 /** Search text only, never attachment bytes or opaque tool/image payloads. */
 export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
@@ -251,26 +252,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'show_email_preview',
 ]);
 
-const AGENT_TOOL_TIMEOUT_MS = 75_000;
-const ALBATROSS_REPLAN_TIMEOUT_MS = 210_000;
-
 type UiStreamWriter = Parameters<Parameters<typeof createUIMessageStream>[0]['execute']>[0]['writer'];
-
-async function withToolTimeout<T>(promise: Promise<T>, toolName: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutMs =
-    toolName === 'albatross_replan_work' ? ALBATROSS_REPLAN_TIMEOUT_MS : AGENT_TOOL_TIMEOUT_MS;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`${toolName} timed out after ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 /**
  * The JSON schema the model sees for a registry tool. Regex patterns are
@@ -308,10 +290,11 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
     lifted[name] = aiTool({
       description: t.description,
       inputSchema: modelInputSchema(t.input),
-      execute: async (args: unknown) => {
+      execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         const context = getAiRequestContext();
-        const invoke = (key?: string) =>
-          invokeTool(t, args ?? {}, {
+        const invoke = (key?: string, abortSignal?: AbortSignal) => {
+          abortSignal?.throwIfAborted();
+          return invokeTool(t, args ?? {}, {
             agent: 'ai',
             userId: context.userId,
             userEmail: context.userEmail,
@@ -320,7 +303,9 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
             userTimezone,
             runId: context.runId,
             toolExecutionKey: key,
+            abortSignal,
           });
+        };
         // Parse before claiming: malformed arguments must never create an uncertain write.
         const parsed = t.input.safeParse(args ?? {});
         if (!parsed.success) {
@@ -332,21 +317,24 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
           rejectedInputs.add(key);
           return invoke(); // registry emits repairable, audited field feedback
         }
-        const pending =
-          context.runId && context.userId && t.mutating
-            ? executeCheckpointedTool(
-                {
-                  userId: context.userId,
-                  runId: context.runId,
-                  name,
-                  args: parsed.data,
-                  mutating: t.mutating,
-                },
-                (key) => invoke(key),
-              )
-            : invoke();
         try {
-          return await withToolTimeout(pending, name);
+          return await withToolTimeout(
+            (signal) =>
+              context.runId && context.userId && t.mutating
+                ? executeCheckpointedTool(
+                    {
+                      userId: context.userId,
+                      runId: context.runId,
+                      name,
+                      args: parsed.data,
+                      mutating: t.mutating,
+                    },
+                    (key) => invoke(key, signal),
+                  )
+                : invoke(undefined, signal),
+            name,
+            { timeoutMs: agentToolTimeoutMs(name, parsed.data), signal: options?.abortSignal },
+          );
         } catch (error) {
           console.warn('[agent-tool-error]', {
             runId: context.runId,

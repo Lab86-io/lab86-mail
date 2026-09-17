@@ -33,6 +33,7 @@ import { HoldThisControl } from '@/components/shell/HoldThisControl';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import SiriOrb from '@/components/smoothui/siri-orb';
 import { Button } from '@/components/ui/button';
+import { ButtonGroup } from '@/components/ui/button-group';
 import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import {
   DropdownMenu,
@@ -114,8 +115,8 @@ function newChatId() {
 const ORB_COLORS = {
   bg: 'transparent',
   c1: 'oklch(from var(--color-accent) calc(l + 0.25) calc(c * 0.6) h)',
-  c2: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h + 50))',
-  c3: 'oklch(from var(--color-accent) calc(l + 0.12) c calc(h - 50))',
+  c2: 'var(--color-accent-2)',
+  c3: 'var(--color-accent-3)',
 };
 
 // ---------- Trigger: the "Ask Assistant" launcher, bottom-right of the shell ----------
@@ -805,11 +806,9 @@ export function AssistantChat({
     >
       <header
         data-assistant-header
-        className="rounded-ui mx-3 mb-1 mt-3 flex shrink-0 items-center justify-between gap-2 border border-[color-mix(in_oklab,var(--color-border)_55%,transparent)] bg-[var(--color-content)] px-2 py-1.5 shadow-[0_2px_10px_rgb(15_23_42/0.025)]"
+        className="mx-3 mb-1 mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 py-1.5"
       >
         <div className="flex min-w-0 items-center gap-2 text-[13px]">
-          {/* Assistant presence: a still gradient pearl that only turns
-                while the model is actually streaming. */}
           <span
             aria-hidden
             className={cn(
@@ -817,7 +816,7 @@ export function AssistantChat({
               !streaming && '[&_.siri-orb::before]:[animation-play-state:paused]',
             )}
           >
-            <SiriOrb size="20px" animationDuration={7} colors={ORB_COLORS} />
+            <SiriOrb size="30px" animationDuration={7} colors={ORB_COLORS} variant="ambient" />
           </span>
           <button
             type="button"
@@ -835,9 +834,9 @@ export function AssistantChat({
               : chatScopeLabel || (chatScopeKind === 'work' ? 'Attached Work' : 'Attached Area')}
           </button>
         </div>
-        <div className="flex items-center gap-0.5">
+        <ButtonGroup aria-label="Chat controls" className="assistant-header-actions ml-auto rounded-ui">
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon-sm"
             onClick={() => setPresentation(presentation === 'full' ? 'split' : 'full')}
             title={presentation === 'full' ? 'Show current page' : 'Focus on chat'}
@@ -851,7 +850,7 @@ export function AssistantChat({
             )}
           </Button>
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon-sm"
             onClick={() => setPresentation(presentation === 'corner' ? 'split' : 'corner')}
             title={presentation === 'corner' ? 'Expand chat beside this page' : 'Return to corner chat'}
@@ -861,7 +860,7 @@ export function AssistantChat({
             {presentation === 'corner' ? <Maximize2 className="size-4" /> : <Minimize2 className="size-4" />}
           </Button>
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon-sm"
             onClick={startNewChat}
             disabled={busy}
@@ -874,7 +873,7 @@ export function AssistantChat({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="icon-sm"
                 disabled={busy}
                 title="Chat history"
@@ -914,7 +913,7 @@ export function AssistantChat({
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
-            variant="ghost"
+            variant="outline"
             size="icon-sm"
             onClick={() => setAiBarOpen(false)}
             title="Close (⌘K)"
@@ -923,7 +922,7 @@ export function AssistantChat({
             <X className="h-3.5 w-3.5" />
             <span className="sr-only">Close</span>
           </Button>
-        </div>
+        </ButtonGroup>
       </header>
 
       {briefContext || pendingBriefResponse ? (
@@ -1217,8 +1216,8 @@ export const MessageView = memo(
     if (isUser) {
       const text = userTextFromMessage(message);
       return (
-        <Message className="justify-end">
-          <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-elevated)] px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
+        <Message className="justify-end" data-message-role="user">
+          <div className="assistant-user-bubble surface-card surface-accent rounded-card max-w-[88%] min-w-0 whitespace-pre-wrap break-words px-3.5 py-2.5 text-[13px] leading-relaxed text-[var(--color-text)]">
             {text ? <p>{text}</p> : null}
             {(message.parts || [])
               .filter((part: any) => part.type === 'file' && isChatAttachmentUrl(part.url))

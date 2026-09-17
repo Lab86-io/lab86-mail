@@ -33,7 +33,7 @@
   --geo-map-zoom-disabled-fg: var(--muted-foreground);
   --geo-map-zoom-shadow: 0 1px 2px oklch(from var(--foreground) l c h / 0.08);
   --geo-map-zoom-focus-ring: var(--ring);
-  --geo-map-zoom-radius: 0.5rem;
+  --geo-map-zoom-radius: var(--radius-control);
   --geo-map-zoom-size: 2.25rem;
   --geo-map-zoom-font-size: 1.125rem;
 }
@@ -43,6 +43,7 @@
 }
 
 .root[data-slot="geo-map"] :global(.leaflet-control-zoom) {
+  corner-shape: var(--corner-shape-ui);
   border: 1px solid var(--geo-map-zoom-border);
   box-shadow: var(--geo-map-zoom-shadow);
   background: var(--geo-map-zoom-bg);
@@ -55,6 +56,7 @@
 }
 
 .root[data-slot="geo-map"] :global(.leaflet-control-zoom a) {
+  corner-shape: var(--corner-shape-ui);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -39,9 +39,16 @@ export interface SiriOrbProps {
     c3?: string;
   };
   size?: string;
+  variant?: 'orb' | 'ambient';
 }
 
-const SiriOrb: React.FC<SiriOrbProps> = ({ size = '192px', className, colors, animationDuration = 20 }) => {
+const SiriOrb: React.FC<SiriOrbProps> = ({
+  size = '192px',
+  className,
+  colors,
+  animationDuration = 20,
+  variant = 'orb',
+}) => {
   const defaultColors = {
     bg: 'oklch(95% 0.02 264.695)',
     c1: 'oklch(75% 0.15 350)', // Pastel pink
@@ -107,6 +114,7 @@ const SiriOrb: React.FC<SiriOrbProps> = ({ size = '192px', className, colors, an
   return (
     <div
       className={cn('siri-orb', className)}
+      data-variant={variant}
       style={
         {
           width: size,
@@ -215,6 +223,22 @@ const SiriOrb: React.FC<SiriOrbProps> = ({ size = '192px', className, colors, an
             black var(--mask-radius),
             transparent 75%
           );
+        }
+
+        .siri-orb[data-variant="ambient"] {
+          overflow: visible;
+          border-radius: 0;
+        }
+
+        .siri-orb[data-variant="ambient"]::before {
+          border-radius: 0;
+          mask-image: radial-gradient(ellipse closest-side, black 8%, #0009 38%, #0003 68%, transparent 100%);
+          transform: scale(1.4, 1.15);
+          pointer-events: none;
+        }
+
+        .siri-orb[data-variant="ambient"]::after {
+          display: none;
         }
 
         @keyframes rotate {

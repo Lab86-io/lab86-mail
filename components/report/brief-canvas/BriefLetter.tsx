@@ -191,16 +191,26 @@ function LetterLane({
   const visible = node.items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
   if (!visible.length) return null;
   return (
-    <section data-brief-region={regionId} className="mb-8">
+    <section
+      data-brief-region={regionId}
+      className={cn(
+        'brief-letter-lane surface-card mb-8 rounded-card p-1',
+        regionId === 'answer'
+          ? 'surface-accent'
+          : regionId === 'today'
+            ? 'surface-accent-3'
+            : 'surface-accent-2',
+      )}
+    >
       {node.title ? (
         <span
           data-brief-letter-kicker
-          className="mb-1 block text-[11px] font-semibold text-[var(--color-accent-2)]"
+          className="block border-b border-[var(--surface-border)] px-3 py-2 text-[11px] font-semibold text-[var(--surface-accent)]"
         >
           {node.title}
         </span>
       ) : null}
-      <div className="divide-y divide-[var(--color-border)]">
+      <div className="brief-letter-items">
         {visible.map((item, index) => (
           <LetterRow
             key={briefRefKey(item.ref)}
@@ -253,7 +263,7 @@ function LetterRow({
         }
       }}
       className={cn(
-        'blur-in flex gap-3 py-3 outline-none focus-visible:bg-[var(--color-hover-soft)]',
+        'brief-letter-row blur-in flex gap-3 rounded-ui px-3 py-3 outline-none hover:bg-[var(--color-hover-soft)] focus-visible:bg-[var(--color-hover-soft)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]',
         gone && 'opacity-55',
       )}
       style={{ animationDelay: `${delayMs}ms` }}

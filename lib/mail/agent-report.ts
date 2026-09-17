@@ -4,7 +4,7 @@ import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { api, convexQuery } from '../hosted/convex';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
-import { dailyBriefEditionTitleAt, normalizeBriefTimezone } from '../shared/brief-edition';
+import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { withDeadline } from '../shared/deadline';
 import {
   type DailyReport,
@@ -345,11 +345,4 @@ export function finalizeBudgetReport(report: DailyReport, composed: ComposedBudg
   next.composition = compositionFromReport(next);
   next.html = buildNativeDailyReportArtifact(next, next.composition);
   return next;
-}
-
-export function dailyBriefEditionTitle(
-  generatedAt: number,
-  timeZone = getAiRequestContext().userTimezone || 'UTC',
-): string {
-  return dailyBriefEditionTitleAt(generatedAt, timeZone);
 }
