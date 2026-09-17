@@ -13,13 +13,15 @@ const built = await build({
   entrypoints: [
     resolve(
       root,
-      process.argv.includes('--controls')
-        ? 'scripts/fixtures/controls-preview.tsx'
-        : process.argv.includes('--files')
-          ? 'scripts/fixtures/files-preview.tsx'
-          : process.argv.includes('--today')
-            ? 'scripts/fixtures/today-workspace-preview.tsx'
-            : 'scripts/fixtures/narrative-tools-preview.tsx',
+      process.argv.includes('--presentations')
+        ? 'scripts/fixtures/presentation-choices-preview.tsx'
+        : process.argv.includes('--controls')
+          ? 'scripts/fixtures/controls-preview.tsx'
+          : process.argv.includes('--files')
+            ? 'scripts/fixtures/files-preview.tsx'
+            : process.argv.includes('--today')
+              ? 'scripts/fixtures/today-workspace-preview.tsx'
+              : 'scripts/fixtures/narrative-tools-preview.tsx',
     ),
   ],
   target: 'browser',
@@ -57,7 +59,9 @@ if (!css) throw new Error('Build the app before previewing its actual styles.');
 // Fonts are emitted in a separate chunk. Include them and the layout's font
 // variables so screenshots exercise production typography, not fallback fonts.
 const styles = (await Promise.all(candidates.map((entry) => file(entry.path).text()))).join('\n');
-const fontVariables = [...styles.matchAll(/--font-(?:geist-sans|geist-mono|fraunces|averia):[^;}]+/g)]
+const fontVariables = [
+  ...styles.matchAll(/--font-(?:geist-sans|geist-mono|fraunces|averia|instrument):[^;}]+/g),
+]
   .map((match) => match[0])
   .join(';');
 // Reuse built font assets, but compile current app/component styles. A saved
@@ -78,6 +82,8 @@ const server = serve({
       return new Response(script, { headers: { 'content-type': 'text/javascript' } });
     if (path === '/preview.css')
       return new Response(previewStyles, { headers: { 'content-type': 'text/css' } });
+    if (/^\/fonts\/[a-zA-Z0-9._-]+\.woff2$/.test(path))
+      return new Response(file(resolve(root, 'public', path.slice(1))));
     if (/^\/media\/[a-zA-Z0-9._~-]+\.(woff2?|ttf|otf)$/.test(path))
       return new Response(file(resolve(root, '.next/static', path.slice(1))));
     if (path === '/')

@@ -1,0 +1,308 @@
+.presentation-choices {
+  width: 100%;
+  max-width: 580px;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 18px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.presentation-choice-topline,
+.presentation-choice-option-label,
+.presentation-choice-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.presentation-choice-topline {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.presentation-choice-eyebrow {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.presentation-choice-progress {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 18px;
+}
+.presentation-choice-progress span {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+}
+.presentation-choice-progress span[data-complete="true"] {
+  background: var(--color-accent);
+}
+.presentation-choices h3 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0 0 12px;
+}
+.presentation-choice-intro,
+.presentation-choice-body > p,
+.presentation-choice-receipt p {
+  color: var(--color-text-muted);
+  margin: 0 0 12px;
+}
+.presentation-choice-body {
+  display: grid;
+  gap: 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.presentation-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.presentation-choice-option {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 6px;
+  gap: 6px;
+  background: var(--color-bg);
+  cursor: pointer;
+}
+.presentation-choice-option[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.presentation-choice-option:hover {
+  border-color: var(--color-text-muted);
+}
+.presentation-choice-option-label {
+  width: 100%;
+  padding: 0 4px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+.presentation-choice-description {
+  padding: 0 4px 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.presentation-choice-preview {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 5px;
+  pointer-events: none;
+}
+.presentation-choice-preview .deck-slide {
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  width: 100%;
+  font-optical-sizing: none;
+  font-variation-settings: "opsz" 14;
+}
+.presentation-choice-preview .deck-element {
+  position: absolute;
+  box-sizing: border-box;
+  line-height: 1.2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.presentation-choice-preview .deck-text {
+  display: block;
+  width: 100%;
+}
+.presentation-choice-preview .deck-element[data-element-type="line"],
+.presentation-choice-preview .deck-element[data-element-type="chart"],
+.presentation-choice-preview .deck-element[data-element-type="image"] {
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.presentation-choice-preview .deck-line,
+.presentation-choice-preview .deck-chart,
+.presentation-choice-preview .deck-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.presentation-choice-preview .deck-image-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--deck-surface);
+  color: var(--deck-muted);
+  font-family: var(--deck-body);
+  font-size: 1.5cqw;
+}
+.presentation-choice-field {
+  display: grid;
+  gap: 6px;
+}
+.presentation-choice-field textarea,
+.presentation-choice-counts input {
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: inherit;
+  padding: 10px;
+  font: inherit;
+  resize: vertical;
+}
+.presentation-choice-chips,
+.presentation-choice-secondary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.presentation-choice-chips button {
+  padding: 5px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+}
+.presentation-choice-counts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.presentation-choice-counts label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+.presentation-choice-counts input {
+  font-size: 20px;
+}
+.presentation-choice-filmstrip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 10px;
+}
+.presentation-choice-filmstrip span {
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--color-border);
+}
+.presentation-choice-filmstrip i {
+  width: 12px;
+  height: 22px;
+  background: var(--color-accent);
+  border-radius: 3px;
+}
+.presentation-choice-filmstrip .is-divider {
+  background: transparent;
+  border: 1px solid var(--color-accent);
+}
+.presentation-choice-actions {
+  margin-top: 18px;
+}
+.presentation-choice-actions button {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.presentation-choice-actions .presentation-choice-primary {
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+  border-color: transparent;
+}
+.presentation-choice-secondary {
+  margin-top: 14px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.presentation-choice-secondary button {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 4px 0;
+}
+.presentation-choices button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.presentation-choices button:focus-visible,
+.presentation-choices input:focus-visible,
+.presentation-choices textarea:focus-visible,
+.presentation-choices summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+.presentation-choice-error {
+  margin-top: 12px;
+  color: var(--color-error, #d65a48);
+}
+.presentation-choice-outline {
+  list-style: decimal;
+  padding-left: 20px;
+  margin: 0;
+}
+.presentation-choice-outline button {
+  width: 100%;
+  display: flex;
+  text-align: left;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.presentation-choice-outline small {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.presentation-choice-data {
+  overflow-x: auto;
+}
+.presentation-choice-data table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.presentation-choice-data th,
+.presentation-choice-data td {
+  padding: 5px;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+.presentation-choice-receipt {
+  display: grid;
+  gap: 8px;
+}
+.presentation-choice-receipt .presentation-choice-preview {
+  max-width: 260px;
+}
+.presentation-choices details {
+  color: var(--color-text-muted);
+}
+.presentation-choices summary {
+  cursor: pointer;
+}
+@media (max-width: 420px) {
+  .presentation-choices {
+    padding: 12px;
+  }
+  .presentation-choice-grid {
+    gap: 8px;
+  }
+  .presentation-choice-outline button {
+    flex-direction: column;
+    gap: 2px;
+  }
+}

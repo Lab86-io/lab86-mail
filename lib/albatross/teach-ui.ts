@@ -84,6 +84,7 @@ export const HITL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'ask_parameters',
   'ask_preferences',
   'ask_question_flow',
+  'ask_presentation_choices',
 ]);
 
 export function isHitlToolName(name: string): boolean {
@@ -394,6 +395,11 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'Walking you through the steps',
     'You finished the steps',
     'The guided steps failed',
+  ),
+  ask_presentation_choices: fixed(
+    'Choosing your presentation direction',
+    'Your presentation choices',
+    'Loading the presentation choices failed',
   ),
 
   // --- Display tools (rich cards render on success; these cover running/failed) ---

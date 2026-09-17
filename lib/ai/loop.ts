@@ -282,7 +282,11 @@ export function stripPatterns<T>(value: T): T {
   return out as T;
 }
 
-export function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
+export function liftToolsForAgent(
+  operationBatchId?: string,
+  userTimezone?: string,
+  presentationSession?: PresentationSession,
+): Record<string, any> {
   const lifted: Record<string, any> = {};
   const rejectedInputs = new Set<string>();
   for (const [name, t] of Object.entries(TOOLS)) {
@@ -292,6 +296,47 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
       inputSchema: modelInputSchema(t.input),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         const context = getAiRequestContext();
+        if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
+          const stage = nextPresentationCheckpoint(presentationSession);
+          if (stage)
+            return {
+              ok: false,
+              status: 'needs_presentation_choices',
+              stage,
+              message:
+                stage === 'cancelled'
+                  ? 'The user cancelled this presentation. Do not create it.'
+                  : `Call ask_presentation_choices for the ${stage} checkpoint and wait for the user. No file was created.`,
+            };
+          if (
+            (presentationSession.brief || presentationSession.design) &&
+            !(args as any)?.presentation?.audience
+          )
+            return {
+              ok: false,
+              status: 'needs_presentation_brief',
+              message:
+                'Submit a complete version 2 presentation brief using the confirmed choices and researched storyboard.',
+            };
+          if ((args as any)?.presentation?.audience && t.input.safeParse(args).success) {
+            const presentation = applyPresentationChoices((args as any).presentation, presentationSession);
+            args = {
+              ...(args as object),
+              presentation,
+              ...(presentationSession.design
+                ? { artwork: presentationSession.design.imagery === 'paintings' ? 'auto' : 'none' }
+                : {}),
+            };
+          }
+        }
+        if (presentationSession?.brief && name === 'presentation_plan') {
+          args = {
+            ...(args as object),
+            audience: presentationSession.brief.audience,
+            slideCount: presentationSession.brief.contentSlides + presentationSession.brief.sectionBreaks + 2,
+            instruction: `${(args as any)?.instruction ?? ''}\nConfirmed presentation choices (honor these): ${JSON.stringify({ brief: presentationSession.brief, design: presentationSession.design })}`,
+          };
+        }
         const invoke = (key?: string, abortSignal?: AbortSignal) => {
           abortSignal?.throwIfAborted();
           return invokeTool(t, args ?? {}, {
@@ -479,6 +524,24 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
         .min(2)
         .max(5),
     }),
+  });
+  lifted[PRESENTATION_CHOICE_TOOL] = aiTool({
+    description:
+      'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and imagery), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
+    inputSchema: modelInputSchema(presentationChoiceInputSchema),
+    onInputAvailable: ({ input }: { input: any }) => {
+      // A new question pauses writes even when an earlier storyboard was confirmed.
+      if (presentationSession) {
+        delete presentationSession.storyboard;
+        delete presentationSession.visuals;
+        presentationSession.delegate = false;
+        if (input.stage === 'brief') {
+          delete presentationSession.brief;
+          delete presentationSession.design;
+        }
+        if (input.stage === 'design') delete presentationSession.design;
+      }
+    },
   });
   // On-demand tool groups (lib/ai/tool-groups.ts). The call itself is the
   // signal: prepareStep reads enable_tools calls from earlier steps and widens
@@ -798,6 +861,7 @@ async function streamAgentTurn(
 export interface AgentRunOpts {
   runId?: string;
   messages: ModelMessage[];
+  presentationSession?: PresentationSession;
   /** Bias the system prompt with extra context (selected thread, focused account). */
   extraSystem?: string;
   userId?: string | null;
@@ -831,6 +895,7 @@ export function agentTimeContext(timezone: string, now = new Date()): string {
 export async function runAgent({
   runId = newOperationBatchId(),
   messages,
+  presentationSession,
   extraSystem,
   userId,
   userEmail,
@@ -854,7 +919,7 @@ export async function runAgent({
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = runId;
   const timezone = userTimezone || 'UTC';
-  const tools = liftToolsForAgent(operationBatchId, timezone);
+  const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession);
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
   const steps = new Promise<any[]>((resolve) => {
@@ -893,7 +958,10 @@ export async function runAgent({
               const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
-              const system = [base, extraSystem, narrative, agentTimeContext(timezone)]
+              const choiceContext = presentationSession
+                ? `Presentation checkpoint state (confirmed user choices): ${JSON.stringify({ next: nextPresentationCheckpoint(presentationSession), presentationId: presentationSession.presentationId, brief: presentationSession.brief, design: presentationSession.design, storyboard: presentationSession.storyboard, visuals: presentationSession.visuals, guidance: presentationSession.guidance, delegated: presentationSession.delegate })}`
+                : '';
+              const system = [base, extraSystem, narrative, choiceContext, agentTimeContext(timezone)]
                 .filter(Boolean)
                 .join('\n\n');
 
@@ -946,3 +1014,11 @@ export async function runAgent({
     },
   };
 }
+
+import {
+  applyPresentationChoices,
+  nextPresentationCheckpoint,
+  PRESENTATION_CHOICE_TOOL,
+  type PresentationSession,
+  presentationChoiceInputSchema,
+} from '@/lib/documents/presentation-choices';

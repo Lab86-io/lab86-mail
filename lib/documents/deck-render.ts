@@ -16,6 +16,10 @@ export const RENDER_WIDTH = 1920;
 export const RENDER_HEIGHT = 1080;
 
 const FONT_FILES = [
+  { family: 'Instrument Serif', file: 'InstrumentSerif.woff2', style: 'normal', weight: '400' },
+  { family: 'Instrument Serif', file: 'InstrumentSerif-Italic.woff2', style: 'italic', weight: '400' },
+  { family: 'Manrope', file: 'Manrope.woff2', style: 'normal', weight: '200 800' },
+  { family: 'Space Grotesk', file: 'SpaceGrotesk.woff2', style: 'normal', weight: '300 700' },
   { family: 'Fraunces', file: 'Fraunces-Variable.woff2', style: 'normal', weight: '300 900' },
   { family: 'Fraunces', file: 'Fraunces-Variable-ext.woff2', style: 'normal', weight: '300 900' },
   { family: 'Fraunces', file: 'Fraunces-Italic-Variable.woff2', style: 'italic', weight: '300 900' },

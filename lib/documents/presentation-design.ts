@@ -332,7 +332,7 @@ export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
 });
 
 export const PRESENTATION_DESIGN_GUIDANCE_V2 = `Design a complete presentation as 16:9 slides. Return finished slide copy and an art-direction brief, not instructions to create them.
-The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. imagery holds the subject words for public-domain paintings that fit the topic, for example "harbor, ships, dusk"; write "none" when the deck should stay typographic. Palettes: editorial (warm paper, ink navy, rust accent) or signal (cool paper, near-black ink, electric blue). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces display with Geist text) or sans (Geist throughout). Editorial with serif is the default.
+The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. imagery holds the subject words for public-domain paintings that fit the topic, for example "harbor, ships, dusk"; write "none" when the deck should stay typographic. Honor the user's confirmed presentation choices. Palettes: editorial (warm paper and rust), signal (crisp blue), grove (botanical greens), lagoon (teal), dusk (violet), rose (warm rose), sand (ochre), slate (blue-grey). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces with Geist), sans (Geist), literary (Instrument Serif with Geist), humanist (Manrope), grotesk (Space Grotesk with Geist), mono (Geist Mono with Geist). Editorial with serif is the fallback only when the user delegates design choices.
 Every slide has one composition role. cover: title, kicker, one-sentence body, optional image; audience becomes the footer. statement: one sentence that carries the slide, optional support line. image-left and image-right: kicker, title, body, up to four short facts as items, an image request. metrics: title and up to four numbers as items (label is the number, detail is what it measures) with chart data. chart: title, body and chart data; items are up to three callouts. process: title and two to four steps as items (label is the step, meta is the date, detail is one sentence). comparison: title and two to four sides as items. list: title and two to four items. quote: the quote as the title, the attribution as the body, at most one context item. close: title, two to four asks as items, a contact line as the body. Leave items empty on cover, statement and table slides.
 Before submitting EACH slide, check its role-specific item budget and every field: title <=120 characters, kicker <=40, body <=320, item label <=60, detail <=160, meta <=40. These are ceilings, not targets: chart callouts and metric captions should be especially short. Group related findings into a single takeaway when there are too many; keep the exact evidence, individual findings and citations in notes. Preserve the requested slide count. Use a short audience name and a short source caption; full citations belong in notes. The larger authoring schema is a recovery allowance, not a target density.
 Vary the roles across the deck; use at least four different roles in a deck of five or more slides. Open with a cover and end with a close. Use metrics or chart only when the grounding material supplies the numbers. Never invent numbers; use metrics only when the grounding material supplies them. Never invent citations.
@@ -895,9 +895,9 @@ export function mentionsRestyle(instruction: string) {
 export const restyleClassificationSchema = z.object({
   /** True only when the request changes appearance and asks for no content change. */
   restyle: z.boolean(),
-  palette: z.enum(['editorial', 'signal', 'custom', 'keep']),
+  palette: z.enum([...PALETTE_NAMES, 'custom', 'keep']),
   colors: deckPaletteColorsSchema.nullish(),
-  fontPair: z.enum(['serif', 'sans', 'keep']),
+  fontPair: z.enum([...FONT_PAIR_NAMES, 'keep']),
   scope: z.enum(['theme', 'theme-and-layout']),
   /** paintings: add public-domain paintings. none: remove them. keep: leave imagery as it is. */
   imagery: z.enum(['paintings', 'none', 'keep']).nullish(),
@@ -905,7 +905,7 @@ export const restyleClassificationSchema = z.object({
 });
 export type RestyleClassification = z.infer<typeof restyleClassificationSchema>;
 
-export const RESTYLE_CLASSIFIER_GUIDANCE = `Decide whether an instruction about an existing presentation asks only for a change of appearance: theme, palette, colors, fonts, typography or layout. Answer restyle=true only when the instruction asks for no change to the words, numbers, charts, notes or slide order. Map the request: palette editorial (warm paper, navy ink, rust accent), signal (cool paper, near-black ink, electric blue), custom when the user names colors (then fill colors with six hex values), or keep. fontPair serif (Fraunces display) or sans (Geist), or keep. scope is theme for color and font changes and theme-and-layout when the user asks for a new layout, a redesign or a fresh look. imagery is paintings when the user asks for artwork, paintings or pictures on the slides, none when the user asks to remove artwork, and keep otherwise. Write a one-sentence plain summary of the change; do not use the word AI.`;
+export const RESTYLE_CLASSIFIER_GUIDANCE = `Decide whether an instruction about an existing presentation asks only for a change of appearance: theme, palette, colors, fonts, typography or layout. Answer restyle=true only when the instruction asks for no change to the words, numbers, charts, notes or slide order. Map the request: palette editorial (warm paper, navy ink, rust accent), signal (cool paper, near-black ink, electric blue), grove (green), lagoon (teal), dusk (violet), rose (pink), sand (ochre), slate (blue-grey), custom when the user names colors (then fill colors with six hex values), or keep. fontPair serif (Fraunces display), sans (Geist), literary (Instrument Serif), humanist (Manrope), grotesk (Space Grotesk), mono (Geist Mono), or keep. scope is theme for color and font changes and theme-and-layout when the user asks for a new layout, a redesign or a fresh look. imagery is paintings when the user asks for artwork, paintings or pictures on the slides, none when the user asks to remove artwork, and keep otherwise. Write a one-sentence plain summary of the change; do not use the word AI.`;
 
 /** The restyle operation a classification maps to, or null when it is not a restyle. */
 export function restyleOperationFor(classification: RestyleClassification) {
@@ -913,7 +913,7 @@ export function restyleOperationFor(classification: RestyleClassification) {
   const palette =
     classification.palette === 'custom' && classification.colors
       ? classification.colors
-      : classification.palette === 'editorial' || classification.palette === 'signal'
+      : classification.palette !== 'custom' && classification.palette !== 'keep'
         ? classification.palette
         : undefined;
   const fontPair = classification.fontPair === 'keep' ? undefined : classification.fontPair;
@@ -956,7 +956,7 @@ export function requestedPresentationSlideConstraints(
     'eleven',
     'twelve',
   ];
-  const number = '(\\d{1,2}|' + words.join('|') + ')';
+  const number = `(\\d{1,2}|${words.join('|')})`;
   const pattern = new RegExp(
     '\\b(?:(up to|at most|no more than|at least|no fewer than|more than|less than|fewer than|exactly|between)\\s+)?' +
       number +
