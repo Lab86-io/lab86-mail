@@ -1,4 +1,4 @@
-import { contrastRatio, textFits } from './deck-quality';
+import { contrastRatio, estimateTextLines, textFits } from './deck-quality';
 import type { DeckElementV2, DeckModelV2, DeckSlideV2, DeckTheme } from './model';
 
 /**
@@ -379,6 +379,25 @@ class Slide {
     });
   }
 
+  /** Reflow generated captions into reserved space before requesting copy edits. */
+  caption(slot: string, value: string, box: Box, maxHeight: number, props: TextProps) {
+    const text = value.replace(/\s+/g, ' ').trim();
+    const probe: Text = {
+      id: 'caption',
+      type: 'text',
+      text,
+      x: box[0],
+      y: box[1],
+      width: box[2],
+      height: box[3],
+      ...props,
+    };
+    const needed = ((estimateTextLines(probe) * (props.fontSize ?? 11) * 1.3) / SLIDE_HEIGHT_PT) * 100;
+    const height = Math.min(maxHeight, Math.max(box[3], needed));
+    const y = props.valign === 'bottom' ? box[1] + box[3] - height : Math.min(box[1], 97 - height);
+    this.text(slot, text, [box[0], y, box[2], height], props);
+  }
+
   rule(slot: string, x: number, y: number, width: number, color: string, weight = 1.25) {
     this.elements.push({
       id: this.id(slot),
@@ -641,7 +660,7 @@ function composeCover(content: CompositionContent, options: ComposeSlideOptions)
     });
   const foot = content.footer || content.items[0]?.label;
   if (foot)
-    s.text('foot', foot, [6, artwork ? 86 : 90, 40, 4], {
+    s.caption('foot', foot, [6, artwork ? 86 : 90, 40, 4], 12, {
       role: 'caption',
       fontSize: 11,
       color: v.c.muted,
@@ -814,7 +833,7 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
   kickerLine(s, v, content.kicker, [6, 10, 40, 4.5]);
   const items = content.items.slice(0, 4);
   if (content.chart) {
-    sectionTitle(s, v, content.title, [6, 16, 52, 18], 34);
+    sectionTitle(s, v, content.title, [6, 16, 52, content.body ? 13 : 18], 34);
     if (content.body)
       s.text('body', content.body, [40, 30, 44, 7], {
         role: 'body',
@@ -849,7 +868,7 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
     s.chart('chart', content.chart, [40, 38, 54, 50], chartColors(v));
     const sourceLine = content.sourceLine ?? content.chart.source;
     if (sourceLine)
-      s.text('source', sourceLine, [40, 90, 44, 5], {
+      s.caption('source', sourceLine, [40, 90, 44, 5], 8, {
         role: 'caption',
         fontSize: 10.5,
         color: v.c.muted,
@@ -937,7 +956,7 @@ function composeTable(content: CompositionContent, options: ComposeSlideOptions)
       s.rule(`table-rule-${index}`, 6, y + rowHeight - 0.5, 88, v.c.muted, 0.4);
     });
     if (source)
-      s.text('source', source, [6, 90, 76, 5], { role: 'caption', fontSize: 10.5, color: v.c.muted });
+      s.caption('source', source, [6, 90, 76, 5], 7, { role: 'caption', fontSize: 10.5, color: v.c.muted });
   }
   pageNumber(s, options, v.c.muted);
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
@@ -975,7 +994,7 @@ function composeChart(content: CompositionContent, options: ComposeSlideOptions)
   s.chart('chart', content.chart, [46, 16, 48, 70], chartColors(v));
   const sourceLine = content.sourceLine ?? content.chart.source;
   if (sourceLine)
-    s.text('source', sourceLine, [46, 88, 38, 5], {
+    s.caption('source', sourceLine, [46, 88, 38, 5], 9, {
       role: 'caption',
       fontSize: 10.5,
       color: v.c.muted,
