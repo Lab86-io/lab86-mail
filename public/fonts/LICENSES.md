@@ -2,6 +2,9 @@
 
 - Fraunces (Undercase Type), SIL Open Font License 1.1. Latin subsets from Google Fonts.
 - Geist and Geist Mono (Vercel), SIL Open Font License 1.1. From the `geist` npm package.
+- Instrument Serif (Rodrigo Fuenzalida), SIL Open Font License 1.1. Google Fonts Latin subsets; see `InstrumentSerif-OFL.txt`.
+- Manrope (Mikhail Sharanda), SIL Open Font License 1.1. Google Fonts Latin subset; see `Manrope-OFL.txt`.
+- Space Grotesk (Florian Karsten), SIL Open Font License 1.1. Google Fonts Latin subset; see `SpaceGrotesk-OFL.txt`.
 
 These files serve the presentation renderer and the exported previews. Application text
 keeps its own font loading.

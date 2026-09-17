@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
+import { FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
 
 export const presentationEvidenceSchema = z.object({
   id: z.string().min(1).max(200),
@@ -11,8 +12,8 @@ export const presentationPlanSchema = z.object({
   narrative: z.string().min(1).max(3000),
   design: z.object({
     direction: z.string().min(1).max(2000),
-    palette: z.enum(['editorial', 'signal']),
-    fontPair: z.enum(['serif', 'sans']),
+    palette: z.enum(PALETTE_NAMES),
+    fontPair: z.enum(FONT_PAIR_NAMES),
     graphics: z.string().min(1).max(2000),
   }),
   slides: z

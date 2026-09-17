@@ -41,6 +41,10 @@ const QuestionFlow = dynamic(() => import('@/components/tool-ui/question-flow').
 });
 
 export type HitlResult = (output: Record<string, unknown>) => void;
+const PresentationChoices = dynamic(
+  () => import('./presentation-choices').then((m) => m.PresentationChoicesPart),
+  { loading: LoadingCard, ssr: false },
+);
 
 // ---------------------------------------------------------------------------
 // ask_approval — binary go/no-go on one consequential action
@@ -236,6 +240,8 @@ export function HitlPart({
 }) {
   if (part.state === 'input-streaming') return null;
   switch (toolName) {
+    case 'ask_presentation_choices':
+      return <PresentationChoices part={part} onResult={onResult} />;
     case 'ask_approval':
       return <ApprovalPart part={part} onResult={onResult} />;
     case 'ask_parameters':

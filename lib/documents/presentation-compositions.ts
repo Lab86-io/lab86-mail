@@ -25,9 +25,18 @@ export const COMPOSITION_ROLES = [
 ] as const;
 export type CompositionRole = (typeof COMPOSITION_ROLES)[number];
 
-export const PALETTE_NAMES = ['editorial', 'signal'] as const;
+export const PALETTE_NAMES = [
+  'editorial',
+  'signal',
+  'grove',
+  'lagoon',
+  'dusk',
+  'rose',
+  'sand',
+  'slate',
+] as const;
 export type PaletteName = (typeof PALETTE_NAMES)[number];
-export const FONT_PAIR_NAMES = ['serif', 'sans'] as const;
+export const FONT_PAIR_NAMES = ['serif', 'sans', 'literary', 'humanist', 'grotesk', 'mono'] as const;
 export type FontPairName = (typeof FONT_PAIR_NAMES)[number];
 
 export type DeckColors = DeckTheme['colors'];
@@ -51,6 +60,54 @@ export const DECK_PALETTES: Record<PaletteName, DeckColors> = {
     accent: '#2F5BFF',
     accentInk: '#FFFFFF',
   },
+  grove: {
+    background: '#F2F5EF',
+    surface: '#DEE7D8',
+    ink: '#19352C',
+    muted: '#526256',
+    accent: '#2D6A4F',
+    accentInk: '#FFFFFF',
+  },
+  lagoon: {
+    background: '#EFF7F8',
+    surface: '#D9EAED',
+    ink: '#153C47',
+    muted: '#4C6570',
+    accent: '#087789',
+    accentInk: '#FFFFFF',
+  },
+  dusk: {
+    background: '#F4F0F9',
+    surface: '#E5DDEF',
+    ink: '#352446',
+    muted: '#695971',
+    accent: '#754395',
+    accentInk: '#FFFFFF',
+  },
+  rose: {
+    background: '#FCF1F0',
+    surface: '#F0DBDC',
+    ink: '#482B33',
+    muted: '#775963',
+    accent: '#A13E5A',
+    accentInk: '#FFFFFF',
+  },
+  sand: {
+    background: '#FAF4E7',
+    surface: '#EDE1C7',
+    ink: '#433721',
+    muted: '#68583F',
+    accent: '#825211',
+    accentInk: '#FFFFFF',
+  },
+  slate: {
+    background: '#EDF1F5',
+    surface: '#DAE1E9',
+    ink: '#243246',
+    muted: '#4D5C6E',
+    accent: '#365478',
+    accentInk: '#FFFFFF',
+  },
 };
 
 export const DECK_FONT_PAIRS: Record<FontPairName, DeckTheme['fonts']> = {
@@ -61,6 +118,26 @@ export const DECK_FONT_PAIRS: Record<FontPairName, DeckTheme['fonts']> = {
   },
   sans: {
     display: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  literary: {
+    display: { family: 'Instrument Serif', exportFamily: 'Georgia', fallback: 'serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  humanist: {
+    display: { family: 'Manrope', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    body: { family: 'Manrope', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  grotesk: {
+    display: { family: 'Space Grotesk', exportFamily: 'Aptos Display', fallback: 'sans-serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  mono: {
+    display: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
     body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
     mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
   },
@@ -193,13 +270,16 @@ export function resolvePalette(input: PaletteInput): ResolvedPalette {
 
 export function buildDeckTheme(palette: PaletteInput, fontPair: FontPairName): DeckTheme {
   const resolved = resolvePalette(palette);
-  const name = resolved.name === 'custom' ? 'Custom' : resolved.name === 'signal' ? 'Signal' : 'Editorial';
+  const name = resolved.name[0].toUpperCase() + resolved.name.slice(1);
   return { name, colors: { ...resolved.colors }, fonts: structuredClone(DECK_FONT_PAIRS[fontPair]) };
 }
 
 /** The font pair a theme uses, by its display family. */
 export function fontPairOf(theme: DeckTheme): FontPairName {
-  return theme.fonts.display.family === 'Fraunces' ? 'serif' : 'sans';
+  return (
+    FONT_PAIR_NAMES.find((name) => DECK_FONT_PAIRS[name].display.family === theme.fonts.display.family) ??
+    'sans'
+  );
 }
 
 export interface CompositionItem {
@@ -542,7 +622,7 @@ interface Voice {
 }
 
 function voice(theme: DeckTheme): Voice {
-  const editorial = fontPairOf(theme) === 'serif';
+  const editorial = ['serif', 'literary'].includes(fontPairOf(theme));
   const c = paletteTokens(theme.colors);
   return {
     c,

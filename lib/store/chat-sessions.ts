@@ -27,6 +27,9 @@ export interface ChatSessionScope {
 const KIND = 'chatSession';
 const MAX_MESSAGES = 80;
 const MAX_PART_JSON_BYTES = 4_000;
+// Choice receipts are bounded by their schema and must survive reload, including
+// the complete 30-slide selection and free-form source guidance.
+const MAX_PRESENTATION_CHOICES_BYTES = 32_000;
 const MAX_SESSIONS_LISTED = 30;
 const MAX_SESSIONS_SCANNED = 1_000;
 
@@ -50,7 +53,11 @@ export function compactMessage(message: any): any {
           input: part.input,
         };
         try {
-          if (part.output !== undefined && JSON.stringify(part.output).length <= MAX_PART_JSON_BYTES) {
+          const limit =
+            toolPartName(part) === 'ask_presentation_choices'
+              ? MAX_PRESENTATION_CHOICES_BYTES
+              : MAX_PART_JSON_BYTES;
+          if (part.output !== undefined && JSON.stringify(part.output).length <= limit) {
             compact.output = part.output;
           } else if (part.state === 'output-available') {
             compact.output = {

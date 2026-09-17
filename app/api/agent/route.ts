@@ -228,6 +228,7 @@ export async function POST(req: NextRequest) {
     const stream = await runAgent({
       runId,
       messages: modelMessages,
+      presentationSession: presentationSessionFromMessages(body.messages),
       extraSystem:
         [
           body.extraSystem,
@@ -305,3 +306,5 @@ export async function POST(req: NextRequest) {
     });
   }
 }
+
+import { presentationSessionFromMessages } from '@/lib/documents/presentation-choices';

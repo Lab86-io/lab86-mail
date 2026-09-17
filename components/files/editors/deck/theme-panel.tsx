@@ -1,8 +1,8 @@
 'use client';
 
-import { DECK_THEMES } from '@/lib/documents/deck-fixtures';
 import { DECK_FONTS, deckThemesEqual } from '@/lib/documents/deck-versions';
 import type { DeckTheme } from '@/lib/documents/model';
+import { buildDeckTheme, PALETTE_NAMES } from '@/lib/documents/presentation-compositions';
 import { slideColor } from '../deck-model';
 import { ColorField, InspectorSection, SelectField } from './fields';
 
@@ -57,7 +57,8 @@ export function ThemePanel({
       <p className="deck-inspector-note">Applies to every slide. Slide edits stay.</p>
       <fieldset className="deck-theme-presets">
         <legend className="sr-only">Built-in themes</legend>
-        {Object.entries(DECK_THEMES).map(([key, preset]) => {
+        {PALETTE_NAMES.map((key) => {
+          const preset = buildDeckTheme(key, key === 'editorial' ? 'serif' : 'sans');
           const active = deckThemesEqual(theme, preset);
           return (
             <button

@@ -187,6 +187,7 @@ const HITL_NAMES = new Set([
   'ask_parameters',
   'ask_preferences',
   'ask_question_flow',
+  'ask_presentation_choices',
 ]);
 
 function partToolName(part: any): string {
