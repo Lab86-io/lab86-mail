@@ -446,6 +446,26 @@ class Slide {
 
   text(slot: string, value: string, box: Box, props: TextProps = {}) {
     if (!value.trim()) return;
+    const fontSlot = props.font ?? (props.role === 'title' || props.role === 'number' ? 'display' : 'body');
+    if (
+      fontSlot !== 'mono' &&
+      this.options.theme.fonts[fontSlot]?.fallback === 'monospace' &&
+      props.fontSize
+    ) {
+      // Measure the actual face without changing its semantic font slot: a
+      // later display-font edit must still restyle these titles and numbers.
+      props = {
+        ...props,
+        fontSize: fitTypeSize(
+          value,
+          box,
+          props.fontSize,
+          Math.min(props.fontSize, fontSlot === 'display' ? 24 : 12),
+          { ...props, font: 'mono', lineHeight: props.lineHeight ?? (fontSlot === 'display' ? 1.05 : 1.3) },
+          1,
+        ),
+      };
+    }
     this.elements.push({
       id: this.id(slot),
       type: 'text',

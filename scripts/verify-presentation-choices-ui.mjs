@@ -2,11 +2,35 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { renderDeckHtml } from '../lib/documents/deck-render.ts';
+import { composePresentationV2 } from '../lib/documents/presentation-design.ts';
+import { retroBrief } from '../tests/fixtures/presentation-briefs.ts';
 
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
 const output = '/tmp/presentation-choice-qa';
 await mkdir(output, { recursive: true });
 try {
+  const fontCheck = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await fontCheck.setContent(
+    await renderDeckHtml(composePresentationV2({ ...retroBrief(), fontPair: 'mono' })),
+  );
+  await fontCheck.evaluate(() => document.fonts.ready);
+  const comparisonTitle = fontCheck
+    .locator('.deck-text')
+    .filter({ hasText: /^What we planned against what we got$/ });
+  assert.equal(
+    await comparisonTitle.evaluate((node) => {
+      const box = node.parentElement.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const text = range.getBoundingClientRect();
+      return text.bottom <= box.bottom + 2 && text.right <= box.right + 2;
+    }),
+    true,
+    'The actual monospace title must fit without clipping',
+  );
+  await fontCheck.close();
+  console.log('Monospace comparison title: actual font bounds fit');
   for (const [name, width, dark] of [
     ['desktop', 1200, false],
     ['mobile-dark', 390, true],

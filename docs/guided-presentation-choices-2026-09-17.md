@@ -22,9 +22,10 @@ Theme, font and preview values share the presentation composition system. Preser
 
 ## Validation
 
-- Full suite: 4,052 tests pass, one optional browser-render test skipped. Changed library files retain or improve baseline line coverage; the new choice/session module has 100% line coverage.
+- Full suite: 4,053 tests pass, one optional browser-render test skipped. Changed library files retain or improve baseline line coverage; the new choice/session module has 100% line coverage.
 - Focused behavior: pending/cancel/revise/delegate, malformed and stale responses, exact slide counts and order, theme/font enforcement, data-preserving chart/table changes, long saved answers, bounded source notes, workbook availability, planner context and one-time continuation.
 - All 48 theme/font combinations pass composition, contrast and export-font checks. Sand and Slate muted colors were adjusted after the contrast checks caught their surface-panel labels.
+- A full-size browser render caught a clipped comparison title in the new monospace pairing. Composition now fits that face using monospace character widths while retaining the semantic display slot, and quality checks use the theme's actual font class. Both a focused regression and the browser acceptance script check this case.
 - Actual-component browser flow at 1200px and 390px (dark): audience/scope/pacing, eight theme previews, six font previews, keyboard selection, chart-data comparison, final storyboard confirmation and reload. No browser errors or horizontal overflow. Reproduce with `NARRATIVE_PREVIEW_PORT=18852 bun scripts/preview-narrative-tools.mjs --presentations`, then `bun scripts/verify-presentation-choices-ui.mjs`.
 - Local screenshots are in `/tmp/presentation-choice-qa/`, including the surrounding actual app workspace. Synthetic data is explicitly labeled; browser acceptance does not claim a live account/model generation run.
 - Typecheck, lint and production build pass. Lint retains the repository's existing unrelated warning/info. CI and the staging deployment workflow verify the merged release.

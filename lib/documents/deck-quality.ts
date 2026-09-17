@@ -65,10 +65,12 @@ function lineHeight(element: TextElement) {
 }
 
 /** Estimated lines the text needs in its box, from average glyph widths. */
-export function estimateTextLines(element: TextElement) {
+export function estimateTextLines(element: TextElement, theme?: DeckTheme) {
   const size = textSize(element);
   const boxWidthPt = (element.width / 100) * SLIDE_WIDTH_PT;
-  const glyph = size * GLYPH_WIDTH[slot(element)] * (1 + (element.letterSpacing ?? 0));
+  const fontSlot = slot(element);
+  const advance = theme?.fonts[fontSlot]?.fallback === 'monospace' ? GLYPH_WIDTH.mono : GLYPH_WIDTH[fontSlot];
+  const glyph = size * advance * (1 + (element.letterSpacing ?? 0));
   const perLine = Math.max(1, Math.floor(boxWidthPt / glyph));
   let lines = 0;
   for (const paragraph of element.text.split('\n')) {
@@ -95,8 +97,8 @@ export function estimateTextLines(element: TextElement) {
 }
 
 /** Does the text fit its box height at its size and line height? */
-export function textFits(element: TextElement) {
-  const needed = estimateTextLines(element) * textSize(element) * lineHeight(element);
+export function textFits(element: TextElement, theme?: DeckTheme) {
+  const needed = estimateTextLines(element, theme) * textSize(element) * lineHeight(element);
   const available = (element.height / 100) * SLIDE_HEIGHT_PT;
   return needed <= available * 1.02;
 }
@@ -187,7 +189,7 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
       words += element.text.split(/\s+/).filter(Boolean).length;
       if (element.text.trim() && textSize(element) < MIN_FONT_PT)
         push('small-type', 'warning', [element.id], `Text "${element.id}" is set under ${MIN_FONT_PT} pt.`);
-      if (element.text.trim() && !textFits(element))
+      if (element.text.trim() && !textFits(element, theme))
         push('overflow', 'error', [element.id], `Text "${element.id}" does not fit its box.`);
       const background = backgroundUnder(slide, theme, element, index);
       if (element.text.trim() && background) {
