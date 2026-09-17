@@ -364,20 +364,17 @@ export function InlineComposer({
         const snapshot = sendSnapshot.current;
         if (!snapshot) throw new Error('The sent draft snapshot is missing.');
         await registerPendingSend(pending, snapshot);
-        setPhase('sent');
-        window.setTimeout(() => {
-          setPhase('draft');
-          setBody('');
-          setFiles([]);
-          setPreviewFile(null);
-          if (composerMode === 'new' || composerMode === 'forward') {
-            setTo('');
-            setCc('');
-            setBcc('');
-            setSubject('');
-          }
-          onSent?.(undefined);
-        }, 400);
+        setPhase('draft');
+        setBody('');
+        setFiles([]);
+        setPreviewFile(null);
+        if (composerMode === 'new' || composerMode === 'forward') {
+          setTo('');
+          setCc('');
+          setBcc('');
+          setSubject('');
+        }
+        onSent?.(undefined);
         return;
       }
 
