@@ -4,6 +4,7 @@ import { ThemeProvider } from 'next-themes';
 import { createRoot } from 'react-dom/client';
 import { CalendarProvider } from '../../components/calendar/engine/calendar-context';
 import { CalendarHeader } from '../../components/calendar/engine/calendar-header';
+import { NativeFilesWorkspace } from '../../components/files/NativeFilesWorkspace';
 import { NarrativeProse } from '../../components/narrative/NarrativeProse';
 import { FrameGallery } from '../../components/report/brief-canvas/FrameGallery';
 import { AppShell } from '../../components/shell/AppShell';
@@ -58,8 +59,11 @@ const items = Array.from({ length: 40 }, (_, index) => ({
     agentStream = null;
   },
 };
+(window as any).__previewOriginalFetch ??= globalThis.fetch.bind(globalThis);
 globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input), location.origin);
+  if (url.origin === location.origin && url.pathname.startsWith('/vendor/'))
+    return (window as any).__previewOriginalFetch(input, init);
   calls.push(`${init?.method || 'GET'} ${url.pathname}`);
   if (url.pathname === '/api/agent') {
     const body = JSON.parse(String(init?.body || '{}'));
@@ -257,7 +261,9 @@ const previewRoot = (window as any).__previewRoot;
 previewRoot.render(
   <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
     <QueryClientProvider client={client}>
-      {new URLSearchParams(location.search).get('review') === 'styles' ? (
+      {new URLSearchParams(location.search).get('review') === 'native-files' ? (
+        <NativeFilesWorkspace clerkEnabled={false} />
+      ) : new URLSearchParams(location.search).get('review') === 'styles' ? (
         <AlbatrossStylesPreview />
       ) : new URLSearchParams(location.search).get('review') === 'frames' ? (
         <FrameGallery />

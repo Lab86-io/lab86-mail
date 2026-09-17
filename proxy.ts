@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import type { NextFetchEvent } from 'next/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { isStagingRuntime } from './lib/hosted/controls';
+import { NATIVE_BROWSER_COOKIE, verifyNativeBrowserAccess } from './lib/native/browser-access';
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
@@ -9,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   '/__clerk(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
+  '/native/session',
   '/api/healthz',
   '/api/clerk/webhook',
   '/api/nylas/callback',
@@ -43,8 +45,13 @@ const protectedProxy = clerkMiddleware(
   },
 );
 
-export default function proxy(req: NextRequest, event: NextFetchEvent) {
-  const basicAuth = basicAuthOrNext(req);
+export default async function proxy(req: NextRequest, event: NextFetchEvent) {
+  const nativeBrowser = await verifyNativeBrowserAccess(
+    req.cookies.get(NATIVE_BROWSER_COOKIE)?.value,
+    req.nextUrl.origin,
+    process.env.LAB86_CONVEX_INTERNAL_SECRET,
+  );
+  const basicAuth = nativeBrowser ? NextResponse.next() : basicAuthOrNext(req);
   if (basicAuth.status !== 200) return basicAuth;
 
   // Staging basic auth makes browsers attach `Authorization: Basic ...` to every

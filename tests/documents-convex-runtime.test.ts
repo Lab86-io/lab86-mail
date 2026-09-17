@@ -45,6 +45,45 @@ async function createDocument(
 }
 
 describe('document Convex transactions', () => {
+  test('old native saves cannot flatten a rich deck, including renames and downgrade requests', async () => {
+    const t = newHarness();
+    const model = {
+      kind: 'deck',
+      version: 2,
+      theme: { name: 'Editorial' },
+      slides: [{ id: 'cover', elements: [{ type: 'image', assetId: 'owned' }] }],
+    };
+    const owner = { internalSecret: SECRET, userId: USER, documentId: 'rich-deck' };
+    await t.mutation(api.documents.create, { ...owner, kind: 'deck', title: 'Rich deck', model });
+    for (const allowDowngrade of [false, true]) {
+      expect(
+        await t.mutation(api.documents.update, {
+          ...owner,
+          expectedRevision: 1,
+          title: 'Renamed',
+          model: createDefaultDocumentModel('deck'),
+          allowDowngrade,
+        }),
+      ).toMatchObject({ ok: false, code: 'RICH_DECK_REQUIRED' });
+    }
+    expect(await t.query(api.documents.get, owner)).toMatchObject({
+      title: 'Rich deck',
+      currentRevision: 1,
+      model,
+    });
+    expect(await t.run((ctx) => ctx.db.query('documentRevisions').collect())).toHaveLength(1);
+    expect(
+      await t.mutation(api.documents.update, { ...owner, expectedRevision: 1, title: 'Renamed' }),
+    ).toMatchObject({ ok: true, document: { title: 'Renamed', currentRevision: 2, model } });
+    expect(
+      await t.mutation(api.documents.update, {
+        ...owner,
+        expectedRevision: 2,
+        model: { ...model, theme: { name: 'Signal' } },
+      }),
+    ).toMatchObject({ ok: true, document: { currentRevision: 3 } });
+  });
+
   test('creation records the exact file in recovery and prevents a second commit for the same execution', async () => {
     const t = newHarness();
     const identity = { internalSecret: SECRET, userId: USER, runId: 'create-run', key: 'create-key' };

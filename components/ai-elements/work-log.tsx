@@ -1,16 +1,15 @@
 'use client';
 
-// The live work log, built on
-// @ai-elements/chain-of-thought for the block (header, rule, steps) and
-// @ai-elements/tool for each call's row and its collapsible content. One row
-// per tool call; the row text is the activity sentence; a running row shows
-// the loader glyph, a done row a check, a failed row a cross and danger text.
-// The shape card or the designed show_* component renders under its row,
-// inside the rule. The header reads the group state; after the turn a block
-// of three or more rows with no failure collapses to the header.
-
 import type { ReactNode } from 'react';
 import { memo, useEffect, useRef, useState } from 'react';
+import { Steps, StepsContent, StepsTrigger } from '@/components/odysseyui/steps';
+import {
+  ThoughtChain,
+  ThoughtChainContent,
+  ThoughtChainItem,
+  ThoughtChainStep,
+  ThoughtChainTrigger,
+} from '@/components/odysseyui/thought-chain';
 import { toolActivityLine } from '@/lib/albatross/teach-ui';
 import {
   settleWorkLogRows,
@@ -18,16 +17,7 @@ import {
   type WorkLogRow,
   workLogHeader,
 } from '@/lib/chat/work-log';
-import {
-  ChainOfThought,
-  ChainOfThoughtContent,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-} from './chain-of-thought';
-import { RevealDot } from './reveal-dot';
 import { ShapeCard } from './shapes/shape-card';
-import { Shimmer } from './shimmer';
-import { Tool, ToolContent, ToolHeader, toolGlyph } from './tool';
 import { TOOL_UI_RENDERED_TOOLS } from './tool-ui-part';
 
 export type RenderRichTool = (toolName: string, output: any) => ReactNode;
@@ -62,41 +52,45 @@ function WorkLogComponent({ rows: inputRows, finished, renderRich, now = Date.no
   }, [collapsible]);
 
   return (
-    <ChainOfThought
+    <Steps
       data-slot="work-log"
-      className="assistant-work-log surface-card surface-accent-3 rounded-card p-2.5"
-      data-state={header.running ? 'working' : header.failed ? 'failed' : finished ? 'finished' : 'done'}
+      className="min-w-0 py-1"
+      data-work-state={header.running ? 'working' : header.failed ? 'failed' : finished ? 'finished' : 'done'}
       open={open}
       onOpenChange={(next) => {
         touchedRef.current = true;
         setOpen(next);
       }}
     >
-      <ChainOfThoughtHeader disclosure={finished}>
-        {header.running ? (
-          <>
-            <Shimmer as="span" className="text-[12px]">
-              Working
-            </Shimmer>
-            <RevealDot />
-          </>
-        ) : (
-          <span className={header.failed ? 'text-[var(--color-danger)]' : undefined}>{header.text}</span>
-        )}
-      </ChainOfThoughtHeader>
-      <ChainOfThoughtContent forceMount className="data-[state=closed]:hidden">
-        {rows.map((row) => (
-          <WorkLogRowView key={row.toolCallId} row={row} renderRich={renderRich} />
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
+      <StepsTrigger
+        active={header.running}
+        className={header.failed ? 'text-[var(--color-danger)]' : undefined}
+      >
+        {header.text}
+      </StepsTrigger>
+      <StepsContent forceMount className="data-[state=closed]:hidden" bar={<span />}>
+        <ThoughtChain>
+          {rows.map((row) => (
+            <WorkLogRowView key={row.toolCallId} row={row} renderRich={renderRich} />
+          ))}
+        </ThoughtChain>
+      </StepsContent>
+    </Steps>
   );
 }
 
 export const WorkLog = memo(WorkLogComponent);
 WorkLog.displayName = 'WorkLog';
 
-function WorkLogRowView({ row, renderRich }: { row: WorkLogRow; renderRich?: RenderRichTool }) {
+function WorkLogRowView({
+  row,
+  renderRich,
+  _isLast,
+}: {
+  row: WorkLogRow;
+  renderRich?: RenderRichTool;
+  _isLast?: boolean;
+}) {
   const part = row.part;
   const state = part.state || 'input-available';
   const activity = toolActivityLine(row.toolName, part.input, state, part.output, part.errorText);
@@ -106,30 +100,23 @@ function WorkLogRowView({ row, renderRich }: { row: WorkLogRow; renderRich?: Ren
       : null;
   const content = rich ?? (row.shape ? <ShapeCard shape={row.shape} /> : null);
   return (
-    <ChainOfThoughtStep
+    <ThoughtChainStep
+      _isLast={_isLast}
       data-tool={row.toolName}
       data-tone={row.state}
-      icon={toolGlyph(row.state)}
-      status={row.state === 'running' ? 'active' : 'complete'}
-      label={
-        <Tool defaultOpen>
-          <ToolHeader
-            title={row.shape?.activity?.[row.state] ?? activity.text}
-            type={part.type}
-            state={state}
-            output={part.output}
-            expandable={content != null}
-          />
-          {row.state === 'failed' && part.errorText ? (
-            <p className="break-words text-[11.5px] text-[var(--color-danger)]">{part.errorText}</p>
-          ) : null}
-          {content != null ? (
-            <ToolContent forceMount className="data-[state=closed]:hidden">
-              <div className="assistant-tool-result pt-1.5">{content}</div>
-            </ToolContent>
-          ) : null}
-        </Tool>
-      }
-    />
+      status={row.state === 'running' ? 'active' : row.state === 'failed' ? 'failed' : 'done'}
+    >
+      <ThoughtChainTrigger expandable={content != null || Boolean(part.errorText)}>
+        {row.shape?.activity?.[row.state] ?? activity.text}
+      </ThoughtChainTrigger>
+      <ThoughtChainContent>
+        {row.state === 'failed' && part.errorText ? (
+          <ThoughtChainItem>
+            <span className="text-[var(--color-danger)]">{part.errorText}</span>
+          </ThoughtChainItem>
+        ) : null}
+        {content != null ? <div className="assistant-tool-result pt-1.5">{content}</div> : null}
+      </ThoughtChainContent>
+    </ThoughtChainStep>
   );
 }

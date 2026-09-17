@@ -210,7 +210,7 @@ export async function updateDocument(input: {
     | { ok: true; document: AlbatrossDocumentRecord }
     | {
         ok: false;
-        code: 'NOT_FOUND' | 'REVISION_CONFLICT' | 'ENGINE_MODEL_REQUIRED';
+        code: 'NOT_FOUND' | 'REVISION_CONFLICT' | 'ENGINE_MODEL_REQUIRED' | 'RICH_DECK_REQUIRED';
         document?: AlbatrossDocumentRecord;
       }
   >(documentsApi.update, {

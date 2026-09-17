@@ -93,6 +93,8 @@ const server = serve({
         { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } },
       );
     }
+    if (path.startsWith('/vendor/') && !path.includes('..') && /^\/vendor\/[a-zA-Z0-9._/-]+$/.test(path))
+      return new Response(file(resolve(root, 'public', path.slice(1))));
     if (/^\/media\/[a-zA-Z0-9._~-]+\.(woff2?|ttf|otf)$/.test(path))
       return new Response(file(resolve(root, '.next/static', path.slice(1))));
     if (/^\/frames\/[a-z0-9-]+\.(png|svg)$/.test(path) || /^\/art\/fallback-[123]\.jpg$/.test(path))
