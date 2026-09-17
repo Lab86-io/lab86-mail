@@ -51,16 +51,31 @@ export const FONT_DESCRIPTIONS: Record<(typeof FONT_PAIR_NAMES)[number], string>
 };
 
 const text = z.string().trim().max(2000);
+// Strict structured-output providers emit null for omitted optional fields.
+// Treat only optional nulls as absent; never coerce or discard chart values.
+const optional = <T extends z.ZodType>(schema: T) =>
+  schema
+    .nullable()
+    .transform((value) => value ?? undefined)
+    .optional();
 export const storyboardSlideSchema = z.object({
   id: z.string().min(1).max(120),
   kind: z.enum(['cover', 'content', 'divider', 'close']),
   title: z.string().min(1).max(120),
   takeaway: z.string().max(400),
   recommended: z.enum(VISUAL_CHOICES),
-  alternatives: z.array(z.enum(VISUAL_CHOICES)).max(4).default([]),
-  chart: briefChartSchema.optional(),
-  table: briefTableSchema.optional(),
-  evidence: z.array(z.string().max(300)).max(4).default([]),
+  alternatives: z
+    .array(z.enum(VISUAL_CHOICES))
+    .max(4)
+    .nullish()
+    .transform((value) => value ?? []),
+  chart: optional(briefChartSchema),
+  table: optional(briefTableSchema),
+  evidence: z
+    .array(z.string().max(300))
+    .max(4)
+    .nullish()
+    .transform((value) => value ?? []),
 });
 export type StoryboardSlide = z.infer<typeof storyboardSlideSchema>;
 export const presentationChoiceInputSchema = z
@@ -72,16 +87,20 @@ export const presentationChoiceInputSchema = z
       .describe('Stable ID for this presentation across all three checkpoints; use a new ID for a new deck.'),
     stage: z.enum(['brief', 'design', 'storyboard']),
     title: z.string().min(1).max(120),
-    summary: z.string().max(1000).default(''),
-    audience: text.optional(),
-    purpose: text.optional(),
-    sources: z.array(z.enum(SOURCE_CHOICES)).max(5).optional(),
-    contentSlides: z.number().int().min(1).max(24).optional(),
-    sectionBreaks: z.number().int().min(0).max(4).optional(),
-    theme: z.enum(PALETTE_NAMES).optional(),
-    fontPair: z.enum(FONT_PAIR_NAMES).optional(),
-    imagery: z.enum(['none', 'provided', 'paintings']).optional(),
-    slides: z.array(storyboardSlideSchema).min(3).max(30).optional(),
+    summary: z
+      .string()
+      .max(1000)
+      .nullish()
+      .transform((value) => value ?? ''),
+    audience: optional(text),
+    purpose: optional(text),
+    sources: optional(z.array(z.enum(SOURCE_CHOICES)).max(5)),
+    contentSlides: optional(z.number().int().min(1).max(24)),
+    sectionBreaks: optional(z.number().int().min(0).max(4)),
+    theme: optional(z.enum(PALETTE_NAMES)),
+    fontPair: optional(z.enum(FONT_PAIR_NAMES)),
+    imagery: optional(z.enum(['none', 'provided', 'paintings'])),
+    slides: optional(z.array(storyboardSlideSchema).min(3).max(30)),
   })
   .refine((input) => input.stage !== 'storyboard' || Boolean(input.slides?.length), {
     message: 'A storyboard needs the complete proposed slide sequence.',
@@ -172,6 +191,56 @@ export interface PresentationSession {
   cancelled?: boolean;
 }
 
+/** Validate before pausing for the user, including the confirmed slide counts. */
+export function presentationChoiceSchemaForSession(session?: PresentationSession) {
+  return presentationChoiceInputSchema.superRefine((input, ctx) => {
+    const issue = (path: (string | number)[], message: string) =>
+      ctx.addIssue({ code: 'custom', path, message });
+    if (session?.presentationId && input.stage !== 'brief' && input.presentationId !== session.presentationId)
+      issue(['presentationId'], `Keep the confirmed presentationId: ${session.presentationId}.`);
+    if (input.stage !== 'storyboard' || !input.slides) return;
+    const slides = input.slides;
+    if (slides[0].kind !== 'cover' || slides.at(-1)?.kind !== 'close')
+      issue(['slides'], 'Start with the cover and end with the close.');
+    if (
+      slides.filter((slide) => slide.kind === 'cover').length !== 1 ||
+      slides.filter((slide) => slide.kind === 'close').length !== 1
+    )
+      issue(['slides'], 'Include exactly one cover and one close.');
+    if (new Set(slides.map((slide) => slide.id)).size !== slides.length)
+      issue(['slides'], 'Give every slide a unique ID.');
+    if (
+      session?.brief &&
+      (slides.filter((slide) => slide.kind === 'content').length !== session.brief.contentSlides ||
+        slides.filter((slide) => slide.kind === 'divider').length !== session.brief.sectionBreaks)
+    )
+      issue(
+        ['slides'],
+        `Use the confirmed ${session.brief.contentSlides} content slides and ${session.brief.sectionBreaks} section breaks, plus cover and close.`,
+      );
+    slides.forEach((slide, index) => {
+      if (!visualOptionsForSlide(slide).includes(slide.recommended))
+        issue(
+          ['slides', index, 'recommended'],
+          'Choose a supported visual with verified chart/table data, or use typography.',
+        );
+    });
+  });
+}
+
+export function presentationChoiceRepair(input: unknown) {
+  const parsed = presentationChoiceSchemaForSession().safeParse(input);
+  return {
+    ok: false,
+    status: 'invalid_presentation_choices',
+    issues: parsed.success
+      ? []
+      : parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+    nextStep:
+      'Repair these fields and call ask_presentation_choices again with the same presentationId and checkpoint. Retain all gathered evidence and confirmed brief/theme/font choices. This is validation feedback, not user approval. Do not create the deck yet.',
+  };
+}
+
 /** Restore confirmed choices from durable tool results, never from model prose. */
 export function presentationSessionFromMessages(
   messages: ReadonlyArray<{ role?: string; parts?: unknown[] }>,
@@ -245,13 +314,18 @@ export function presentationSessionFromMessages(
         value.visuals
       ) {
         const slides = input.data.slides;
+        // Older clients allowed confirmation of a complete storyboard whose
+        // counts differed from the initial brief. Honor the user's latest
+        // explicit selection instead of repeatedly discarding that receipt.
+        // New requests are checked against the brief before the picker opens.
+        const confirmedBrief = presentationBriefChoicesSchema.safeParse({
+          ...session.brief,
+          contentSlides: slides.filter((slide) => slide.kind === 'content').length,
+          sectionBreaks: slides.filter((slide) => slide.kind === 'divider').length,
+        });
         const valid =
-          slides.length === session.brief.contentSlides + session.brief.sectionBreaks + 2 &&
-          slides[0].kind === 'cover' &&
-          slides.at(-1)?.kind === 'close' &&
-          slides.filter((slide) => slide.kind === 'content').length === session.brief.contentSlides &&
-          slides.filter((slide) => slide.kind === 'divider').length === session.brief.sectionBreaks &&
-          new Set(slides.map((slide) => slide.id)).size === slides.length &&
+          confirmedBrief.success &&
+          presentationChoiceSchemaForSession().safeParse(input.data).success &&
           value.visuals.length === slides.length &&
           new Set(value.visuals.map((entry) => entry.slideId)).size === slides.length &&
           slides.every((slide) =>
@@ -259,7 +333,8 @@ export function presentationSessionFromMessages(
               (entry) => entry.slideId === slide.id && visualOptionsForSlide(slide).includes(entry.visual),
             ),
           );
-        if (valid) {
+        if (valid && confirmedBrief.success) {
+          session.brief = confirmedBrief.data;
           session.storyboard = slides;
           session.visuals = value.visuals;
           session.guidance = value.guidance;
@@ -286,10 +361,36 @@ export function applyPresentationChoices(
   session: PresentationSession,
 ): PresentationBriefV2 {
   const next = structuredClone(brief);
+  // Models sometimes omit the opening/close or section breaks when translating
+  // the approved outline. Fill only unambiguous structural slides from the exact
+  // approved copy; missing research/content still requires model remediation.
+  if (session.storyboard && next.slides.length !== session.storyboard.length) {
+    const drafts = new Map(next.slides.map((slide) => [slide.title, slide]));
+    const titles = new Set(session.storyboard.map((slide) => slide.title));
+    if (
+      drafts.size === next.slides.length &&
+      titles.size === session.storyboard.length &&
+      next.slides.every((slide) => titles.has(slide.title)) &&
+      session.storyboard.every((slide) => drafts.has(slide.title) || slide.kind !== 'content')
+    ) {
+      next.slides = session.storyboard.map(
+        (planned) =>
+          drafts.get(planned.title) ?? {
+            role: planned.kind === 'cover' || planned.kind === 'close' ? planned.kind : 'statement',
+            title: planned.title,
+            body: planned.takeaway,
+            kicker: '',
+            items: [],
+            notes: '',
+            visualRole: 'Confirmed narrative transition',
+          },
+      );
+    }
+  }
   if (session.brief) {
-    if (brief.slides.length !== session.brief.contentSlides + session.brief.sectionBreaks + 2)
+    if (next.slides.length !== session.brief.contentSlides + session.brief.sectionBreaks + 2)
       throw new Error(
-        'Match the confirmed content-slide and section-break counts before creating the presentation.',
+        `The confirmed counts require ${session.brief.contentSlides + session.brief.sectionBreaks + 2} slides (${session.brief.contentSlides} content, ${session.brief.sectionBreaks} section breaks, opening and close); received ${next.slides.length}. Repair the draft to match the confirmed storyboard. Keep the existing user confirmation; do not ask again.`,
       );
     next.audience = session.brief.audience.slice(0, 200);
     next.purpose = session.brief.purpose.slice(0, 300);

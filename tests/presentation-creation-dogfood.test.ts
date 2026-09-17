@@ -10,6 +10,7 @@ import {
 import { checkDeck } from '../lib/documents/deck-quality';
 import { exportDocument } from '../lib/documents/export';
 import { type AlbatrossDocumentRecord, documentModelText } from '../lib/documents/model';
+import { presentationSessionFromMessages } from '../lib/documents/presentation-choices';
 import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
 import { harborBrief, passingSlideReviews, retroBrief, VALLEY } from './fixtures/presentation-briefs';
@@ -50,6 +51,120 @@ afterEach(() => {
 });
 
 describe('presentation creation dogfood', () => {
+  test('a confirmed nine-slide storyboard creates and reads back despite old counts, omitted breaks and blank item labels', async () => {
+    const kinds = [
+      'cover',
+      'content',
+      'content',
+      'divider',
+      'content',
+      'content',
+      'divider',
+      'content',
+      'close',
+    ];
+    const slides = kinds.map((kind, index) => ({
+      id: `s${index}`,
+      kind,
+      title: `Approved chapter ${index + 1}`,
+      takeaway: 'A carefully sourced historical account.',
+      recommended: kind === 'content' ? 'process' : 'typography',
+      alternatives: [],
+      evidence: ['Supplied archive excerpt'],
+    }));
+    const part = (stage: string, output: object, extra: object = {}) => ({
+      type: 'tool-ask_presentation_choices',
+      toolCallId: stage,
+      state: 'output-available',
+      input: { presentationId: 'history', stage, title: 'History deck', ...extra },
+      output: { presentationId: 'history', stage, decision: 'continue', ...output },
+    });
+    const session = presentationSessionFromMessages([
+      {
+        role: 'assistant',
+        parts: [
+          part('brief', {
+            brief: {
+              audience: 'Students',
+              purpose: 'Understand the history',
+              sources: ['provided'],
+              sourceGuidance: '',
+              contentSlides: 7,
+              sectionBreaks: 2,
+              detail: 'balanced',
+            },
+          }),
+          part('design', { design: { theme: 'rose', fontPair: 'literary', imagery: 'none', guidance: '' } }),
+          part(
+            'storyboard',
+            { visuals: slides.map((slide) => ({ slideId: slide.id, visual: slide.recommended })) },
+            { slides },
+          ),
+        ],
+      },
+    ]);
+    __setDocumentAiDepsForTest({
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
+    let saved: AlbatrossDocumentRecord;
+    const save = mock(async (input: any) => {
+      saved = {
+        ...input,
+        documentId: 'recovered-history',
+        currentRevision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        sourceRefs: input.sourceRefs || [],
+      };
+      return saved;
+    });
+    __setDocumentToolDepsForTest({
+      createDocument: save,
+      getDocument: async () => ({ ...saved, suggestions: [] }),
+      recordOperation: async () => 'operation',
+    });
+    const base = harborBrief();
+    const draft = {
+      ...base,
+      audience: '',
+      slides: slides
+        .filter((slide) => slide.kind === 'content')
+        .map((slide) => ({
+          ...base.slides[0],
+          title: slide.title,
+          role: 'process' as const,
+          body: slide.takeaway,
+          items: [
+            { label: '', detail: 'Read the original archive account.' },
+            { label: 'Context', detail: 'Distinguish evidence from later interpretation.' },
+            { label: '', detail: '' },
+          ],
+          notes: 'Source: supplied archive excerpt.',
+        })),
+    };
+    const created = await runTool(
+      () =>
+        liftToolsForAgent(undefined, 'UTC', session).document_create.execute({
+          kind: 'deck',
+          title: 'History deck',
+          presentation: draft,
+          artwork: 'none',
+        }),
+      {},
+    );
+    expect(created).toMatchObject({ ok: true, documentId: 'recovered-history' });
+    expect(save).toHaveBeenCalledTimes(1);
+    const read = await runTool(documentGet.handler, { documentId: created.documentId });
+    const model = read.document.model;
+    if (model.kind !== 'deck' || model.version !== 2) throw new Error('Expected version 2 deck');
+    expect(model.slides).toHaveLength(9);
+    expect(model.slides.map((slide) => slide.title)).toEqual(slides.map((slide) => slide.title));
+    expect(checkDeck(model).ok).toBe(true);
+    expect(documentModelText(model)).toContain('Read the original archive account.');
+    expect(model.slides[1].notes).toContain('"label":""');
+    expect(model.theme.fonts.display.family).toContain('Instrument');
+  });
   test('a thirteen-slide brief with four-item lists and a chart without callouts saves all slides', async () => {
     __setDocumentAiDepsForTest({
       isDeckV2AuthoringEnabled: () => true,

@@ -260,7 +260,7 @@ type UiStreamWriter = Parameters<Parameters<typeof createUIMessageStream>[0]['ex
  * has one), and the registry re-validates every call with the real zod schema
  * in invokeTool, so the model-facing schema only needs shape and descriptions.
  */
-export function modelInputSchema(input: unknown) {
+export function modelInputSchema(input: unknown, validate = false) {
   const schema = (input as z.ZodTypeAny | undefined) ?? z.object({});
   let json: Record<string, unknown>;
   try {
@@ -268,7 +268,19 @@ export function modelInputSchema(input: unknown) {
   } catch {
     return schema as any;
   }
-  return jsonSchema(stripPatterns(json) as any);
+  return jsonSchema(
+    stripPatterns(json) as any,
+    validate
+      ? {
+          validate: (value) => {
+            const result = schema.safeParse(value);
+            return result.success
+              ? { success: true, value: result.data }
+              : { success: false, error: result.error };
+          },
+        }
+      : undefined,
+  );
 }
 
 export function stripPatterns<T>(value: T): T {
@@ -310,7 +322,7 @@ export function liftToolsForAgent(
             };
           if (
             (presentationSession.brief || presentationSession.design) &&
-            !(args as any)?.presentation?.audience
+            typeof (args as any)?.presentation?.audience !== 'string'
           )
             return {
               ok: false,
@@ -318,8 +330,25 @@ export function liftToolsForAgent(
               message:
                 'Submit a complete version 2 presentation brief using the confirmed choices and researched storyboard.',
             };
-          if ((args as any)?.presentation?.audience && t.input.safeParse(args).success) {
-            const presentation = applyPresentationChoices((args as any).presentation, presentationSession);
+          const checked = t.input.safeParse(args);
+          if (typeof (args as any)?.presentation?.audience === 'string' && checked.success) {
+            let presentation: ReturnType<typeof applyPresentationChoices>;
+            try {
+              presentation = applyPresentationChoices(
+                (checked.data as any).presentation,
+                presentationSession,
+              );
+            } catch (error) {
+              return {
+                ok: false,
+                status: 'presentation_content_needs_repair',
+                message: errorText(error),
+                confirmedStoryboard: presentationSession.storyboard,
+                confirmedVisuals: presentationSession.visuals,
+                nextStep:
+                  'Repair the submitted presentation content to match these already-confirmed slides, then retry document_create in this turn. Preserve evidence in notes. The user confirmation is retained; do not ask for the same storyboard again.',
+              };
+            }
             args = {
               ...(args as object),
               presentation,
@@ -528,7 +557,9 @@ export function liftToolsForAgent(
   lifted[PRESENTATION_CHOICE_TOOL] = aiTool({
     description:
       'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and imagery), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
-    inputSchema: modelInputSchema(presentationChoiceInputSchema),
+    // Client tools have no invokeTool validation. Validate here so SDK tool-error
+    // results reach the model for repair instead of stranding an unusable card.
+    inputSchema: modelInputSchema(presentationChoiceSchemaForSession(presentationSession), true),
     onInputAvailable: ({ input }: { input: any }) => {
       // A new question pauses writes even when an earlier storyboard was confirmed.
       if (presentationSession) {
@@ -1020,5 +1051,5 @@ import {
   nextPresentationCheckpoint,
   PRESENTATION_CHOICE_TOOL,
   type PresentationSession,
-  presentationChoiceInputSchema,
+  presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';

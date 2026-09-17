@@ -30,6 +30,8 @@ const MAX_PART_JSON_BYTES = 4_000;
 // Choice receipts are bounded by their schema and must survive reload, including
 // the complete 30-slide selection and free-form source guidance.
 const MAX_PRESENTATION_CHOICES_BYTES = 32_000;
+// A researched plan/partial recovery must survive the next picker round trip.
+const MAX_PRESENTATION_PLAN_BYTES = 128_000;
 const MAX_SESSIONS_LISTED = 30;
 const MAX_SESSIONS_SCANNED = 1_000;
 
@@ -56,18 +58,37 @@ export function compactMessage(message: any): any {
           const limit =
             toolPartName(part) === 'ask_presentation_choices'
               ? MAX_PRESENTATION_CHOICES_BYTES
-              : MAX_PART_JSON_BYTES;
-          if (part.output !== undefined && JSON.stringify(part.output).length <= limit) {
+              : toolPartName(part) === 'presentation_plan'
+                ? MAX_PRESENTATION_PLAN_BYTES
+                : MAX_PART_JSON_BYTES;
+          const serialized = part.output === undefined ? undefined : JSON.stringify(part.output);
+          // Measure the new plan budget in actual storage bytes. Keep existing
+          // receipt/text limits unchanged so older Unicode answers still restore.
+          if (
+            serialized !== undefined &&
+            (toolPartName(part) === 'presentation_plan'
+              ? new TextEncoder().encode(serialized).length
+              : serialized.length) <= limit
+          ) {
             compact.output = part.output;
           } else if (part.state === 'output-available') {
-            compact.output = {
-              outputOmitted: true,
-              message: ['document_get', 'word_document_get', 'google_document_get'].includes(
-                toolPartName(part),
-              )
-                ? 'Read succeeded. Reread the source for its full contents before editing.'
-                : 'Tool completed successfully. Its full output was omitted from saved history; read the source again if needed.',
-            };
+            compact.output =
+              toolPartName(part) === 'presentation_plan'
+                ? {
+                    ok: false,
+                    readyToBuild: false,
+                    outputOmitted: true,
+                    nextStep:
+                      'The detailed plan exceeded saved-history capacity. Retain the evidence in this tool input and all confirmed presentation choices. Reconstruct the per-slide plan from that evidence before asking for storyboard confirmation; no deck was created by this planning call.',
+                  }
+                : {
+                    outputOmitted: true,
+                    message: ['document_get', 'word_document_get', 'google_document_get'].includes(
+                      toolPartName(part),
+                    )
+                      ? 'Read succeeded. Reread the source for its full contents before editing.'
+                      : 'Tool completed successfully. Its full output was omitted from saved history; read the source again if needed.',
+                  };
           }
         } catch {
           // unserializable output — drop it

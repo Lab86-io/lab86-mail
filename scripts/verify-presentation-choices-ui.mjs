@@ -89,9 +89,36 @@ try {
     assert.equal(answers[1].output.design.theme, 'lagoon');
     assert.equal(answers[1].output.design.fontPair, 'grotesk');
     assert.equal(answers[2].output.visuals.find((entry) => entry.slideId === 'slide-0').visual, 'line');
+    // Reproduce a saved malformed storyboard, then repair without resubmitting
+    // the brief or design. New malformed calls are tested through the real SDK.
+    await page.evaluate(() => {
+      const history = JSON.parse(localStorage.getItem('presentation-preview'));
+      localStorage.setItem('presentation-preview', JSON.stringify(history.slice(0, 2)));
+    });
+    await page.goto(`${process.env.PRESENTATION_PREVIEW_URL || 'http://127.0.0.1:18852'}?recovery=1`);
+    if (dark) await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await page.getByRole('button', { name: 'Repair these choices', exact: true }).waitFor();
+    await page.screenshot({ path: `${output}/${name}-recovery.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Repair these choices', exact: true }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).waitFor();
+    await page.reload();
+    if (dark) await page.evaluate(() => document.documentElement.classList.add('dark'));
+    assert.equal(await page.getByRole('button', { name: 'Repair these choices', exact: true }).count(), 0);
+    const recovered = await page.evaluate(() => JSON.parse(localStorage.getItem('presentation-preview')));
+    assert.equal(recovered.length, 3);
+    assert.equal(recovered[1].output.design.theme, 'lagoon');
+    assert.equal(recovered[1].output.design.fontPair, 'grotesk');
+    assert.equal(recovered[2].output.status, 'invalid_presentation_choices');
+    assert.equal(recovered[2].output.decision, undefined);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: 'Line chart', exact: true }).click();
+    await page.getByText('View chart data (users)', { exact: true }).click();
+    assert.match(await page.locator('.presentation-choice-data').innerText(), /240/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.screenshot({ path: `${output}/${name}-recovered.png`, fullPage: true });
     assert.deepEqual(errors, []);
     console.log(
-      `${name}: pacing, eight themes, six fonts, keyboard selection, real chart values, confirmation and reload passed`,
+      `${name}: choices, confirmation, reload, malformed-preview repair and preserved preferences/data passed`,
     );
     await page.close();
   }

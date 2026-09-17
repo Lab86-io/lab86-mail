@@ -48,6 +48,58 @@ async function choose(label: string) {
   await act(async () => option(label).props.onClick());
 }
 
+test('an already-stranded picker offers one-click repair without approving or resetting choices', async () => {
+  const result = mock((_output: Record<string, unknown>) => {});
+  const part = { toolCallId: 'broken', state: 'input-available', input: { ...base, stage: 'storyboard' } };
+  await act(async () => {
+    view = create(<PresentationChoicesPart part={part} onResult={result} />);
+  });
+  expect(result).not.toHaveBeenCalled();
+  const repair = button('Repair these choices');
+  await act(async () => {
+    repair.props.onClick();
+    repair.props.onClick();
+  });
+  expect(result).toHaveBeenCalledTimes(1);
+  expect(result.mock.calls[0][0]).toMatchObject({ ok: false, status: 'invalid_presentation_choices' });
+  expect(result.mock.calls[0][0]).not.toHaveProperty('decision');
+  expect(text(view.root)).toContain('returned for correction');
+  await act(async () =>
+    view.update(
+      <PresentationChoicesPart
+        part={{ ...part, state: 'output-available', output: result.mock.calls[0][0] }}
+        onResult={result}
+      />,
+    ),
+  );
+  expect(view.root.findAllByType('button')).toHaveLength(0);
+  expect(result).toHaveBeenCalledTimes(1);
+});
+
+test('server-rejected picker reports correction without creating a second client result', async () => {
+  const result = mock(() => {});
+  await act(async () => {
+    view = create(
+      <PresentationChoicesPart
+        part={{ state: 'output-error', rawInput: {}, errorText: 'slides is required' }}
+        onResult={result}
+      />,
+    );
+  });
+  expect(text(view.root)).toContain('returned for correction');
+  expect(view.root.findAllByType('button')).toHaveLength(0);
+  expect(result).not.toHaveBeenCalled();
+  await act(async () => {
+    view.update(
+      <PresentationChoicesPart
+        part={{ input: base, state: 'output-error', errorText: 'Confirmed count mismatch' }}
+        onResult={result}
+      />,
+    );
+  });
+  expect(view.root.findAllByType('button')).toHaveLength(0);
+});
+
 test('brief pauses until audience, scope, pacing and detail are explicitly submitted', async () => {
   const result = await mount();
   await click('Next');

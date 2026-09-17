@@ -3,8 +3,11 @@ import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV3 } from 'ai/test';
 import * as gateway from '../lib/ai/gateway';
 import { runAgent } from '../lib/ai/loop';
+import { type PresentationSession } from '../lib/documents/presentation-choices';
+import { planPresentation } from '../lib/documents/presentation-plan';
 import * as narrative from '../lib/narrative/service';
 import * as memories from '../lib/store/memories';
+import { presentationPlan } from '../lib/tools/presentations';
 
 const restores: Array<() => void> = [];
 afterEach(() => {
@@ -44,7 +47,11 @@ function finish(reason: 'stop' | 'tool-calls' = 'stop'): LanguageModelV3StreamPa
   };
 }
 
-async function run(models: MockLanguageModelV3[], signal?: AbortSignal) {
+async function run(
+  models: MockLanguageModelV3[],
+  signal?: AbortSignal,
+  presentationSession?: PresentationSession,
+) {
   const runtimeSpy = spyOn(gateway, 'resolveAgentRuntimes').mockResolvedValue(
     models.map((model, index) => ({
       userId: 'owner',
@@ -64,6 +71,7 @@ async function run(models: MockLanguageModelV3[], signal?: AbortSignal) {
     toolGroups: ['documents'],
     messages: [{ role: 'user', content: 'Restyle the deck' }],
     signal,
+    presentationSession,
   });
   const response = agent.toUIMessageStreamResponse();
   expect(response.headers.get('x-agent-run-id')).toBe('deck-run');
@@ -74,6 +82,114 @@ async function run(models: MockLanguageModelV3[], signal?: AbortSignal) {
     .map((line) => JSON.parse(line.slice(6)));
   return { events, steps: await agent.steps, usage, runtimeSpy };
 }
+
+test('a planner timeout and malformed storyboard recover in the same stream, then pause for actual user choices', async () => {
+  const evidence = [
+    { id: 'source', source: 'Supplied historical source', content: 'Source content remains in context.' },
+  ];
+  const failed = await planPresentation(
+    { userId: 'owner', instruction: 'Plan the history deck', audience: 'Students', evidence, slideCount: 3 },
+    async () => {
+      throw new Error('Planning timed out');
+    },
+  );
+  const planner = spyOn(presentationPlan, 'handler').mockResolvedValue(failed);
+  restores.push(() => planner.mockRestore());
+  const session: PresentationSession = {
+    presentationId: 'history',
+    brief: {
+      audience: 'Students',
+      purpose: 'Understand the history',
+      sources: ['provided'],
+      sourceGuidance: '',
+      contentSlides: 1,
+      sectionBreaks: 0,
+      detail: 'balanced',
+    },
+    design: { theme: 'rose', fontPair: 'literary', imagery: 'none', guidance: '' },
+  };
+  const valid = {
+    presentationId: 'history',
+    stage: 'storyboard',
+    title: 'The Zong and its legacy',
+    theme: 'rose',
+    fontPair: 'literary',
+    audience: null,
+    slides: ['cover', 'content', 'close'].map((kind, index) => ({
+      id: `slide-${index}`,
+      kind,
+      title: `Chapter ${index + 1}`,
+      takeaway: 'A grounded historical account',
+      recommended: 'typography',
+      chart: null,
+      table: null,
+    })),
+  };
+  const primary = model(
+    [
+      {
+        type: 'tool-call',
+        toolCallId: 'plan',
+        toolName: 'presentation_plan',
+        input: JSON.stringify({
+          instruction: 'Plan the history deck',
+          audience: 'Students',
+          evidence,
+          slideCount: 3,
+        }),
+      },
+      finish('tool-calls'),
+    ],
+    [
+      {
+        type: 'tool-call',
+        toolCallId: 'bad-picker',
+        toolName: 'ask_presentation_choices',
+        input: JSON.stringify({
+          ...valid,
+          slides: valid.slides.map((slide) => ({ ...slide, takeaway: 'x'.repeat(401) })),
+        }),
+      },
+      finish('tool-calls'),
+    ],
+    [
+      {
+        type: 'tool-call',
+        toolCallId: 'fixed-picker',
+        toolName: 'ask_presentation_choices',
+        input: JSON.stringify(valid),
+      },
+      finish('tool-calls'),
+    ],
+  );
+  const { events, steps } = await run([primary], undefined, session);
+  expect(steps).toHaveLength(3);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'tool-output-error',
+      toolCallId: 'bad-picker',
+      errorText: expect.stringContaining('takeaway'),
+    }),
+  );
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'tool-input-available',
+      toolCallId: 'fixed-picker',
+      input: expect.objectContaining({ theme: 'rose', fontPair: 'literary' }),
+    }),
+  );
+  expect(events.some((event) => event.type === 'error')).toBe(false);
+  expect(
+    events.some((event) => event.type === 'tool-output-available' && event.toolCallId === 'fixed-picker'),
+  ).toBe(false);
+  expect(session.brief?.contentSlides).toBe(1);
+  expect(session.design?.theme).toBe('rose');
+  expect(session.design?.fontPair).toBe('literary');
+  const thirdRequest = JSON.stringify(primary.doStreamCalls[2].prompt);
+  expect(thirdRequest).toContain('Source content remains in context');
+  expect(thirdRequest).toContain('takeaway');
+  expect(thirdRequest).toContain('Continue NOW');
+});
 
 test('a rejected deck edit is a recoverable tool result, not a failed provider stream', async () => {
   const primary = model(

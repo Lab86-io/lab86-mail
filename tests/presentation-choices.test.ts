@@ -8,7 +8,9 @@ import {
   nextPresentationCheckpoint,
   type PresentationSession,
   presentationChoiceInputSchema,
+  presentationChoiceRepair,
   presentationChoiceResultSchema,
+  presentationChoiceSchemaForSession,
   presentationSessionFromMessages,
   type StoryboardSlide,
   tableForStoryboard,
@@ -114,6 +116,93 @@ function ready(): PresentationSession {
 afterEach(() => __setDocumentToolDepsForTest());
 
 describe('guided presentation preferences', () => {
+  test('planning recovery survives saved history and oversized plans are never labeled successful', () => {
+    const output = {
+      ok: false,
+      readyToBuild: false,
+      recovery: {
+        completedSlides: Array.from({ length: 15 }, (_, index) => ({
+          slideNumber: index + 1,
+          slide: { title: `Slide ${index}`, purpose: 'Research notes '.repeat(80) },
+        })),
+        pendingSlideNumbers: [16, 17],
+      },
+      nextStep: 'Continue from retained evidence.',
+    };
+    const save = (output: unknown) =>
+      compactMessage({
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-presentation_plan',
+            toolCallId: 'plan',
+            state: 'output-available',
+            input: { evidence: ['Retained source'] },
+            output,
+          },
+        ],
+      }).parts[0];
+    expect(JSON.stringify(output).length).toBeGreaterThan(4000);
+    expect(save(output).output).toEqual(output);
+    const large = save({ ok: true, plan: 'x'.repeat(128001) });
+    expect(large.output).toMatchObject({ ok: false, readyToBuild: false, outputOmitted: true });
+    expect(large.input.evidence).toEqual(['Retained source']);
+    const unicode = { ok: true, plan: '界'.repeat(50000) };
+    expect(JSON.stringify(unicode).length).toBeLessThan(128000);
+    expect(save(unicode).output).toMatchObject({ ok: false, readyToBuild: false, outputOmitted: true });
+  });
+  test('optional provider nulls preserve data and restore confirmed storyboard choices', () => {
+    const input = {
+      ...part('storyboard').input,
+      theme: null,
+      fontPair: null,
+      audience: null,
+      purpose: null,
+      sources: null,
+      contentSlides: null,
+      sectionBreaks: null,
+      imagery: null,
+      slides: slides.map((slide) => ({ ...slide, chart: slide.chart ?? null, table: null })),
+    };
+    expect(presentationChoiceSchemaForSession(ready()).safeParse(input).success).toBe(true);
+    const restored = presentationSessionFromMessages(
+      messages([part('brief'), part('design'), part('storyboard', {}, input)]),
+    );
+    expect(restored.storyboard?.[1].chart?.series[0].values).toEqual([4, 8]);
+    expect(nextPresentationCheckpoint(restored)).toBeNull();
+    expect(
+      presentationChoiceInputSchema.safeParse({
+        ...input,
+        slides: input.slides.map((slide: any) =>
+          slide.chart
+            ? { ...slide, chart: { ...slide.chart, series: [{ name: 'Count', values: [null, 8] }] } }
+            : slide,
+        ),
+      }).success,
+    ).toBe(false);
+  });
+  test('server validation catches unreviewable sequences, unsupported visuals and mismatched confirmed counts', () => {
+    const schema = presentationChoiceSchemaForSession(ready());
+    for (const input of [
+      { ...part('storyboard').input, presentationId: 'wrong' },
+      { ...part('storyboard').input, slides: [...slides].reverse() },
+      { ...part('storyboard').input, slides: [slides[0], slides[0], slides[2]] },
+      {
+        ...part('storyboard').input,
+        slides: [slides[0], slides[1], { ...slides[1], id: 'extra' }, slides[2]],
+      },
+      { ...part('storyboard').input, slides: slides.map((slide) => ({ ...slide, chart: null })) },
+    ])
+      expect(schema.safeParse(input).success).toBe(false);
+    const feedback = presentationChoiceRepair({
+      ...part('storyboard').input,
+      slides: [{ ...slides[0], takeaway: 'x'.repeat(401) }, ...slides.slice(1)],
+    });
+    expect(feedback.issues.join(' ')).toContain('slides.0.takeaway');
+    expect(feedback.nextStep).toContain('not user approval');
+    expect(feedback).not.toHaveProperty('decision');
+    expect(presentationChoiceRepair(part('brief').input).issues).toEqual([]);
+  });
   test('monospace display titles are measured at their actual width and retain the display font slot', () => {
     const model = composePresentationV2({ ...retroBrief(), fontPair: 'mono' });
     const title = model.slides[4].elements.find(
@@ -234,6 +323,74 @@ describe('guided presentation preferences', () => {
           presentationSessionFromMessages(messages([part('brief'), part('design'), bad])),
         ),
       ).toBe('storyboard');
+  });
+  test('a complete older storyboard confirmation is authoritative over an earlier slide count', () => {
+    const state = presentationSessionFromMessages(
+      messages([
+        part('brief', { brief: { ...brief, contentSlides: 5, sectionBreaks: 2 } }),
+        part('design'),
+        part('storyboard'),
+      ]),
+    );
+    expect(state.brief).toMatchObject({
+      contentSlides: 1,
+      sectionBreaks: 0,
+      audience: brief.audience,
+      sources: brief.sources,
+    });
+    expect(state.storyboard).toEqual(slides);
+    expect(state.visuals).toEqual(visuals);
+    expect(nextPresentationCheckpoint(state)).toBeNull();
+    // A pending/revised outline never overrides the brief or gains approval.
+    for (const pending of [
+      { ...part('storyboard'), state: 'input-available', output: undefined },
+      part('storyboard', { decision: 'revise' }),
+    ]) {
+      const state = presentationSessionFromMessages(
+        messages([
+          part('brief', { brief: { ...brief, contentSlides: 5, sectionBreaks: 2 } }),
+          part('design'),
+          pending,
+        ]),
+      );
+      expect(state.brief?.contentSlides).toBe(5);
+      expect(nextPresentationCheckpoint(state)).toBe('storyboard');
+    }
+  });
+  test('missing structural slides use approved copy, while missing researched content gets targeted repair', async () => {
+    const state = ready();
+    const draft = harborBrief();
+    draft.slides = [
+      {
+        ...draft.slides[0],
+        title: slides[1].title,
+        role: 'chart',
+        chart,
+        notes: 'Original research',
+        items: [],
+      },
+    ];
+    const aligned = applyPresentationChoices(draft, state);
+    expect(aligned.slides.map((slide) => slide.title)).toEqual(slides.map((slide) => slide.title));
+    expect(aligned.slides[0].body).toBe(slides[0].takeaway);
+    expect(aligned.slides[1].notes).toContain('Original research');
+    expect(aligned.slides[1].chart).toEqual(chart);
+    expect(aligned.slides[2].body).toBe(slides[2].takeaway);
+    const tools = liftToolsForAgent(undefined, 'UTC', state);
+    const result = await tools.document_create.execute({
+      kind: 'deck',
+      title: 'Research',
+      presentation: { ...draft, slides: [{ ...draft.slides[0], title: 'Missing content' }] },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      status: 'presentation_content_needs_repair',
+      confirmedStoryboard: slides,
+      confirmedVisuals: visuals,
+    });
+    expect(result.message).toContain('received 1');
+    expect(result.nextStep).toContain('do not ask');
+    expect(nextPresentationCheckpoint(state)).toBeNull();
   });
   test('preserves long confirmed answers across persistence and continuation', () => {
     const long = {

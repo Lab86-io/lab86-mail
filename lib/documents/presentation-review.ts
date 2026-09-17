@@ -51,6 +51,20 @@ function groupSlideItems(slide: Slide) {
   });
   return true;
 }
+
+/** Empty generated placeholders are repairable draft copy, not a failed deck. */
+function repairEmptyItemLabels(slide: Slide) {
+  if (!slide.items.some((item) => !item.label.trim())) return;
+  preserveOriginal(slide, 'items', JSON.stringify(slide.items));
+  slide.items = slide.items.flatMap((item) => {
+    if (item.label.trim()) return [item];
+    const source =
+      item.detail.trim() || ('meta' in item && typeof item.meta === 'string' ? item.meta.trim() : '');
+    // Retain all real source content and use it to label the item. A completely
+    // empty placeholder has no audience-facing content to preserve on the slide.
+    return source ? [{ ...item, label: excerpt(source, 'role' in slide ? 60 : 50) }] : [];
+  });
+}
 export const slideReviewSchema = z.object({
   reviews: z
     .array(
@@ -142,6 +156,7 @@ export async function reviewPresentation<T extends Brief>(
   const brief = structuredClone(initial);
   if (brief.slides.some((slide) => !fitsPresentationPreservationBudget(slide)))
     throw new Error(PRESENTATION_PRESERVATION_BUDGET_MESSAGE);
+  for (const slide of brief.slides) repairEmptyItemLabels(slide);
   const grouped = brief.slides.filter(groupSlideItems).length;
   const remaining = new Set(brief.slides.map((_, index) => `slide-${index + 1}`));
   // Analyze all pages even when the first draft already fits. Retry only missing

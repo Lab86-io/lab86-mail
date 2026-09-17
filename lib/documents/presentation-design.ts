@@ -294,7 +294,7 @@ export const presentationAuthoringSchema = presentationBriefSchema.extend({
         .extend({
           ...authoringCopy,
           items: z
-            .array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) }))
+            .array(z.object({ label: z.string().max(1000), detail: z.string().max(4000) }))
             .max(12)
             .describe('Aim for at most 3 concise items. Excess draft items are grouped during slide review.'),
         })
@@ -313,7 +313,9 @@ export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
           items: z
             .array(
               briefItemSchema.extend({
-                label: z.string().min(1).max(1000),
+                // Empty draft labels are repaired from their own supporting copy
+                // during review; compact/final labels still require content.
+                label: z.string().max(1000),
                 detail: z.string().max(4000),
                 meta: z.string().max(1000).nullish(),
               }),
