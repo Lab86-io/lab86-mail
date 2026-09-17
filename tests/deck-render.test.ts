@@ -64,6 +64,45 @@ describe('deck render page', () => {
         .every((text) => !text.getAttribute('transform')),
     ).toBe(true);
   });
+  test('long negative value labels leave a positive plot width and retain complete text', async () => {
+    const model = referenceDeck('editorial');
+    const negative = -0.0000010000000000000002;
+    const unit = ' dollars per person';
+    model.slides = [
+      {
+        id: 'long-label',
+        title: 'Long labels',
+        elements: [
+          {
+            id: 'chart',
+            type: 'chart',
+            chart: 'bar',
+            x: 10,
+            y: 10,
+            width: 80,
+            height: 70,
+            categories: ['Long negative-value category', 'Long positive-value category'],
+            series: [{ name: 'Net', values: [negative, 0.000001] }],
+            values: true,
+            unit,
+          },
+        ],
+      },
+    ];
+    const { JSDOM } = await import('jsdom');
+    const document = new JSDOM(await renderDeckHtml(model)).window.document;
+    const [loss, gain] = [...document.querySelectorAll('[data-chart-mark="bar"]')];
+    expect(Number(loss.getAttribute('width'))).toBeGreaterThan(0);
+    expect(Number(gain.getAttribute('width'))).toBeGreaterThan(0);
+    expect(Number(loss.getAttribute('x'))).toBeLessThan(Number(gain.getAttribute('x')));
+    const label = [...document.querySelectorAll('text')].find(
+      (node) => node.textContent === `${negative}${unit}` && node.getAttribute('text-anchor') === 'end',
+    )!;
+    expect(label).toBeDefined();
+    expect(Number(label.getAttribute('textLength'))).toBeGreaterThan(0);
+    expect(Number(label.getAttribute('textLength'))).toBeLessThan(140);
+    expect(Number(loss.getAttribute('data-value'))).toBe(negative);
+  });
   test('inlines the packaged fonts and one frame per slide with absolute asset paths', async () => {
     const html = await renderDeckHtml(referenceDeck('editorial'), {
       assetOrigin: 'https://mail-staging.lab86.io',

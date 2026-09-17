@@ -32,7 +32,7 @@ Final feature checks: 4,093 tests passed, one optional test skipped, no failures
 
 ## Follow-up review
 
-The automated review identified an actual collision between category labels and negative bar-value labels. The renderer now reserves separate space for negative values, including their unit suffix. Added a direct OpenAI-key regression with both hosted defaults set to GLM.
+The automated review identified an actual collision between category labels and negative bar-value labels. The renderer now reserves separate, bounded space for negative values, including their unit suffix. Exceptionally long labels fit into that space without truncating their text or reducing the plot width below zero. Chromium checks cover simple numbers, currency suffixes, and a long decimal plus unit. Added a direct OpenAI-key regression with both hosted defaults set to GLM.
 
 The 120-second image-review budget remains intentional: creation also needs composition, editorial review, and persistence within its 280-second tool limit. Raising image review to 200 seconds could consume the remaining save window. Slow or large decks stay resumable drafts.
 

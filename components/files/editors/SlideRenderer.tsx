@@ -243,15 +243,14 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
   const min = Math.min(0, ...allValues);
   const max = Math.max(0, ...allValues);
   const span = max - min || 1;
+  const valueLabelWidth = (value: number) => `${value}${unit}`.length * labelSize * 0.65;
   // Negative value labels sit left of their bars; keep them clear of the
   // category labels, including a longer unit suffix.
   const negativeValuePad =
     horizontal && element.values && min < 0
-      ? Math.max(
-          34,
-          ...allValues
-            .filter((value) => value < 0)
-            .map((value) => `${value}${unit}`.length * labelSize * 0.65 + 8),
+      ? Math.min(
+          140,
+          Math.max(34, ...allValues.filter((value) => value < 0).map((value) => valueLabelWidth(value) + 8)),
         )
       : 0;
   const padLeft = horizontal
@@ -349,6 +348,12 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
             y={horizontal ? across + thickness / 2 + 3 : position + (value < 0 ? 11 : -4)}
             fontSize={labelSize}
             textAnchor={horizontal ? (value < 0 ? 'end' : 'start') : 'middle'}
+            textLength={
+              horizontal && value < 0 && valueLabelWidth(value) > negativeValuePad - 8
+                ? negativeValuePad - 8
+                : undefined
+            }
+            lengthAdjust="spacingAndGlyphs"
             fill="var(--deck-ink)"
             fontFamily="var(--deck-body)"
           >
