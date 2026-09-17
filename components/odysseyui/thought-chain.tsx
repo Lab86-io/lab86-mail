@@ -2,9 +2,10 @@
 
 // Adapted from Odyssey UI; see README.md for upstream source and local changes.
 
+import { useControllableState } from '@radix-ui/react-use-controllable-state';
 import { Check, ChevronDown, Circle, CircleAlert, Loader2 } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -87,6 +88,8 @@ export function ThoughtChainStep({
   children,
   status = 'pending',
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
   _isLast = false,
   className,
   ...props
@@ -96,7 +99,11 @@ export function ThoughtChainStep({
   defaultOpen?: boolean;
   _isLast?: boolean;
 } & React.ComponentProps<typeof Collapsible>) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useControllableState({
+    prop: controlledOpen,
+    defaultProp: defaultOpen,
+    onChange: onOpenChange,
+  });
   const styles = statusStyles[status];
 
   return (

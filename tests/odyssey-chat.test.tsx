@@ -63,6 +63,32 @@ describe('Odyssey chat integration', () => {
     await act(async () => tree.unmount());
   });
 
+  test('controlled disclosure keeps the trigger and content synchronized', async () => {
+    const onOpenChange = mock(() => {});
+    const content = (open: boolean) => (
+      <ThoughtChain>
+        <ThoughtChainStep status="done" open={open} onOpenChange={onOpenChange}>
+          <ThoughtChainTrigger>Read file</ThoughtChainTrigger>
+          <ThoughtChainContent>
+            <Counter />
+          </ThoughtChainContent>
+        </ThoughtChainStep>
+      </ThoughtChain>
+    );
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(content(false));
+    });
+    await act(async () => tree.root.findAllByType('button')[0].props.onClick({ ...click }));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(false);
+    expect(tree.root.findAllByType('div').filter((node) => node.props.inert === true)).toHaveLength(1);
+    await act(async () => tree.update(content(true)));
+    expect(tree.root.findAllByType('button')[0].props['aria-expanded']).toBe(true);
+    expect(tree.root.findAllByType('div').filter((node) => node.props.inert === true)).toHaveLength(0);
+    await act(async () => tree.unmount());
+  });
+
   test('Enter submits once; Shift+Enter, IME and handled Ask/Hold keys do not submit again', async () => {
     const submit = mock(() => {});
     const handled = mock((event: any) => {
