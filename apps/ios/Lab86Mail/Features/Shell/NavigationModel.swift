@@ -159,6 +159,7 @@ enum SheetDestination: Identifiable, Sendable {
     case activity
     case compose
     case settings
+    case workspace(NativeWorkspaceDestination)
 
     var id: String {
         switch self {
@@ -166,6 +167,7 @@ enum SheetDestination: Identifiable, Sendable {
         case .activity: "activity"
         case .compose: "compose"
         case .settings: "settings"
+        case .workspace(let destination): "workspace:\(destination.id)"
         }
     }
 }

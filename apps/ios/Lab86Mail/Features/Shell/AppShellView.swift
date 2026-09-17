@@ -72,6 +72,8 @@ struct AppShellView: View {
                 ComposeView()
             case .settings:
                 SettingsView()
+            case .workspace(let destination):
+                NativeWorkspaceView(destination: destination)
             }
         }
         .alert(
