@@ -349,8 +349,8 @@ function ChartArt({ element }: { element: Extract<DeckElementV2, { type: 'chart'
             fontSize={labelSize}
             textAnchor={horizontal ? (value < 0 ? 'end' : 'start') : 'middle'}
             textLength={
-              horizontal && value < 0 && valueLabelWidth(value) > negativeValuePad - 8
-                ? negativeValuePad - 8
+              horizontal && value < 0
+                ? Math.min(valueLabelWidth(value), negativeValuePad - 8)
                 : undefined
             }
             lengthAdjust="spacingAndGlyphs"
