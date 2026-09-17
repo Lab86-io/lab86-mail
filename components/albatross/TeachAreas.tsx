@@ -32,17 +32,13 @@ import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-pro
 import { HitlPart } from '@/components/ai-elements/hitl-parts';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
+import { ChatContainer, ChatContainerContent } from '@/components/odysseyui/chat-container';
+import { MessageBubble, MessageBubbleContent } from '@/components/odysseyui/message-bubble';
+import { PromptInput, PromptInputActions } from '@/components/odysseyui/prompt-input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ChatContainerContent, ChatContainerRoot } from '@/components/ui/chat-container';
 import { Loader } from '@/components/ui/loader';
 import { Markdown } from '@/components/ui/markdown';
-import {
-  PromptInput,
-  PromptInputAction,
-  PromptInputActions,
-  PromptInputTextarea,
-} from '@/components/ui/prompt-input';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { areaCanArchive } from '@/lib/albatross/area-home';
@@ -270,7 +266,7 @@ function TeachChat() {
         ) : null}
       </div>
 
-      <ChatContainerRoot className="h-[420px] bg-[var(--color-bg)]/25">
+      <ChatContainer className="h-[420px] bg-[var(--color-bg)]/25">
         <ChatContainerContent className="gap-3.5 px-3.5 py-4">
           {messages.length === 0 ? <AssistantBubble>{TEACH_OPENER}</AssistantBubble> : null}
           {messages.map((message: any) =>
@@ -309,34 +305,28 @@ function TeachChat() {
             </div>
           ) : null}
         </ChatContainerContent>
-      </ChatContainerRoot>
+      </ChatContainer>
 
       <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]/45 p-2.5">
         <PromptInput
           value={input}
           onValueChange={setInput}
-          isLoading={streaming}
+          placeholder={messages.length ? 'Reply…' : 'Name a part of your life…'}
           onSubmit={submit}
           maxHeight={140}
           className="border-[var(--color-control-border)] bg-[var(--color-control)] shadow-[var(--shadow-control)]"
         >
-          <PromptInputTextarea
-            placeholder={messages.length ? 'Reply…' : 'Name a part of your life…'}
-            className="text-[13px] leading-relaxed text-[var(--color-text)]"
-          />
           <PromptInputActions className="justify-end pt-1">
-            <PromptInputAction tooltip={streaming ? 'Stop' : 'Send'}>
-              <Button
-                type="button"
-                size="icon-sm"
-                onClick={submit}
-                disabled={!streaming && !input.trim()}
-                className="rounded-ui"
-                aria-label={streaming ? 'Stop' : 'Send'}
-              >
-                {streaming ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
-              </Button>
-            </PromptInputAction>
+            <Button
+              type="button"
+              size="icon-sm"
+              onClick={submit}
+              disabled={!streaming && !input.trim()}
+              className="rounded-ui"
+              aria-label={streaming ? 'Stop' : 'Send'}
+            >
+              {streaming ? <Square className="size-3.5 fill-current" /> : <ArrowUp className="size-4" />}
+            </Button>
           </PromptInputActions>
         </PromptInput>
       </div>
@@ -359,7 +349,11 @@ function hasRenderableContent(message: any): boolean {
 }
 
 function AssistantBubble({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-[92%] text-[13px] leading-relaxed text-[var(--color-text)]">{children}</div>;
+  return (
+    <MessageBubble from="assistant">
+      <MessageBubbleContent className="max-w-full bg-transparent px-0 py-0">{children}</MessageBubbleContent>
+    </MessageBubble>
+  );
 }
 
 function UserBubble({ message }: { message: any }) {
@@ -371,11 +365,9 @@ function UserBubble({ message }: { message: any }) {
           .map((p) => p.text || '')
           .join('');
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl bg-[var(--color-bg-muted)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--color-text)]">
-        {text || '(empty)'}
-      </div>
-    </div>
+    <MessageBubble from="user">
+      <MessageBubbleContent className="whitespace-pre-wrap">{text || '(empty)'}</MessageBubbleContent>
+    </MessageBubble>
   );
 }
 
