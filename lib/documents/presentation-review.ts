@@ -1,10 +1,26 @@
 import { z } from 'zod';
 import type { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
-import type { PresentationBrief, PresentationBriefV2 } from './presentation-design';
+import {
+  fitsPresentationPreservationBudget,
+  PRESENTATION_PRESERVATION_BUDGET_MESSAGE,
+  type PresentationBrief,
+  type PresentationBriefV2,
+} from './presentation-design';
 
 type Brief = PresentationBrief | PresentationBriefV2;
 type Slide = Brief['slides'][number];
+
+// Track our own preservation, never infer it from user-authored note markers.
+// Only the source version belongs in notes, not every intermediate repair.
+const preservedFields = new WeakMap<Slide, Set<string>>();
+function preserveOriginal(slide: Slide, field: string, text: string) {
+  const fields = preservedFields.get(slide) ?? new Set<string>();
+  if (fields.has(field) || (field.startsWith('items.') && fields.has('items'))) return;
+  slide.notes = [slide.notes, `Original ${field}:\n${text}`].filter(Boolean).join('\n\n');
+  fields.add(field);
+  preservedFields.set(slide, fields);
+}
 
 /** Match the visible slots; no input item may disappear through composer slicing. */
 export function slideItemCapacity(slide: Slide) {
@@ -19,7 +35,7 @@ function groupSlideItems(slide: Slide) {
   const capacity = slideItemCapacity(slide);
   if (slide.items.length <= capacity) return false;
   const original = slide.items;
-  slide.notes = [slide.notes, `Original items:\n${JSON.stringify(original)}`].filter(Boolean).join('\n\n');
+  preserveOriginal(slide, 'items', JSON.stringify(original));
   slide.items = Array.from({ length: capacity }, (_, index) => {
     const group = original.slice(
       Math.floor((index * original.length) / capacity),
@@ -79,8 +95,7 @@ export function replaceSlideCopy(slide: Slide, field: string, text: string) {
   const descriptor = copyFields(slide, 'role' in slide).find((candidate) => candidate.field === field);
   if (!descriptor || descriptor.text === text) return;
   if ((field === 'title' || field.endsWith('.label')) && !text.trim()) return;
-  const original = `Original ${field}:\n${descriptor.text}`;
-  if (!slide.notes.includes(original)) slide.notes = [slide.notes, original].filter(Boolean).join('\n\n');
+  preserveOriginal(slide, field, descriptor.text);
   if (field === 'title' || field === 'body' || field === 'kicker') slide[field] = text;
   else if ('role' in slide && (field === 'chart.source' || field === 'table.source')) {
     const source = field === 'chart.source' ? slide.chart! : slide.table!;
@@ -125,6 +140,8 @@ export async function reviewPresentation<T extends Brief>(
   generate: typeof generateObjectForCurrentUser,
 ): Promise<{ brief: T; summary: string }> {
   const brief = structuredClone(initial);
+  if (brief.slides.some((slide) => !fitsPresentationPreservationBudget(slide)))
+    throw new Error(PRESENTATION_PRESERVATION_BUDGET_MESSAGE);
   const grouped = brief.slides.filter(groupSlideItems).length;
   const remaining = new Set(brief.slides.map((_, index) => `slide-${index + 1}`));
   // Analyze all pages even when the first draft already fits. Retry only missing

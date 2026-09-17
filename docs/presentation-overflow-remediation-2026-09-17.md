@@ -25,3 +25,11 @@ The authoring schema relaxed string limits but retained the compact item-array l
 ## Limits
 
 Layout checks remain mandatory. Invalid chart/table data or content that cannot be repaired safely must still return an error before saving. These regressions cover the reported failures; they do not guarantee uninterrupted network connections or model availability. Existing recovery requires reading saved results before another write.
+
+## Preservation budget follow-up
+
+Review of #259 found that twelve individually valid, maximum-length items could exceed the persisted 50,000-character notes limit when archived. Authoring now enforces a combined 40,000-character serialized source budget per slide, including JSON escaping, before any editorial call. The same guard protects direct review callers. This is a storage-size constraint, separate from the compact visible-copy budgets.
+
+Preservation tracks the source version of each field internally and stores it once. Grouped items already have their exact original array archived, so shortened group labels/details do not duplicate the same evidence in notes. User-authored note markers cannot suppress preservation. The compact brief's original 4,000-character note budget is not reapplied to enriched review output: that output intentionally includes recovered source detail and must satisfy the persisted document's 50,000-character limit.
+
+Regression tests cover maximum-length arrays, control-character JSON expansion, a large accepted draft through `parseDocumentModel`, repeated repairs, and note-marker collisions.
