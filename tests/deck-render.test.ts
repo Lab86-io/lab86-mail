@@ -7,6 +7,7 @@ describe('deck render page', () => {
   test.each([
     '',
     ' USD',
+    ' WWWWWWWWWW',
   ])('horizontal bars keep upright, separated labels and signed data (unit: %s)', async (unit) => {
     const model = referenceDeck('editorial');
     model.slides = [
@@ -51,11 +52,10 @@ describe('deck render page', () => {
       (label) => label.textContent === `-50${unit}` && label.getAttribute('text-anchor') === 'end',
     )!;
     const categoryRight = Number(category.getAttribute('x'));
+    expect(valueLabel.hasAttribute('textLength')).toBe(true);
     // Numeric values and their unit suffix must have a clear gap from the
     // category to their left.
-    const valueLeft =
-      Number(valueLabel.getAttribute('x')) -
-      `-50${unit}`.length * Number(valueLabel.getAttribute('font-size')) * 0.65;
+    const valueLeft = Number(valueLabel.getAttribute('x')) - Number(valueLabel.getAttribute('textLength'));
     expect(valueLeft - categoryRight).toBeGreaterThan(6);
     expect(bars.every((bar) => Number(bar.getAttribute('height')) > 0)).toBe(true);
     expect(
