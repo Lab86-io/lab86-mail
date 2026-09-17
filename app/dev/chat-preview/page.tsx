@@ -1,7 +1,7 @@
 'use client';
 
 import { notFound } from 'next/navigation';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AssistantChat } from '@/components/shell/AIBar';
 import { QueryProvider } from '@/components/shell/QueryProvider';
 import { useApplyThemeExtras } from '@/components/shell/ThemePanel';
@@ -14,10 +14,15 @@ export default function ChatPreviewPage() {
 
 function ChatPreview() {
   useApplyThemeExtras();
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
   const transport = useMemo(() => createFixtureTransport(), []);
   return (
     <QueryProvider clerkEnabled={false}>
-      <main className="mx-auto h-dvh max-w-3xl border-x border-[var(--color-border)] bg-[var(--color-bg)]">
+      <main
+        data-preview-state={ready ? 'ready' : 'loading'}
+        className="mx-auto h-dvh max-w-3xl border-x border-[var(--color-border)] bg-[var(--color-bg)]"
+      >
         <AssistantChat transport={transport} preview />
       </main>
     </QueryProvider>

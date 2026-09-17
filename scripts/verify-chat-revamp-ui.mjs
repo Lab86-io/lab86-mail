@@ -25,6 +25,7 @@ try {
       waitUntil: 'networkidle',
       timeout: 60000,
     });
+    await page.locator('[data-preview-state="ready"]').waitFor({ timeout: 60000 });
     await page
       .getByRole('button', { name: 'What needs my reply today? Open the most urgent one.', exact: true })
       .click({ timeout: 60000 });
@@ -52,6 +53,7 @@ try {
       spacer.style.height = '800px';
       log.append(spacer);
       log.parentElement.scrollTop = log.parentElement.scrollHeight;
+      log.parentElement.dispatchEvent(new Event('scroll')); // Deliver the scroll before simulating another stream chunk.
     });
     await page.waitForFunction(() => {
       const viewport = document.querySelector('[role="log"]').parentElement;
@@ -85,10 +87,18 @@ try {
     await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
     await page.evaluate(() => document.documentElement.classList.add('dark'));
     await page.locator('[data-slot="work-log"]').first().scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: `/tmp/chat-preview/${name}-dark-reduced-motion.png`,
-      animations: 'disabled',
-    });
+    const transitions = await page.locator('[data-slot="work-log"] > button svg').evaluateAll((icons) =>
+      icons.map((icon) => {
+        const style = getComputedStyle(icon);
+        return { property: style.transitionProperty, duration: style.transitionDuration };
+      }),
+    );
+    if (
+      !transitions.length ||
+      transitions.some(({ property, duration }) => property !== 'none' && duration !== '0s')
+    )
+      throw Error('Steps icons animate despite reduced motion');
+    await page.screenshot({ path: `/tmp/chat-preview/${name}-dark-reduced-motion.png` });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
     if (overflow) throw Error(`${name} chat overflows`);
     console.log(name, JSON.stringify({ logCount, failures, errors }));

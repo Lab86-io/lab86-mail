@@ -12,7 +12,7 @@ export type StepsItemProps = React.ComponentProps<'div'>;
 export const StepsItem = ({ children, className, ...props }: StepsItemProps) => (
   <div
     className={cn(
-      'text-muted-foreground hover:text-foreground text-[12px] transition-colors duration-200 [&_strong]:text-[var(--color-accent)]',
+      'text-muted-foreground hover:text-foreground text-[12px] transition-colors duration-200 motion-reduce:transition-none [&_strong]:text-[var(--color-accent)]',
       className,
     )}
     {...props}
@@ -37,7 +37,7 @@ export const StepsTrigger = ({
 }: StepsTriggerProps) => (
   <CollapsibleTrigger
     className={cn(
-      'group text-muted-foreground hover:text-[var(--color-accent)] flex w-full cursor-pointer items-center justify-start gap-1 text-[12px] transition-colors duration-200',
+      'group text-muted-foreground hover:text-[var(--color-accent)] flex w-full cursor-pointer items-center justify-start gap-1 text-[12px] transition-colors duration-200 motion-reduce:transition-none',
       className,
     )}
     {...props}
@@ -45,18 +45,23 @@ export const StepsTrigger = ({
     <span className="flex min-w-0 items-center gap-2">
       {leftIcon ? (
         <span className="relative inline-flex size-4 items-center justify-center">
-          <span className={cn('transition-opacity', swapIconOnHover && 'group-hover:opacity-0')}>
+          <span
+            className={cn(
+              'transition-opacity motion-reduce:transition-none',
+              swapIconOnHover && 'group-hover:opacity-0',
+            )}
+          >
             {leftIcon}
           </span>
           {swapIconOnHover && (
-            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-hover:text-[var(--color-accent)] group-data-[state=open]:rotate-180" />
+            <ChevronDown className="absolute size-4 opacity-0 transition-opacity motion-reduce:transition-none group-hover:opacity-100 group-hover:text-[var(--color-accent)] group-data-[state=open]:rotate-180" />
           )}
         </span>
       ) : null}
       <span>{active && typeof children === 'string' ? <ShimmerText text={children} /> : children}</span>
     </span>
     {!leftIcon && (
-      <ChevronDown className="size-4 transition-transform group-hover:text-[var(--color-accent)] group-data-[state=open]:rotate-180" />
+      <ChevronDown className="size-4 transition-transform motion-reduce:transition-none group-hover:text-[var(--color-accent)] group-data-[state=open]:rotate-180" />
     )}
   </CollapsibleTrigger>
 );
@@ -87,7 +92,7 @@ export type StepsBarProps = React.HTMLAttributes<HTMLDivElement>;
 export const StepsBar = ({ className, ...props }: StepsBarProps) => (
   <div
     className={cn(
-      'bg-muted h-full w-[2px] transition-colors duration-300 group-hover:bg-[var(--color-accent)]/40',
+      'bg-muted h-full w-[2px] transition-colors duration-300 motion-reduce:transition-none group-hover:bg-[var(--color-accent)]/40',
       className,
     )}
     aria-hidden
