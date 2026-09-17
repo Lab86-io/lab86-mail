@@ -25,6 +25,7 @@ try {
       waitUntil: 'networkidle',
       timeout: 60000,
     });
+    await page.locator('[data-preview-state="ready"]').waitFor({ timeout: 60000 });
     await page
       .getByRole('button', { name: 'What needs my reply today? Open the most urgent one.', exact: true })
       .click({ timeout: 60000 });

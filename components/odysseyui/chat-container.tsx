@@ -39,6 +39,7 @@ export function ChatContainer({
   const reduceMotion = useReducedMotion();
   const contentRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [messageCount, setMessageCount] = useState(0);
@@ -47,6 +48,7 @@ export function ChatContainer({
     (behavior: ScrollBehavior = 'smooth') => {
       const viewport = viewportRef.current;
       if (!viewport) return;
+      atBottomRef.current = true;
       viewport.scrollTo({ top: viewport.scrollHeight, behavior: reduceMotion ? 'instant' : behavior });
     },
     [reduceMotion],
@@ -57,8 +59,14 @@ export function ChatContainer({
     if (!viewport) return;
     const onScroll = () => {
       const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-      atBottomRef.current = distFromBottom <= bottomThreshold;
-      setIsAtBottom(atBottomRef.current);
+      const nearBottom = distFromBottom <= bottomThreshold;
+      // ResizeObserver and native scroll events can arrive in either order.
+      // Growing content increases the distance without the reader moving;
+      // only an upward scroll should release our intent to follow the stream.
+      if (nearBottom) atBottomRef.current = true;
+      else if (viewport.scrollTop < lastScrollTopRef.current - 1) atBottomRef.current = false;
+      lastScrollTopRef.current = viewport.scrollTop;
+      setIsAtBottom(nearBottom);
     };
     viewport.addEventListener('scroll', onScroll, { passive: true });
     return () => viewport.removeEventListener('scroll', onScroll);

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { WorkLog } from '../components/ai-elements/work-log';
+import { ChatContainer } from '../components/odysseyui/chat-container';
 import { PromptInput } from '../components/odysseyui/prompt-input';
 import {
   ThoughtChain,
@@ -61,6 +62,60 @@ describe('Odyssey chat integration', () => {
     await act(async () => tree.root.findAllByType('button')[0].props.onClick({ ...click }));
     expect(tree.root.findAllByType('button')[1].children.join('')).toBe('Result 1');
     await act(async () => tree.unmount());
+  });
+
+  test('a delayed scroll event after content growth keeps following, while upward scrolling releases it', async () => {
+    const originalObserver = globalThis.ResizeObserver;
+    let resize = () => {};
+    let scroll = () => {};
+    const viewport = {
+      clientHeight: 100,
+      scrollHeight: 200,
+      scrollTop: 0,
+      scrollTo({ top }: { top: number }) {
+        this.scrollTop = Math.max(0, top - this.clientHeight);
+      },
+      addEventListener(_name: string, callback: () => void) {
+        scroll = callback;
+      },
+      removeEventListener() {},
+    };
+    globalThis.ResizeObserver = class {
+      constructor(callback: () => void) {
+        resize = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    let tree!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        tree = create(
+          <ChatContainer>
+            <p>Reply</p>
+          </ChatContainer>,
+          {
+            createNodeMock: (element) =>
+              element.props.className?.includes('overflow-y-auto') ? viewport : {},
+          },
+        );
+      });
+      await act(async () => scroll());
+      viewport.scrollHeight = 300;
+      await act(async () => scroll()); // Native event queued before the next streamed chunk grew the content.
+      await act(async () => resize());
+      expect(viewport.scrollTop).toBe(200);
+      await act(async () => scroll());
+      viewport.scrollTop = 50;
+      await act(async () => scroll());
+      viewport.scrollHeight = 400;
+      await act(async () => resize());
+      expect(viewport.scrollTop).toBe(50);
+    } finally {
+      if (tree) await act(async () => tree.unmount());
+      globalThis.ResizeObserver = originalObserver;
+    }
   });
 
   test('controlled disclosure keeps the trigger and content synchronized', async () => {
