@@ -233,7 +233,7 @@ async function selectDeckArtworks(
   }
 }
 
-const COPY_REPAIR_GUIDANCE = `Some slide copy does not fit its box. Return shorter text for each listed field. Keep the meaning. Keep every number, name and date exactly as written. Do not add, remove or reorder slides. Plain language, no emoji. Fields: title, kicker, body, notes, chart.source, items.N.label, items.N.detail, items.N.meta.`;
+const COPY_REPAIR_GUIDANCE = `Some slide copy does not fit its box. Return shorter text for each listed field. Keep the meaning. Keep every number, name and date exactly as written. Do not add, remove or reorder slides. Plain language, no emoji. Use only the supplied fields. Source captions may be shortened; exact original citations are preserved in notes. Fields: title, kicker, body, chart.source, table.source, items.N.label, items.N.detail, items.N.meta.`;
 
 function issueList(issues: DeckIssue[]) {
   return issues
@@ -280,50 +280,54 @@ async function finishComposedDeck(
           targets.push({ slideId: issue.slideId, field, text: element.text, problem: issue.message });
       }
     }
-    if (targets.length) {
-      try {
-        const { object } = await withToolTimeout(
-          (signal) =>
-            dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
-              userId: input.userId,
-              userEmail: input.userEmail,
-              userName: input.userName,
-              feature: 'document_generation',
-              abortSignal: signal,
-              speed: 'primary',
-              maxOutputTokens: 4_000,
-              schema: copyRepairSchema,
-              system: COPY_REPAIR_GUIDANCE,
-              prompt: JSON.stringify(targets),
-            }),
-          'presentation_copy_repair',
-          { timeoutMs: 20_000, signal: input.abortSignal },
-        );
-        const fixes = copyRepairSchema.safeParse(object);
-        if (fixes.success) {
-          for (const fix of fixes.data.fixes) {
-            const slide = brief.slides[slideIds.indexOf(fix.slideId)];
-            const field = slide && copyFields(slide, true).find((field) => field.field === fix.field);
-            if (slide && field && preservesNumericClaims(field.text, fix.text))
-              replaceSlideCopy(slide, fix.field, fix.text);
-          }
-          for (const slide of brief.slides) fitSlideCopy(slide);
-          repaired = compose();
+    if (!targets.length) break;
+    try {
+      const { object } = await withToolTimeout(
+        (signal) =>
+          dependencies.generateObjectForCurrentUser<z.infer<typeof copyRepairSchema>>({
+            userId: input.userId,
+            userEmail: input.userEmail,
+            userName: input.userName,
+            feature: 'document_generation',
+            abortSignal: signal,
+            speed: 'primary',
+            maxOutputTokens: 4_000,
+            schema: copyRepairSchema,
+            system: COPY_REPAIR_GUIDANCE,
+            prompt: JSON.stringify(targets),
+          }),
+        'presentation_copy_repair',
+        { timeoutMs: 20_000, signal: input.abortSignal },
+      );
+      const fixes = copyRepairSchema.safeParse(object);
+      if (fixes.success) {
+        for (const fix of fixes.data.fixes) {
+          const slide = brief.slides[slideIds.indexOf(fix.slideId)];
+          const field = slide && copyFields(slide, true).find((field) => field.field === fix.field);
+          if (slide && field && preservesNumericClaims(field.text, fix.text))
+            replaceSlideCopy(slide, fix.field, fix.text);
         }
-      } catch {
-        input.abortSignal?.throwIfAborted();
+        for (const slide of brief.slides) fitSlideCopy(slide);
+        repaired = compose();
       }
+    } catch {
+      input.abortSignal?.throwIfAborted();
     }
   }
   // If a critique service fails or copy still overflows, progressively extract
   // readable visible copy, retaining every original field in speaker notes.
   for (let pass = 0; pass < 4 && !repaired.report.ok; pass++) {
-    const failing = new Set(
-      repaired.report.issues.filter((issue) => issue.severity === 'error').map((issue) => issue.slideId),
-    );
-    brief.slides.forEach((slide, index) => {
-      if (failing.has(slideIds[index])) fitSlideCopy(slide, 0.65 ** (pass + 1));
-    });
+    for (const issue of repaired.report.issues) {
+      if (issue.kind !== 'overflow' || issue.severity !== 'error') continue;
+      const index = slideIds.indexOf(issue.slideId);
+      const targets = new Set(
+        repaired.model.slides[index].elements
+          .filter((element) => issue.elementIds.includes(element.id))
+          .map(briefFieldForElement)
+          .filter((field): field is string => field !== null),
+      );
+      fitSlideCopy(brief.slides[index], 0.65 ** (pass + 1), targets);
+    }
     repaired = compose();
   }
   if (!repaired.report.ok)

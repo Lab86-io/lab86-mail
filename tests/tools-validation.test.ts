@@ -32,6 +32,10 @@ describe('tool input validation', () => {
     const presentation = harborBrief();
     presentation.slides[0].body = 'x'.repeat(321);
     presentation.slides[1].title = 'x'.repeat(121);
+    presentation.slides[2].items = Array.from({ length: 5 }, (_, i) => ({
+      label: `Finding ${i + 1}`,
+      detail: 'Verified supporting evidence',
+    }));
     const input = getTool('document_create')!.input;
     expect(input.safeParse({ kind: 'deck', title: 'Review', presentation }).success).toBe(true);
     presentation.slides = Array.from({ length: 31 }, () => presentation.slides[0]);

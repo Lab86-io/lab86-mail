@@ -285,7 +285,10 @@ export const presentationAuthoringSchema = presentationBriefSchema.extend({
     .array(
       presentationBriefSchema.shape.slides.element.extend({
         ...authoringCopy,
-        items: z.array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) })).max(3),
+        items: z
+          .array(z.object({ label: z.string().min(1).max(1000), detail: z.string().max(4000) }))
+          .max(12)
+          .describe('Aim for at most 3 concise items. Excess draft items are grouped during slide review.'),
       }),
     )
     .min(1)
@@ -304,7 +307,10 @@ export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
               meta: z.string().max(1000).nullish(),
             }),
           )
-          .max(4)
+          .max(12)
+          .describe(
+            'Visible budget: 4 items for lists/process/comparison/metrics/image/close; 3 chart callouts; 1 quote context item; no items for cover/statement/table. Up to 12 draft items can be grouped during review. Put source detail in notes.',
+          )
           .default([]),
       }),
     )
@@ -314,7 +320,8 @@ export const presentationAuthoringV2Schema = presentationBriefV2Schema.extend({
 
 export const PRESENTATION_DESIGN_GUIDANCE_V2 = `Design a complete presentation as 16:9 slides. Return finished slide copy and an art-direction brief, not instructions to create them.
 The brief names the audience, the purpose, the tone, one palette, one font pair and short imagery guidance. imagery holds the subject words for public-domain paintings that fit the topic, for example "harbor, ships, dusk"; write "none" when the deck should stay typographic. Palettes: editorial (warm paper, ink navy, rust accent) or signal (cool paper, near-black ink, electric blue). Use a custom six-color set only when the user names colors. Font pairs: serif (Fraunces display with Geist text) or sans (Geist throughout). Editorial with serif is the default.
-Every slide has one composition role. cover: title, kicker, one-sentence body, optional image. statement: one sentence that carries the slide, optional support line. image-left and image-right: kicker, title, body, up to three short facts as items, an image request. metrics: title and up to three numbers as items (label is the number, detail is what it measures) with chart data. chart: title, body and chart data; items are up to three callouts. process: title and two to four steps as items (label is the step, meta is the date, detail is one sentence). comparison: title and two to four sides as items. list: title and two to four items. quote: the quote as the title, the attribution as the body. close: title, two to four asks as items, a contact line as the body.
+Every slide has one composition role. cover: title, kicker, one-sentence body, optional image; audience becomes the footer. statement: one sentence that carries the slide, optional support line. image-left and image-right: kicker, title, body, up to four short facts as items, an image request. metrics: title and up to four numbers as items (label is the number, detail is what it measures) with chart data. chart: title, body and chart data; items are up to three callouts. process: title and two to four steps as items (label is the step, meta is the date, detail is one sentence). comparison: title and two to four sides as items. list: title and two to four items. quote: the quote as the title, the attribution as the body, at most one context item. close: title, two to four asks as items, a contact line as the body. Leave items empty on cover, statement and table slides.
+Before submitting EACH slide, check its role-specific item budget and every field: title <=120 characters, kicker <=40, body <=320, item label <=60, detail <=160, meta <=40. These are ceilings, not targets: chart callouts and metric captions should be especially short. Group related findings into a single takeaway when there are too many; keep the exact evidence, individual findings and citations in notes. Preserve the requested slide count. Use a short audience name and a short source caption; full citations belong in notes. The larger authoring schema is a recovery allowance, not a target density.
 Vary the roles across the deck; use at least four different roles in a deck of five or more slides. Open with a cover and end with a close. Use metrics or chart only when the grounding material supplies the numbers. Never invent numbers; use metrics only when the grounding material supplies them. Never invent citations.
 Image requests need alt text and a subject. Only set assetId to an asset id listed in the grounding material. Never reference an outside image address; a slide without an owned image composes as typography.
 Use role table for precise comparisons with headers (2–4), rows (1–6), and a source caption. Use real chart data for trends or numerical comparisons. Choose a visual that proves the slide takeaway; never invent data or substitute prose for a chart. Respect the requested slide count. Write short headlines, concise labels and details that fit their limits. Speaker notes carry sources, nuance, exact dates with time zones and the fuller explanation. Each slide holds real content, never placeholders or a restatement of the request. Only attribute events to a date when source timestamps support it. Plain language, no emoji.`;
@@ -430,7 +437,8 @@ export function briefFieldForElement(element: DeckElementV2): string | null {
   const slot = parseSlotName(element.name)?.slot;
   if (!slot) return null;
   if (slot === 'title' || slot === 'kicker' || slot === 'body') return slot;
-  if (slot === 'source') return 'chart.source';
+  if (slot === 'source')
+    return parseSlotName(element.name)?.role === 'table' ? 'table.source' : 'chart.source';
   const item = /^item-(\d)-(label|detail|meta)$/.exec(slot);
   if (item) return `items.${item[1]}.${item[2]}`;
   return null;
