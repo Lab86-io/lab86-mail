@@ -28,4 +28,14 @@ The chart renderer now draws horizontal bars directly with upright labels and a 
 
 Staging deployment uses `z-ai/glm-5.3-flash` for the normal and fast defaults. Explicit compatible user selections remain respected. Production defaults are unchanged.
 
-Final local checks: 4,093 tests passed, one optional test skipped, no failures. Every changed library file meets the staging coverage baseline; the visual-review module has 100% line coverage. Typecheck and lint passed.
+Final feature checks: 4,093 tests passed, one optional test skipped, no failures. Every changed library file meets the staging coverage baseline; the visual-review module has 100% line coverage. Typecheck and lint passed.
+
+## Follow-up review
+
+The automated review identified an actual collision between category labels and negative bar-value labels. The renderer now reserves separate, bounded space for negative values, including their unit suffix. Exceptionally long labels fit into that space without truncating their text or reducing the plot width below zero. Chromium checks cover simple numbers, currency suffixes, and a long decimal plus unit. Added a direct OpenAI-key regression with both hosted defaults set to GLM.
+
+The 120-second image-review budget remains intentional: creation also needs composition, editorial review, and persistence within its 280-second tool limit. Raising image review to 200 seconds could consume the remaining save window. Slow or large decks stay resumable drafts.
+
+Unsupported saved text-only models intentionally fall back to the configured vision default, including retired text-only models. This prevents legacy settings from breaking the presentation flow. Explicitly selecting a retired model is still rejected.
+
+The Google gate applies to automatic publication during creation. A later explicit publish remains available; this release does not introduce a mandatory review policy for manual publishing or persist a typed review attestation on every document revision. Review results are in the tool result and revision summary, and resuming the review checks the entire current deck. The legacy generator returns its composition promise without awaiting it inside the catch, so asynchronous cancellation is already propagated rather than relabeled.
