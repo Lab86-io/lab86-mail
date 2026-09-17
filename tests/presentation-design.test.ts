@@ -491,7 +491,8 @@ describe('designed generation through the document proposal', () => {
     });
     await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
     expect(untouched).not.toHaveBeenCalled();
-    expect(PRESENTATION_DESIGN_GUIDANCE_V2).toContain('write "none"');
+    expect(PRESENTATION_DESIGN_GUIDANCE_V2).toContain('imagery is artwork-search subject context');
+    expect(PRESENTATION_DESIGN_GUIDANCE_V2).not.toContain('write "none"');
   });
 
   test('a slide count outside the request is refused before anything composes', async () => {

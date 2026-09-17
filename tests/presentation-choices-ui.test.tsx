@@ -145,16 +145,21 @@ test('brief pauses until audience, scope, pacing and detail are explicitly submi
 
 test('theme/font previews are real slides, choices remain editable until confirmation', async () => {
   const result = await mount({ ...base, stage: 'design' });
+  expect(text(view.root)).toContain('1 / 2');
   expect(view.root.findAll((node) => node.props.className === 'presentation-choice-preview')).toHaveLength(8);
   await choose('lagoon');
   await click('Next');
+  expect(text(view.root)).toContain('2 / 2');
   expect(view.root.findAll((node) => node.props.className === 'presentation-choice-preview')).toHaveLength(6);
   await choose('Space Grotesk');
   await click('Back');
   expect(option('lagoon').props['aria-pressed']).toBe(true);
   await click('Next');
-  await click('Next');
-  await choose('Credited paintings');
+  expect(button('Next')).toBeUndefined();
+  expect(text(view.root)).not.toContain('What should the imagery feel like?');
+  expect(option('Credited paintings')).toBeUndefined();
+  expect(option('My images')).toBeUndefined();
+  expect(option('Typography & data')).toBeUndefined();
   await act(async () =>
     view.root.findByType('textarea').props.onChange({ target: { value: 'Large numbers and quiet accents' } }),
   );
@@ -164,10 +169,10 @@ test('theme/font previews are real slides, choices remain editable until confirm
     design: {
       theme: 'lagoon',
       fontPair: 'grotesk',
-      imagery: 'paintings',
       guidance: 'Large numbers and quiet accents',
     },
   });
+  expect(result.mock.calls[0][0].design).not.toHaveProperty('imagery');
 });
 
 test('storyboard shows real chart values, accepts another visual and can request revisions', async () => {
