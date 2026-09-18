@@ -20,6 +20,69 @@ import { passingVisualReview } from './fixtures/visual-review';
 
 afterEach(() => __setDocumentAiDepsForTest());
 describe('every-slide presentation review', () => {
+  test('omitted supporting text is normalized before creation/review without losing chart data or legacy copy', async () => {
+    const brief = harborBrief();
+    const chart = {
+      type: 'line' as const,
+      categories: ['2020', '2021'],
+      series: [{ name: 'Wins', values: [4, 10] }],
+      unit: 'games',
+      source: 'Synthetic test data',
+    };
+    const { body: _body, kicker: _kicker, notes: _notes, ...slide } = brief.slides[0];
+    const draft = { ...brief, slides: [{ ...slide, role: 'chart', chart, items: [] }] };
+    const normalized = presentationAuthoringV2Schema.parse(draft);
+    expect(normalized.slides[0]).toMatchObject({ body: '', kicker: '', notes: '', chart });
+    expect(
+      presentationAuthoringV2Schema.parse({ ...draft, slides: [{ ...draft.slides[0], body: null }] })
+        .slides[0].body,
+    ).toBe('');
+    expect(
+      presentationAuthoringV2Schema.safeParse({ ...draft, slides: [{ ...draft.slides[0], body: 42 }] })
+        .success,
+    ).toBe(false);
+    expect(
+      presentationAuthoringV2Schema.safeParse({ ...draft, slides: [{ ...draft.slides[0], title: '' }] })
+        .success,
+    ).toBe(false);
+    const legacy = presentationAuthoringSchema.parse({
+      title: 'Legacy',
+      summary: 'Retain actual content',
+      palette: 'ink',
+      slides: [
+        {
+          layout: 'columns',
+          title: 'Findings',
+          items: [{ label: 'Evidence', detail: 'Keep this finding.' }],
+        },
+      ],
+    });
+    expect(legacy.slides[0]).toMatchObject({
+      body: '',
+      kicker: '',
+      notes: '',
+      items: [{ label: 'Evidence', detail: 'Keep this finding.' }],
+    });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) =>
+        options.schema === slideReviewSchema
+          ? passingSlideReviews(options)
+          : { object: { fixes: [] } }) as any,
+    });
+    const result = await composeDocumentPresentation({
+      userId: 'u',
+      instruction: 'Create one evidence slide',
+      presentation: normalized,
+      artwork: 'none',
+    });
+    const model = result.model as any;
+    expect(checkDeck(model).ok).toBe(true);
+    expect(model.slides[0].elements.find((element: any) => element.type === 'chart').series).toEqual(
+      chart.series,
+    );
+  });
   test('empty draft labels are repaired from supplied copy before composition, even without model review', async () => {
     const brief = harborBrief();
     const original = [

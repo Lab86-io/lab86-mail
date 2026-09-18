@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
+import * as gateway from '../lib/ai/gateway';
 import { agentStepLimit, liftToolsForAgent } from '../lib/ai/loop';
 import {
   type PresentationPlan,
@@ -46,6 +47,22 @@ const input = {
   slideCount: 1,
 };
 describe('evidence-led presentation planning', () => {
+  test('the tool handler carries server-restored delegation into planning guidance', async () => {
+    const generate = spyOn(gateway, 'generateObjectForCurrentUser').mockResolvedValue({
+      object: plan(),
+    } as any);
+    try {
+      const result = await getTool('presentation_plan')!.handler(input, {
+        userId: 'u',
+        agent: 'ai',
+        presentationChoicesDelegated: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.nextStep).toContain('without more pickers');
+    } finally {
+      generate.mockRestore();
+    }
+  });
   test('dedicates high reasoning to evidence and tool-backed data/visual construction', async () => {
     const generate = mock(async (options: any) => {
       expect(options).toMatchObject({
@@ -136,7 +153,7 @@ describe('evidence-led presentation planning', () => {
       outline(17).slides.map((slide) => slide.title),
     );
     expect(peak).toBe(3);
-    expect(generate).toHaveBeenCalledTimes(6);
+    expect(generate).toHaveBeenCalledTimes(10);
   });
   test('a failing section retries only that section and retains all other slide work', async () => {
     const generate = mock(async (options: any) => {
@@ -149,11 +166,13 @@ describe('evidence-led presentation planning', () => {
     expect(result.ok).toBe(false);
     expect(result.readyToBuild).toBe(false);
     expect(result.plan).toBeUndefined();
-    expect(result.recovery?.pendingSlideNumbers).toEqual([5, 6, 7, 8]);
-    expect(result.recovery?.completedSlides.map((slide) => slide.slideNumber)).toEqual([1, 2, 3, 4, 9]);
+    expect(result.recovery?.pendingSlideNumbers).toEqual([5]);
+    expect(result.recovery?.completedSlides.map((slide) => slide.slideNumber)).toEqual([
+      1, 2, 3, 4, 6, 7, 8, 9,
+    ]);
     expect(presentationPlanningRecoverySchema.safeParse(result.recovery).success).toBe(true);
-    expect(result.issues.join(' ')).toContain('Slides 5–8: section timed out');
-    expect(generate).toHaveBeenCalledTimes(5);
+    expect(result.issues.join(' ')).toContain('Slide 5: section timed out');
+    expect(generate).toHaveBeenCalledTimes(9);
     expect(result.nextStep).toContain('Continue NOW');
   });
   test('the total deadline aborts stalled requests and returns completed sections for recovery', async () => {
@@ -164,7 +183,7 @@ describe('evidence-led presentation planning', () => {
         const prompt = JSON.parse(options.prompt);
         if (prompt.phase === 'outline') return { object: outline() };
         if (prompt.firstSlideNumber === 1)
-          return { object: { slides: Array.from({ length: 4 }, () => plan().slides[0]) } };
+          return { object: { slides: Array.from({ length: prompt.slideCount }, () => plan().slides[0]) } };
         sectionSignal = options.abortSignal;
         return new Promise(() => {});
       }) as any,
@@ -172,8 +191,8 @@ describe('evidence-led presentation planning', () => {
     );
     expect(sectionSignal?.aborted).toBe(true);
     expect(result.ok).toBe(false);
-    expect(result.recovery?.completedSlides).toHaveLength(4);
-    expect(result.recovery?.pendingSlideNumbers).toEqual([5, 6, 7, 8, 9]);
+    expect(result.recovery?.completedSlides).toHaveLength(2);
+    expect(result.recovery?.pendingSlideNumbers).toEqual([3, 4, 5, 6, 7, 8, 9]);
   });
   test('a request timeout retries locally; parent cancellation never becomes remediation', async () => {
     let calls = 0;
@@ -211,5 +230,100 @@ describe('evidence-led presentation planning', () => {
     }) as any);
     expect(result.ok).toBe(true);
     expect(calls).toBe(2);
+  });
+
+  test('timed-out batches split into individually analyzed slides without repeating successful work', async () => {
+    const requests: number[][] = [];
+    const generate = mock(async (options: any) => {
+      const prompt = JSON.parse(options.prompt);
+      if (prompt.phase === 'outline') return { object: outline(6) };
+      requests.push(prompt.slideNumbers);
+      if (prompt.firstSlideNumber === 3 && prompt.slideCount > 1) return new Promise(() => {});
+      return {
+        object: {
+          slides: prompt.slideNumbers.map((number: number) => ({
+            ...plan().slides[0],
+            title: `Slide ${number}`,
+          })),
+        },
+      };
+    });
+    const result = await planPresentation({ ...input, slideCount: 6 }, generate as any, {
+      requestTimeoutMs: 20,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.plan?.slides.map((slide) => slide.title)).toEqual(
+      outline(6).slides.map((slide) => slide.title),
+    );
+    expect(requests.filter((numbers) => numbers.length === 2)).toEqual([
+      [1, 2],
+      [3, 4],
+      [5, 6],
+    ]);
+    expect(requests).toContainEqual([3]);
+    expect(requests).toContainEqual([4]);
+  });
+  test('resuming a partial plan reuses its outline and completed slides, including nonconsecutive gaps', async () => {
+    const recovery = {
+      outline: outline(),
+      completedSlides: [1, 3, 5, 7, 9].map((slideNumber) => ({
+        slideNumber,
+        slide: { ...plan().slides[0], title: `Slide ${slideNumber}` },
+      })),
+      pendingSlideNumbers: [], // Recompute from actual completed work, not model bookkeeping.
+    };
+    const generate = mock(async (options: any) => {
+      const prompt = JSON.parse(options.prompt);
+      expect(prompt.phase).toBe('slides');
+      expect(prompt.evidence).toEqual(input.evidence);
+      expect(prompt.slideNumbers.every((number: number) => [2, 4, 6, 8].includes(number))).toBe(true);
+      return {
+        object: {
+          slides: prompt.slideNumbers.map((number: number) => ({
+            ...plan().slides[0],
+            title: `Slide ${number}`,
+          })),
+        },
+      };
+    });
+    const result = await planPresentation(
+      { ...input, slideCount: undefined, recovery, delegateRemaining: true },
+      generate as any,
+    );
+    expect(result.ok).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(result.plan?.slides.map((slide) => slide.title)).toEqual(
+      outline().slides.map((slide) => slide.title),
+    );
+    expect(result.plan?.slides[0]).toEqual(recovery.completedSlides[0].slide);
+    expect(result.nextStep).toContain('without more pickers');
+    const complete = {
+      ...recovery,
+      completedSlides: result.plan!.slides.map((slide, index) => ({ slideNumber: index + 1, slide })),
+    };
+    expect(
+      (await planPresentation({ ...input, slideCount: 9, recovery: complete }, generate as any)).ok,
+    ).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const invalid of [
+      { ...recovery, outline: outline(8) },
+      { ...recovery, completedSlides: [recovery.completedSlides[0], recovery.completedSlides[0]] },
+      { ...recovery, completedSlides: [{ ...recovery.completedSlides[0], slideNumber: 0 }] },
+      { ...recovery, completedSlides: [{ ...recovery.completedSlides[0], slideNumber: 10 }] },
+      {
+        ...recovery,
+        completedSlides: [
+          { ...recovery.completedSlides[0], slide: { ...plan().slides[0], evidenceIds: ['unknown'] } },
+        ],
+      },
+    ]) {
+      const rejected = await planPresentation(
+        { ...input, slideCount: 9, recovery: invalid, delegateRemaining: true },
+        generate as any,
+      );
+      expect(rejected.ok).toBe(false);
+      expect(rejected.nextStep).toContain('do not ask any more pickers');
+    }
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 });

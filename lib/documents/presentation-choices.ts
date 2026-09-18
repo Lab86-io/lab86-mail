@@ -193,11 +193,27 @@ export interface PresentationSession {
 
 /** Validate before pausing for the user, including the confirmed slide counts. */
 export function presentationChoiceSchemaForSession(session?: PresentationSession) {
-  return presentationChoiceInputSchema.superRefine((input, ctx) => {
+  const next = session ? nextPresentationCheckpoint(session) : undefined;
+  // Encode the next checkpoint in the provider's schema, not only in prose.
+  const schema = presentationChoiceInputSchema.safeExtend({
+    stage: next && next !== 'cancelled' ? z.literal(next) : presentationChoiceInputSchema.shape.stage,
+    presentationId: session?.presentationId
+      ? z.literal(session.presentationId)
+      : presentationChoiceInputSchema.shape.presentationId,
+  });
+  return schema.superRefine((input, ctx) => {
     const issue = (path: (string | number)[], message: string) =>
       ctx.addIssue({ code: 'custom', path, message });
-    if (session?.presentationId && input.stage !== 'brief' && input.presentationId !== session.presentationId)
-      issue(['presentationId'], `Keep the confirmed presentationId: ${session.presentationId}.`);
+    if (session) {
+      const checkpoint = nextPresentationCheckpoint(session);
+      if (!checkpoint || checkpoint === 'cancelled')
+        issue(
+          ['stage'],
+          'No presentation questions remain. Honor the saved choices and delegation; stop if cancelled.',
+        );
+      else if (input.stage !== checkpoint)
+        issue(['stage'], `Only ask the unanswered ${checkpoint} checkpoint. Keep all confirmed answers.`);
+    }
     if (input.stage !== 'storyboard' || !input.slides) return;
     const slides = input.slides;
     if (slides[0].kind !== 'cover' || slides.at(-1)?.kind !== 'close')
@@ -241,6 +257,17 @@ export function presentationChoiceRepair(input: unknown) {
   };
 }
 
+function revisePresentationCheckpoint(
+  session: PresentationSession,
+  stage: 'brief' | 'design' | 'storyboard',
+) {
+  if (stage === 'brief') delete session.brief;
+  if (stage !== 'storyboard') delete session.design;
+  delete session.storyboard;
+  delete session.visuals;
+  session.delegate = false;
+}
+
 /** Restore confirmed choices from durable tool results, never from model prose. */
 export function presentationSessionFromMessages(
   messages: ReadonlyArray<{ role?: string; parts?: unknown[] }>,
@@ -251,12 +278,34 @@ export function presentationSessionFromMessages(
       const userText = (message.parts ?? [])
         .map((part: any) => (part.type === 'text' ? part.text : ''))
         .join(' ');
+      // Continuing construction of this deck must not erase its answers.
       if (
         /\b(?:create|generate|make|build|prepare|design)\b.{0,100}\b(?:presentation|deck|slides)\b/i.test(
           userText,
-        )
+        ) &&
+        (/\b(?:new|another)\s+(?:presentation|deck|slides)\b/i.test(userText) ||
+          !/\b(?:this|that|the|same|approved|confirmed)\s+(?:presentation|deck|slides)\b/i.test(userText))
       )
         session = {};
+      // Explicit requests to revisit choices are different from model retries.
+      if (
+        session.presentationId &&
+        /^(?:(?:please|actually|can we|can you|could you|i want to|let's)\s+)*(?:change|revise|revisit|redo|reopen|choose different)\b/i.test(
+          userText.trim(),
+        )
+      ) {
+        const stage = /\b(?:brief|audience|purpose|sources|slide count|section breaks)\b/i.test(userText)
+          ? 'brief'
+          : /\b(?:theme|fonts?|colors?|colours?|design choices)\b/i.test(userText)
+            ? 'design'
+            : /\b(?:storyboard|visual choices|graph choices)\b/i.test(userText)
+              ? 'storyboard'
+              : null;
+        if (stage) {
+          revisePresentationCheckpoint(session, stage);
+          session.guidance = userText;
+        }
+      }
       if (
         /\b(?:skip (?:the |all )?questions|(?:you |please )?(?:decide|choose) (?:everything|for me)|use your (?:best )?(?:judgment|judgement))\b/i.test(
           userText,
@@ -274,18 +323,8 @@ export function presentationSessionFromMessages(
         continue;
       const input = presentationChoiceInputSchema.safeParse(part.input);
       if (!input.success) continue;
-      if (input.data.stage === 'brief') session = { presentationId: input.data.presentationId };
-      if (session.presentationId !== input.data.presentationId) continue;
-      // A newer pending/revised checkpoint invalidates later confirmation.
-      if (input.data.stage === 'design') {
-        delete session.design;
-        delete session.storyboard;
-        delete session.visuals;
-      }
-      if (input.data.stage === 'storyboard') {
-        delete session.storyboard;
-        delete session.visuals;
-      }
+      if (!session.presentationId && input.data.stage === 'brief')
+        session.presentationId = input.data.presentationId;
       const result = presentationChoiceResultSchema.safeParse(part.output);
       if (
         part.state !== 'output-available' ||
@@ -295,17 +334,35 @@ export function presentationSessionFromMessages(
       )
         continue;
       const value = result.data;
+      // A model retry/pending card cannot revoke a user's answers. Older runs
+      // could repeat brief cards under new IDs; retain their submitted choices
+      // and delegation, adopting the ID only when the user actually answered.
+      if (value.stage === 'brief') session.presentationId = value.presentationId;
+      if (session.presentationId !== value.presentationId) continue;
       if (value.decision === 'cancel') {
         session.cancelled = true;
         continue;
       }
       if (value.decision === 'revise') {
+        revisePresentationCheckpoint(session, value.stage);
         session.guidance = value.guidance;
         continue;
       }
       session.delegate = value.delegateRemaining || session.delegate;
-      if (value.stage === 'brief' && value.brief) session.brief = value.brief;
-      if (value.stage === 'design' && value.design && session.brief) session.design = value.design;
+      if (value.stage === 'brief' && value.brief) {
+        if (session.brief && JSON.stringify(session.brief) !== JSON.stringify(value.brief)) {
+          delete session.storyboard;
+          delete session.visuals;
+        }
+        session.brief = value.brief;
+      }
+      if (value.stage === 'design' && value.design && session.brief) {
+        if (session.design && JSON.stringify(session.design) !== JSON.stringify(value.design)) {
+          delete session.storyboard;
+          delete session.visuals;
+        }
+        session.design = value.design;
+      }
       if (
         value.stage === 'storyboard' &&
         session.brief &&

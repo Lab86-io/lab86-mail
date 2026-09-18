@@ -90,13 +90,15 @@ export async function planPresentation(
     audience: string;
     evidence: z.infer<typeof presentationEvidenceSchema>[];
     slideCount?: number;
+    recovery?: z.infer<typeof presentationPlanningRecoverySchema>;
+    delegateRemaining?: boolean;
     abortSignal?: AbortSignal;
   },
   generate = generateObjectForCurrentUser,
   limits: { budgetMs?: number; requestTimeoutMs?: number } = {},
 ) {
   const issues: string[] = [];
-  const count = input.slideCount ?? 8;
+  const count = input.slideCount ?? input.recovery?.outline.slides.length ?? 8;
   const known = new Set(input.evidence.map((item) => item.id));
   let outline: z.infer<typeof presentationOutlineSchema> | undefined;
   const completed = new Map<number, PresentationPlan['slides'][number]>();
@@ -110,6 +112,19 @@ export async function planPresentation(
     if (unknown.length) throw new Error(unknown.join('; '));
   };
   try {
+    if (input.recovery) {
+      const saved = presentationPlanningRecoverySchema.parse(input.recovery);
+      if (saved.outline.slides.length !== count)
+        throw new Error('The saved outline must match the requested slide count.');
+      validateEvidence(saved.outline.slides);
+      validateEvidence(saved.completedSlides.map((entry) => entry.slide));
+      for (const entry of saved.completedSlides) {
+        if (entry.slideNumber < 1 || entry.slideNumber > count || completed.has(entry.slideNumber))
+          throw new Error('Saved slide numbers must be unique and within the outline.');
+        completed.set(entry.slideNumber, entry.slide);
+      }
+      outline = saved.outline;
+    }
     const plan = await withToolTimeout(
       async (signal) => {
         async function request<T extends z.ZodType>(
@@ -117,10 +132,11 @@ export async function planPresentation(
           prompt: Record<string, unknown>,
           maxOutputTokens: number,
           check: (value: z.infer<T>) => void,
+          attempts = 2,
         ) {
           let error: unknown;
           let prior: unknown;
-          for (let attempt = 0; attempt < 2; attempt++) {
+          for (let attempt = 0; attempt < attempts; attempt++) {
             signal.throwIfAborted();
             try {
               const { object } = await withToolTimeout(
@@ -165,12 +181,12 @@ export async function planPresentation(
           }
           throw error;
         }
-        if (count <= 4)
+        if (count <= 4 && !outline)
           return request(presentationPlanSchema, { slideCount: count }, 9000, (value) => {
             validateEvidence(value.slides);
             if (value.slides.length !== count) throw new Error(`Return exactly ${count} slides.`);
           });
-        outline = await request(
+        outline ??= await request(
           presentationOutlineSchema,
           {
             phase: 'outline',
@@ -184,37 +200,51 @@ export async function planPresentation(
           },
         );
         const plannedOutline = outline;
+        const pending = Array.from({ length: count }, (_, index) => index + 1).filter(
+          (number) => !completed.has(number),
+        );
         let cursor = 0;
-        // At most three model calls at once. Every section sees the same narrative
-        // and evidence. Retain completed sections if another section times out.
+        async function planSection(numbers: number[]): Promise<void> {
+          try {
+            const section = await request(
+              z.object({ slides: z.array(slideSchema).length(numbers.length) }),
+              {
+                phase: 'slides',
+                outline: plannedOutline,
+                firstSlideNumber: numbers[0],
+                slideNumbers: numbers,
+                slideCount: numbers.length,
+                task: `Fully analyze only slides ${numbers.join(', ')}, in that order. Preserve their topics and takeaways. Decide evidence, visuals, calculations, tool steps and layout for EVERY assigned slide.`,
+              },
+              numbers.length === 1 ? 5000 : 9000,
+              (value) => validateEvidence(value.slides),
+              // A failing multi-slide request is split, never repeated unchanged.
+              numbers.length === 1 ? 2 : 1,
+            );
+            section.slides.forEach((slide, index) => {
+              completed.set(numbers[index], slide);
+            });
+          } catch (error) {
+            signal.throwIfAborted();
+            if (numbers.length > 1) {
+              // Stay within three concurrent calls, with smaller requests and
+              // retained successful slides rather than restarting the whole plan.
+              for (const number of numbers) await planSection([number]);
+            } else {
+              issues.push(
+                `Slide ${numbers[0]}: ${error instanceof Error ? error.message : 'Planning service unavailable'}`,
+              );
+            }
+          }
+        }
+        // At most three calls at once. Two-slide sections keep high reasoning
+        // focused enough to finish inside the per-request deadline on GLM too.
         await Promise.all(
-          Array.from({ length: Math.min(3, Math.ceil(count / 4)) }, async () => {
-            while (cursor < count && !signal.aborted) {
+          Array.from({ length: Math.min(3, Math.ceil(pending.length / 2)) }, async () => {
+            while (cursor < pending.length && !signal.aborted) {
               const start = cursor;
-              cursor += 4;
-              const size = Math.min(4, count - start);
-              try {
-                const section = await request(
-                  z.object({ slides: z.array(slideSchema).length(size) }),
-                  {
-                    phase: 'slides',
-                    outline: plannedOutline,
-                    firstSlideNumber: start + 1,
-                    slideCount: size,
-                    task: `Fully analyze only slides ${start + 1}–${start + size}, in order. Preserve their topics and takeaways. Decide evidence, visuals, calculations, tool steps and layout for EVERY assigned slide.`,
-                  },
-                  9000,
-                  (value) => validateEvidence(value.slides),
-                );
-                section.slides.forEach((slide, index) => {
-                  completed.set(start + index + 1, slide);
-                });
-              } catch (error) {
-                signal.throwIfAborted();
-                issues.push(
-                  `Slides ${start + 1}–${start + size}: ${error instanceof Error ? error.message : 'Planning service unavailable'}`,
-                );
-              }
+              cursor += 2;
+              await planSection(pending.slice(start, start + 2));
             }
           }),
         );
@@ -242,7 +272,7 @@ export async function planPresentation(
         issues: gaps,
         nextStep: gaps.length
           ? 'Retrieve the missing evidence using tools, then update the plan. Do not fabricate the missing data.'
-          : 'Execute the planned calculation and asset tool calls, show the complete storyboard picker for confirmation, create the deck, then read it back and verify every slide.',
+          : `Execute the planned calculation and asset tool calls, ${input.delegateRemaining ? 'honor delegated choices without more pickers,' : 'show the complete storyboard picker only if that checkpoint remains unanswered (honor any saved confirmation),'} create the deck with the version 2 presentation brief, then read it back and verify every slide.`,
       };
     }
   } catch (error) {
@@ -266,7 +296,6 @@ export async function planPresentation(
           },
         }
       : {}),
-    nextStep:
-      'Retain the gathered evidence and confirmed choices. Continue NOW in the current agent context using recovery.outline and recovery.completedSlides when present; deeply plan only the unfinished slides. Execute remaining research/calculation tools, then call ask_presentation_choices at stage=storyboard. Do not ask the user to restart or repeat their choices. Convert plan fields to the picker schema: unique id, kind cover/content/divider/close, title <=120, takeaway <=400, recommended (a specific chart type, table, metrics, process, comparison, image or typography), alternatives <=4, evidence references <=4 of <=300 characters. Keep full citations in the plan/notes; never invent chart data. Do not send the raw plan as picker input. A tool validation error means correct its exact fields and retry in this turn. Wait for storyboard confirmation before creating the deck.',
+    nextStep: `Retain the gathered evidence and confirmed choices. Continue NOW: when recovery is present, call presentation_plan with that recovery object, the same evidence and slideCount to finish only pendingSlideNumbers without redoing the outline or completed slides. Otherwise deeply plan the slides in the current agent context. Execute remaining research/calculation tools. ${input.delegateRemaining ? 'The user delegated remaining choices: do not ask any more pickers; finish the storyboard yourself.' : 'Ask only the next unanswered checkpoint in the authoritative session state; never repeat confirmed choices. Wait for storyboard confirmation unless already confirmed or delegated.'} Create the deck with document_create kind=deck and a version 2 presentation brief, never the raw plan or legacy layout slides. Each slide uses role, title, kicker, body, items, notes, visualRole and the relevant chart/table/image data; omit unused supporting copy or use empty strings. Do not ask the user to restart. Never invent chart data.`,
   };
 }

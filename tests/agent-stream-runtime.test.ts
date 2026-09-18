@@ -3,7 +3,10 @@ import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV3 } from 'ai/test';
 import * as gateway from '../lib/ai/gateway';
 import { runAgent } from '../lib/ai/loop';
-import { type PresentationSession } from '../lib/documents/presentation-choices';
+import {
+  type PresentationSession,
+  presentationSessionFromMessages,
+} from '../lib/documents/presentation-choices';
 import { planPresentation } from '../lib/documents/presentation-plan';
 import * as narrative from '../lib/narrative/service';
 import * as memories from '../lib/store/memories';
@@ -82,6 +85,134 @@ async function run(
     .map((line) => JSON.parse(line.slice(6)));
   return { events, steps: await agent.steps, usage, runtimeSpy };
 }
+
+function answeredBrief(delegateRemaining = false) {
+  return presentationSessionFromMessages([
+    {
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-ask_presentation_choices',
+          toolCallId: 'brief',
+          state: 'output-available',
+          input: {
+            presentationId: 'bengals',
+            stage: 'brief',
+            title: 'Cincinnati Bengals: The Last Six Seasons',
+          },
+          output: {
+            presentationId: 'bengals',
+            stage: 'brief',
+            decision: 'continue',
+            delegateRemaining,
+            brief: {
+              audience: 'me',
+              purpose: 'Review the last six seasons',
+              sources: ['provided', 'web'],
+              sourceGuidance: '',
+              contentSlides: 6,
+              sectionBreaks: 2,
+              detail: 'balanced',
+            },
+          },
+        },
+      ],
+    },
+  ]);
+}
+
+function pickerCall(id: string, stage = 'design'): LanguageModelV3StreamPart {
+  return {
+    type: 'tool-call',
+    toolCallId: id,
+    toolName: 'ask_presentation_choices',
+    input: JSON.stringify({
+      presentationId: 'bengals',
+      stage,
+      title: 'Cincinnati Bengals: The Last Six Seasons',
+    }),
+  };
+}
+
+test('a repeated brief is repaired internally and only the next design picker opens', async () => {
+  const session = answeredBrief();
+  const saved = structuredClone(session);
+  const primary = model(
+    [pickerCall('duplicate-brief', 'brief'), finish('tool-calls')],
+    [pickerCall('design'), finish('tool-calls')],
+  );
+  const { events, steps } = await run([primary], undefined, session);
+  expect(steps).toHaveLength(2);
+  const schema = primary.doStreamCalls[0].tools?.find((tool) => tool.name === 'ask_presentation_choices');
+  expect(schema).toMatchObject({
+    inputSchema: {
+      properties: {
+        stage: { const: 'design' },
+        presentationId: { const: 'bengals' },
+      },
+    },
+  });
+  expect(events.filter((event) => event.type === 'tool-input-available')).toEqual([
+    expect.objectContaining({
+      toolCallId: 'design',
+      input: expect.objectContaining({ stage: 'design' }),
+    }),
+  ]);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'tool-output-error',
+      toolCallId: 'duplicate-brief',
+    }),
+  );
+  expect(events.some((event) => event.type === 'error')).toBe(false);
+  expect(session).toEqual(saved);
+});
+
+test('parallel presentation questions expose one picker and pause without replaying the model', async () => {
+  const session = answeredBrief();
+  const primary = model(
+    [pickerCall('first'), pickerCall('duplicate'), finish('tool-calls')],
+    [...textParts('Must wait for the user'), finish()],
+  );
+  const { events } = await run([primary], undefined, session);
+  expect(primary.doStreamCalls).toHaveLength(1);
+  expect(events.filter((event) => event.type === 'tool-input-available')).toEqual([
+    expect.objectContaining({ toolCallId: 'first' }),
+  ]);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'tool-output-error',
+      toolCallId: 'duplicate',
+      errorText: expect.stringContaining('already awaiting'),
+    }),
+  );
+  expect(events.some((event) => event.type === 'error')).toBe(false);
+  expect(session).toEqual(answeredBrief());
+});
+
+test('delegated continuations omit the picker and reject a provider replay without revoking delegation', async () => {
+  const session = answeredBrief(true);
+  const primary = model(
+    [pickerCall('stale-brief', 'brief'), finish('tool-calls')],
+    [...textParts('Continuing with the researched deck.'), finish()],
+  );
+  const { events } = await run([primary], undefined, session);
+  expect(primary.doStreamCalls).toHaveLength(2);
+  for (const call of primary.doStreamCalls) {
+    expect(call.tools?.some((tool) => tool.name === 'ask_presentation_choices')).toBe(false);
+    expect(call.tools?.some((tool) => tool.name === 'presentation_plan')).toBe(true);
+    expect(call.tools?.some((tool) => tool.name === 'document_create')).toBe(true);
+  }
+  expect(events.filter((event) => event.type === 'tool-input-available')).toHaveLength(0);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: 'text-delta',
+      delta: 'Continuing with the researched deck.',
+    }),
+  );
+  expect(events.some((event) => event.type === 'error')).toBe(false);
+  expect(session).toEqual(answeredBrief(true));
+});
 
 test('a planner timeout and malformed storyboard recover in the same stream, then pause for actual user choices', async () => {
   const evidence = [

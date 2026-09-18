@@ -276,9 +276,23 @@ export type PresentationBriefV2 = z.infer<typeof presentationBriefV2Schema>;
 // Structure stays bounded; a paragraph over 320 characters is repairable input.
 const authoringCopy = {
   title: z.string().min(1).max(2000),
-  kicker: z.string().max(1000),
-  body: z.string().max(8000),
-  notes: z.string().max(12000),
+  // Chart/table/statement slides can intentionally omit supporting copy.
+  // Normalize absent text before review, without inventing prose or touching data.
+  kicker: z
+    .string()
+    .max(1000)
+    .nullish()
+    .transform((value) => value ?? ''),
+  body: z
+    .string()
+    .max(8000)
+    .nullish()
+    .transform((value) => value ?? ''),
+  notes: z
+    .string()
+    .max(12000)
+    .nullish()
+    .transform((value) => value ?? ''),
 };
 // Leave room below the 50,000-character persisted slide-note limit for
 // preservation labels and artwork credits. Count JSON escaping as well.
