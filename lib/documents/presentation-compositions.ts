@@ -14,6 +14,9 @@ export const COMPOSITION_ROLES = [
   'statement',
   'image-left',
   'image-right',
+  'image-top',
+  'image-bottom',
+  'image-auto',
   'metrics',
   'chart',
   'table',
@@ -923,6 +926,47 @@ function composeImageSide(
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
 }
 
+/** Choose image geometry from its shape and the amount of visible copy. */
+export function imageLayoutFor(
+  content: CompositionContent,
+): 'image-left' | 'image-right' | 'image-top' | 'image-bottom' {
+  const asset = content.image?.asset ?? content.artwork?.asset;
+  if (!asset || content.items.length > 2 || (content.body?.length ?? 0) > 220) return 'image-right';
+  const aspect = asset.aspect ?? 1.5;
+  if (aspect >= 2.2 && (content.body?.length ?? 0) <= 140) return 'image-top';
+  if (aspect >= 1.4) return 'image-bottom';
+  return aspect < 1 ? 'image-left' : 'image-right';
+}
+
+/** Wide photographs get a separate band; all text stays outside that band. */
+function composeImageBand(
+  content: CompositionContent,
+  options: ComposeSlideOptions,
+  side: 'top' | 'bottom',
+): DeckSlideV2 {
+  const artwork = artworkFor(content);
+  if (!content.image?.asset && !artwork) return composeImageSide(content, options, 'right');
+  const v = voice(options.theme);
+  const s = new Slide(side === 'top' ? 'image-top' : 'image-bottom', options);
+  const top = side === 'top';
+  const imageBox: Box = top ? [6, 6, 88, 38] : [6, 54, 88, 33];
+  if (content.image?.asset) s.image('image', content.image, imageBox, { x: 0.5, y: 0.5 });
+  else if (artwork) s.artwork('image', artwork, imageBox, { x: 0.5, y: 0.5 });
+  kickerLine(s, v, content.kicker, [6, top ? 47 : 8, 40, 4.5]);
+  sectionTitle(s, v, content.title, [6, top ? 55 : 16, 40, 28], 38);
+  if (content.body)
+    s.text('body', content.body, [52, top ? 55 : 16, 42, content.items.length ? 17 : 30], {
+      role: 'body',
+      fontSize: 15,
+      lineHeight: 1.4,
+      valign: 'top',
+    });
+  factsRow(s, v, content.items.slice(0, 2), 52, 42, top ? 75 : 36);
+  if (artwork) s.credit(artwork, top ? [52, 45, 42, 5] : [6, 89, 76, 6], v.c.muted, top ? 'right' : 'left');
+  pageNumber(s, options, v.c.muted, top ? 6 : 86);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
+}
+
 function chartColors(v: Voice) {
   return [v.c.accent, v.c.ink, v.c.muted, v.c.soft];
 }
@@ -1410,6 +1454,8 @@ function notes(content: CompositionContent, artwork?: CompositionArtwork) {
 
 /** Compose one slide through its composition. */
 export function composeSlide(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
+  if (content.role === 'image-auto')
+    return composeSlide({ ...content, role: imageLayoutFor(content) }, options);
   switch (content.role) {
     case 'cover':
       return composeCover(content, options);
@@ -1419,6 +1465,10 @@ export function composeSlide(content: CompositionContent, options: ComposeSlideO
       return composeImageSide(content, options, 'left');
     case 'image-right':
       return composeImageSide(content, options, 'right');
+    case 'image-top':
+      return composeImageBand(content, options, 'top');
+    case 'image-bottom':
+      return composeImageBand(content, options, 'bottom');
     case 'metrics':
       return composeMetrics(content, options);
     case 'table':

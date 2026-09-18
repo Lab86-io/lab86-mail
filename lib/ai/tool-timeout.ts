@@ -9,7 +9,7 @@ export function agentToolTimeoutMs(name: string, args: Record<string, unknown> =
     name === 'document_apply_instruction' ||
     name === 'document_suggest_changes'
   )
-    return 280_000;
+    return 380_000;
   if (
     name === 'presentation_plan' ||
     name === 'albatross_replan_work' ||

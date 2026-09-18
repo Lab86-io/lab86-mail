@@ -8,7 +8,7 @@ import {
   useRef,
   Fragment,
 } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import type {
   OptionListProps,
   OptionListSelection,
@@ -89,6 +89,7 @@ interface OptionItemProps {
   onFocus?: () => void;
   buttonRef?: (el: HTMLButtonElement | null) => void;
   compact?: boolean;
+  media?: ReactNode;
 }
 
 function OptionItem({
@@ -103,6 +104,7 @@ function OptionItem({
   onFocus,
   buttonRef,
   compact,
+  media,
 }: OptionItemProps) {
   const hasAdjacentOptions = !isFirst && !isLast;
 
@@ -110,6 +112,7 @@ function OptionItem({
     <Button
       ref={buttonRef}
       data-id={option.id}
+      data-has-media={media ? "true" : undefined}
       variant="ghost"
       size="lg"
       role="option"
@@ -128,6 +131,7 @@ function OptionItem({
         hasAdjacentOptions && !compact && "py-2.5",
       )}
     >
+      {media && <span data-slot="option-media" aria-hidden="true">{media}</span>}
       <span
         className={cn(
           "bg-primary/5 absolute inset-0 -mx-3 -my-0.5 rounded-xl opacity-0 transition-opacity group-hover:opacity-100",
@@ -238,6 +242,7 @@ export function OptionList({
   onAction,
   onBeforeAction,
   className,
+  renderOptionMedia,
 }: OptionListProps) {
   if (process.env["NODE_ENV"] !== "production") {
     if (value !== undefined && defaultValue !== undefined) {
@@ -610,6 +615,7 @@ export function OptionList({
                       optionRefs.current[index] = el;
                     }}
                     compact={density === "compact"}
+                    media={renderOptionMedia?.(option)}
                     onToggle={() => toggleSelection(option.id)}
                   />
                 </Fragment>

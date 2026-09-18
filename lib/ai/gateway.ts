@@ -60,6 +60,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   albatross_classify: 2000,
   document_generation: 14000,
   presentation_planning: 24000,
+  presentation_layout: 6000,
   presentation_visual_review: 3500,
   document_suggestion: 14000,
   // One structured verdict per message: a handful of area ids plus short

@@ -10,7 +10,7 @@ import {
   requestedPresentationSlideConstraints,
 } from '../lib/documents/presentation-design';
 import { lakeshoreBrief } from './fixtures/presentation-briefs';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 afterEach(() => __setDocumentAiDepsForTest());
 
@@ -171,6 +171,7 @@ describe('document generation guards', () => {
     const brief = lakeshoreBrief();
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({
         object: { ...brief, slides: brief.slides.slice(0, 1) },
@@ -184,6 +185,7 @@ describe('document generation guards', () => {
   test('a version 2 brief that fails its schema is refused as incomplete', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: { title: 'Half a brief' } })) as any,
     });
@@ -195,6 +197,7 @@ describe('document generation guards', () => {
   test('invalid workbook changes are refused before any spreadsheet command runs', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => ({
         object: { title: 'Sheet', summary: 'x', changes: 'nope' },
       })) as any,

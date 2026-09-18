@@ -191,7 +191,7 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
         push('small-type', 'warning', [element.id], `Text "${element.id}" is set under ${MIN_FONT_PT} pt.`);
       if (element.text.trim() && !textFits(element, theme))
         push('overflow', 'error', [element.id], `Text "${element.id}" does not fit its box.`);
-      const background = backgroundUnder(slide, theme, element, index);
+      const background = element.fill ?? backgroundUnder(slide, theme, element, index);
       if (element.text.trim() && background) {
         const ratio = contrastRatio(element.color ?? theme.colors.ink, element.fill ?? background);
         const needed = slot(element) === 'display' && textSize(element) >= 24 ? 3 : 4.5;
@@ -212,14 +212,34 @@ export function checkSlide(slide: DeckSlideV2, theme: DeckTheme): DeckIssue[] {
       [],
       `The slide holds ${words} words; ${MAX_WORDS_PER_SLIDE} is the ceiling.`,
     );
-  const content = slide.elements.filter(isContent);
+  const content = slide.elements.filter(
+    (element) => element.opacity !== 0 && (isContent(element) || element.type === 'image'),
+  );
   for (let i = 0; i < content.length; i += 1)
     for (let j = i + 1; j < content.length; j += 1) {
       const a = content[i];
       const b = content[j];
-      if (a.overlapAllowed || b.overlapAllowed) continue;
+      // Background art may sit behind copy. An image painted after text/data
+      // cannot waive its occlusion through decorative/overlap flags.
+      const coversContent = b.type === 'image' && (a.type === 'text' || a.type === 'chart');
+      if (
+        !coversContent &&
+        (a.overlapAllowed ||
+          b.overlapAllowed ||
+          (a.type === 'image' && a.decorative) ||
+          (b.type === 'image' && b.decorative))
+      )
+        continue;
       const area = overlapArea(a, b);
-      if (area > 0.5) push('overlap', 'error', [a.id, b.id], `"${a.id}" and "${b.id}" overlap.`);
+      if (area > 0.5)
+        push(
+          'overlap',
+          'error',
+          [a.id, b.id],
+          coversContent
+            ? `Image "${b.id}" covers "${a.id}". Move the image or reserve a separate text area; do not hide copy beneath it.`
+            : `"${a.id}" and "${b.id}" overlap.`,
+        );
     }
   return issues;
 }
@@ -230,6 +250,47 @@ export function checkDeck(model: DeckModelV2): DeckQualityReport {
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;
+
+/** Fit intersecting copy beside an image at its existing type size, or leave it
+ * for visual review. Never truncate text or create another content collision. */
+function separateTextFromImages(slide: DeckSlideV2, theme: DeckTheme): DeckSlideV2 {
+  const next = structuredClone(slide);
+  for (const issue of checkSlide(next, theme).filter((item) => item.kind === 'overlap')) {
+    const pair = issue.elementIds.map((id) => next.elements.find((element) => element.id === id)!);
+    const text = pair.find((element): element is TextElement => element.type === 'text');
+    const image = pair.find((element) => element.type === 'image');
+    if (!text || text.locked || !image || text.rotation || image.rotation) continue;
+    const right = text.x + text.width;
+    const bottom = text.y + text.height;
+    const gap = 2;
+    const candidates: TextElement[] = [
+      { ...text, width: Math.min(right, image.x - gap) - text.x },
+      {
+        ...text,
+        x: Math.max(text.x, image.x + image.width + gap),
+        width: right - Math.max(text.x, image.x + image.width + gap),
+      },
+      { ...text, height: Math.min(bottom, image.y - gap) - text.y },
+      {
+        ...text,
+        y: Math.max(text.y, image.y + image.height + gap),
+        height: bottom - Math.max(text.y, image.y + image.height + gap),
+      },
+    ];
+    const candidate = candidates
+      .filter((box) => box.width >= 8 && box.height >= 4 && textFits(box, theme))
+      .sort((a, b) => b.width * b.height - a.width * a.height)
+      .find(
+        (box) =>
+          !checkSlide(
+            { ...next, elements: next.elements.map((element) => (element.id === text.id ? box : element)) },
+            theme,
+          ).some((item) => item.severity === 'error' && item.elementIds.includes(text.id)),
+      );
+    if (candidate) next.elements[next.elements.findIndex((element) => element.id === text.id)] = candidate;
+  }
+  return next;
+}
 
 function clampBox<T extends Box>(element: T): T {
   const width = Math.min(100, Math.max(0, element.width));
@@ -246,14 +307,17 @@ function clampBox<T extends Box>(element: T): T {
 /**
  * Bounded automatic repair: pull elements back on canvas and step overflowing
  * text down in size, never below the readable floor. Returns the repaired deck
- * and the report after the last pass. Overlap, contrast and missing images are
- * not repaired here; they need a design decision.
+ * and the report after the last pass. Image/text intersections use reserved
+ * space when copy fits; unresolved collisions/contrast need a design decision.
  */
 export function repairDeck(
   model: DeckModelV2,
   passes = 3,
 ): { model: DeckModelV2; report: DeckQualityReport } {
-  let current = model;
+  let current =
+    passes > 0
+      ? { ...model, slides: model.slides.map((slide) => separateTextFromImages(slide, model.theme)) }
+      : model;
   let report = checkDeck(current);
   for (let pass = 0; pass < passes && !report.ok; pass += 1) {
     const overflowing = new Set(
@@ -268,6 +332,7 @@ export function repairDeck(
       slides: current.slides.map((slide) => ({
         ...slide,
         elements: slide.elements.map((element) => {
+          if (element.locked) return element;
           let next = element;
           if (offCanvas.has(element.id)) next = clampBox(next);
           if (next.type === 'text' && overflowing.has(next.id)) {

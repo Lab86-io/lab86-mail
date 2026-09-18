@@ -91,6 +91,35 @@ const clean = (options: any) => ({ object: { slideId: currentSlide(options).id, 
 afterEach(() => __setDeckVisualReviewDepsForTest());
 
 describe('image-based slide review', () => {
+  test('a clean vision verdict cannot waive an image covering locked text', async () => {
+    const model = fixture();
+    model.slides = [model.slides[1]];
+    model.slides[0].elements[0].locked = true;
+    model.slides[0].elements.push({
+      id: 'covering-image',
+      type: 'image',
+      src: '/owned.png',
+      alt: 'Source image',
+      x: 5,
+      y: 10,
+      width: 85,
+      height: 20,
+      decorative: true,
+      overlapAllowed: true,
+    });
+    __setDeckVisualReviewDepsForTest({
+      renderDeckSlides: async (deck) => render(deck),
+      generateObjectForCurrentUser: (async (options: any) => {
+        expect(JSON.parse(options.messages[0].content[0].text).measuredLayout[0].kind).toBe('overlap');
+        return clean(options);
+      }) as any,
+    });
+    const result = await reviewDeckVisuals(model, { userId: 'u' });
+    expect(result.report.status).toBe('needs_review');
+    expect(JSON.stringify(result.report.issues)).toContain('covers');
+    expect(result.model.slides[0].elements[0]).toEqual(model.slides[0].elements[0]);
+  });
+
   test('browser-measured text clipping cannot be approved by a clean model verdict', async () => {
     __setDeckVisualReviewDepsForTest({
       renderDeckSlides: async (model) =>
@@ -191,6 +220,33 @@ describe('image-based slide review', () => {
     expect(result.slides[0]).toEqual(model.slides[0]);
   });
 
+  test('reconsiders a rejected repair with its attempted geometry and specific collision feedback', async () => {
+    let attempts = 0;
+    __setDeckVisualReviewDepsForTest({
+      renderDeckSlides: async (model) => render(model),
+      generateObjectForCurrentUser: (async (options: any) => {
+        const input = JSON.parse(options.messages[0].content[0].text);
+        if (input.slide.id === 'two' || input.slide.elements[1].rotation === 0) return clean(options);
+        attempts++;
+        if (attempts === 2) {
+          expect(input.rejectedRepair.fixes[0].y).toBe(5);
+          expect(input.rejectedRepair.reason).toContain('overlap');
+        }
+        return {
+          object: {
+            slideId: 'one',
+            issues: [{ elementId: 'graph', description: 'Upside down' }],
+            fixes: [attempts === 1 ? fix({ y: 5 }) : fix()],
+          },
+        };
+      }) as any,
+    });
+    const result = await reviewDeckVisuals(fixture(), { userId: 'u' });
+    expect(result.report.status).toBe('passed');
+    expect(attempts).toBe(2);
+    expect(result.model.slides[0].elements[1].rotation).toBe(0);
+  });
+
   test('rejects invented elements, off-canvas fixes, and new overlaps', () => {
     const model = fixture();
     for (const patch of [fix({ elementId: 'invented' }), fix({ x: 99 }), fix({ y: 5 })]) {
@@ -203,6 +259,32 @@ describe('image-based slide review', () => {
     }
     expect(applyVisualRepairs(model, { slideId: 'absent', issues: [], fixes: [] })).toBe(model);
     expect(applyVisualRepairs(model, { slideId: 'one', issues: [], fixes: [fix()] } as any)).toBe(model);
+  });
+
+  test('visual repairs retain the chosen accent palette when moving decorations', () => {
+    const model = fixture();
+    model.slides[1].elements.push({
+      id: 'accent',
+      type: 'shape',
+      x: 5,
+      y: 40,
+      width: 10,
+      height: 1,
+      fill: model.theme.colors.accent,
+    });
+    const rejected = mock((_reason: string) => {});
+    const review = {
+      slideId: 'two',
+      issues: [{ elementId: 'accent', description: 'Move the accent away from the label' }],
+      fixes: [fix({ elementId: 'accent', y: 50, fill: '#1f6feb' })],
+    };
+    expect(applyVisualRepairs(model, review, rejected)).toBe(model);
+    expect(rejected.mock.calls[0][0]).toContain('palette');
+    review.fixes[0].fill = model.theme.colors.accent;
+    expect(applyVisualRepairs(model, review).slides[1].elements[1]).toMatchObject({
+      y: 50,
+      fill: model.theme.colors.accent,
+    });
   });
 
   test('unfixable visual problems remain explicit and never become a pass', async () => {
