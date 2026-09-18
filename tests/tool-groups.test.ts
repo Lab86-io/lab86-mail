@@ -112,6 +112,17 @@ describe('tool groups', () => {
     expect(lifted[ENABLE_TOOLS_NAME].description).toContain('smart_labels');
   });
 
+  test('presentation questions are unavailable after delegation, cancellation or a pending question', () => {
+    expect(activeToolsForStep(allNames, [], [], {})).toContain('ask_presentation_choices');
+    for (const session of [{ delegate: true }, { cancelled: true }])
+      expect(activeToolsForStep(allNames, [], [], session)).not.toContain('ask_presentation_choices');
+    const call = { type: 'tool-call', toolName: 'ask_presentation_choices' };
+    expect(activeToolsForStep(allNames, [], [{ content: [call] }])).not.toContain('ask_presentation_choices');
+    expect(activeToolsForStep(allNames, [], [{ content: [{ ...call, invalid: true }] }])).toContain(
+      'ask_presentation_choices',
+    );
+  });
+
   test('enable_tools has a sentence and no card', () => {
     expect(toolActivityLine(ENABLE_TOOLS_NAME, { groups: ['areas'] }, 'input-available').text).toBe(
       'Loading areas tools…',
@@ -143,5 +154,16 @@ describe('tool groups', () => {
     const prompt = buildSystemPrompt();
     for (const group of TOOL_GROUP_NAMES) expect(prompt).toContain(group);
     expect(prompt).toContain('call enable_tools with the group first');
+  });
+
+  test('agent deck creation advertises only the modern native chart/table contract', () => {
+    const schema = JSON.stringify(lifted.document_create.inputSchema.jsonSchema);
+    expect(schema).toContain('"role"');
+    expect(schema).toContain('"chart"');
+    expect(schema).toContain('"table"');
+    expect(schema).not.toContain('"layout"');
+    const planner = JSON.stringify(lifted.presentation_plan.inputSchema.jsonSchema);
+    expect(planner).toContain('"recovery"');
+    expect(planner).toContain('"completedSlides"');
   });
 });

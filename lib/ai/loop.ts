@@ -11,6 +11,7 @@ import { narrativePrompt } from '../narrative/service';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
+import { documentCreate } from '../tools/documents';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, toolExecutionKey } from './execution';
@@ -306,7 +307,13 @@ export function liftToolsForAgent(
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     lifted[name] = aiTool({
       description: t.description,
-      inputSchema: modelInputSchema(t.input),
+      // Keep legacy briefs readable by the registry, but offer the agent one
+      // creation contract with native charts/tables, including during recovery.
+      inputSchema: modelInputSchema(
+        name === 'document_create'
+          ? documentCreate.input.safeExtend({ presentation: presentationAuthoringV2Schema.optional() })
+          : t.input,
+      ),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         const context = getAiRequestContext();
         if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
@@ -376,6 +383,7 @@ export function liftToolsForAgent(
             userName: context.userName,
             operationBatchId,
             userTimezone,
+            presentationChoicesDelegated: presentationSession?.delegate,
             runId: context.runId,
             toolExecutionKey: key,
             abortSignal,
@@ -555,24 +563,27 @@ export function liftToolsForAgent(
         .max(5),
     }),
   });
+  let presentationQuestionPending = false;
+  const presentationChoiceSchema = presentationChoiceSchemaForSession(presentationSession).superRefine(
+    (_input, ctx) => {
+      if (presentationQuestionPending)
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'A presentation question is already awaiting the user. Wait for that answer; do not open another picker.',
+        });
+    },
+  );
   lifted[PRESENTATION_CHOICE_TOOL] = aiTool({
     description:
       'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and optional design notes), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Mix relevant artwork, user-provided images, and data visuals as needed; never ask the user to choose a single imagery category for the deck. Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
     // Client tools have no invokeTool validation. Validate here so SDK tool-error
     // results reach the model for repair instead of stranding an unusable card.
-    inputSchema: modelInputSchema(presentationChoiceSchemaForSession(presentationSession), true),
-    onInputAvailable: ({ input }: { input: any }) => {
-      // A new question pauses writes even when an earlier storyboard was confirmed.
-      if (presentationSession) {
-        delete presentationSession.storyboard;
-        delete presentationSession.visuals;
-        presentationSession.delegate = false;
-        if (input.stage === 'brief') {
-          delete presentationSession.brief;
-          delete presentationSession.design;
-        }
-        if (input.stage === 'design') delete presentationSession.design;
-      }
+    inputSchema: modelInputSchema(presentationChoiceSchema, true),
+    onInputAvailable: () => {
+      // Serial SDK validation rejects a second card in the same response.
+      // Only submitted user results can change confirmed choices/delegation.
+      presentationQuestionPending = true;
     },
   });
   // On-demand tool groups (lib/ai/tool-groups.ts). The call itself is the
@@ -770,6 +781,7 @@ interface AgentStreamOptions {
   tools: Record<string, any>;
   /** Tool groups active from the first step (from the chat scope). */
   toolGroups?: string[];
+  presentationSession?: PresentationSession;
   signal?: AbortSignal;
 }
 
@@ -781,8 +793,24 @@ export function activeToolsForStep(
   toolNames: Iterable<string>,
   initialGroups: readonly string[],
   steps: ReadonlyArray<{ content?: unknown }>,
+  presentationSession?: PresentationSession,
 ): string[] {
-  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]);
+  const next = presentationSession ? nextPresentationCheckpoint(presentationSession) : 'brief';
+  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]).filter(
+    (name) =>
+      name !== PRESENTATION_CHOICE_TOOL ||
+      (!!next && next !== 'cancelled' && !hasPendingPresentationQuestion(steps)),
+  );
+}
+
+function hasPendingPresentationQuestion(steps: ReadonlyArray<{ content?: unknown }>) {
+  return steps.some(
+    (step) =>
+      Array.isArray(step.content) &&
+      step.content.some(
+        (part) => part?.type === 'tool-call' && part.toolName === PRESENTATION_CHOICE_TOOL && !part.invalid,
+      ),
+  );
 }
 
 /** A planned deck needs room for research, workbook calculations, composition and verification. */
@@ -819,12 +847,14 @@ async function streamAgentTurn(
       system: options.system,
       messages: options.messages,
       tools: options.tools,
-      activeTools: activeToolsForStep(toolNames, initialGroups, []),
-      prepareStep: ({ steps }) => ({ activeTools: activeToolsForStep(toolNames, initialGroups, steps) }),
+      activeTools: activeToolsForStep(toolNames, initialGroups, [], options.presentationSession),
+      prepareStep: ({ steps }) => ({
+        activeTools: activeToolsForStep(toolNames, initialGroups, steps, options.presentationSession),
+      }),
       abortSignal: options.signal,
       // Multi-step flows (fetch a file → store → attach → send) need headroom
       // beyond the old 6-step cap.
-      stopWhen: ({ steps }) => steps.length >= agentStepLimit(steps),
+      stopWhen: ({ steps }) => steps.length >= agentStepLimit(steps) || hasPendingPresentationQuestion(steps),
       // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
       // that OpenRouter 402s on); leaves room for reasoning + a reply.
       maxOutputTokens: maxOutputTokensForFeature(feature),
@@ -991,14 +1021,23 @@ export async function runAgent({
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
               const choiceContext = presentationSession
-                ? `Presentation checkpoint state (confirmed user choices): ${JSON.stringify({ next: nextPresentationCheckpoint(presentationSession), presentationId: presentationSession.presentationId, brief: presentationSession.brief, design: presentationSession.design, storyboard: presentationSession.storyboard, visuals: presentationSession.visuals, guidance: presentationSession.guidance, delegated: presentationSession.delegate })}`
+                ? `Presentation checkpoint state (authoritative confirmed user choices): ${JSON.stringify({ next: nextPresentationCheckpoint(presentationSession), presentationId: presentationSession.presentationId, brief: presentationSession.brief, design: presentationSession.design, storyboard: presentationSession.storyboard, visuals: presentationSession.visuals, guidance: presentationSession.guidance, delegated: presentationSession.delegate })}\nAsk only the next unanswered checkpoint shown here, once. Never restart the brief or change the presentationId. If next is null, no questions remain: gather any missing evidence, plan, create and visually verify the deck using the saved choices. Delegation remains in force; do not replace a disabled picker with ask_user or prose questions. If next is cancelled, stop presentation creation.`
                 : '';
               const system = [base, extraSystem, narrative, choiceContext, agentTimeContext(timezone)]
                 .filter(Boolean)
                 .join('\n\n');
 
               const outcome = await runWithAiRequestContext(requestContext, () =>
-                streamAgentTurn(writer, { runId, userId, system, messages, tools, toolGroups, signal }),
+                streamAgentTurn(writer, {
+                  runId,
+                  userId,
+                  system,
+                  messages,
+                  tools,
+                  toolGroups,
+                  presentationSession,
+                  signal,
+                }),
               );
               completed = outcome.steps;
               writer.write(
@@ -1054,3 +1093,4 @@ import {
   type PresentationSession,
   presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';
+import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';

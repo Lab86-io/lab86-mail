@@ -18,6 +18,11 @@ export const presentationPlan = defineTool({
     audience: z.string().min(1).max(2000),
     evidence: z.array(presentationEvidenceSchema).max(80),
     slideCount: z.number().int().min(1).max(30).optional(),
+    recovery: presentationPlanningRecoverySchema
+      .optional()
+      .describe(
+        'Resume a returned partial plan with the same evidence and slideCount; only unfinished slides are planned.',
+      ),
   }),
   output: z.object({
     ok: z.boolean(),
@@ -29,6 +34,11 @@ export const presentationPlan = defineTool({
   }),
   handler: async (args, ctx) => {
     if (!ctx.userId) throw new Error('Not authenticated.');
-    return planPresentation({ ...args, userId: ctx.userId, abortSignal: ctx.abortSignal });
+    return planPresentation({
+      ...args,
+      userId: ctx.userId,
+      abortSignal: ctx.abortSignal,
+      delegateRemaining: ctx.presentationChoicesDelegated,
+    });
   },
 });

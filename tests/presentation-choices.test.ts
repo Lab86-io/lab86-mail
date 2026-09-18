@@ -199,7 +199,13 @@ describe('guided presentation preferences', () => {
       imagery: null,
       slides: slides.map((slide) => ({ ...slide, chart: slide.chart ?? null, table: null })),
     };
-    expect(presentationChoiceSchemaForSession(ready()).safeParse(input).success).toBe(true);
+    expect(
+      presentationChoiceSchemaForSession({
+        presentationId: 'deck',
+        brief: { ...brief, sources: ['provided'] },
+        design,
+      }).safeParse(input).success,
+    ).toBe(true);
     const restored = presentationSessionFromMessages(
       messages([part('brief'), part('design'), part('storyboard', {}, input)]),
     );
@@ -217,7 +223,11 @@ describe('guided presentation preferences', () => {
     ).toBe(false);
   });
   test('server validation catches unreviewable sequences, unsupported visuals and mismatched confirmed counts', () => {
-    const schema = presentationChoiceSchemaForSession(ready());
+    const schema = presentationChoiceSchemaForSession({
+      presentationId: 'deck',
+      brief: { ...brief, sources: ['provided'] },
+      design,
+    });
     for (const input of [
       { ...part('storyboard').input, presentationId: 'wrong' },
       { ...part('storyboard').input, slides: [...slides].reverse() },
@@ -285,7 +295,7 @@ describe('guided presentation preferences', () => {
       nextPresentationCheckpoint(
         presentationSessionFromMessages(messages([...messages()[0].parts, pending])),
       ),
-    ).toBe('design');
+    ).toBeNull();
     const revised = presentationSessionFromMessages(
       messages([
         ...messages()[0].parts,
@@ -343,6 +353,135 @@ describe('guided presentation preferences', () => {
         ]),
       ),
     ).toBeNull();
+  });
+  test('Bengals replay retains submitted choices and delegation through duplicate and pending brief cards', () => {
+    const bengals = {
+      ...brief,
+      audience: 'me',
+      contentSlides: 6,
+      sectionBreaks: 2,
+      sources: ['provided', 'web'],
+    };
+    const receipt = (id: string, output: any = {}) =>
+      part(
+        'brief',
+        { presentationId: id, brief: bengals, ...output },
+        {
+          presentationId: id,
+          title: 'Cincinnati Bengals: The Last Six Seasons',
+        },
+      );
+    const repeated = messages([
+      receipt('bengals'),
+      receipt('bengals'),
+      receipt('bengals-retry'),
+      receipt('bengals-retry', {
+        brief: { ...bengals, sources: ['provided'] },
+      }),
+      receipt('bengals-retry', { brief: undefined, delegateRemaining: true }),
+      receipt('bengals-again'),
+      receipt('bengals-again'),
+      { ...receipt('invented-id'), state: 'input-available' },
+      { ...receipt('invented-id'), state: 'output-error', output: undefined },
+    ]);
+    const restored = presentationSessionFromMessages(repeated.map(compactMessage));
+    expect(restored).toMatchObject({
+      presentationId: 'bengals-again',
+      brief: bengals,
+      delegate: true,
+    });
+    expect(nextPresentationCheckpoint(restored)).toBeNull();
+    expect(
+      presentationChoiceSchemaForSession(restored).safeParse(receipt('bengals-again').input).success,
+    ).toBe(false);
+  });
+  test('pending and invalid retries cannot erase confirmed checkpoints or delegation', () => {
+    for (const stage of ['brief', 'design', 'storyboard'] as const) {
+      for (const retry of [
+        { ...part(stage), state: 'input-available' },
+        { ...part(stage), output: {} },
+        part(stage),
+      ]) {
+        const restored = presentationSessionFromMessages(messages([...messages()[0].parts, retry]));
+        expect(restored).toEqual(ready());
+      }
+    }
+    const delegated = presentationSessionFromMessages([
+      {
+        role: 'user',
+        parts: [{ type: 'text', text: 'Generate a presentation, decide for me' }],
+      },
+      ...messages([{ ...part('brief'), state: 'input-available' }]),
+    ]);
+    expect(delegated.delegate).toBe(true);
+    expect(nextPresentationCheckpoint(delegated)).toBeNull();
+  });
+  test('only the next unanswered stage and the saved ID can be requested', () => {
+    const state = presentationSessionFromMessages(messages([part('brief')]));
+    const schema = presentationChoiceSchemaForSession(state);
+    expect(schema.safeParse(part('design').input).success).toBe(true);
+    for (const input of [
+      part('brief').input,
+      part('storyboard').input,
+      part('design', {}, { presentationId: 'new' }).input,
+    ])
+      expect(schema.safeParse(input).success).toBe(false);
+    // Runtime validation still honors a later delegation/cancellation.
+    state.delegate = true;
+    expect(schema.safeParse(part('design').input).success).toBe(false);
+    state.delegate = false;
+    state.cancelled = true;
+    expect(schema.safeParse(part('design').input).success).toBe(false);
+    expect(presentationChoiceSchemaForSession(ready()).safeParse(part('storyboard').input).success).toBe(
+      false,
+    );
+    const initial: PresentationSession = {};
+    const initialSchema = presentationChoiceSchemaForSession(initial);
+    initial.brief = { ...brief, sources: ['provided'] };
+    expect(initialSchema.safeParse(part('brief').input).success).toBe(false);
+  });
+  test('actual user changes invalidate affected confirmations while simple continuation retains them', () => {
+    const user = (text: string) => ({
+      role: 'user',
+      parts: [{ type: 'text', text }],
+    });
+    for (const text of [
+      'Build the presentation now',
+      'Generate this deck',
+      'Continue',
+      'Change the title',
+      "Don't change the theme",
+    ])
+      expect(presentationSessionFromMessages([...messages(), user(text)])).toEqual(ready());
+    for (const [text, stage] of [
+      ['Revisit the brief', 'brief'],
+      ['Change the theme', 'design'],
+      ['Revise the storyboard', 'storyboard'],
+    ]) {
+      const session = presentationSessionFromMessages([...messages(), user(text)]);
+      expect(nextPresentationCheckpoint(session)).toBe(stage);
+      expect(session.guidance).toBe(text);
+      expect(session.storyboard).toBeUndefined();
+    }
+    for (const stage of ['brief', 'design', 'storyboard'] as const) {
+      const session = presentationSessionFromMessages(
+        messages([...messages()[0].parts, part(stage, { decision: 'revise', guidance: 'Please revise' })]),
+      );
+      expect(nextPresentationCheckpoint(session)).toBe(stage);
+      expect(session.delegate).toBe(false);
+    }
+    for (const text of ['Generate another presentation', 'Create a presentation about another team'])
+      expect(presentationSessionFromMessages([...messages(), user(text)])).toEqual({});
+    const changedBrief = presentationSessionFromMessages(
+      messages([...messages()[0].parts, part('brief', { brief: { ...brief, contentSlides: 6 } })]),
+    );
+    expect(changedBrief.design).toEqual(design);
+    expect(nextPresentationCheckpoint(changedBrief)).toBe('storyboard');
+    const changedDesign = presentationSessionFromMessages(
+      messages([...messages()[0].parts, part('design', { design: { ...design, theme: 'rose' } })]),
+    );
+    expect(changedDesign.design?.theme).toBe('rose');
+    expect(nextPresentationCheckpoint(changedDesign)).toBe('storyboard');
   });
   test('rejects mismatched counts, duplicates, unsupported visuals and incomplete sequences', () => {
     for (const bad of [
@@ -561,11 +700,15 @@ describe('guided presentation preferences', () => {
     expect(await tools.document_create.execute({ kind: 'deck' })).toMatchObject({
       status: 'needs_presentation_brief',
     });
-    await tools.ask_presentation_choices.onInputAvailable({ input: part('design').input });
-    expect(nextPresentationCheckpoint(state)).toBe('design');
-    expect(state.delegate).toBe(false);
-    await tools.ask_presentation_choices.onInputAvailable({ input: part('brief').input });
-    expect(nextPresentationCheckpoint(state)).toBe('brief');
+    await tools.ask_presentation_choices.onInputAvailable({
+      input: part('design').input,
+    });
+    expect(nextPresentationCheckpoint(state)).toBeNull();
+    expect(state).toEqual(ready());
+    await tools.ask_presentation_choices.onInputAvailable({
+      input: part('brief').input,
+    });
+    expect(nextPresentationCheckpoint(state)).toBeNull();
     const proposal = mock(async (input: any) => {
       throw new Error(
         `Reached generation: ${input.presentation.palette}/${input.presentation.fontPair}/${input.artwork}`,
