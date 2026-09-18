@@ -13,6 +13,15 @@
   background: var(--color-content);
 }
 
+/* The rail already includes its own horizontal inset. An extra workspace
+   gutter makes the collapsed icons' right inset wider than their left, and
+   separates the expanded resize seam from the panel edge. */
+@media (min-width: 768px) {
+  .workspace-panel {
+    margin-inline-start: 0;
+  }
+}
+
 .rail-wash[data-slot="sidebar-container"] {
   border-inline-end: 0;
   background-color: transparent;
@@ -20,7 +29,7 @@
 
 .rail-resize-outline {
   position: absolute;
-  inset-block: var(--radius-panel);
+  inset-block: calc(var(--workspace-gutter) + var(--radius-panel));
   inset-inline-start: 50%;
   width: 1px;
   background: transparent;

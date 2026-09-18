@@ -53,12 +53,12 @@ export const metadata: Metadata = {
   },
 };
 
-// Static values (matching --color-bg in globals.css) — CSS variables don't
-// resolve in the theme-color meta tag, which is parsed before any stylesheet.
+// Default workspace-frame colors before hydration. BrowserThemeColor then
+// follows the resolved app theme and the user's live palette, not just OS mode.
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f6f8fb' },
-    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+    { media: '(prefers-color-scheme: light)', color: '#d2e0d6' },
+    { media: '(prefers-color-scheme: dark)', color: '#19211c' },
   ],
 };
 
