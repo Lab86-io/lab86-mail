@@ -1,6 +1,5 @@
 /** Actual AppShell + AIBar; all transport is deterministic and synthetic. */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider } from 'next-themes';
 import { createRoot } from 'react-dom/client';
 import { CalendarProvider } from '../../components/calendar/engine/calendar-context';
 import { CalendarHeader } from '../../components/calendar/engine/calendar-header';
@@ -8,6 +7,7 @@ import { NativeFilesWorkspace } from '../../components/files/NativeFilesWorkspac
 import { NarrativeProse } from '../../components/narrative/NarrativeProse';
 import { FrameGallery } from '../../components/report/brief-canvas/FrameGallery';
 import { AppShell } from '../../components/shell/AppShell';
+import { ThemeProvider } from '../../components/shell/ThemeProvider';
 import { useClientStore } from '../../lib/client-state';
 import { AlbatrossStylesPreview } from './albatross-styles-preview';
 import {
@@ -259,7 +259,7 @@ const client = (window as any).__previewQueryClient;
 (window as any).__previewRoot ??= createRoot(document.getElementById('root')!);
 const previewRoot = (window as any).__previewRoot;
 previewRoot.render(
-  <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+  <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
     <QueryClientProvider client={client}>
       {new URLSearchParams(location.search).get('review') === 'native-files' ? (
         <NativeFilesWorkspace clerkEnabled={false} />

@@ -1,6 +1,6 @@
 'use client';
 
-// Odyssey UI's layered prompt card, wired to Albatross's controlled composer.
+// Odyssey UI prompt card with one shared Albatross corner/border owner.
 import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -43,36 +43,34 @@ export function PromptInput({
     <div
       data-slot="prompt-input"
       className={cn(
-        'rounded-3xl border border-[var(--color-control-border)] bg-[var(--color-control)]/50 p-1.5 backdrop-blur-sm',
+        'relative flex w-full min-w-0 flex-col rounded-ui border border-[var(--color-control-border)] bg-[var(--color-field)] pt-1 shadow-xs focus-within:border-[var(--color-accent)]',
         className,
       )}
       {...props}
     >
-      <div className="relative flex w-full min-w-0 flex-col rounded-[20px] border border-[var(--color-control-border)] bg-[var(--color-field)] pt-1 shadow-xs focus-within:border-[var(--color-accent)]">
-        {before}
-        {field ?? (
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(event) => onValueChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
-              onKeyDown?.(event);
-              if (!event.defaultPrevented && event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                if (!disabled) onSubmit?.();
-              }
-            }}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            disabled={disabled}
-            rows={1}
-            className="min-h-11 w-full resize-none border-none bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
-            style={{ maxHeight }}
-          />
-        )}
-        {children}
-      </div>
+      {before}
+      {field ?? (
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            onKeyDown?.(event);
+            if (!event.defaultPrevented && event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              if (!disabled) onSubmit?.();
+            }
+          }}
+          placeholder={placeholder}
+          aria-label={placeholder}
+          disabled={disabled}
+          rows={1}
+          className="min-h-11 w-full resize-none border-none bg-transparent px-3 py-2 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+          style={{ maxHeight }}
+        />
+      )}
+      {children}
     </div>
   );
 }
