@@ -10,6 +10,7 @@ export interface WorkChatContextData {
     workState?: string | null;
     primaryAreaId?: string | null;
     shape?: string | null;
+    replyWatch?: { requirement: string; senderEmails: string[] } | null;
   };
   plan?: {
     _id?: string;
@@ -81,6 +82,12 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
     line('Title', detail.work.title || detail.work.rawText, 400),
     line('Original outcome request', detail.work.rawText, 2_000),
     line('Work state', detail.work.workState || detail.work.status, 80),
+    line(
+      'Waiting for reply',
+      detail.work.replyWatch
+        ? `${detail.work.replyWatch.senderEmails.join(', ')}: ${detail.work.replyWatch.requirement}`
+        : '',
+    ),
     line('Work shape', resolveShape(detail.work.shape)),
     line('Shape policy', JSON.stringify(SHAPE_POLICY[resolveShape(detail.work.shape)])),
     line('Current plan id', plan?._id, 180),
@@ -116,6 +123,7 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
     'Behavior for this attached Work:',
     `- Keep this Work attached unless the user explicitly broadens the conversation.`,
     `- If the user says this outcome is finished, call albatross_complete_work with their statement. Do not research, ask for proof, or replan completed Work.`,
+    `- Waiting for email: use albatross_record_progress.waitingForReply with the sent thread. It watches automatically; do not replan waiting or paused Work.`,
     `- If the user corrects partial progress or answers an open question, treat their statement as authoritative, search relevant connected sources for corroborating evidence, then call albatross_record_progress before albatross_replan_work, and replan only while Work remains open.`,
     `- When the user's message resolves any open question listed above, the albatross_record_progress call MUST include a questionAnswers entry with that exact questionId and the user's answer. An answer that never reaches questionAnswers leaves the Work blocked on a question the user already answered.`,
     `- Search Granola first when meetings or spoken decisions may contain the evidence. Search mail, files, calendar, tasks, GitHub, and the web when relevant; use connection-status tools instead of assuming a source is absent.`,

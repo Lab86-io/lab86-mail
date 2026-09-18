@@ -21,6 +21,7 @@ import type * as albatrossEvidence from "../albatrossEvidence.js";
 import type * as albatrossIntents from "../albatrossIntents.js";
 import type * as albatrossModel from "../albatrossModel.js";
 import type * as albatrossNotifications from "../albatrossNotifications.js";
+import type * as albatrossReplies from "../albatrossReplies.js";
 import type * as albatrossRoutines from "../albatrossRoutines.js";
 import type * as albatrossWork from "../albatrossWork.js";
 import type * as albatrossWorkV2 from "../albatrossWorkV2.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   albatrossIntents: typeof albatrossIntents;
   albatrossModel: typeof albatrossModel;
   albatrossNotifications: typeof albatrossNotifications;
+  albatrossReplies: typeof albatrossReplies;
   albatrossRoutines: typeof albatrossRoutines;
   albatrossWork: typeof albatrossWork;
   albatrossWorkV2: typeof albatrossWorkV2;

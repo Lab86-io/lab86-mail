@@ -378,6 +378,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index('by_user_received', ['userId', 'receivedAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
@@ -1150,6 +1151,28 @@ export default defineSchema({
     // an expected mail confirmation. The watcher conductor polls these.
     mailWatchAt: v.optional(v.number()),
     mailWatchClaimedAt: v.optional(v.number()),
+    replyWatch: v.optional(
+      v.object({
+        id: v.string(),
+        accountId: v.string(),
+        threadId: v.string(),
+        senderEmails: v.array(v.string()),
+        requirement: v.string(),
+        after: v.number(),
+        startedAt: v.number(),
+      }),
+    ),
+    replyReceivedAt: v.optional(v.number()),
+    replyArrived: v.optional(
+      v.object({
+        accountId: v.string(),
+        threadId: v.string(),
+        messageId: v.string(),
+        from: v.string(),
+        subject: v.string(),
+        reason: v.string(),
+      }),
+    ),
     pendingStepEvidence: v.optional(
       v.object({
         planId: v.string(),
@@ -1272,6 +1295,7 @@ export default defineSchema({
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_mail_watch', ['mailWatchAt'])
+    .index('by_user_reply_received', ['userId', 'replyReceivedAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
     .index('by_capture', ['captureId']),
 

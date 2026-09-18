@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import { proofMatchScore, proofOfferAllowed, threadPrimaryCategory } from '@/lib/albatross/proof-match';
+import { checkWaitingReplies } from '@/lib/albatross/reply-watch-runtime';
 import { completeWorkStep } from '@/lib/albatross/step-execution';
 import { type StepVerification, stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { isInternalCronRequest } from '@/lib/cron-auth';
@@ -67,6 +68,15 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         userId,
         workId,
       });
+      if (detail?.work?.replyWatch && detail.work.workState === 'waiting') {
+        const replies = await checkWaitingReplies({ userId, workId }, deps);
+        await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+          userId,
+          workId,
+          stillWatching: true,
+        });
+        return NextResponse.json({ ok: true, ...replies, completedSteps: 0 });
+      }
       const steps: WatchableStep[] = detail?.execution?.guideSteps || [];
       // A confirmed step is final. It is never watched again.
       const outstanding = steps.filter(

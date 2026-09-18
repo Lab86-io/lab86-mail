@@ -301,6 +301,25 @@ const artifactSteps = [
 ];
 
 describe('reconcileWorkTurn', () => {
+  test('a saved waiting report is not replanned by post-chat reconciliation', async () => {
+    const state = harness({ detail: { work: { _id: 'w1', workState: 'waiting' }, questions: [] } });
+    try {
+      const outcome = await reconcileWorkTurn({
+        ...baseInput,
+        uiMessages: [],
+        steps: [
+          step([
+            call('wait', 'albatross_record_progress', { workId: 'w1', claim: 'Waiting on Jolie' }),
+            result('wait', { ok: true, state: 'waiting' }),
+          ]),
+        ],
+      });
+      expect(outcome.advanced).toBe(false);
+      expect(state.advances).toHaveLength(0);
+    } finally {
+      state.restore();
+    }
+  });
   test('records chat artifacts on the Work and replans', async () => {
     const state = harness();
     try {

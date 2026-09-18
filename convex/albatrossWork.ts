@@ -907,6 +907,22 @@ export const dailyReportContext = query({
       areas,
       checkins,
       intentWork,
+      resumedWork: (
+        await ctx.db
+          .query('albatrossIntents')
+          .withIndex('by_user_reply_received', (q) =>
+            q.eq('userId', userId).gt('replyReceivedAt', now() - 36 * 60 * 60_000),
+          )
+          .order('desc')
+          .take(30)
+      )
+        .filter((work) => work.workState === 'active' && work.replyArrived)
+        .map((work) => ({
+          id: String(work._id),
+          title: work.title || work.rawText,
+          areaId: work.primaryAreaId || work.areaId,
+          reply: work.replyArrived,
+        })),
     };
   },
 });

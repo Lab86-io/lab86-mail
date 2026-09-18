@@ -4,6 +4,7 @@ import { invokeTool } from '../lib/tools/registry';
 import { runTool } from './tools/harness';
 
 const apiMock = {
+  albatrossReplies: { recordProgress: 'albatrossReplies.recordProgress' },
   albatrossWork: {
     createProject: 'albatross.createProject',
     updateProject: 'albatross.updateProject',
@@ -78,6 +79,19 @@ async function convexMutationMock(fn: string, args: any) {
   mutationCalls.push({ fn, args });
   sequence += 1;
   if (fn === apiMock.albatrossWorkV2.completeWork) return { state: 'done', title: 'Monro' };
+  if (fn === apiMock.albatrossReplies.recordProgress) {
+    workDetailFixture.evidence = [
+      ...(workDetailFixture.evidence || []),
+      {
+        claim: args.claim,
+        title: 'Progress reported in Albatross chat',
+        sourceKind: 'chat',
+        trust: 'confirmed',
+      },
+    ];
+    if (args.waitingForReply) workDetailFixture.work.workState = 'waiting';
+    return { state: workDetailFixture.work.workState || 'active' };
+  }
   if (fn === apiMock.albatrossWorkV2.attachProof && workDetailFixture) {
     workDetailFixture = {
       ...workDetailFixture,
@@ -845,6 +859,7 @@ describe('Albatross tools', () => {
         {
           sourceKind: 'mail_thread',
           sourceId: 'receipt_thread',
+          accountId: 'personal',
           title: 'Passport photo receipt',
           summary: 'Purchase confirmation from the photo service.',
           trust: 'observed',
@@ -859,12 +874,15 @@ describe('Albatross tools', () => {
       questionsAnswered: 1,
     });
     const proofWrites = mutationCalls.filter((call) => call.fn === apiMock.albatrossWorkV2.attachProof);
-    expect(proofWrites).toHaveLength(2);
-    expect(proofWrites[0].args).toMatchObject({ sourceKind: 'chat', trust: 'confirmed' });
-    expect(proofWrites[1].args).toMatchObject({
+    expect(proofWrites).toHaveLength(1);
+    expect(
+      mutationCalls.find((call) => call.fn === apiMock.albatrossReplies.recordProgress)?.args.claim,
+    ).toBe('I already bought the passport photo package.');
+    expect(proofWrites[0].args).toMatchObject({
       sourceKind: 'mail_thread',
       sourceId: 'receipt_thread',
       trust: 'observed',
+      settleContract: false,
     });
     expect(mutationCalls.some((call) => call.fn === apiMock.albatrossWorkV2.answerQuestion)).toBe(true);
 
@@ -1120,4 +1138,77 @@ test('a failed optional attachment returns saved progress and an attachment warn
   expect(result).toMatchObject({ ok: true, evidenceRecorded: 1, state: 'active' });
   expect(result.warnings[0]).toContain('Booking');
   expect(workDetailFixture.evidence).toHaveLength(1);
+});
+
+test('a reply watch is saved through chat and waiting Work cannot be replanned', async () => {
+  workDetailFixture = { work: { _id: 'llc', workState: 'active' } };
+  const waitingForReply = {
+    accountId: 'personal',
+    threadId: 'jolie-thread',
+    requirement: 'Advice about the LLC',
+  };
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+    workId: 'llc',
+    claim: 'I sent Jolie an email; waiting on her reply.',
+    waitingForReply,
+  });
+  expect(result).toMatchObject({ ok: true, state: 'waiting', evidenceRecorded: 1 });
+  expect(result.summary).toContain('Waiting for the reply');
+  expect(mutationCalls[0]).toMatchObject({
+    fn: apiMock.albatrossReplies.recordProgress,
+    args: { waitingForReply },
+  });
+  const mutationCount = mutationCalls.length;
+  const replan = await runTool(albatross.albatrossReplanWork.handler, { workId: 'llc', reason: 'Waiting' });
+  expect(replan.changed).toBe(false);
+  expect(mutationCalls).toHaveLength(mutationCount);
+});
+
+test('a missing mail account cannot prevent saving the authoritative progress report', async () => {
+  workDetailFixture = { work: { _id: 'llc', workState: 'active' } };
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+    workId: 'llc',
+    claim: 'Email sent',
+    evidence: [{ sourceKind: 'mail_thread', sourceId: 'thread-with-no-account', title: 'Sent email' }],
+  });
+  expect(result).toMatchObject({ ok: true, evidenceRecorded: 1 });
+  expect(result.warnings[0]).toContain('progress report is saved');
+  expect(mutationCalls).toHaveLength(1);
+});
+
+test('a failed question or post-save refresh returns saved progress without a misleading tool failure', async () => {
+  workDetailFixture = { work: { _id: 'llc', workState: 'active' } };
+  albatross.__setAlbatrossToolDepsForTest({
+    api: apiMock as any,
+    convexMutation: (async (fn: any, args: any) => {
+      if (fn === apiMock.albatrossWorkV2.answerQuestion) throw new Error('Stale question');
+      return convexMutationMock(fn, args);
+    }) as any,
+    convexQuery: (async () => {
+      throw new Error('Refresh unavailable');
+    }) as any,
+  });
+  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+    workId: 'llc',
+    claim: 'Email sent',
+    questionAnswers: [{ questionId: 'stale', answer: 'Yes' }],
+  });
+  expect(result).toMatchObject({ ok: true, state: 'active', questionsAnswered: 0 });
+  expect(result.warnings).toHaveLength(2);
+  expect(workDetailFixture.evidence).toHaveLength(1);
+});
+
+test('a failed authoritative write remains a failure and never claims to have saved a watch', async () => {
+  albatross.__setAlbatrossToolDepsForTest({
+    api: apiMock as any,
+    convexMutation: (async () => {
+      throw new Error('Storage unavailable');
+    }) as any,
+  });
+  await expect(
+    runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+      workId: 'llc',
+      claim: 'Email sent',
+    }),
+  ).rejects.toThrow('Storage unavailable');
 });

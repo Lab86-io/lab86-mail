@@ -9,6 +9,7 @@ import {
   mergeDuplicateTaskHandoffs,
   selectHandoffsForIntent,
 } from '../albatross/daily-report';
+import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
@@ -259,6 +260,17 @@ export async function generateDailyReport(input: {
       const key = `${existing.account}:${existing._id}`;
       candidates.set(key, existing);
       humanKeys.add(key);
+    }
+  }
+
+  if (input.userId) {
+    try {
+      const replies = await checkWaitingReplies({ userId: input.userId });
+      if (replies.unavailable)
+        errors.push('Some Albatross reply checks could not run; those watches will retry.');
+    } catch (error) {
+      console.warn('Daily report reply watch failed:', error);
+      errors.push('Albatross reply checks could not finish; saved watches will retry.');
     }
   }
 
