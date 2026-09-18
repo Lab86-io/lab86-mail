@@ -181,6 +181,7 @@ export async function reviewDeckVisuals(
           )
             throw new Error('Not every slide rendered; review is incomplete.');
           let cursor = 0;
+          let missedMeasuredIssues = false;
           const outcomes = new Map<string, SlideReview>();
           await Promise.all(
             Array.from({ length: Math.min(4, pending.length) }, async () => {
@@ -246,8 +247,10 @@ export async function reviewDeckVisuals(
                       })),
                   ];
                   for (const issue of measuredIssues) {
-                    if (!result.issues.some((reported) => reported.elementId === issue.elementId))
+                    if (!result.issues.some((reported) => reported.elementId === issue.elementId)) {
                       result.issues.push(issue);
+                      missedMeasuredIssues = true;
+                    }
                   }
                   outcomes.set(slide.id, result);
                   checked.add(slide.id);
@@ -290,7 +293,7 @@ export async function reviewDeckVisuals(
           }
           // Incomplete checks can retry within the same three-round budget,
           // including a provider failure while checking a repaired slide.
-          if (!changed && !retryRejected && outcomes.size === pending.length) break;
+          if (!changed && !retryRejected && !missedMeasuredIssues && outcomes.size === pending.length) break;
         }
       },
       'presentation_visual_review',

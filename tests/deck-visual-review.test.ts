@@ -91,6 +91,38 @@ const clean = (options: any) => ({ object: { slideId: currentSlide(options).id, 
 afterEach(() => __setDeckVisualReviewDepsForTest());
 
 describe('image-based slide review', () => {
+  test('measured clipping missed by vision gets another repair attempt before returning a draft', async () => {
+    let attempts = 0;
+    __setDeckVisualReviewDepsForTest({
+      renderDeckSlides: async (model) =>
+        render(model).map((image) => ({
+          ...image,
+          issues:
+            image.slideId === 'two' &&
+            model.slides.find((slide) => slide.id === 'two')!.elements[0].height < 25
+              ? [{ elementId: 'body', description: 'The last line is clipped.' }]
+              : [],
+        })),
+      generateObjectForCurrentUser: (async (options: any) => {
+        const input = JSON.parse(options.messages[0].content[0].text);
+        if (input.slide.id !== 'two') return clean(options);
+        if (++attempts !== 2) return clean(options);
+        expect(input.previousIssues[0].description).toContain('clipped');
+        return {
+          object: {
+            slideId: 'two',
+            issues: [{ elementId: 'body', description: 'Clipped' }],
+            fixes: [fix({ elementId: 'body', height: 25 })],
+          },
+        };
+      }) as any,
+    });
+    const result = await reviewDeckVisuals(fixture(), { userId: 'u' });
+    expect(attempts).toBe(3);
+    expect(result.report.status).toBe('passed');
+    expect(result.model.slides[1].elements[0].height).toBe(25);
+  });
+
   test('a clean vision verdict cannot waive an image covering locked text', async () => {
     const model = fixture();
     model.slides = [model.slides[1]];
