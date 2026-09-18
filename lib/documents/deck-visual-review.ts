@@ -250,7 +250,15 @@ export async function reviewDeckVisuals(
                       })),
                   ];
                   for (const issue of measuredIssues) {
-                    if (!result.issues.some((reported) => reported.elementId === issue.elementId)) {
+                    // One element can have several independent defects. Only
+                    // an identical measured finding is already represented.
+                    if (
+                      !result.issues.some(
+                        (reported) =>
+                          reported.elementId === issue.elementId &&
+                          reported.description === issue.description,
+                      )
+                    ) {
                       result.issues.push(issue);
                       missedMeasuredIssues = true;
                     }

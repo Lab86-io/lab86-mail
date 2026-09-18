@@ -91,6 +91,49 @@ const clean = (options: any) => ({ object: { slideId: currentSlide(options).id, 
 afterEach(() => __setDeckVisualReviewDepsForTest());
 
 describe('image-based slide review', () => {
+  test('a reported contrast problem cannot hide clipping measured on the same text box', async () => {
+    const model = fixture();
+    model.slides = [model.slides[1]];
+    const body = model.slides[0].elements[0];
+    if (body.type !== 'text') throw new Error('Expected text');
+    body.color = model.theme.colors.background;
+    let attempts = 0;
+    __setDeckVisualReviewDepsForTest({
+      renderDeckSlides: async (deck) =>
+        render(deck).map((image) => ({
+          ...image,
+          issues:
+            deck.slides[0].elements[0].height < 25
+              ? [{ elementId: 'body', description: 'The last line is clipped.' }]
+              : [],
+        })),
+      generateObjectForCurrentUser: (async (options: any) => {
+        const input = JSON.parse(options.messages[0].content[0].text);
+        if (++attempts === 1)
+          return {
+            object: {
+              slideId: 'two',
+              issues: [{ elementId: 'body', description: 'Poor contrast.' }],
+              fixes: [],
+            },
+          };
+        if (attempts === 3) return clean(options);
+        expect(input.previousIssues.some((issue: any) => issue.description.includes('clipped'))).toBe(true);
+        expect(input.previousIssues.some((issue: any) => issue.description.includes('contrast'))).toBe(true);
+        return {
+          object: {
+            slideId: 'two',
+            issues: [{ elementId: 'body', description: 'Clipping and poor contrast.' }],
+            fixes: [fix({ elementId: 'body', height: 25, color: model.theme.colors.ink })],
+          },
+        };
+      }) as any,
+    });
+    const result = await reviewDeckVisuals(model, { userId: 'u' });
+    expect(result.report.status).toBe('passed');
+    expect(attempts).toBe(3);
+  });
+
   test('measured clipping missed by vision gets another repair attempt before returning a draft', async () => {
     let attempts = 0;
     __setDeckVisualReviewDepsForTest({
