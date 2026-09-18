@@ -23,7 +23,7 @@ const button = (label: string) =>
 const option = (label: string) =>
   view.root
     .findAllByType('button')
-    .find((node) => node.props['aria-pressed'] !== undefined && text(node).includes(label))!;
+    .find((node) => node.props['aria-selected'] !== undefined && text(node).includes(label))!;
 const base: PresentationChoiceInput = {
   presentationId: 'd',
   stage: 'brief',
@@ -153,7 +153,7 @@ test('theme/font previews are real slides, choices remain editable until confirm
   expect(view.root.findAll((node) => node.props.className === 'presentation-choice-preview')).toHaveLength(6);
   await choose('Space Grotesk');
   await click('Back');
-  expect(option('lagoon').props['aria-pressed']).toBe(true);
+  expect(option('lagoon').props['aria-selected']).toBe(true);
   await click('Next');
   expect(button('Next')).toBeUndefined();
   expect(text(view.root)).not.toContain('What should the imagery feel like?');

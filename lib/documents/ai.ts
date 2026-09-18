@@ -45,6 +45,7 @@ import {
   restyleClassificationSchema,
   restyleOperationFor,
 } from './presentation-design';
+import { designPresentationLayouts } from './presentation-layout';
 import {
   copyFields,
   fitSlideCopy,
@@ -64,6 +65,7 @@ import { applySpreadsheetChanges } from './spreadsheet-server';
 const defaultDependencies = {
   generateObjectForCurrentUser,
   reviewDeckVisuals,
+  designPresentationLayouts,
   isDeckV2AuthoringEnabled,
   resolveDeckImagery,
   artworksForDeck,
@@ -333,8 +335,14 @@ async function finishComposedDeck(
       `The presentation did not pass its layout check: ${issueList(repaired.report.issues)} Nothing was saved.`,
     );
   input.abortSignal?.throwIfAborted();
-  const summary = `${brief.summary}${art.note}${reviewed.summary}`;
-  return { brief, model: repaired.model, summary };
+  const designed = await dependencies.designPresentationLayouts(
+    repaired.model,
+    input,
+    dependencies.generateObjectForCurrentUser,
+  );
+  input.abortSignal?.throwIfAborted();
+  const summary = `${brief.summary}${art.note}${reviewed.summary}${designed.designedSlideIds.length ? ` Designed individual layouts for ${designed.designedSlideIds.length} slides.` : ''}`;
+  return { brief, model: designed.model, summary };
 }
 
 /** Review every page, repair copy and layout, then compose the researched content. */

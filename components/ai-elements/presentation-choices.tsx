@@ -1,7 +1,10 @@
 'use client';
 
-import { type ReactNode, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
+import { OptionList } from '@/components/tool-ui/option-list';
+import type { OptionListProps } from '@/components/tool-ui/option-list/schema';
 import {
   FONT_DESCRIPTIONS,
   type PresentationBriefChoices,
@@ -97,28 +100,38 @@ export function PresentationPreview({
   );
 }
 
-function Option({
-  selected,
+function Choices({
+  id,
   label,
-  description,
-  children,
-  onClick,
+  options,
+  value,
+  onChange,
+  multi = false,
+  renderOptionMedia,
 }: {
-  selected: boolean;
+  id: string;
   label: string;
-  description?: string;
-  children?: ReactNode;
-  onClick: () => void;
+  options: OptionListProps['options'];
+  value: OptionListProps['value'];
+  onChange: NonNullable<OptionListProps['onChange']>;
+  multi?: boolean;
+  renderOptionMedia?: OptionListProps['renderOptionMedia'];
 }) {
   return (
-    <button type="button" className="presentation-choice-option" aria-pressed={selected} onClick={onClick}>
-      {children}
-      <span className="presentation-choice-option-label">
-        <span>{label}</span>
-        <span aria-hidden="true">{selected ? '✓' : ''}</span>
-      </span>
-      {description && <span className="presentation-choice-description">{description}</span>}
-    </button>
+    <div className="presentation-tool-choices" role="group" aria-label={label}>
+      <OptionList
+        key={id}
+        id={id}
+        options={options}
+        value={value}
+        onChange={onChange}
+        selectionMode={multi ? 'multi' : 'single'}
+        hideActions
+        density="compact"
+        className={renderOptionMedia ? 'presentation-option-gallery' : 'presentation-option-list'}
+        renderOptionMedia={renderOptionMedia}
+      />
+    </div>
   );
 }
 
@@ -388,11 +401,19 @@ export function PresentationPicker({
           {step + 1} / {count}
         </span>
       </div>
-      <div className="presentation-choice-progress" aria-hidden="true">
+      <div
+        className="presentation-choice-progress"
+        role="progressbar"
+        aria-label="Presentation choices"
+        aria-valuemin={1}
+        aria-valuemax={count}
+        aria-valuenow={step + 1}
+      >
         {Array.from({ length: count }, (_, index) => (
           <span key={index} data-complete={index <= step} />
         ))}
       </div>
+      <p className="presentation-choice-deck-title">{input.title}</p>
       <h3 ref={heading} tabIndex={-1}>
         {title}
       </h3>
@@ -427,23 +448,26 @@ export function PresentationPicker({
             <p>
               I’ll gather and read the relevant material before proposing slides. Choose the places to look.
             </p>
-            <div className="presentation-choice-grid">
-              {SOURCE_CHOICES.map((source) => (
-                <Option
-                  key={source}
-                  label={SOURCE_LABELS[source]}
-                  selected={brief.sources.includes(source)}
-                  onClick={() =>
-                    setBrief({
-                      ...brief,
-                      sources: brief.sources.includes(source)
-                        ? brief.sources.filter((value) => value !== source)
-                        : [...brief.sources, source],
-                    })
-                  }
-                />
-              ))}
-            </div>
+            <Choices
+              id={`${input.presentationId}-sources`}
+              label="Research sources"
+              multi
+              options={SOURCE_CHOICES.map((id) => ({
+                id,
+                label: SOURCE_LABELS[id],
+                description: {
+                  provided: 'Use what you have shared here',
+                  mail: 'Find the relevant threads',
+                  meetings: 'Read meeting notes and decisions',
+                  files: 'Draw from connected documents',
+                  web: 'Gather and verify public sources',
+                }[id],
+              }))}
+              value={brief.sources}
+              onChange={(value) =>
+                setBrief({ ...brief, sources: value as PresentationBriefChoices['sources'] })
+              }
+            />
             <TextAnswer
               label="Anything to include or leave out?"
               value={brief.sourceGuidance}
@@ -500,59 +524,65 @@ export function PresentationPicker({
               {brief.contentSlides + brief.sectionBreaks + 2} slides total, including an opening and a closing
               slide. Section breaks give the audience a pause between topics.
             </p>
-            <div className="presentation-choice-grid">
-              {(['concise', 'balanced', 'detailed'] as const).map((detail) => (
-                <Option
-                  key={detail}
-                  label={detail}
-                  description={
-                    {
-                      concise: 'One idea, lots of breathing room',
-                      balanced: 'Clear ideas with supporting evidence',
-                      detailed: 'More evidence, with depth in speaker notes',
-                    }[detail]
-                  }
-                  selected={brief.detail === detail}
-                  onClick={() => setBrief({ ...brief, detail })}
-                />
-              ))}
-            </div>
+            <Choices
+              id={`${input.presentationId}-detail`}
+              label="Level of detail"
+              options={(['concise', 'balanced', 'detailed'] as const).map((id) => ({
+                id,
+                label: id,
+                description: {
+                  concise: 'One idea, plenty of breathing room',
+                  balanced: 'A clear story with supporting evidence',
+                  detailed: 'More depth, with the nuance in speaker notes',
+                }[id],
+              }))}
+              value={brief.detail}
+              onChange={(value) => {
+                if (value) setBrief({ ...brief, detail: value as PresentationBriefChoices['detail'] });
+              }}
+            />
           </>
         )}
         {input.stage === 'design' && step === 0 && (
-          <>
-            <p>Preview the colors on your opening slide. You’ll choose the type next.</p>
-            <div className="presentation-choice-grid">
-              {PALETTE_NAMES.map((theme) => (
-                <Option
-                  key={theme}
-                  label={theme}
-                  description={THEME_DESCRIPTIONS[theme]}
-                  selected={design.theme === theme}
-                  onClick={() => setDesign({ ...design, theme })}
-                >
-                  <PresentationPreview title={input.title} theme={theme} fontPair={design.fontPair} />
-                </Option>
-              ))}
-            </div>
-          </>
+          <Choices
+            id={`${input.presentationId}-theme`}
+            label="Presentation theme"
+            options={PALETTE_NAMES.map((id) => ({ id, label: id, description: THEME_DESCRIPTIONS[id] }))}
+            value={design.theme}
+            onChange={(value) => {
+              if (value) setDesign({ ...design, theme: value as PresentationDesignChoices['theme'] });
+            }}
+            renderOptionMedia={(option) => (
+              <PresentationPreview
+                title={input.title}
+                theme={option.id as PresentationDesignChoices['theme']}
+                fontPair={design.fontPair}
+              />
+            )}
+          />
         )}
         {input.stage === 'design' && step === 1 && (
           <>
-            <p>Same theme, different typography. Each pairing carries through the whole deck.</p>
-            <div className="presentation-choice-grid">
-              {FONT_PAIR_NAMES.map((fontPair) => (
-                <Option
-                  key={fontPair}
-                  label={FONT_DESCRIPTIONS[fontPair].split(' · ')[0]}
-                  description={FONT_DESCRIPTIONS[fontPair].split(' · ')[1]}
-                  selected={design.fontPair === fontPair}
-                  onClick={() => setDesign({ ...design, fontPair })}
-                >
-                  <PresentationPreview title={input.title} theme={design.theme} fontPair={fontPair} />
-                </Option>
-              ))}
-            </div>
+            <Choices
+              id={`${input.presentationId}-font`}
+              label="Presentation typography"
+              options={FONT_PAIR_NAMES.map((id) => ({
+                id,
+                label: FONT_DESCRIPTIONS[id].split(' · ')[0],
+                description: FONT_DESCRIPTIONS[id].split(' · ')[1],
+              }))}
+              value={design.fontPair}
+              onChange={(value) => {
+                if (value) setDesign({ ...design, fontPair: value as PresentationDesignChoices['fontPair'] });
+              }}
+              renderOptionMedia={(option) => (
+                <PresentationPreview
+                  title={input.title}
+                  theme={design.theme}
+                  fontPair={option.id as PresentationDesignChoices['fontPair']}
+                />
+              )}
+            />
             <TextAnswer
               label="Any other design direction?"
               value={design.guidance}
@@ -564,25 +594,28 @@ export function PresentationPicker({
         {currentSlide && (
           <>
             <p>{currentSlide.takeaway}</p>
-            <div className="presentation-choice-grid">
-              {visualOptionsForSlide(currentSlide).map((visual) => (
-                <Option
-                  key={visual}
-                  label={VISUAL_LABELS[visual]}
-                  description={visual === currentSlide.recommended ? 'Suggested for this slide' : undefined}
-                  selected={visuals[currentSlide.id] === visual}
-                  onClick={() => setVisuals({ ...visuals, [currentSlide.id]: visual })}
-                >
-                  <PresentationPreview
-                    title={input.title}
-                    theme={design.theme}
-                    fontPair={design.fontPair}
-                    slide={currentSlide}
-                    visual={visual}
-                  />
-                </Option>
-              ))}
-            </div>
+            <Choices
+              id={`${input.presentationId}-${currentSlide.id}-visual`}
+              label="Slide visual"
+              options={visualOptionsForSlide(currentSlide).map((id) => ({
+                id,
+                label: VISUAL_LABELS[id],
+                description: id === currentSlide.recommended ? 'Suggested for this story beat' : undefined,
+              }))}
+              value={visuals[currentSlide.id]}
+              onChange={(value) => {
+                if (value) setVisuals({ ...visuals, [currentSlide.id]: value as VisualChoice });
+              }}
+              renderOptionMedia={(option) => (
+                <PresentationPreview
+                  title={input.title}
+                  theme={design.theme}
+                  fontPair={design.fontPair}
+                  slide={currentSlide}
+                  visual={option.id as VisualChoice}
+                />
+              )}
+            />
             {currentSlide.evidence.length > 0 && (
               <details>
                 <summary>Evidence for this slide</summary>
@@ -656,7 +689,7 @@ export function PresentationPicker({
       )}
       <div className="presentation-choice-actions">
         <button type="button" disabled={submitted || step === 0} onClick={() => move(step - 1)}>
-          Back
+          <ArrowLeft size={14} aria-hidden="true" /> Back
         </button>
         <button type="button" className="presentation-choice-primary" disabled={submitted} onClick={next}>
           {submitted
@@ -668,6 +701,7 @@ export function PresentationPicker({
                 : input.stage === 'design'
                   ? 'Plan my slides'
                   : 'Build this presentation'}
+          {submitted ? <Check size={14} aria-hidden="true" /> : <ArrowRight size={14} aria-hidden="true" />}
         </button>
       </div>
       <div className="presentation-choice-secondary">

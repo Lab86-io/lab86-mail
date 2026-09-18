@@ -11,7 +11,6 @@
   line-height: 1.5;
 }
 .presentation-choice-topline,
-.presentation-choice-option-label,
 .presentation-choice-actions {
   display: flex;
   align-items: center;
@@ -21,6 +20,73 @@
 .presentation-choice-topline {
   color: var(--color-text-muted);
   font-size: 11px;
+}
+.presentation-choice-deck-title {
+  margin: 0 0 5px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.presentation-tool-choices {
+  min-width: 0;
+}
+.presentation-tool-choices [data-slot="option-list"] {
+  min-width: 0;
+  max-width: none;
+}
+.presentation-tool-choices [role="listbox"] {
+  border-radius: 12px;
+  background: var(--color-bg);
+}
+.presentation-tool-choices [role="option"] {
+  white-space: normal;
+}
+.presentation-tool-choices [role="option"][aria-selected="true"] {
+  color: var(--color-text-primary);
+}
+.presentation-option-gallery [role="listbox"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  overflow: visible;
+  background: transparent;
+}
+.presentation-option-gallery [data-slot="separator"] {
+  display: none;
+}
+.presentation-option-gallery [role="option"] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 10px;
+  padding: 7px 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  background: var(--color-bg);
+}
+.presentation-option-gallery [role="option"] > span:not([data-slot]) {
+  display: none;
+}
+.presentation-option-gallery [role="option"]:hover {
+  border-color: var(--color-text-muted);
+}
+.presentation-option-gallery [role="option"][aria-selected="true"] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.presentation-option-gallery [data-slot="option-media"] {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.presentation-option-gallery [role="option"] > div {
+  padding: 0 3px;
+}
+.presentation-option-list [role="option"] {
+  min-height: 48px;
 }
 .presentation-choice-eyebrow {
   color: var(--color-text-muted);
@@ -59,41 +125,6 @@
   padding: 0;
   margin: 0;
   min-width: 0;
-}
-.presentation-choice-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.presentation-choice-option {
-  display: flex;
-  flex-direction: column;
-  text-align: left;
-  min-width: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 6px;
-  gap: 6px;
-  background: var(--color-bg);
-  cursor: pointer;
-}
-.presentation-choice-option[aria-pressed="true"] {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
-}
-.presentation-choice-option:hover {
-  border-color: var(--color-text-muted);
-}
-.presentation-choice-option-label {
-  width: 100%;
-  padding: 0 4px;
-  font-weight: 500;
-  text-transform: capitalize;
-}
-.presentation-choice-description {
-  padding: 0 4px 4px;
-  color: var(--color-text-muted);
-  font-size: 11px;
 }
 .presentation-choice-preview {
   display: block;
@@ -215,6 +246,9 @@
   margin-top: 18px;
 }
 .presentation-choice-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -230,6 +264,9 @@
   font-size: 11px;
 }
 .presentation-choice-secondary button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   text-decoration: underline;
   text-underline-offset: 3px;
   padding: 4px 0;
@@ -297,9 +334,6 @@
 @media (max-width: 420px) {
   .presentation-choices {
     padding: 12px;
-  }
-  .presentation-choice-grid {
-    gap: 8px;
   }
   .presentation-choice-outline button {
     flex-direction: column;

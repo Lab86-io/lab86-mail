@@ -34,7 +34,7 @@ import {
   updateDocument,
 } from '../lib/documents/service';
 import { api } from '../lib/hosted/convex';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 const documentsApi = (api as any).documents;
 
@@ -71,6 +71,7 @@ describe('document AI proposal service', () => {
     };
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => ({ object: brief })) as any,
     });
     await expect(
@@ -88,6 +89,7 @@ describe('document AI proposal service', () => {
     if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing content';
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => ({
         object: { title: 'Release', summary: 'Done', model: current.model },
       })) as any,
@@ -107,6 +109,7 @@ describe('document AI proposal service', () => {
     if (current.model.kind === 'deck') current.model.slides[0].elements[0].text = 'Existing slide content';
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => ({
         object: { title: current.title, summary: 'Filled in six slides', model: current.model },
       })) as any,
@@ -157,6 +160,7 @@ describe('document AI proposal service', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: generated as any,
     });
 
@@ -195,6 +199,7 @@ describe('document AI proposal service', () => {
   test('rejects model output that does not match the requested document kind', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => ({
         object: {
           title: 'Wrong model',

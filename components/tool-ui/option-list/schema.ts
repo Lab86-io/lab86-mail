@@ -175,6 +175,8 @@ export type OptionListProps = Omit<
   onAction?: EmbeddedActionsProps<OptionListSelection>["onAction"];
   onBeforeAction?: EmbeddedActionsProps<OptionListSelection>["onBeforeAction"];
   className?: string;
+  /** Runtime-only media previews; selection, keyboard handling and receipts remain Tool UI owned. */
+  renderOptionMedia?: (option: OptionListOption) => ReactNode;
 };
 
 export const SerializableOptionListSchema = OptionListPropsSchemaBase.omit({

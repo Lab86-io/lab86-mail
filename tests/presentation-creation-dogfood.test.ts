@@ -14,7 +14,7 @@ import { presentationSessionFromMessages } from '../lib/documents/presentation-c
 import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
 import { harborBrief, passingSlideReviews, retroBrief, VALLEY } from './fixtures/presentation-briefs';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 import { runTool } from './tools/harness';
 
 const presentation = {
@@ -106,6 +106,7 @@ describe('presentation creation dogfood', () => {
     ]);
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
     });
@@ -170,6 +171,7 @@ describe('presentation creation dogfood', () => {
   test('a thirteen-slide brief with four-item lists and a chart without callouts saves all slides', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
     });
@@ -249,6 +251,7 @@ describe('presentation creation dogfood', () => {
     const create = mock(async (input: any) => ({ ...input, documentId: 'v2-deck', currentRevision: 1 }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate,
       resolveDeckImagery: artwork,
@@ -284,6 +287,7 @@ describe('presentation creation dogfood', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate,
     });
@@ -303,6 +307,7 @@ describe('presentation creation dogfood', () => {
   test('direct version 2 content respects the authoring rollout flag', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => false,
     });
     await expect(
@@ -322,6 +327,7 @@ describe('presentation creation dogfood', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       resolveDeckImagery: artwork,
       generateObjectForCurrentUser: (async (input: any) => {
@@ -419,11 +425,11 @@ describe('presentation creation dogfood', () => {
   test('generation and reviewed briefs get a longer deadline while reads stay bounded', () => {
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck' })).toBe(210_000);
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck', presentation })).toBe(
-      280_000,
+      380_000,
     );
     expect(agentToolTimeoutMs('document_create')).toBe(75_000);
     expect(agentToolTimeoutMs('document_get')).toBe(75_000);
-    expect(agentToolTimeoutMs('document_apply_instruction')).toBe(280_000);
+    expect(agentToolTimeoutMs('document_apply_instruction')).toBe(380_000);
   });
 
   test('a generation taking 90 seconds can finish and clears its deadline', async () => {
@@ -452,6 +458,7 @@ describe('presentation creation dogfood', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: async (input) => {
         providerSignal = input.abortSignal;
         return new Promise((resolve) => {

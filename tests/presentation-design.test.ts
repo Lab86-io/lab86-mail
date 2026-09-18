@@ -37,7 +37,7 @@ import {
   retroBrief,
   VALLEY,
 } from './fixtures/presentation-briefs';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 type Box = { x: number; y: number; width: number; height: number; type: string };
 
@@ -271,6 +271,7 @@ describe('designed generation through the document proposal', () => {
   const deckV2 = () =>
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
     });
 
@@ -281,6 +282,7 @@ describe('designed generation through the document proposal', () => {
     deckV2();
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -311,6 +313,7 @@ describe('designed generation through the document proposal', () => {
     }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => false,
       generateObjectForCurrentUser: generate as any,
     });
@@ -334,6 +337,7 @@ describe('designed generation through the document proposal', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -355,6 +359,7 @@ describe('designed generation through the document proposal', () => {
     );
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: stubborn as any,
     });
@@ -378,6 +383,7 @@ describe('designed generation through the document proposal', () => {
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
       reviewDeckVisuals: review,
+      designPresentationLayouts: passingLayoutDesign,
     });
     const proposal = await generateDocumentProposal({ userId: 'u', kind: 'deck', instruction: 'Retro' });
     expect(review).toHaveBeenCalledTimes(1);
@@ -398,6 +404,7 @@ describe('designed generation through the document proposal', () => {
     );
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: resolve as any,
@@ -433,6 +440,7 @@ describe('designed generation through the document proposal', () => {
     );
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: one as any,
@@ -443,6 +451,7 @@ describe('designed generation through the document proposal', () => {
     const none = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: none as any,
@@ -454,6 +463,7 @@ describe('designed generation through the document proposal', () => {
 
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: (async () => {
@@ -472,6 +482,7 @@ describe('designed generation through the document proposal', () => {
     const untouched = mock(async () => ({ assets: [], bySlot: {}, notes: [] }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: harborBrief() })) as any,
       resolveDeckImagery: untouched as any,
@@ -485,6 +496,7 @@ describe('designed generation through the document proposal', () => {
     expect(off.summary).toContain('The dredging plan for the outer harbor.');
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
       resolveDeckImagery: untouched as any,
@@ -498,6 +510,7 @@ describe('designed generation through the document proposal', () => {
   test('a slide count outside the request is refused before anything composes', async () => {
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({ object: retroBrief() })) as any,
     });

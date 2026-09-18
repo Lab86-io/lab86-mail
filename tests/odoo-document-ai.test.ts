@@ -7,7 +7,7 @@ import {
 } from '../lib/documents/ai';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
 import { type SheetWorkbookModel, workbookText } from '../lib/documents/sheet-workbook';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 function currentWorkbook(): AlbatrossDocumentRecord & { model: SheetWorkbookModel } {
   return {
@@ -61,6 +61,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const gateway = mock(async () => ({ object: validOutput }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: gateway as any,
     });
     await expect(
@@ -79,6 +80,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const gateway = mock(async (_input: any) => ({ object: validOutput }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: gateway as any,
     });
 
@@ -130,6 +132,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const gateway = mock(async (_input: any) => ({ object: validOutput }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: gateway as any,
     });
     await generateDocumentProposal({
@@ -156,6 +159,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const gateway = mock(async (_input: any) => ({ object: output }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: gateway as any,
     });
     const result = await generateDocumentProposal({
@@ -193,6 +197,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     for (const object of invalidOutputs) {
       __setDocumentAiDepsForTest({
         reviewDeckVisuals: passingVisualReview,
+        designPresentationLayouts: passingLayoutDesign,
         generateObjectForCurrentUser: (async () => ({ object })) as any,
       });
       try {
@@ -216,6 +221,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const timeout = new Error('Model timed out');
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => {
         throw timeout;
       }) as any,
@@ -250,6 +256,7 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const gateway = mock(async (_input: any) => ({ object: output }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: gateway as any,
     });
     const result = await generateDocumentProposal({

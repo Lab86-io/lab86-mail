@@ -27,6 +27,7 @@ export function slideItemCapacity(slide: Slide) {
   if (!('role' in slide)) return slide.layout === 'cover' || slide.layout === 'statement' ? 0 : 3;
   if (slide.role === 'cover' || slide.role === 'statement' || slide.role === 'table') return 0;
   if (slide.role === 'quote') return 1;
+  if (slide.role === 'image-top' || slide.role === 'image-bottom') return 2;
   return slide.role === 'chart' ? 3 : 4;
 }
 

@@ -29,7 +29,7 @@ import {
   restyleOperationFor,
 } from '../lib/documents/presentation-design';
 import { harborBrief, lakeshoreBrief, poolArtworks, VALLEY } from './fixtures/presentation-briefs';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 afterEach(() => __setDocumentAiDepsForTest());
 
@@ -421,6 +421,7 @@ describe('restyle requests through the document proposal', () => {
     }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -445,6 +446,7 @@ describe('restyle requests through the document proposal', () => {
     // The same look again is refused, so no empty revision is written.
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({
         object: {
@@ -473,6 +475,7 @@ describe('restyle requests through the document proposal', () => {
     }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -514,6 +517,7 @@ describe('restyle requests through the document proposal', () => {
     });
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -558,6 +562,7 @@ describe('restyle requests through the document proposal', () => {
     }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: classify as any,
       artworksForDeck: resolve as any,
@@ -578,6 +583,7 @@ describe('restyle requests through the document proposal', () => {
 
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: classify as any,
       artworksForDeck: (async () => ({ artworks: {}, imagery: { mode: 'paintings' }, notes: ['x'] })) as any,
@@ -588,6 +594,7 @@ describe('restyle requests through the document proposal', () => {
 
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) =>
         options.schema === restyleClassificationSchema
@@ -620,6 +627,7 @@ describe('restyle requests through the document proposal', () => {
     }));
     __setDocumentAiDepsForTest({
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => false,
       generateObjectForCurrentUser: generate as any,
     });

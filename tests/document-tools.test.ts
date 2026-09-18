@@ -18,7 +18,7 @@ import {
 } from '../lib/tools/documents';
 import { __setCloudFileToolDepsForTest, cloudFileSearch, googleFileImport } from '../lib/tools/files';
 import { poolArtworks } from './fixtures/presentation-briefs';
-import { passingVisualReview } from './fixtures/visual-review';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 import { runTool, toolContext } from './tools/harness';
 
 function record(overrides: Partial<AlbatrossDocumentRecord> = {}): AlbatrossDocumentRecord {
@@ -52,6 +52,7 @@ describe('document tools', () => {
     __setDocumentToolDepsForTest({
       getDocument: (async () => deck) as any,
       reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       updateDocument: save as any,
     });
     const result = await runTool(documentReviewSlides.handler, { documentId: deck.documentId });

@@ -481,7 +481,9 @@ export function applyPresentationChoices(
           label: `${planned.chart!.series[0].values[i]}${planned.chart!.unit ? ` ${planned.chart!.unit}` : ''}`,
           detail: category,
         }));
-      } else slide.role = choice === 'image' ? 'image-right' : (choice as 'process' | 'comparison');
+      } else if (choice === 'image') {
+        if (!slide.role.startsWith('image-')) slide.role = 'image-auto';
+      } else slide.role = choice as 'process' | 'comparison';
       const provenance = `Confirmed slide: ${planned.title}\nTakeaway: ${planned.takeaway}\nSources: ${planned.evidence.join('; ')}`;
       const notes = [slide.notes, provenance].filter(Boolean).join('\n\n');
       // The durable storyboard already retains these references. Append them
