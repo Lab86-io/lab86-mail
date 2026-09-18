@@ -234,8 +234,8 @@ describe('image-based slide review', () => {
             height: 25,
             fontSize: 18,
             lineHeight: 1.2,
-            color: '#111111',
-            fill: '#FFFFFF',
+            color: model.theme.colors.ink,
+            fill: model.theme.colors.background,
             rotation: null,
           }),
         ],
@@ -245,8 +245,8 @@ describe('image-based slide review', () => {
       text: 'Keep the exact 200 figure.',
       height: 25,
       fontSize: 18,
-      color: '#111111',
-      fill: '#FFFFFF',
+      color: model.theme.colors.ink,
+      fill: model.theme.colors.background,
     });
     expect(result.theme).toEqual(model.theme);
     expect(result.slides[0]).toEqual(model.slides[0]);
@@ -316,6 +316,47 @@ describe('image-based slide review', () => {
     expect(applyVisualRepairs(model, review).slides[1].elements[1]).toMatchObject({
       y: 50,
       fill: model.theme.colors.accent,
+    });
+  });
+
+  test('text and chart recoloring honor the palette while positional repairs preserve custom colors', () => {
+    const model = fixture();
+    for (const [slideId, patch] of [
+      ['two', fix({ elementId: 'body', color: '#123456' })],
+      ['two', fix({ elementId: 'body', fill: '#123456' })],
+      ['one', fix({ colors: ['#123456'] })],
+    ] as const) {
+      const rejected = mock((_reason: string) => {});
+      expect(
+        applyVisualRepairs(
+          model,
+          { slideId, issues: [{ elementId: null, description: 'Contrast' }], fixes: [patch] },
+          rejected,
+        ),
+      ).toBe(model);
+      expect(rejected.mock.calls[0][0]).toContain('palette');
+    }
+    const graph = model.slides[0].elements[1];
+    if (graph.type !== 'chart') throw new Error('Expected chart');
+    graph.colors = ['#123456'];
+    const review = {
+      slideId: 'one',
+      issues: [{ elementId: 'graph', description: 'Upside down' }],
+      fixes: [fix()],
+    };
+    expect(applyVisualRepairs(model, review).slides[0].elements[1]).toMatchObject({
+      colors: ['#123456'],
+      rotation: 0,
+    });
+    review.fixes = [fix({ colors: ['#123456'] })];
+    expect(applyVisualRepairs(model, review).slides[0].elements[1]).toMatchObject({
+      colors: ['#123456'],
+      rotation: 0,
+    });
+    review.fixes = [fix({ colors: [model.theme.colors.accent] })];
+    expect(applyVisualRepairs(model, review).slides[0].elements[1]).toMatchObject({
+      colors: [model.theme.colors.accent],
+      rotation: 0,
     });
   });
 

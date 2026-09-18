@@ -74,19 +74,22 @@ export function applyVisualRepairs(
     return model;
   }
   const palette = new Set(Object.values(model.theme.colors).map((value) => value.toLowerCase()));
+  const approved = (next: string | null, original?: string) =>
+    next === null || next.toLowerCase() === original?.toLowerCase() || palette.has(next.toLowerCase());
   if (
     review.fixes.some((fix) => {
       const element = slide.elements.find((item) => item.id === fix.elementId);
+      if (element?.type === 'text')
+        return !approved(fix.color, element.color) || !approved(fix.fill, element.fill);
+      if (element?.type === 'shape') return !approved(fix.fill, element.fill);
       return (
-        element?.type === 'shape' &&
-        fix.fill !== null &&
-        fix.fill.toLowerCase() !== element.fill?.toLowerCase() &&
-        !palette.has(fix.fill.toLowerCase())
+        element?.type === 'chart' &&
+        fix.colors?.some((value, index) => !approved(value, element.colors?.[index]))
       );
     })
   ) {
     onRejected?.(
-      'Keep decorative fills in the approved theme palette. Preserve the original fill when only moving a shape.',
+      'Keep changed text, fill and chart colors in the approved theme palette. Preserve existing colors when only adjusting geometry.',
     );
     return model;
   }
