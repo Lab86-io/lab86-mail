@@ -31,6 +31,7 @@ const LIVE_FIXTURE: OpenRouterLiveModel[] = [
   'google/gemini-3.5-flash-lite',
   'google/gemini-3.1-flash-lite',
   'x-ai/grok-4.3',
+  'z-ai/glm-5.3-flash',
   'deepseek/deepseek-v4-pro',
   'deepseek/deepseek-v4-flash',
   'moonshotai/kimi-k2.6',
@@ -43,39 +44,26 @@ const LIVE_FIXTURE: OpenRouterLiveModel[] = [
 
 function ModelPickerPreviewInner() {
   useApplyThemeExtras();
-  const [model, setModel] = useState('openai/gpt-5.5');
-  const [fastModel, setFastModel] = useState('openai/gpt-5-nano');
+  const [model, setModel] = useState('z-ai/glm-5.3-flash');
+  const [fastModel, setFastModel] = useState('z-ai/glm-5.3-flash');
   const [retired, setRetired] = useState('openai/gpt-5.1-chat');
   const catalog = buildModelCatalog({ live: LIVE_FIXTURE, provider: 'openrouter' });
   const anthropicOnly = buildModelCatalog({ live: LIVE_FIXTURE, provider: 'anthropic' });
   return (
     <main className="mx-auto max-w-[760px] space-y-6 p-8">
       <h1 className="text-[15px] font-semibold">Model picker preview</h1>
-      <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 sm:grid-cols-2">
+      <div className="grid gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Normal model</span>
-          <ModelPicker
-            slot="normal"
-            value={model}
-            onChange={setModel}
-            catalog={catalog}
-            allowCustomId
-            defaultOpen
-          />
+          <ModelPicker slot="normal" value={model} onChange={setModel} catalog={catalog} />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Fast model</span>
-          <ModelPicker
-            slot="fast"
-            value={fastModel}
-            onChange={setFastModel}
-            catalog={catalog}
-            allowCustomId
-          />
+          <ModelPicker slot="fast" value={fastModel} onChange={setFastModel} catalog={catalog} />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Retired saved model</span>
-          <ModelPicker slot="normal" value={retired} onChange={setRetired} catalog={catalog} allowCustomId />
+          <ModelPicker slot="normal" value={retired} onChange={setRetired} catalog={catalog} />
         </div>
         <div className="space-y-1.5">
           <span className="text-[12px] font-medium">Anthropic key only</span>

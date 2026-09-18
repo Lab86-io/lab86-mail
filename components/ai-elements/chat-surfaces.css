@@ -1,21 +1,3 @@
-.assistant-user-bubble {
-  background: color-mix(in oklab, var(--color-accent) 12%, var(--color-surface-float));
-  overflow-wrap: anywhere;
-}
-
-.assistant-work-log {
-  background: color-mix(in oklab, var(--color-accent-3) 3%, var(--color-bg-elevated));
-}
-
-.assistant-work-log [data-tool] + [data-tool] {
-  border-top: 1px solid var(--surface-border);
-  padding-top: 10px;
-}
-
-.assistant-work-log[data-state="failed"] {
-  --surface-border: color-mix(in oklab, var(--color-danger) 35%, var(--color-border));
-}
-
 .assistant-tool-result > * {
   max-width: none;
   border-radius: var(--radius-card);

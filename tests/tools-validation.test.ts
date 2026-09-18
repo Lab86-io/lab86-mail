@@ -28,24 +28,18 @@ const SAMPLE_INVALID_ARGS: Record<string, unknown> = {
 };
 
 describe('tool input validation', () => {
-  test('presentation union errors identify the failing slide fields', async () => {
+  test('oversized presentation copy reaches internal review while structural errors still reject', () => {
     const presentation = harborBrief();
     presentation.slides[0].body = 'x'.repeat(321);
     presentation.slides[1].title = 'x'.repeat(121);
-    await expect(
-      invokeTool(
-        getTool('document_create')!,
-        { kind: 'deck', title: 'Invalid', presentation },
-        toolContext(),
-      ),
-    ).rejects.toThrow('presentation.slides.0.body');
-    await expect(
-      invokeTool(
-        getTool('document_create')!,
-        { kind: 'deck', title: 'Invalid', presentation },
-        toolContext(),
-      ),
-    ).rejects.toThrow('presentation.slides.1.title');
+    presentation.slides[2].items = Array.from({ length: 5 }, (_, i) => ({
+      label: `Finding ${i + 1}`,
+      detail: 'Verified supporting evidence',
+    }));
+    const input = getTool('document_create')!.input;
+    expect(input.safeParse({ kind: 'deck', title: 'Review', presentation }).success).toBe(true);
+    presentation.slides = Array.from({ length: 31 }, () => presentation.slides[0]);
+    expect(input.safeParse({ kind: 'deck', title: 'Invalid', presentation }).success).toBe(false);
   });
 
   for (const [name, args] of Object.entries(SAMPLE_INVALID_ARGS)) {

@@ -10,9 +10,11 @@ import {
 import { checkDeck } from '../lib/documents/deck-quality';
 import { exportDocument } from '../lib/documents/export';
 import { type AlbatrossDocumentRecord, documentModelText } from '../lib/documents/model';
+import { presentationSessionFromMessages } from '../lib/documents/presentation-choices';
 import { presentationBriefV2Schema } from '../lib/documents/presentation-design';
 import { __setDocumentToolDepsForTest, documentCreate, documentGet } from '../lib/tools/documents';
-import { harborBrief, retroBrief, VALLEY } from './fixtures/presentation-briefs';
+import { harborBrief, passingSlideReviews, retroBrief, VALLEY } from './fixtures/presentation-briefs';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 import { runTool } from './tools/harness';
 
 const presentation = {
@@ -50,8 +52,129 @@ afterEach(() => {
 });
 
 describe('presentation creation dogfood', () => {
+  test('a confirmed nine-slide storyboard creates and reads back despite old counts, omitted breaks and blank item labels', async () => {
+    const kinds = [
+      'cover',
+      'content',
+      'content',
+      'divider',
+      'content',
+      'content',
+      'divider',
+      'content',
+      'close',
+    ];
+    const slides = kinds.map((kind, index) => ({
+      id: `s${index}`,
+      kind,
+      title: `Approved chapter ${index + 1}`,
+      takeaway: 'A carefully sourced historical account.',
+      recommended: kind === 'content' ? 'process' : 'typography',
+      alternatives: [],
+      evidence: ['Supplied archive excerpt'],
+    }));
+    const part = (stage: string, output: object, extra: object = {}) => ({
+      type: 'tool-ask_presentation_choices',
+      toolCallId: stage,
+      state: 'output-available',
+      input: { presentationId: 'history', stage, title: 'History deck', ...extra },
+      output: { presentationId: 'history', stage, decision: 'continue', ...output },
+    });
+    const session = presentationSessionFromMessages([
+      {
+        role: 'assistant',
+        parts: [
+          part('brief', {
+            brief: {
+              audience: 'Students',
+              purpose: 'Understand the history',
+              sources: ['provided'],
+              sourceGuidance: '',
+              contentSlides: 7,
+              sectionBreaks: 2,
+              detail: 'balanced',
+            },
+          }),
+          part('design', { design: { theme: 'rose', fontPair: 'literary', imagery: 'none', guidance: '' } }),
+          part(
+            'storyboard',
+            { visuals: slides.map((slide) => ({ slideId: slide.id, visual: slide.recommended })) },
+            { slides },
+          ),
+        ],
+      },
+    ]);
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
+    let saved: AlbatrossDocumentRecord;
+    const save = mock(async (input: any) => {
+      saved = {
+        ...input,
+        documentId: 'recovered-history',
+        currentRevision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        sourceRefs: input.sourceRefs || [],
+      };
+      return saved;
+    });
+    __setDocumentToolDepsForTest({
+      createDocument: save,
+      getDocument: async () => ({ ...saved, suggestions: [] }),
+      recordOperation: async () => 'operation',
+    });
+    const base = harborBrief();
+    const draft = {
+      ...base,
+      audience: '',
+      slides: slides
+        .filter((slide) => slide.kind === 'content')
+        .map((slide) => ({
+          ...base.slides[0],
+          title: slide.title,
+          role: 'process' as const,
+          body: slide.takeaway,
+          items: [
+            { label: '', detail: 'Read the original archive account.' },
+            { label: 'Context', detail: 'Distinguish evidence from later interpretation.' },
+            { label: '', detail: '' },
+          ],
+          notes: 'Source: supplied archive excerpt.',
+        })),
+    };
+    const created = await runTool(
+      () =>
+        liftToolsForAgent(undefined, 'UTC', session).document_create.execute({
+          kind: 'deck',
+          title: 'History deck',
+          presentation: draft,
+          artwork: 'none',
+        }),
+      {},
+    );
+    expect(created).toMatchObject({ ok: true, documentId: 'recovered-history' });
+    expect(save).toHaveBeenCalledTimes(1);
+    const read = await runTool(documentGet.handler, { documentId: created.documentId });
+    const model = read.document.model;
+    if (model.kind !== 'deck' || model.version !== 2) throw new Error('Expected version 2 deck');
+    expect(model.slides).toHaveLength(9);
+    expect(model.slides.map((slide) => slide.title)).toEqual(slides.map((slide) => slide.title));
+    expect(checkDeck(model).ok).toBe(true);
+    expect(documentModelText(model)).toContain('Read the original archive account.');
+    expect(model.slides[1].notes).toContain('"label":""');
+    expect(model.theme.fonts.display.family).toContain('Instrument');
+  });
   test('a thirteen-slide brief with four-item lists and a chart without callouts saves all slides', async () => {
-    __setDocumentAiDepsForTest({ isDeckV2AuthoringEnabled: () => true });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      isDeckV2AuthoringEnabled: () => true,
+      generateObjectForCurrentUser: (async (options: any) => passingSlideReviews(options)) as any,
+    });
     const brief = harborBrief();
     const list = {
       role: 'list' as const,
@@ -120,15 +243,15 @@ describe('presentation creation dogfood', () => {
     }
   });
 
-  test('version 2 direct creation keeps owned images and design checks without generating again', async () => {
-    const generate = mock(async () => {
-      throw new Error('must not generate');
-    });
+  test('version 2 direct creation reviews all slides while keeping owned images and design checks', async () => {
+    const generate = mock(async (options: any) => passingSlideReviews(options)) as any;
     const artwork = mock(async () => {
       throw new Error('must not fetch artwork');
     });
     const create = mock(async (input: any) => ({ ...input, documentId: 'v2-deck', currentRevision: 1 }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate,
       resolveDeckImagery: artwork,
@@ -154,28 +277,39 @@ describe('presentation creation dogfood', () => {
         (element: any) => element.type === 'image' && element.assetId === VALLEY.assetId,
       ),
     ).toBe(true);
-    expect(generate).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
     expect(artwork).not.toHaveBeenCalled();
   });
 
-  test('direct version 2 content refuses overflowing copy without another model call', async () => {
+  test('direct version 2 content repairs overflow even when editorial service is unavailable', async () => {
     const generate = mock(async () => {
       throw new Error('must not generate');
     });
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate,
     });
     const brief = retroBrief();
     brief.slides[2].items[0].detail = 'from the launch brief '.repeat(7).trim();
-    await expect(
-      composeDocumentPresentation({ userId: 'owner', instruction: '', presentation: brief, artwork: 'none' }),
-    ).rejects.toThrow('layout check');
-    expect(generate).not.toHaveBeenCalled();
+    const proposal = await composeDocumentPresentation({
+      userId: 'owner',
+      instruction: '',
+      presentation: brief,
+      artwork: 'none',
+    });
+    expect(checkDeck(proposal.model as any).ok).toBe(true);
+    expect((proposal.model as any).slides[2].notes).toContain(brief.slides[2].items[0].detail);
+    expect(generate).toHaveBeenCalled();
   });
 
   test('direct version 2 content respects the authoring rollout flag', async () => {
-    __setDocumentAiDepsForTest({ isDeckV2AuthoringEnabled: () => false });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      isDeckV2AuthoringEnabled: () => false,
+    });
     await expect(
       composeDocumentPresentation({
         userId: 'owner',
@@ -192,6 +326,8 @@ describe('presentation creation dogfood', () => {
       throw new Error('must not fetch artwork');
     });
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       resolveDeckImagery: artwork,
       generateObjectForCurrentUser: (async (input: any) => {
@@ -286,14 +422,14 @@ describe('presentation creation dogfood', () => {
     ).toBe(true);
   });
 
-  test('generation gets a longer deadline while direct creation and reads stay bounded', () => {
+  test('generation and reviewed briefs get a longer deadline while reads stay bounded', () => {
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck' })).toBe(210_000);
     expect(agentToolTimeoutMs('document_create', { instructions: 'Create a deck', presentation })).toBe(
-      75_000,
+      380_000,
     );
     expect(agentToolTimeoutMs('document_create')).toBe(75_000);
     expect(agentToolTimeoutMs('document_get')).toBe(75_000);
-    expect(agentToolTimeoutMs('document_apply_instruction')).toBe(210_000);
+    expect(agentToolTimeoutMs('document_apply_instruction')).toBe(380_000);
   });
 
   test('a generation taking 90 seconds can finish and clears its deadline', async () => {
@@ -321,6 +457,8 @@ describe('presentation creation dogfood', () => {
       throw new Error('must not save');
     });
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: async (input) => {
         providerSignal = input.abortSignal;
         return new Promise((resolve) => {

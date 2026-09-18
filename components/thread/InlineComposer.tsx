@@ -175,7 +175,8 @@ export function InlineComposer({
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
   const composeRecoveredFiles = useClientStore((s) => s.composeRecoveredFiles);
   const setComposeRecoveredFiles = useClientStore((s) => s.setComposeRecoveredFiles);
-  const { registerPendingSend } = usePendingSend();
+  const { registerPendingSend, cancelPendingSend } = usePendingSend();
+  const pendingSendId = useRef<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -303,7 +304,8 @@ export function InlineComposer({
       fd.set('mode', composerMode);
       fd.set('account', fromAccount || account);
       if (sendAt) fd.set('sendAt', String(sendAt));
-      else if (undoSendSeconds > 0) fd.set('undoSeconds', String(undoSendSeconds));
+      else fd.set('undoSeconds', String(undoSendSeconds));
+      pendingSendId.current = null;
       sendSnapshot.current = {
         mode: composerMode,
         account: fromAccount || account,
@@ -335,6 +337,20 @@ export function InlineComposer({
       }
       if (composerNeedsSubject) fd.set('subject', subject);
       fd.set('body', body);
+      if (!sendAt && undoSendSeconds > 0) {
+        const id = `outbox:${crypto.randomUUID()}`;
+        pendingSendId.current = id;
+        fd.set('pendingId', id);
+        await registerPendingSend(
+          {
+            id,
+            fireAt: Date.now() + undoSendSeconds * 1_000,
+            undoSeconds: undoSendSeconds,
+            status: 'preparing',
+          },
+          sendSnapshot.current!,
+        );
+      }
       // Convert markdown → HTML and sanitize before sending. The plaintext
       // body still goes alongside as the fallback.
       const trimmed = body.trim();
@@ -363,21 +379,18 @@ export function InlineComposer({
         const pending = data.pending as { id: string; fireAt: number; undoSeconds: number };
         const snapshot = sendSnapshot.current;
         if (!snapshot) throw new Error('The sent draft snapshot is missing.');
-        await registerPendingSend(pending, snapshot);
-        setPhase('sent');
-        window.setTimeout(() => {
-          setPhase('draft');
-          setBody('');
-          setFiles([]);
-          setPreviewFile(null);
-          if (composerMode === 'new' || composerMode === 'forward') {
-            setTo('');
-            setCc('');
-            setBcc('');
-            setSubject('');
-          }
-          onSent?.(undefined);
-        }, 400);
+        if (!(await registerPendingSend(pending, snapshot))) return;
+        setPhase('draft');
+        setBody('');
+        setFiles([]);
+        setPreviewFile(null);
+        if (composerMode === 'new' || composerMode === 'forward') {
+          setTo('');
+          setCc('');
+          setBcc('');
+          setSubject('');
+        }
+        onSent?.(undefined);
         return;
       }
 
@@ -448,7 +461,11 @@ export function InlineComposer({
         onSent?.(sent);
       }, 700);
     },
-    onError: (err: any) => {
+    onError: async (err: any) => {
+      if (pendingSendId.current && !(await cancelPendingSend(pendingSendId.current))) {
+        toast.error('Send status is uncertain. Check the send notice before trying again.');
+        return;
+      }
       setPhase('draft');
       toast.error(err?.message || 'Send failed');
     },

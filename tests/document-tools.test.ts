@@ -13,10 +13,12 @@ import {
   documentGet,
   documentList,
   documentPublishGoogle,
+  documentReviewSlides,
   documentSuggestChanges,
 } from '../lib/tools/documents';
 import { __setCloudFileToolDepsForTest, cloudFileSearch, googleFileImport } from '../lib/tools/files';
 import { poolArtworks } from './fixtures/presentation-briefs';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 import { runTool, toolContext } from './tools/harness';
 
 function record(overrides: Partial<AlbatrossDocumentRecord> = {}): AlbatrossDocumentRecord {
@@ -39,6 +41,59 @@ afterEach(() => {
 });
 
 describe('document tools', () => {
+  test('visual review resumes the same saved presentation and protects concurrent edits', async () => {
+    const deck = record({ kind: 'deck', model: referenceDeck('editorial') });
+    let conflict = false;
+    const save = mock(async (input: any) =>
+      conflict
+        ? { ok: false, code: 'REVISION_CONFLICT' }
+        : { ok: true, document: { ...deck, model: input.model, currentRevision: 3 } },
+    );
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => deck) as any,
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      updateDocument: save as any,
+    });
+    const result = await runTool(documentReviewSlides.handler, { documentId: deck.documentId });
+    expect(result).toMatchObject({
+      documentId: deck.documentId,
+      revision: 3,
+      visualReview: { status: 'passed', totalSlides: 6 },
+    });
+    expect(save.mock.calls[0][0]).toMatchObject({
+      documentId: deck.documentId,
+      expectedRevision: 2,
+      actor: 'ai',
+    });
+    conflict = true;
+    await expect(runTool(documentReviewSlides.handler, { documentId: deck.documentId })).rejects.toThrow(
+      'changed during visual review',
+    );
+  });
+
+  test('visual review never commits after cancellation and refuses non-presentations', async () => {
+    const save = mock(async () => {
+      throw new Error('Must not save');
+    });
+    const controller = new AbortController();
+    __setDocumentToolDepsForTest({ getDocument: (async () => record()) as any, updateDocument: save });
+    await expect(runTool(documentReviewSlides.handler, { documentId: 'document-1' })).rejects.toThrow(
+      'Presentation not found',
+    );
+    __setDocumentToolDepsForTest({
+      getDocument: (async () => record({ kind: 'deck', model: referenceDeck('editorial') })) as any,
+      updateDocument: save,
+      reviewDeckVisuals: async (model) => {
+        controller.abort(new Error('Stopped'));
+        return passingVisualReview(model);
+      },
+    });
+    await expect(
+      runTool(documentReviewSlides.handler, { documentId: 'document-1' }, { abortSignal: controller.signal }),
+    ).rejects.toThrow('Stopped');
+    expect(save).not.toHaveBeenCalled();
+  });
   test.each([
     documentSuggestChanges,
     documentApplyInstruction,
@@ -439,11 +494,13 @@ describe('document tools', () => {
       artwork: 'none',
       assets: [{ assetId: 'asset-1', src: 'https://owned/asset-1' }],
     });
-    expect(result).toMatchObject({ ok: true, notes: ['brief.pdf is not an image and was skipped.'] });
+    expect(result).toMatchObject({ ok: true });
+    expect(result.notes).toContain('brief.pdf is not an image and was skipped.');
+    expect(result.notes).toContain('Six slides. Added 2 public-domain paintings with credits.');
     expect(documentCreate.description).toContain('imageUploadIds');
     expect(documentCreate.description).not.toMatch(/\bAI\b/);
 
-    // Uploads on a text document are noted and never read; without uploads the field stays absent.
+    // Uploads on a text document are noted and never read; presentation review notes remain visible even without uploads.
     uploads.mockClear();
     proposal.mockClear();
     const memo = await runTool(
@@ -459,7 +516,7 @@ describe('document tools', () => {
       { kind: 'deck', title: 'Plain', instructions: 'Draft' },
       toolContext(),
     );
-    expect(plain.notes).toBeUndefined();
+    expect(plain.notes).toContain('Six slides. Added 2 public-domain paintings with credits.');
     expect(proposal.mock.calls[1][0]).not.toHaveProperty('artwork');
   });
 

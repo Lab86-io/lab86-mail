@@ -31,6 +31,12 @@ export const DECK_FONTS: Record<
     exportFamily: 'Georgia',
     fallback: 'serif',
   },
+  Manrope: { css: '"Manrope", Arial, sans-serif', exportFamily: 'Aptos', fallback: 'sans-serif' },
+  'Space Grotesk': {
+    css: '"Space Grotesk", Arial, sans-serif',
+    exportFamily: 'Aptos Display',
+    fallback: 'sans-serif',
+  },
   Geist: {
     css: 'var(--font-geist-sans), "Geist", "Helvetica Neue", Arial, sans-serif',
     exportFamily: 'Aptos',

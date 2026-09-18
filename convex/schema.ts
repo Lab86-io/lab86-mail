@@ -72,6 +72,25 @@ const albatrossConfirmationRef = v.object({
 
 export default defineSchema({
   ...narrativeTables,
+  mailOutbox: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('sending'),
+      v.literal('sent'),
+      v.literal('failed'),
+      v.literal('cancelled'),
+      v.literal('unknown'),
+    ),
+    fireAt: v.number(),
+    undoSeconds: v.number(),
+    payloadId: v.optional(v.id('_storage')),
+    messageId: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index('by_user_key', ['userId', 'key'])
+    .index('by_user', ['userId']),
   agentToolExecutions: defineTable({
     userId: v.string(),
     runId: v.string(),

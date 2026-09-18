@@ -84,6 +84,7 @@ export const HITL_TOOL_NAMES: ReadonlySet<string> = new Set([
   'ask_parameters',
   'ask_preferences',
   'ask_question_flow',
+  'ask_presentation_choices',
 ]);
 
 export function isHitlToolName(name: string): boolean {
@@ -395,6 +396,11 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     'You finished the steps',
     'The guided steps failed',
   ),
+  ask_presentation_choices: fixed(
+    'Choosing your presentation direction',
+    'Your presentation choices',
+    'Loading the presentation choices failed',
+  ),
 
   // --- Display tools (rich cards render on success; these cover running/failed) ---
   show_weather: (a) => {
@@ -527,7 +533,17 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
     failed: 'Triaging the thread failed',
   }),
   draft_reply: fixed('Drafting a reply', 'Drafted a reply for your review', 'Drafting the reply failed'),
+  presentation_plan: fixed(
+    'Planning the evidence and visuals for every slide',
+    'Planned the presentation slides',
+    'Presentation planning failed; retrying needs the gathered evidence',
+  ),
   document_create: fixed('Creating the file', 'Created the editable file', 'Creating the file failed'),
+  document_review_slides: fixed(
+    'Checking every slide visually',
+    'Finished the slide check',
+    'Slide check failed',
+  ),
   word_document_create: fixed(
     'Creating the Word document',
     'Created the Word document',

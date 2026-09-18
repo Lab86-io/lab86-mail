@@ -7,6 +7,7 @@ import {
 } from '../lib/documents/ai';
 import { type AlbatrossDocumentRecord, createDefaultDocumentModel } from '../lib/documents/model';
 import { type SheetWorkbookModel, workbookText } from '../lib/documents/sheet-workbook';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 function currentWorkbook(): AlbatrossDocumentRecord & { model: SheetWorkbookModel } {
   return {
@@ -58,7 +59,11 @@ afterEach(() => __setDocumentAiDepsForTest());
 describe('engine-backed spreadsheet AI proposals', () => {
   test('rejects a non-workbook before invoking spreadsheet generation', async () => {
     const gateway = mock(async () => ({ object: validOutput }));
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: gateway as any,
+    });
     await expect(
       generateDocumentProposal({
         userId: 'owner',
@@ -73,7 +78,11 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const current = currentWorkbook();
     const original = structuredClone(current);
     const gateway = mock(async (_input: any) => ({ object: validOutput }));
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: gateway as any,
+    });
 
     const proposal = await generateDocumentProposal({
       userId: 'owner',
@@ -121,7 +130,11 @@ describe('engine-backed spreadsheet AI proposals', () => {
     const current = currentWorkbook();
     current.model.workbook.sheets[0].cells = { A1: 'a'.repeat(90_000), A2: 'b'.repeat(90_000) };
     const gateway = mock(async (_input: any) => ({ object: validOutput }));
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: gateway as any,
+    });
     await generateDocumentProposal({
       userId: 'owner',
       kind: 'sheet',
@@ -144,7 +157,11 @@ describe('engine-backed spreadsheet AI proposals', () => {
   ])('omits absent grounding (%p) and accepts an existing-sheet-only edit', async (sourceContext) => {
     const { newSheets: _newSheets, ...output } = validOutput;
     const gateway = mock(async (_input: any) => ({ object: output }));
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: gateway as any,
+    });
     const result = await generateDocumentProposal({
       userId: 'owner',
       kind: 'sheet',
@@ -178,7 +195,11 @@ describe('engine-backed spreadsheet AI proposals', () => {
       { ...validOutput, changes: [{ sheet: 'Forecast', cell: 'A1', content: 'x'.repeat(10_001) }] },
     ];
     for (const object of invalidOutputs) {
-      __setDocumentAiDepsForTest({ generateObjectForCurrentUser: (async () => ({ object })) as any });
+      __setDocumentAiDepsForTest({
+        reviewDeckVisuals: passingVisualReview,
+        designPresentationLayouts: passingLayoutDesign,
+        generateObjectForCurrentUser: (async () => ({ object })) as any,
+      });
       try {
         await generateDocumentProposal({
           userId: 'owner',
@@ -199,6 +220,8 @@ describe('engine-backed spreadsheet AI proposals', () => {
   test('preserves gateway failure identity rather than presenting an invented or malformed proposal', async () => {
     const timeout = new Error('Model timed out');
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       generateObjectForCurrentUser: (async () => {
         throw timeout;
       }) as any,
@@ -231,7 +254,11 @@ describe('engine-backed spreadsheet AI proposals', () => {
       ],
     };
     const gateway = mock(async (_input: any) => ({ object: output }));
-    __setDocumentAiDepsForTest({ generateObjectForCurrentUser: gateway as any });
+    __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
+      generateObjectForCurrentUser: gateway as any,
+    });
     const result = await generateDocumentProposal({
       userId: 'owner',
       kind: 'sheet',

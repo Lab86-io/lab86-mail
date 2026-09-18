@@ -29,6 +29,37 @@ const threadRow = (n: number) => ({
 });
 
 describe('resolveToolShape', () => {
+  test('new presentation cards disclose unfinished visual review', () => {
+    expect(
+      shape('document_create', {}, { documentId: 'deck', visualReview: { status: 'needs_review' } }),
+    ).toMatchObject({ status: 'needs review', summary: 'Draft saved. Its visual review needs attention.' });
+    expect(
+      shape(
+        'document_create',
+        {},
+        { documentId: 'deck', visualReview: { status: 'passed', totalSlides: 9 } },
+      ),
+    ).toMatchObject({ status: 'created', summary: 'Visually checked all 9 slides.' });
+  });
+  test('slide review distinguishes checked decks from drafts that need review', () => {
+    for (const [status, label] of [
+      ['passed', 'checked'],
+      ['needs_review', 'needs review'],
+    ]) {
+      expect(
+        shape(
+          'document_review_slides',
+          { documentId: 'deck' },
+          { ok: true, visualReview: { status }, summary: 'Slide review result.' },
+        ),
+      ).toMatchObject({
+        kind: 'document',
+        documentId: 'deck',
+        status: label,
+        summary: 'Slide review result.',
+      });
+    }
+  });
   test('document lists omit rows without an actionable document ID', () => {
     const result = shape(
       'document_list',

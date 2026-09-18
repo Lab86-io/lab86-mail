@@ -4,6 +4,17 @@ import { buildModelCatalog } from '../lib/ai/model-catalog';
 
 describe('model picker choices', () => {
   const catalog = buildModelCatalog();
+  test('only image-capable choices appear, including GLM and excluding a saved text-only model', () => {
+    const rows = pickerRows(catalog, {
+      slot: 'normal',
+      value: 'deepseek/deepseek-v4-pro',
+      showOlder: true,
+      showAllTiers: true,
+    });
+    expect(rows.every((model) => model.capabilities.vision)).toBe(true);
+    expect(rows.some((model) => model.id === 'z-ai/glm-5.3-flash')).toBe(true);
+    expect(rows.some((model) => model.id === 'deepseek/deepseek-v4-pro')).toBe(false);
+  });
   test('groups by provider and searches names without case sensitivity', () => {
     const matches = catalog.filter((model) => matchesQuery(model, 'anthropic HAIKU'));
     expect(matches.map((model) => model.id)).toEqual(['anthropic/claude-haiku-4.5']);

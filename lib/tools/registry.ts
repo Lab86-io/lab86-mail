@@ -17,6 +17,8 @@ export interface ToolContext {
   abortSignal?: AbortSignal;
   // IANA timezone for interpreting naive wall-clock timestamps in tool args.
   userTimezone?: string;
+  // Server-restored user choice; never supplied by model tool arguments.
+  presentationChoicesDelegated?: boolean;
 }
 
 export interface ToolDefinition<

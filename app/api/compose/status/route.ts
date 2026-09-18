@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { getNylasScheduledSendStatus } from '@/lib/nylas/provider';
+import { outboxStatus } from '@/lib/send/outbox';
 import { getPendingStatus, parseProviderPendingId, rememberPendingStatus } from '@/lib/send/pending';
 
 export const runtime = 'nodejs';
@@ -12,6 +13,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const user = await requireCurrentUser();
+    if (pendingId.startsWith('outbox:')) {
+      return NextResponse.json({ ok: true, ...(await outboxStatus(user.userId, pendingId)) });
+    }
     if (!pendingId.startsWith(`${user.userId}:`)) {
       return NextResponse.json({ ok: false, error: 'not found' }, { status: 404 });
     }

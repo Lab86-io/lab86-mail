@@ -42,19 +42,38 @@ function harness(provider: 'openrouter' | 'openai' | 'anthropic' = 'openrouter')
 }
 
 describe('AI settings persistence', () => {
-  test('hosted mode persists the requested models and custom OpenRouter ids', async () => {
+  test('saving unrelated preferences migrates an old text-only choice to a compatible default', async () => {
+    const h = harness();
+    const response = await h.post(
+      { mode: 'lab86' },
+      {
+        convexQuery: async () => ({
+          settings: {
+            provider: 'openrouter',
+            model: 'deepseek/deepseek-v4-pro',
+            fastModel: 'vendor/custom-fast',
+          },
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    const saved = await response.json();
+    expect(buildModelCatalog().find((model) => model.id === saved.model)?.capabilities.vision).toBe(true);
+    expect(buildModelCatalog().find((model) => model.id === saved.fastModel)?.capabilities.vision).toBe(true);
+  });
+  test('hosted mode persists verified vision models across providers', async () => {
     const h = harness();
     const response = await h.post({
       mode: 'lab86',
       provider: 'openrouter',
       model: 'anthropic/claude-sonnet-4.6',
-      fastModel: 'vendor/custom-fast',
+      fastModel: 'z-ai/glm-5.3-flash',
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       model: 'anthropic/claude-sonnet-4.6',
-      fastModel: 'vendor/custom-fast',
-      unknown: true,
+      fastModel: 'z-ai/glm-5.3-flash',
+      unknown: false,
     });
     expect(h.writes.find((write) => write.name === 'ai:upsertSettings')?.args).toMatchObject({
       userId: 'user-1',
@@ -81,6 +100,8 @@ describe('AI settings persistence', () => {
       { mode: 'byok', provider: 'openai', model: 'anthropic/claude-sonnet-4.6', apiKey: 'fixture' },
       { mode: 'byok', provider: 'openrouter', model: 123 },
       { mode: 'lab86', model: 'malformed' },
+      { mode: 'lab86', model: 'deepseek/deepseek-v4-pro' },
+      { mode: 'lab86', fastModel: 'vendor/custom-fast' },
     ]) {
       const h = harness();
       expect((await h.post(body)).status).toBe(400);

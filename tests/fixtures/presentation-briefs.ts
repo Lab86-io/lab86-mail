@@ -378,3 +378,17 @@ export function harborBrief(): PresentationBriefV2 {
     ],
   });
 }
+
+export function passingSlideReviews(options: { prompt: string }) {
+  return {
+    object: {
+      reviews: JSON.parse(options.prompt).slides.map((slide: { slideId: string }) => ({
+        slideId: slide.slideId,
+        purpose: 'Advances the narrative.',
+        contentAssessment: 'Supported by the supplied content.',
+        layoutAssessment: 'Readable in the selected layout.',
+        fixes: [],
+      })),
+    },
+  };
+}

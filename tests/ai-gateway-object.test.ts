@@ -4,9 +4,42 @@ import {
   agentProviderOptions,
   generateObjectForCurrentUser,
 } from '../lib/ai/gateway';
+import { buildModelCatalog } from '../lib/ai/model-catalog';
 
 describe('structured AI gateway', () => {
   afterEach(() => __setObjectGenerationDepsForTest());
+
+  test('vision calls forward images to GLM through OpenRouter and reject text-only or unverified runtimes', async () => {
+    let modelName = 'z-ai/glm-5.3-flash';
+    const sent: any[] = [];
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () => ({
+        userId: 'u',
+        source: 'byok',
+        provider: 'openrouter',
+        modelName,
+        model: 'selected-glm',
+      }),
+      loadRuntimeModelCatalog: async () => buildModelCatalog(),
+      generateObject: (async (request: any) => {
+        sent.push(request);
+        return { object: {}, usage: {} };
+      }) as any,
+      recordUsage: async () => undefined,
+    });
+    const messages = [
+      { role: 'user', content: [{ type: 'image', image: Buffer.from('slide'), mediaType: 'image/png' }] },
+    ];
+    const options = { schema: {}, feature: 'presentation_visual_review', requireVision: true, messages };
+    await generateObjectForCurrentUser(options);
+    expect(sent[0]).toMatchObject({ model: 'selected-glm', maxOutputTokens: 3500, messages });
+    expect(sent[0]).not.toHaveProperty('requireVision');
+    for (const id of ['deepseek/deepseek-v4-pro', 'vendor/unverified']) {
+      modelName = id;
+      await expect(generateObjectForCurrentUser(options)).rejects.toThrow('verified image-input');
+    }
+    expect(sent).toHaveLength(1);
+  });
 
   test('agent cache and reasoning options follow the provider transport', () => {
     const direct = agentProviderOptions({ provider: 'openai' } as any, 'agent:owner');
@@ -73,6 +106,34 @@ describe('structured AI gateway', () => {
     expect(requests[0].providerOptions.openai.reasoningEffort).toBeUndefined();
     expect(usage[0][0]).toBe(runtime);
     expect(usage[0].slice(1)).toEqual(['albatross_area_route', { inputTokens: 10, outputTokens: 2 }, true]);
+  });
+
+  test('presentation planning forwards high effort with a bounded output budget', async () => {
+    let sent: any;
+    __setObjectGenerationDepsForTest({
+      resolveAiRuntime: async () =>
+        ({
+          userId: 'planner',
+          source: 'lab86',
+          provider: 'openai',
+          modelName: 'gpt-5.5',
+          model: 'resolved',
+        }) as any,
+      generateObject: (async (request: any) => {
+        sent = request;
+        return { object: {}, usage: {} };
+      }) as any,
+      recordUsage: async () => undefined,
+    });
+    await generateObjectForCurrentUser({
+      userId: 'planner',
+      schema: {},
+      feature: 'presentation_planning',
+      speed: 'primary',
+      reasoningEffort: 'high',
+    });
+    expect(sent.providerOptions.openai.reasoningEffort).toBe('high');
+    expect(sent.maxOutputTokens).toBe(24000);
   });
 
   test('preserves caller provider options and records/rethrows failed generation', async () => {

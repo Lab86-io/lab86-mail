@@ -1,15 +1,28 @@
 'use client';
 
-import { Undo2 } from 'lucide-react';
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { callTool } from '@/lib/api-client';
 import { type ComposeMode, useClientStore } from '@/lib/client-state';
+import { fireSendEffect } from '@/lib/effects/send-effect';
+import { PendingSendToast } from './PendingSendToast';
 
 type PendingReceipt = {
   id: string;
   fireAt: number;
   undoSeconds: number;
+  status?: 'preparing' | 'pending' | 'cancelled';
 };
 
 export type DurableComposeDraft = {
@@ -26,13 +39,14 @@ export type DurableComposeDraft = {
   draftId?: string | null;
 };
 
-type DurablePendingSend = PendingReceipt & {
+export type DurablePendingSend = Omit<PendingReceipt, 'status'> & {
   draft: DurableComposeDraft;
-  status?: 'pending' | 'sent' | 'failed' | 'cancelled' | 'unknown';
+  status?: 'preparing' | 'sending' | 'pending' | 'sent' | 'failed' | 'cancelled' | 'unknown';
 };
 
 type PendingSendContextValue = {
-  registerPendingSend: (receipt: PendingReceipt, draft: DurableComposeDraft) => Promise<void>;
+  registerPendingSend: (receipt: PendingReceipt, draft: DurableComposeDraft) => Promise<boolean>;
+  cancelPendingSend: (id: string) => Promise<boolean>;
 };
 
 const PendingSendContext = createContext<PendingSendContextValue | null>(null);
@@ -47,191 +61,233 @@ export function usePendingSend() {
 
 export function PendingSendProvider({ children }: { children: ReactNode }) {
   const [records, setRecords] = useState<DurablePendingSend[]>([]);
+  const recordsRef = useRef(new Map<string, DurablePendingSend>());
+  const removed = useRef(new Set<string>());
+  const checking = useRef(new Set<string>());
+  const cancellingRef = useRef(new Set<string>());
+  const [cancelling, setCancelling] = useState(new Set<string>());
   const [now, setNow] = useState(() => Date.now());
-  const openComposeNew = useClientStore((state) => state.openComposeNew);
-  const openComposeReply = useClientStore((state) => state.openComposeReply);
-  const setComposeRecoveredFiles = useClientStore((state) => state.setComposeRecoveredFiles);
+  const queryClient = useQueryClient();
 
-  const remove = useCallback(async (id: string) => {
-    await deleteRecord(id).catch(() => undefined);
-    setRecords((current) => current.filter((record) => record.id !== id));
+  const publish = useCallback(() => {
+    setRecords([...recordsRef.current.values()].sort((a, b) => a.fireAt - b.fireAt));
+    setNow(Date.now());
   }, []);
 
-  const restore = useCallback(
-    async (record: DurablePendingSend) => {
-      setComposeRecoveredFiles(record.draft.files);
-      const prefill = {
-        to: record.draft.to,
-        cc: record.draft.cc,
-        bcc: record.draft.bcc,
-        subject: record.draft.subject,
-        body: record.draft.body,
-      };
-      if (record.draft.mode !== 'new' && record.draft.threadId && record.draft.anchorMessageId) {
-        openComposeReply({
-          mode: record.draft.mode,
-          threadId: record.draft.threadId,
-          messageId: record.draft.anchorMessageId,
-          account: record.draft.account,
-          prefill,
-        });
-      } else {
-        openComposeNew(prefill);
-      }
-      await remove(record.id);
-      toast.success(
-        record.draft.files.length
-          ? 'Send cancelled — draft and attachments restored'
-          : 'Send cancelled — draft restored',
-      );
+  const remove = useCallback(
+    (id: string) => {
+      removed.current.add(id);
+      recordsRef.current.delete(id);
+      publish();
+      void deleteRecord(id).catch(() => undefined);
     },
-    [openComposeNew, openComposeReply, remove, setComposeRecoveredFiles],
+    [publish],
+  );
+
+  const restore = useCallback(
+    (record: DurablePendingSend) => {
+      const { draft } = record;
+      const state = useClientStore.getState();
+      const prefill = {
+        to: draft.to,
+        cc: draft.cc,
+        bcc: draft.bcc,
+        subject: draft.subject,
+        body: draft.body,
+      };
+      // One atomic update preserves the sending account, reply anchor, and files.
+      useClientStore.setState({
+        compose: {
+          mode: draft.mode,
+          anchorThreadId: draft.threadId || null,
+          anchorMessageId: draft.anchorMessageId || null,
+          anchorAccount: draft.account,
+          prefill,
+          nonce: state.compose.nonce + 1,
+        },
+        composeRecoveredFiles: draft.files,
+        ...(draft.threadId ? { selectedThreadId: draft.threadId, threadAccount: draft.account } : {}),
+      });
+      remove(record.id);
+      toast.success(record.status === 'failed' ? 'Draft restored' : 'Send cancelled — draft restored');
+    },
+    [remove],
   );
 
   const reconcile = useCallback(async () => {
-    const stored = await loadRecords().catch(() => [] as DurablePendingSend[]);
-    const visible: DurablePendingSend[] = [];
-    for (const record of stored) {
-      try {
-        const response = await fetch(`/api/compose/status?pendingId=${encodeURIComponent(record.id)}`, {
-          cache: 'no-store',
-        });
-        if (response.status === 401) continue;
-        if (response.status === 404) {
-          await deleteRecord(record.id);
-          continue;
-        }
-        const result = await response.json().catch(() => null);
-        const status = result?.status as DurablePendingSend['status'];
-        if (status === 'sent') {
-          if (record.draft.draftId) {
-            void deleteServerDraft(record.draft.draftId);
+    await Promise.all(
+      [...recordsRef.current.values()].map(async (record) => {
+        if (checking.current.has(record.id) || cancellingRef.current.has(record.id)) return;
+        if (record.status === 'preparing') return;
+        if (record.status === 'failed' || record.status === 'cancelled') return;
+        checking.current.add(record.id);
+        try {
+          const response = await fetch(`/api/compose/status?pendingId=${encodeURIComponent(record.id)}`, {
+            cache: 'no-store',
+            signal: AbortSignal.timeout(10_000),
+          });
+          // A response started before Undo must never resurrect or celebrate it.
+          if (recordsRef.current.get(record.id) !== record || cancellingRef.current.has(record.id)) return;
+          if (response.status === 401) {
+            recordsRef.current.delete(record.id);
+            publish();
+            return;
           }
-          await deleteRecord(record.id);
-          continue;
+          if (response.status === 404) {
+            remove(record.id);
+            return;
+          }
+          const result = await response.json();
+          if (!response.ok || result?.ok === false) return;
+          if (recordsRef.current.get(record.id) !== record || cancellingRef.current.has(record.id)) return;
+          if (result.status === 'sent') {
+            remove(record.id);
+            if (record.draft.draftId) void deleteServerDraft(record.draft.draftId);
+            void queryClient.invalidateQueries({ queryKey: ['thread'] });
+            void queryClient.invalidateQueries({ queryKey: ['search'] });
+            toast.success('Message sent');
+            fireSendEffect();
+          } else if (['pending', 'sending', 'unknown', 'failed', 'cancelled'].includes(result.status)) {
+            const updated = { ...record, status: result.status };
+            recordsRef.current.set(record.id, updated);
+            publish();
+            void saveRecord(updated).catch(() => undefined);
+          }
+        } catch {
+          // Keep the in-memory receipt even when IndexedDB or the network is unavailable.
+          // Time passing alone is never evidence that a message was delivered.
+        } finally {
+          checking.current.delete(record.id);
         }
-        visible.push({ ...record, status: status || 'unknown' });
-      } catch {
-        // Offline state is honest but does not destroy the only durable copy.
-        visible.push({ ...record, status: record.status || 'unknown' });
-      }
-    }
-    setRecords(visible.sort((a, b) => a.fireAt - b.fireAt));
-  }, []);
+      }),
+    );
+  }, [publish, queryClient, remove]);
 
   useEffect(() => {
-    void reconcile();
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') void reconcile();
+    let active = true;
+    const hydrate = async () => {
+      const stored = await loadRecords().catch(() => [] as DurablePendingSend[]);
+      if (!active) return;
+      for (const record of stored) {
+        if (!removed.current.has(record.id) && !recordsRef.current.has(record.id)) {
+          recordsRef.current.set(record.id, {
+            ...record,
+            status: record.status === 'preparing' ? 'unknown' : record.status,
+          });
+        }
+      }
+      publish();
+      void reconcile();
     };
-    window.addEventListener('online', reconcile);
+    void hydrate();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void hydrate();
+    };
+    window.addEventListener('online', hydrate);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('online', reconcile);
+      active = false;
+      window.removeEventListener('online', hydrate);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [reconcile]);
+  }, [publish, reconcile]);
 
   useEffect(() => {
     if (!records.length) return;
     const timer = window.setInterval(() => {
       const next = Date.now();
       setNow(next);
-      if (records.some((record) => record.fireAt <= next && record.status === 'pending')) {
+      if (
+        [...recordsRef.current.values()].some(
+          (record) => record.fireAt <= next && record.status !== 'failed' && record.status !== 'cancelled',
+        )
+      ) {
         void reconcile();
       }
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [records, reconcile]);
+  }, [records.length, reconcile]);
 
-  const registerPendingSend = useCallback(async (receipt: PendingReceipt, draft: DurableComposeDraft) => {
-    const record: DurablePendingSend = { ...receipt, draft, status: 'pending' };
-    await saveRecord(record).catch(() => undefined);
-    setRecords((current) =>
-      [...current.filter((item) => item.id !== receipt.id), record].sort((a, b) => a.fireAt - b.fireAt),
-    );
-  }, []);
+  const registerPendingSend = useCallback(
+    async (receipt: PendingReceipt, draft: DurableComposeDraft) => {
+      if (removed.current.has(receipt.id)) return false;
+      const record: DurablePendingSend = { ...receipt, draft, status: receipt.status || 'pending' };
+      recordsRef.current.set(receipt.id, record);
+      publish();
+      // Storage must not delay the user's opportunity to undo a short window.
+      void saveRecord(record).catch(() => undefined);
+      return true;
+    },
+    [publish],
+  );
 
   const undo = useCallback(
     async (record: DurablePendingSend) => {
+      if (cancellingRef.current.has(record.id)) return false;
+      cancellingRef.current.add(record.id);
+      setCancelling(new Set(cancellingRef.current));
       try {
         const response = await fetch('/api/compose/undo', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ pendingId: record.id }),
+          signal: AbortSignal.timeout(10_000),
         });
         const result = await response.json().catch(() => null);
         if (response.ok && result?.undone) {
-          await restore(record);
-          return;
-        }
-        toast.error('The server says this message is already sending.');
-        await reconcile();
+          restore(record);
+          return true;
+        } else toast.error(result?.error || 'Could not cancel this send. Checking its status…');
       } catch {
-        toast.error('Could not reach the server. The message was not marked cancelled.');
+        toast.error('Could not reach the server. Cancellation is not confirmed.');
+      } finally {
+        cancellingRef.current.delete(record.id);
+        setCancelling(new Set(cancellingRef.current));
+        void reconcile();
       }
+      return false;
     },
     [reconcile, restore],
   );
 
-  const value = useMemo(() => ({ registerPendingSend }), [registerPendingSend]);
-
+  const cancelPendingSend = useCallback(
+    async (id: string) => {
+      const record = recordsRef.current.get(id);
+      if (record) {
+        const cancelled = await undo(record);
+        if (!cancelled && recordsRef.current.has(id)) {
+          recordsRef.current.set(id, { ...record, status: 'unknown' });
+          publish();
+        }
+        return cancelled;
+      }
+      return removed.current.has(id);
+    },
+    [undo, publish],
+  );
+  const value = useMemo(
+    () => ({ registerPendingSend, cancelPendingSend }),
+    [registerPendingSend, cancelPendingSend],
+  );
   return (
     <PendingSendContext.Provider value={value}>
       {children}
-      <div
-        className="pointer-events-none fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[120] ml-auto flex max-w-[28rem] flex-col gap-2 sm:left-auto sm:right-4"
-        aria-live="polite"
-      >
-        {records.map((record) => {
-          const seconds = Math.max(0, Math.ceil((record.fireAt - now) / 1_000));
-          const canUndo = record.status === 'pending' && seconds > 0;
-          const recoverable = record.status === 'failed' || record.status === 'cancelled';
-          return (
-            <section
-              key={record.id}
-              className="pointer-events-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-3 shadow-xl"
-            >
-              <div className="flex items-center gap-3">
-                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--color-accent)]/12 text-[var(--color-accent)]">
-                  <Undo2 className="h-4 w-4" aria-hidden="true" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12.5px] font-medium text-[var(--color-text)]">
-                    {canUndo
-                      ? `Sending in ${seconds}s`
-                      : recoverable
-                        ? record.status === 'failed'
-                          ? 'Send failed'
-                          : 'Send cancelled'
-                        : 'Confirming send…'}
-                  </p>
-                  <p className="truncate text-[11px] text-[var(--color-text-faint)]">
-                    {record.draft.subject || 'Message held by the server'}
-                  </p>
-                </div>
-                {canUndo ? (
-                  <button
-                    type="button"
-                    onClick={() => void undo(record)}
-                    className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12px] font-medium text-white"
-                  >
-                    Undo Send
-                  </button>
-                ) : recoverable ? (
-                  <button
-                    type="button"
-                    onClick={() => void restore(record)}
-                    className="rounded-md border border-[var(--color-control-border)] px-3 py-1.5 text-[12px] font-medium text-[var(--color-text)]"
-                  >
-                    Restore draft
-                  </button>
-                ) : null}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      {records.length > 0 &&
+        createPortal(
+          <div className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 left-4 z-[10000] ml-auto flex max-h-[calc(100dvh-2rem)] w-auto max-w-[24rem] flex-col gap-2 overflow-y-auto sm:left-auto sm:w-96">
+            {records.map((record) => (
+              <PendingSendToast
+                key={record.id}
+                record={record}
+                now={now}
+                cancelling={cancelling.has(record.id)}
+                onUndo={() => void undo(record)}
+                onRestore={() => restore(record)}
+              />
+            ))}
+          </div>,
+          document.body,
+        )}
     </PendingSendContext.Provider>
   );
 }
@@ -258,19 +314,30 @@ async function withStore<T>(
   return await new Promise<T>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, mode);
     const request = operation(transaction.objectStore(STORE_NAME));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-    transaction.oncomplete = () => database.close();
-    transaction.onerror = () => reject(transaction.error);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve(request.result);
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error);
+    };
+    transaction.onabort = () => {
+      database.close();
+      reject(transaction.error);
+    };
   });
 }
 
+let writes: Promise<unknown> = Promise.resolve();
 function saveRecord(record: DurablePendingSend) {
-  return withStore('readwrite', (store) => store.put(record));
+  writes = writes.catch(() => undefined).then(() => withStore('readwrite', (store) => store.put(record)));
+  return writes;
 }
 
 function deleteRecord(id: string) {
-  return withStore('readwrite', (store) => store.delete(id));
+  writes = writes.catch(() => undefined).then(() => withStore('readwrite', (store) => store.delete(id)));
+  return writes;
 }
 
 function loadRecords() {

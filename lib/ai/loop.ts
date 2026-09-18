@@ -4,7 +4,6 @@ import {
   createUIMessageStreamResponse,
   jsonSchema,
   type ModelMessage,
-  stepCountIs,
   streamText,
 } from 'ai';
 import { z } from 'zod';
@@ -12,6 +11,7 @@ import { narrativePrompt } from '../narrative/service';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
+import { documentCreate } from '../tools/documents';
 import { invokeTool } from '../tools/registry';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, toolExecutionKey } from './execution';
@@ -190,6 +190,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'tasks_attach_link',
   'tasks_attach_file',
   'tasks_attach_calendar_event_link',
+  'presentation_plan',
   'document_create',
   'document_list',
   'document_get',
@@ -197,6 +198,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'spreadsheet_capabilities',
   'document_suggest_changes',
   'document_apply_instruction',
+  'document_review_slides',
   'document_publish_google',
   'document_export',
   'cloud_file_search',
@@ -260,7 +262,7 @@ type UiStreamWriter = Parameters<Parameters<typeof createUIMessageStream>[0]['ex
  * has one), and the registry re-validates every call with the real zod schema
  * in invokeTool, so the model-facing schema only needs shape and descriptions.
  */
-export function modelInputSchema(input: unknown) {
+export function modelInputSchema(input: unknown, validate = false) {
   const schema = (input as z.ZodTypeAny | undefined) ?? z.object({});
   let json: Record<string, unknown>;
   try {
@@ -268,7 +270,19 @@ export function modelInputSchema(input: unknown) {
   } catch {
     return schema as any;
   }
-  return jsonSchema(stripPatterns(json) as any);
+  return jsonSchema(
+    stripPatterns(json) as any,
+    validate
+      ? {
+          validate: (value) => {
+            const result = schema.safeParse(value);
+            return result.success
+              ? { success: true, value: result.data }
+              : { success: false, error: result.error };
+          },
+        }
+      : undefined,
+  );
 }
 
 export function stripPatterns<T>(value: T): T {
@@ -282,16 +296,84 @@ export function stripPatterns<T>(value: T): T {
   return out as T;
 }
 
-export function liftToolsForAgent(operationBatchId?: string, userTimezone?: string): Record<string, any> {
+export function liftToolsForAgent(
+  operationBatchId?: string,
+  userTimezone?: string,
+  presentationSession?: PresentationSession,
+): Record<string, any> {
   const lifted: Record<string, any> = {};
   const rejectedInputs = new Set<string>();
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     lifted[name] = aiTool({
       description: t.description,
-      inputSchema: modelInputSchema(t.input),
+      // Keep legacy briefs readable by the registry, but offer the agent one
+      // creation contract with native charts/tables, including during recovery.
+      inputSchema: modelInputSchema(
+        name === 'document_create'
+          ? documentCreate.input.safeExtend({ presentation: presentationAuthoringV2Schema.optional() })
+          : t.input,
+      ),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
         const context = getAiRequestContext();
+        if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
+          const stage = nextPresentationCheckpoint(presentationSession);
+          if (stage)
+            return {
+              ok: false,
+              status: 'needs_presentation_choices',
+              stage,
+              message:
+                stage === 'cancelled'
+                  ? 'The user cancelled this presentation. Do not create it.'
+                  : `Call ask_presentation_choices for the ${stage} checkpoint and wait for the user. No file was created.`,
+            };
+          if (
+            (presentationSession.brief || presentationSession.design) &&
+            typeof (args as any)?.presentation?.audience !== 'string'
+          )
+            return {
+              ok: false,
+              status: 'needs_presentation_brief',
+              message:
+                'Submit a complete version 2 presentation brief using the confirmed choices and researched storyboard.',
+            };
+          const checked = t.input.safeParse(args);
+          if (typeof (args as any)?.presentation?.audience === 'string' && checked.success) {
+            let presentation: ReturnType<typeof applyPresentationChoices>;
+            try {
+              presentation = applyPresentationChoices(
+                (checked.data as any).presentation,
+                presentationSession,
+              );
+            } catch (error) {
+              return {
+                ok: false,
+                status: 'presentation_content_needs_repair',
+                message: errorText(error),
+                confirmedStoryboard: presentationSession.storyboard,
+                confirmedVisuals: presentationSession.visuals,
+                nextStep:
+                  'Repair the submitted presentation content to match these already-confirmed slides, then retry document_create in this turn. Preserve evidence in notes. The user confirmation is retained; do not ask for the same storyboard again.',
+              };
+            }
+            args = {
+              ...(args as object),
+              presentation,
+              ...(presentationSession.design?.imagery
+                ? { artwork: presentationSession.design.imagery === 'paintings' ? 'auto' : 'none' }
+                : {}),
+            };
+          }
+        }
+        if (presentationSession?.brief && name === 'presentation_plan') {
+          args = {
+            ...(args as object),
+            audience: presentationSession.brief.audience,
+            slideCount: presentationSession.brief.contentSlides + presentationSession.brief.sectionBreaks + 2,
+            instruction: `${(args as any)?.instruction ?? ''}\nConfirmed presentation choices (honor these): ${JSON.stringify({ brief: presentationSession.brief, design: presentationSession.design })}`,
+          };
+        }
         const invoke = (key?: string, abortSignal?: AbortSignal) => {
           abortSignal?.throwIfAborted();
           return invokeTool(t, args ?? {}, {
@@ -301,6 +383,7 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
             userName: context.userName,
             operationBatchId,
             userTimezone,
+            presentationChoicesDelegated: presentationSession?.delegate,
             runId: context.runId,
             toolExecutionKey: key,
             abortSignal,
@@ -479,6 +562,29 @@ export function liftToolsForAgent(operationBatchId?: string, userTimezone?: stri
         .min(2)
         .max(5),
     }),
+  });
+  let presentationQuestionPending = false;
+  const presentationChoiceSchema = presentationChoiceSchemaForSession(presentationSession).superRefine(
+    (_input, ctx) => {
+      if (presentationQuestionPending)
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'A presentation question is already awaiting the user. Wait for that answer; do not open another picker.',
+        });
+    },
+  );
+  lifted[PRESENTATION_CHOICE_TOOL] = aiTool({
+    description:
+      'Guide presentation creation with CUSTOM VISUAL PICKERS and WAIT. Use the same presentationId across brief (audience, purpose, sources, content-slide count, section breaks and detail), design (8 theme previews, 6 font previews and optional design notes), and storyboard (every proposed slide with grounded chart/table data and meaningful alternative visual choices). Mix relevant artwork, user-provided images, and data visuals as needed; never ask the user to choose a single imagery category for the deck. Prefill only what the user already specified. Gather evidence between brief and design; call presentation_plan and execute its research/calculations before storyboard. Storyboard must include the complete cover/content/divider/close sequence matching their counts. Supply real chart/table data and source references; never fabricate preview data. Continue only after the user submits. A revise result means adjust and ask again; cancel means stop. Explicit delegation may skip later questions.',
+    // Client tools have no invokeTool validation. Validate here so SDK tool-error
+    // results reach the model for repair instead of stranding an unusable card.
+    inputSchema: modelInputSchema(presentationChoiceSchema, true),
+    onInputAvailable: () => {
+      // Serial SDK validation rejects a second card in the same response.
+      // Only submitted user results can change confirmed choices/delegation.
+      presentationQuestionPending = true;
+    },
   });
   // On-demand tool groups (lib/ai/tool-groups.ts). The call itself is the
   // signal: prepareStep reads enable_tools calls from earlier steps and widens
@@ -675,6 +781,7 @@ interface AgentStreamOptions {
   tools: Record<string, any>;
   /** Tool groups active from the first step (from the chat scope). */
   toolGroups?: string[];
+  presentationSession?: PresentationSession;
   signal?: AbortSignal;
 }
 
@@ -686,8 +793,34 @@ export function activeToolsForStep(
   toolNames: Iterable<string>,
   initialGroups: readonly string[],
   steps: ReadonlyArray<{ content?: unknown }>,
+  presentationSession?: PresentationSession,
 ): string[] {
-  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]);
+  const next = presentationSession ? nextPresentationCheckpoint(presentationSession) : 'brief';
+  return activeToolNames(toolNames, [...initialGroups, ...enabledGroupsFromSteps(steps)]).filter(
+    (name) =>
+      name !== PRESENTATION_CHOICE_TOOL ||
+      (!!next && next !== 'cancelled' && !hasPendingPresentationQuestion(steps)),
+  );
+}
+
+function hasPendingPresentationQuestion(steps: ReadonlyArray<{ content?: unknown }>) {
+  return steps.some(
+    (step) =>
+      Array.isArray(step.content) &&
+      step.content.some(
+        (part) => part?.type === 'tool-call' && part.toolName === PRESENTATION_CHOICE_TOOL && !part.invalid,
+      ),
+  );
+}
+
+/** A planned deck needs room for research, workbook calculations, composition and verification. */
+export function agentStepLimit(steps: ReadonlyArray<{ content?: unknown }>) {
+  const presentation = steps.some(
+    (step) =>
+      Array.isArray(step.content) &&
+      step.content.some((part) => part?.type === 'tool-call' && part.toolName === 'presentation_plan'),
+  );
+  return presentation ? 40 : 20;
 }
 
 /**
@@ -714,12 +847,14 @@ async function streamAgentTurn(
       system: options.system,
       messages: options.messages,
       tools: options.tools,
-      activeTools: activeToolsForStep(toolNames, initialGroups, []),
-      prepareStep: ({ steps }) => ({ activeTools: activeToolsForStep(toolNames, initialGroups, steps) }),
+      activeTools: activeToolsForStep(toolNames, initialGroups, [], options.presentationSession),
+      prepareStep: ({ steps }) => ({
+        activeTools: activeToolsForStep(toolNames, initialGroups, steps, options.presentationSession),
+      }),
       abortSignal: options.signal,
       // Multi-step flows (fetch a file → store → attach → send) need headroom
       // beyond the old 6-step cap.
-      stopWhen: stepCountIs(20),
+      stopWhen: ({ steps }) => steps.length >= agentStepLimit(steps) || hasPendingPresentationQuestion(steps),
       // Tiered per-step ceiling (never unbounded → avoids the 65536 reservation
       // that OpenRouter 402s on); leaves room for reasoning + a reply.
       maxOutputTokens: maxOutputTokensForFeature(feature),
@@ -788,6 +923,7 @@ async function streamAgentTurn(
 export interface AgentRunOpts {
   runId?: string;
   messages: ModelMessage[];
+  presentationSession?: PresentationSession;
   /** Bias the system prompt with extra context (selected thread, focused account). */
   extraSystem?: string;
   userId?: string | null;
@@ -821,6 +957,7 @@ export function agentTimeContext(timezone: string, now = new Date()): string {
 export async function runAgent({
   runId = newOperationBatchId(),
   messages,
+  presentationSession,
   extraSystem,
   userId,
   userEmail,
@@ -844,7 +981,7 @@ export async function runAgent({
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = runId;
   const timezone = userTimezone || 'UTC';
-  const tools = liftToolsForAgent(operationBatchId, timezone);
+  const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession);
 
   let resolveSteps: (steps: any[]) => void = () => undefined;
   const steps = new Promise<any[]>((resolve) => {
@@ -883,12 +1020,24 @@ export async function runAgent({
               const base = buildSystemPrompt({ name: userName, email: userEmail }, { memories });
               // Static instructions first, per-turn context last: providers cache the
               // shared prefix, so the parts that change every turn sit at the end.
-              const system = [base, extraSystem, narrative, agentTimeContext(timezone)]
+              const choiceContext = presentationSession
+                ? `Presentation checkpoint state (authoritative confirmed user choices): ${JSON.stringify({ next: nextPresentationCheckpoint(presentationSession), presentationId: presentationSession.presentationId, brief: presentationSession.brief, design: presentationSession.design, storyboard: presentationSession.storyboard, visuals: presentationSession.visuals, guidance: presentationSession.guidance, delegated: presentationSession.delegate })}\nAsk only the next unanswered checkpoint shown here, once. Never restart the brief or change the presentationId. If next is null, no questions remain: gather any missing evidence, plan, create and visually verify the deck using the saved choices. Delegation remains in force; do not replace a disabled picker with ask_user or prose questions. If next is cancelled, stop presentation creation.`
+                : '';
+              const system = [base, extraSystem, narrative, choiceContext, agentTimeContext(timezone)]
                 .filter(Boolean)
                 .join('\n\n');
 
               const outcome = await runWithAiRequestContext(requestContext, () =>
-                streamAgentTurn(writer, { runId, userId, system, messages, tools, toolGroups, signal }),
+                streamAgentTurn(writer, {
+                  runId,
+                  userId,
+                  system,
+                  messages,
+                  tools,
+                  toolGroups,
+                  presentationSession,
+                  signal,
+                }),
               );
               completed = outcome.steps;
               writer.write(
@@ -936,3 +1085,12 @@ export async function runAgent({
     },
   };
 }
+
+import {
+  applyPresentationChoices,
+  nextPresentationCheckpoint,
+  PRESENTATION_CHOICE_TOOL,
+  type PresentationSession,
+  presentationChoiceSchemaForSession,
+} from '@/lib/documents/presentation-choices';
+import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';

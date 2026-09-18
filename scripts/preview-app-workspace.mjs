@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/postcss';
 import { file, serve } from 'bun';
 import postcss from 'postcss';
 import preview from './fixtures/app-workspace-preview.html';
+import sendPreview from './fixtures/send-preview.html';
 
 const root = process.cwd();
 const chunks = resolve(root, '.next/static/chunks');
@@ -71,7 +72,7 @@ const server = serve({
   port: Number(process.env.ALBATROSS_PREVIEW_PORT || 18847),
   development: { hmr: true, console: false },
   idleTimeout: 0,
-  routes: { '/': preview },
+  routes: { '/': preview, '/send': sendPreview },
   fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === '/preview.css')

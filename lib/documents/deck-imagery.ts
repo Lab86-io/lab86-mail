@@ -43,6 +43,9 @@ const ROLE_PRIORITY: Partial<Record<CompositionRole, number>> = {
   cover: 0,
   'image-left': 1,
   'image-right': 1,
+  'image-top': 1,
+  'image-bottom': 1,
+  'image-auto': 1,
   statement: 2,
   close: 3,
   quote: 4,
@@ -81,6 +84,8 @@ export interface ImageryPlanSlide {
   role: CompositionRole;
   title: string;
   kicker?: string;
+  /** Specific image subject takes priority over broad deck context. */
+  subject?: string;
   /** The slide already shows an owned image; artwork never displaces it. */
   hasImage: boolean;
 }
@@ -136,7 +141,12 @@ export function planImagerySlots(input: ImageryPlanInput, theme: DeckTheme): Dec
   const slots: ImagerySlot[] = [];
   input.slides.forEach((slide, slideIndex) => {
     if (slide.hasImage || !ARTWORK_ROLES.includes(slide.role)) return;
-    const text = unique([...subjectWords, ...words(slide.title), ...words(slide.kicker)])
+    const text = unique([
+      ...words(slide.subject),
+      ...subjectWords,
+      ...words(slide.title),
+      ...words(slide.kicker),
+    ])
       .slice(0, MAX_QUERY_WORDS)
       .join(' ');
     slots.push({
@@ -173,6 +183,7 @@ export function planDeckImagery(
         slideId: options.slideIds?.[index] ?? `slide-${index + 1}`,
         role: content.role,
         title: content.title,
+        subject: brief.slides[index].image?.subject,
         ...(content.kicker ? { kicker: content.kicker } : {}),
         hasImage: Boolean(content.image?.asset || content.artwork),
       })),

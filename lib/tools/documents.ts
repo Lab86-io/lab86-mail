@@ -5,12 +5,17 @@ import { artworksForDeck } from '@/lib/documents/deck-imagery';
 import { checkSlide } from '@/lib/documents/deck-quality';
 import { assetsFromUploads, MAX_UPLOAD_ASSETS } from '@/lib/documents/deck-upload-assets';
 import { upgradeDeckModel } from '@/lib/documents/deck-versions';
+import {
+  deckVisualReportSchema,
+  reviewDeckVisuals,
+  visualReviewSummary,
+} from '@/lib/documents/deck-visual-review';
 import { type DocumentEditContext, documentEditsSchema, prepareDocumentEdits } from '@/lib/documents/edits';
 import { publishDocumentToGoogle } from '@/lib/documents/google';
 import { DOCUMENT_KINDS, documentModelText, isSheetWorkbookModel } from '@/lib/documents/model';
 import {
-  presentationBriefSchema,
-  presentationBriefV2Schema,
+  presentationAuthoringSchema,
+  presentationAuthoringV2Schema,
   presentationSlideCountMatches,
 } from '@/lib/documents/presentation-design';
 import {
@@ -51,6 +56,7 @@ const defaultDependencies = {
   listDocuments,
   publishDocumentToGoogle,
   recordOperation,
+  reviewDeckVisuals,
   updateDocument,
 };
 
@@ -63,7 +69,7 @@ export function __setDocumentToolDepsForTest(overrides: Partial<typeof defaultDe
 export const documentCreate = defineTool({
   name: 'document_create',
   description:
-    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through the existing design and layout checks without another model call. Prefer the version 2 brief with audience, purpose, tone, palette (editorial or signal), fontPair (serif or sans), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, process, comparison, list, quote, close. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none keeps slides typographic. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
+    'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through review of every slide and bounded copy/layout repair. Prefer the version 2 brief with audience, purpose, tone, palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate), fontPair (serif, sans, literary, humanist, grotesk, mono), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, table, process, comparison, list, quote, close. Chart slides take typed categories/series; table slides take headers/rows/source and compose editable cells. Call presentation_plan with gathered evidence first, execute its calculation and visual tool steps, then create the deck. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none excludes decorative paintings without excluding uploaded images or data. Combine supplied images, artwork and chart/table slides as the content needs; no imagery-category selection is required. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
   category: 'documents',
   mutating: true,
   input: z
@@ -74,10 +80,10 @@ export const documentCreate = defineTool({
       sourceContext: z.string().max(40_000).optional(),
       sourceRefs: z.array(sourceRefSchema).max(100).optional(),
       presentation: z
-        .union([presentationBriefV2Schema, presentationBriefSchema])
+        .union([presentationAuthoringV2Schema, presentationAuthoringSchema])
         .optional()
         .describe(
-          'Finished presentation content for kind=deck; composed and saved directly without AI generation. Put source detail and citations in speaker notes.',
+          'Finished presentation content for kind=deck; reviewed slide by slide, repaired and composed before saving. Put source detail and citations in speaker notes.',
         ),
       publishToGoogle: z.boolean().default(false),
       googleConnectionId: z.string().max(500).optional(),
@@ -111,6 +117,7 @@ export const documentCreate = defineTool({
     openPath: z.string(),
     googleUrl: z.string().optional(),
     publishError: z.string().optional(),
+    visualReview: deckVisualReportSchema.optional(),
     /** Plain notes on uploads that were skipped. */
     notes: z.array(z.string()).optional(),
   }),
@@ -131,6 +138,9 @@ export const documentCreate = defineTool({
       ? await dependencies.composeDocumentPresentation({
           userId,
           instruction: args.instructions || '',
+          sourceContext: args.sourceContext,
+          userEmail: ctx.userEmail || undefined,
+          userName: ctx.userName || undefined,
           presentation: args.presentation,
           assets,
           artwork: args.artwork,
@@ -150,6 +160,7 @@ export const documentCreate = defineTool({
           })
         : null;
     ctx.abortSignal?.throwIfAborted();
+    if (args.kind === 'deck' && proposal?.summary) notes.push(proposal.summary);
     const document = await dependencies.createDocument({
       userId,
       kind: args.kind,
@@ -170,6 +181,8 @@ export const documentCreate = defineTool({
     let publishError: string | undefined;
     if (args.publishToGoogle) {
       try {
+        if (proposal?.visualReview?.status === 'needs_review')
+          throw new Error('Draft saved. Finish its visual review before publishing to Google.');
         ctx.abortSignal?.throwIfAborted();
         google = await dependencies.publishDocumentToGoogle({
           userId,
@@ -192,6 +205,7 @@ export const documentCreate = defineTool({
       openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
       googleUrl: google?.webUrl,
       publishError,
+      ...(proposal?.visualReview ? { visualReview: proposal.visualReview } : {}),
       ...(notes.length ? { notes } : {}),
     };
   },
@@ -385,6 +399,55 @@ export const documentApplyInstruction = defineTool({
   },
 });
 
+export const documentReviewSlides = defineTool({
+  name: 'document_review_slides',
+  description:
+    'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Saves repairs with revision conflict protection; never recreates the presentation.',
+  category: 'documents',
+  mutating: true,
+  input: z.object({ documentId: z.string().min(1) }),
+  output: z.object({
+    ok: z.boolean(),
+    documentId: z.string(),
+    revision: z.number(),
+    visualReview: deckVisualReportSchema,
+    summary: z.string(),
+    openPath: z.string(),
+  }),
+  async handler(args, ctx) {
+    const userId = requireUserId(ctx.userId);
+    ctx.abortSignal?.throwIfAborted();
+    const document = await dependencies.getDocument(userId, args.documentId);
+    if (!document || document.model.kind !== 'deck') throw new Error('Presentation not found.');
+    const reviewed = await dependencies.reviewDeckVisuals(upgradeDeckModel(document.model), {
+      userId,
+      abortSignal: ctx.abortSignal,
+    });
+    ctx.abortSignal?.throwIfAborted();
+    const summary = visualReviewSummary(reviewed.report).trim();
+    const saved = await dependencies.updateDocument({
+      userId,
+      documentId: document.documentId,
+      expectedRevision: document.currentRevision,
+      model: reviewed.model,
+      reason: summary,
+      actor: 'ai',
+    });
+    if (!saved.ok)
+      throw new Error(
+        'The presentation changed during visual review. Read the latest revision and review it again.',
+      );
+    return {
+      ok: true,
+      documentId: document.documentId,
+      revision: saved.document.currentRevision,
+      visualReview: reviewed.report,
+      summary,
+      openPath: `/?view=files&document=${encodeURIComponent(document.documentId)}`,
+    };
+  },
+});
+
 export const documentPublishGoogle = defineTool({
   name: 'document_publish_google',
   description:
@@ -447,7 +510,7 @@ export const documentExport = defineTool({
 export const documentEdit = defineTool({
   name: 'document_edit',
   description:
-    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, or six custom hex colors), fontPair (serif or sans), scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay), and imagery paintings (credited public-domain paintings on the cover, statement, image, quote and close slides that have no image) or none (paintings removed; the user’s own images stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
+    'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate, or six custom hex colors), fontPair (serif, sans, literary, humanist, grotesk, mono), scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay), and imagery paintings (credited public-domain paintings on the cover, statement, image, quote and close slides that have no image) or none (paintings removed; the user’s own images stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
   mutating: true,
   input: z.object({

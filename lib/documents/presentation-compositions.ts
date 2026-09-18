@@ -1,8 +1,8 @@
-import { contrastRatio, textFits } from './deck-quality';
+import { contrastRatio, estimateTextLines, textFits } from './deck-quality';
 import type { DeckElementV2, DeckModelV2, DeckSlideV2, DeckTheme } from './model';
 
 /**
- * The eleven slide compositions of the presentation design system, composed
+ * The slide compositions of the presentation design system, composed
  * deterministically from content. Geometry, type scale and spacing copy the
  * reference deck in `deck-fixtures.ts` number for number; a test keeps the two
  * within half a percent. Long copy steps the type down by rule, never past
@@ -14,8 +14,12 @@ export const COMPOSITION_ROLES = [
   'statement',
   'image-left',
   'image-right',
+  'image-top',
+  'image-bottom',
+  'image-auto',
   'metrics',
   'chart',
+  'table',
   'process',
   'comparison',
   'list',
@@ -24,9 +28,18 @@ export const COMPOSITION_ROLES = [
 ] as const;
 export type CompositionRole = (typeof COMPOSITION_ROLES)[number];
 
-export const PALETTE_NAMES = ['editorial', 'signal'] as const;
+export const PALETTE_NAMES = [
+  'editorial',
+  'signal',
+  'grove',
+  'lagoon',
+  'dusk',
+  'rose',
+  'sand',
+  'slate',
+] as const;
 export type PaletteName = (typeof PALETTE_NAMES)[number];
-export const FONT_PAIR_NAMES = ['serif', 'sans'] as const;
+export const FONT_PAIR_NAMES = ['serif', 'sans', 'literary', 'humanist', 'grotesk', 'mono'] as const;
 export type FontPairName = (typeof FONT_PAIR_NAMES)[number];
 
 export type DeckColors = DeckTheme['colors'];
@@ -50,6 +63,54 @@ export const DECK_PALETTES: Record<PaletteName, DeckColors> = {
     accent: '#2F5BFF',
     accentInk: '#FFFFFF',
   },
+  grove: {
+    background: '#F2F5EF',
+    surface: '#DEE7D8',
+    ink: '#19352C',
+    muted: '#526256',
+    accent: '#2D6A4F',
+    accentInk: '#FFFFFF',
+  },
+  lagoon: {
+    background: '#EFF7F8',
+    surface: '#D9EAED',
+    ink: '#153C47',
+    muted: '#4C6570',
+    accent: '#087789',
+    accentInk: '#FFFFFF',
+  },
+  dusk: {
+    background: '#F4F0F9',
+    surface: '#E5DDEF',
+    ink: '#352446',
+    muted: '#695971',
+    accent: '#754395',
+    accentInk: '#FFFFFF',
+  },
+  rose: {
+    background: '#FCF1F0',
+    surface: '#F0DBDC',
+    ink: '#482B33',
+    muted: '#775963',
+    accent: '#A13E5A',
+    accentInk: '#FFFFFF',
+  },
+  sand: {
+    background: '#FAF4E7',
+    surface: '#EDE1C7',
+    ink: '#433721',
+    muted: '#68583F',
+    accent: '#825211',
+    accentInk: '#FFFFFF',
+  },
+  slate: {
+    background: '#EDF1F5',
+    surface: '#DAE1E9',
+    ink: '#243246',
+    muted: '#4D5C6E',
+    accent: '#365478',
+    accentInk: '#FFFFFF',
+  },
 };
 
 export const DECK_FONT_PAIRS: Record<FontPairName, DeckTheme['fonts']> = {
@@ -60,6 +121,26 @@ export const DECK_FONT_PAIRS: Record<FontPairName, DeckTheme['fonts']> = {
   },
   sans: {
     display: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  literary: {
+    display: { family: 'Instrument Serif', exportFamily: 'Georgia', fallback: 'serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  humanist: {
+    display: { family: 'Manrope', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    body: { family: 'Manrope', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  grotesk: {
+    display: { family: 'Space Grotesk', exportFamily: 'Aptos Display', fallback: 'sans-serif' },
+    body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
+    mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
+  },
+  mono: {
+    display: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
     body: { family: 'Geist', exportFamily: 'Aptos', fallback: 'sans-serif' },
     mono: { family: 'Geist Mono', exportFamily: 'Consolas', fallback: 'monospace' },
   },
@@ -192,13 +273,16 @@ export function resolvePalette(input: PaletteInput): ResolvedPalette {
 
 export function buildDeckTheme(palette: PaletteInput, fontPair: FontPairName): DeckTheme {
   const resolved = resolvePalette(palette);
-  const name = resolved.name === 'custom' ? 'Custom' : resolved.name === 'signal' ? 'Signal' : 'Editorial';
+  const name = resolved.name[0].toUpperCase() + resolved.name.slice(1);
   return { name, colors: { ...resolved.colors }, fonts: structuredClone(DECK_FONT_PAIRS[fontPair]) };
 }
 
 /** The font pair a theme uses, by its display family. */
 export function fontPairOf(theme: DeckTheme): FontPairName {
-  return theme.fonts.display.family === 'Fraunces' ? 'serif' : 'sans';
+  return (
+    FONT_PAIR_NAMES.find((name) => DECK_FONT_PAIRS[name].display.family === theme.fonts.display.family) ??
+    'sans'
+  );
 }
 
 export interface CompositionItem {
@@ -277,6 +361,7 @@ export interface CompositionContent {
   items: CompositionItem[];
   notes?: string;
   chart?: CompositionChart;
+  table?: { headers: string[]; rows: string[][]; source?: string | null };
   image?: CompositionImage;
   /** Cover foot line, e.g. who the deck is for. */
   footer?: string;
@@ -364,6 +449,26 @@ class Slide {
 
   text(slot: string, value: string, box: Box, props: TextProps = {}) {
     if (!value.trim()) return;
+    const fontSlot = props.font ?? (props.role === 'title' || props.role === 'number' ? 'display' : 'body');
+    if (
+      fontSlot !== 'mono' &&
+      this.options.theme.fonts[fontSlot]?.fallback === 'monospace' &&
+      props.fontSize
+    ) {
+      // Measure the actual face without changing its semantic font slot: a
+      // later display-font edit must still restyle these titles and numbers.
+      props = {
+        ...props,
+        fontSize: fitTypeSize(
+          value,
+          box,
+          props.fontSize,
+          Math.min(props.fontSize, fontSlot === 'display' ? 24 : 12),
+          { ...props, font: 'mono', lineHeight: props.lineHeight ?? (fontSlot === 'display' ? 1.05 : 1.3) },
+          1,
+        ),
+      };
+    }
     this.elements.push({
       id: this.id(slot),
       type: 'text',
@@ -375,6 +480,25 @@ class Slide {
       height: box[3],
       ...props,
     });
+  }
+
+  /** Reflow generated captions into reserved space before requesting copy edits. */
+  caption(slot: string, value: string, box: Box, maxHeight: number, props: TextProps) {
+    const text = value.replace(/\s+/g, ' ').trim();
+    const probe: Text = {
+      id: 'caption',
+      type: 'text',
+      text,
+      x: box[0],
+      y: box[1],
+      width: box[2],
+      height: box[3],
+      ...props,
+    };
+    const needed = ((estimateTextLines(probe) * (props.fontSize ?? 11) * 1.3) / SLIDE_HEIGHT_PT) * 100;
+    const height = Math.min(maxHeight, Math.max(box[3], needed));
+    const y = props.valign === 'bottom' ? box[1] + box[3] - height : Math.min(box[1], 97 - height);
+    this.text(slot, text, [box[0], y, box[2], height], props);
   }
 
   rule(slot: string, x: number, y: number, width: number, color: string, weight = 1.25) {
@@ -521,7 +645,7 @@ interface Voice {
 }
 
 function voice(theme: DeckTheme): Voice {
-  const editorial = fontPairOf(theme) === 'serif';
+  const editorial = ['serif', 'literary'].includes(fontPairOf(theme));
   const c = paletteTokens(theme.colors);
   return {
     c,
@@ -639,7 +763,7 @@ function composeCover(content: CompositionContent, options: ComposeSlideOptions)
     });
   const foot = content.footer || content.items[0]?.label;
   if (foot)
-    s.text('foot', foot, [6, artwork ? 86 : 90, 40, 4], {
+    s.caption('foot', foot, [6, artwork ? 86 : 90, 40, 4], 12, {
       role: 'caption',
       fontSize: 11,
       color: v.c.muted,
@@ -802,6 +926,47 @@ function composeImageSide(
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
 }
 
+/** Choose image geometry from its shape and the amount of visible copy. */
+export function imageLayoutFor(
+  content: CompositionContent,
+): 'image-left' | 'image-right' | 'image-top' | 'image-bottom' {
+  const asset = content.image?.asset ?? content.artwork?.asset;
+  if (!asset || content.items.length > 2 || (content.body?.length ?? 0) > 220) return 'image-right';
+  const aspect = asset.aspect ?? 1.5;
+  if (aspect >= 2.2 && (content.body?.length ?? 0) <= 140) return 'image-top';
+  if (aspect >= 1.4) return 'image-bottom';
+  return aspect < 1 ? 'image-left' : 'image-right';
+}
+
+/** Wide photographs get a separate band; all text stays outside that band. */
+function composeImageBand(
+  content: CompositionContent,
+  options: ComposeSlideOptions,
+  side: 'top' | 'bottom',
+): DeckSlideV2 {
+  const artwork = artworkFor(content);
+  if (!content.image?.asset && !artwork) return composeImageSide(content, options, 'right');
+  const v = voice(options.theme);
+  const s = new Slide(side === 'top' ? 'image-top' : 'image-bottom', options);
+  const top = side === 'top';
+  const imageBox: Box = top ? [6, 6, 88, 38] : [6, 54, 88, 33];
+  if (content.image?.asset) s.image('image', content.image, imageBox, { x: 0.5, y: 0.5 });
+  else if (artwork) s.artwork('image', artwork, imageBox, { x: 0.5, y: 0.5 });
+  kickerLine(s, v, content.kicker, [6, top ? 47 : 8, 40, 4.5]);
+  sectionTitle(s, v, content.title, [6, top ? 55 : 16, 40, 28], 38);
+  if (content.body)
+    s.text('body', content.body, [52, top ? 55 : 16, 42, content.items.length ? 17 : 30], {
+      role: 'body',
+      fontSize: 15,
+      lineHeight: 1.4,
+      valign: 'top',
+    });
+  factsRow(s, v, content.items.slice(0, 2), 52, 42, top ? 75 : 36);
+  if (artwork) s.credit(artwork, top ? [52, 45, 42, 5] : [6, 89, 76, 6], v.c.muted, top ? 'right' : 'left');
+  pageNumber(s, options, v.c.muted, top ? 6 : 86);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content, artwork) };
+}
+
 function chartColors(v: Voice) {
   return [v.c.accent, v.c.ink, v.c.muted, v.c.soft];
 }
@@ -812,7 +977,7 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
   kickerLine(s, v, content.kicker, [6, 10, 40, 4.5]);
   const items = content.items.slice(0, 4);
   if (content.chart) {
-    sectionTitle(s, v, content.title, [6, 16, 52, 18], 34);
+    sectionTitle(s, v, content.title, [6, 16, 52, content.body ? 13 : 18], 34);
     if (content.body)
       s.text('body', content.body, [40, 30, 44, 7], {
         role: 'body',
@@ -847,7 +1012,7 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
     s.chart('chart', content.chart, [40, 38, 54, 50], chartColors(v));
     const sourceLine = content.sourceLine ?? content.chart.source;
     if (sourceLine)
-      s.text('source', sourceLine, [40, 90, 44, 5], {
+      s.caption('source', sourceLine, [40, 90, 44, 5], 8, {
         role: 'caption',
         fontSize: 10.5,
         color: v.c.muted,
@@ -893,6 +1058,54 @@ function composeMetrics(content: CompositionContent, options: ComposeSlideOption
   return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
 }
 
+/** Editable table cells, using the same typography and rules as the deck. */
+function composeTable(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
+  const v = voice(options.theme);
+  const s = new Slide('table', options);
+  kickerLine(s, v, content.kicker, [6, 7, 88, 4.5]);
+  sectionTitle(s, v, content.title, [6, 14, 88, 14], 34);
+  if (content.body)
+    s.text('body', content.body, [6, 29, 88, 8], {
+      role: 'body',
+      fontSize: 14,
+      color: v.c.muted,
+      valign: 'top',
+    });
+  if (content.table) {
+    const { headers, rows, source } = content.table;
+    const width = 88 / headers.length;
+    const rowHeight = Math.min(8, 48 / (rows.length + 1));
+    headers.forEach((header, column) => {
+      s.text(`table-header-${column}`, header, [6 + column * width, 39, width - 2, rowHeight - 1], {
+        role: 'subtitle',
+        fontSize: 12,
+        fontWeight: 600,
+        color: v.c.accent,
+        align: column > 0 && rows.every((row) => /^[-+\d$€£]/.test(row[column])) ? 'right' : 'left',
+        valign: 'middle',
+      });
+    });
+    s.rule('table-header-rule', 6, 39 + rowHeight - 0.5, 88, v.c.ink);
+    rows.forEach((row, index) => {
+      const y = 39 + (index + 1) * rowHeight;
+      row.forEach((cell, column) => {
+        s.text(`table-cell-${index}-${column}`, cell, [6 + column * width, y, width - 2, rowHeight - 1], {
+          role: 'body',
+          fontSize: 12,
+          color: v.c.ink,
+          valign: 'middle',
+          align: column > 0 && /^[-+\d$€£]/.test(cell) ? 'right' : 'left',
+        });
+      });
+      s.rule(`table-rule-${index}`, 6, y + rowHeight - 0.5, 88, v.c.muted, 0.4);
+    });
+    if (source)
+      s.caption('source', source, [6, 90, 76, 5], 7, { role: 'caption', fontSize: 10.5, color: v.c.muted });
+  }
+  pageNumber(s, options, v.c.muted);
+  return { id: options.slideId, title: content.title, elements: s.elements, ...notes(content) };
+}
+
 function composeChart(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
   if (!content.chart) return composeMetrics({ ...content, role: 'metrics' }, options);
   const v = voice(options.theme);
@@ -925,7 +1138,7 @@ function composeChart(content: CompositionContent, options: ComposeSlideOptions)
   s.chart('chart', content.chart, [46, 16, 48, 70], chartColors(v));
   const sourceLine = content.sourceLine ?? content.chart.source;
   if (sourceLine)
-    s.text('source', sourceLine, [46, 88, 38, 5], {
+    s.caption('source', sourceLine, [46, 88, 38, 5], 9, {
       role: 'caption',
       fontSize: 10.5,
       color: v.c.muted,
@@ -1241,6 +1454,8 @@ function notes(content: CompositionContent, artwork?: CompositionArtwork) {
 
 /** Compose one slide through its composition. */
 export function composeSlide(content: CompositionContent, options: ComposeSlideOptions): DeckSlideV2 {
+  if (content.role === 'image-auto')
+    return composeSlide({ ...content, role: imageLayoutFor(content) }, options);
   switch (content.role) {
     case 'cover':
       return composeCover(content, options);
@@ -1250,8 +1465,14 @@ export function composeSlide(content: CompositionContent, options: ComposeSlideO
       return composeImageSide(content, options, 'left');
     case 'image-right':
       return composeImageSide(content, options, 'right');
+    case 'image-top':
+      return composeImageBand(content, options, 'top');
+    case 'image-bottom':
+      return composeImageBand(content, options, 'bottom');
     case 'metrics':
       return composeMetrics(content, options);
+    case 'table':
+      return composeTable(content, options);
     case 'chart':
       return composeChart(content, options);
     case 'process':

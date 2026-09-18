@@ -1141,7 +1141,22 @@ const MAPPERS: Record<string, Mapper> = {
     documentShape(tool, input, { ...output, kind: 'doc' }, 'created'),
   word_document_edit: (input, output, tool) =>
     documentShape(tool, input, { ...output, kind: 'doc' }, 'applied'),
-  document_create: (input, output, tool) => documentShape(tool, input, output, 'created'),
+  document_create: (input, output, tool) => {
+    const review = asRecord(output.visualReview);
+    return documentShape(
+      tool,
+      input,
+      {
+        ...output,
+        ...(review.status === 'needs_review'
+          ? { summary: 'Draft saved. Its visual review needs attention.' }
+          : review.status === 'passed'
+            ? { summary: `Visually checked all ${num(review.totalSlides)} slides.` }
+            : {}),
+      },
+      review.status === 'needs_review' ? 'needs review' : 'created',
+    );
+  },
   document_edit: (input, output, tool) => documentShape(tool, input, output),
   document_suggest_changes: (input, output, tool) =>
     documentShape(
@@ -1151,6 +1166,13 @@ const MAPPERS: Record<string, Mapper> = {
       'proposed',
     ),
   document_apply_instruction: (input, output, tool) => documentShape(tool, input, output, 'applied'),
+  document_review_slides: (input, output, tool) =>
+    documentShape(
+      tool,
+      input,
+      output,
+      asRecord(output.visualReview).status === 'passed' ? 'checked' : 'needs review',
+    ),
   document_get: (input, output, tool) => {
     const document = asRecord(output.document);
     return documentShape(tool, input, {

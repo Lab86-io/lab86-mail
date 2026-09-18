@@ -105,6 +105,7 @@ import {
   documentGet,
   documentList,
   documentPublishGoogle,
+  documentReviewSlides,
   documentSuggestChanges,
   spreadsheetCapabilitiesTool,
 } from './documents';
@@ -146,6 +147,7 @@ import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
 import { listRecentOperationsTool, undoOperationTool } from './operations-tools';
 import { resolvePhotos } from './photos';
+import { presentationPlan } from './presentations';
 import type { AnyTool } from './registry';
 import { salvageContext } from './salvage';
 import {
@@ -284,6 +286,7 @@ const allTools: AnyTool[] = [
   resolveTrackedThread,
   listTrackedThreadsTool,
   getTrackedThreadTool,
+  presentationPlan,
   documentCreate,
   documentEdit,
   wordDocumentCreate,
@@ -294,6 +297,7 @@ const allTools: AnyTool[] = [
   documentSuggestChanges,
   spreadsheetCapabilitiesTool,
   documentApplyInstruction,
+  documentReviewSlides,
   documentPublishGoogle,
   documentExport,
   cloudFileSearch,

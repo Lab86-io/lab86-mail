@@ -29,6 +29,7 @@ import {
   restyleOperationFor,
 } from '../lib/documents/presentation-design';
 import { harborBrief, lakeshoreBrief, poolArtworks, VALLEY } from './fixtures/presentation-briefs';
+import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
 
 afterEach(() => __setDocumentAiDepsForTest());
 
@@ -419,6 +420,8 @@ describe('restyle requests through the document proposal', () => {
       },
     }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -435,13 +438,15 @@ describe('restyle requests through the document proposal', () => {
       speed: 'classify',
     });
     expect(proposal.title).toBe('Lakeshore');
-    expect(proposal.summary).toBe('Moved the deck to the signal palette with sans fonts.');
+    expect(proposal.summary).toContain('Moved the deck to the signal palette with sans fonts.');
     const model = proposal.model as DeckModelV2;
     expect(model.theme).toEqual(DECK_THEMES.signal);
     expect(texts(model, 2)).toEqual(texts(referenceDeck('editorial'), 2));
     expect(chartData(model)).toEqual(chartData(referenceDeck('editorial')));
     // The same look again is refused, so no empty revision is written.
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async () => ({
         object: {
@@ -469,6 +474,8 @@ describe('restyle requests through the document proposal', () => {
       },
     }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -481,7 +488,7 @@ describe('restyle requests through the document proposal', () => {
     expect(generate).toHaveBeenCalledTimes(1);
     expect(generate.mock.calls[0][0]).toMatchObject({ feature: 'document_suggestion' });
     expect(generate.mock.calls[0][0].schema).not.toBe(restyleClassificationSchema);
-    expect(proposal.summary).toBe('Added a budget slide.');
+    expect(proposal.summary).toContain('Added a budget slide.');
   });
 
   test('a classification that is not a restyle falls back to the content path', async () => {
@@ -509,6 +516,8 @@ describe('restyle requests through the document proposal', () => {
       };
     });
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: generate as any,
     });
@@ -519,7 +528,7 @@ describe('restyle requests through the document proposal', () => {
       current,
     });
     expect(calls).toHaveLength(2);
-    expect(proposal.summary).toBe('Changed the words.');
+    expect(proposal.summary).toContain('Changed the words.');
     expect(
       restyleOperationFor({
         restyle: true,
@@ -552,6 +561,8 @@ describe('restyle requests through the document proposal', () => {
       notes: [],
     }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: classify as any,
       artworksForDeck: resolve as any,
@@ -568,9 +579,11 @@ describe('restyle requests through the document proposal', () => {
     expect(model.theme.imagery).toEqual({ mode: 'paintings', subject: 'valley' });
     expect(model.slides[1].backgroundImage).toMatchObject({ assetId: 'art-1' });
     expect(model.slides[5].elements.some((e) => e.type === 'image' && isArtworkSource(e.source))).toBe(true);
-    expect(proposal.summary).toBe('Added paintings to the open slides.');
+    expect(proposal.summary).toContain('Added paintings to the open slides.');
 
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: classify as any,
       artworksForDeck: (async () => ({ artworks: {}, imagery: { mode: 'paintings' }, notes: ['x'] })) as any,
@@ -580,6 +593,8 @@ describe('restyle requests through the document proposal', () => {
     ).rejects.toThrow('Artwork was not available, so nothing was changed.');
 
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => true,
       generateObjectForCurrentUser: (async (options: any) =>
         options.schema === restyleClassificationSchema
@@ -595,7 +610,7 @@ describe('restyle requests through the document proposal', () => {
       instruction: 'Signal palette with paintings',
       current,
     });
-    expect(degraded.summary).toBe(
+    expect(degraded.summary).toContain(
       'Added paintings to the open slides. Artwork could not be added; the slides stay typographic.',
     );
     expect((degraded.model as DeckModelV2).theme.colors).toEqual(DECK_THEMES.signal.colors);
@@ -611,6 +626,8 @@ describe('restyle requests through the document proposal', () => {
       },
     }));
     __setDocumentAiDepsForTest({
+      reviewDeckVisuals: passingVisualReview,
+      designPresentationLayouts: passingLayoutDesign,
       isDeckV2AuthoringEnabled: () => false,
       generateObjectForCurrentUser: generate as any,
     });
@@ -622,6 +639,6 @@ describe('restyle requests through the document proposal', () => {
     });
     expect(generate).toHaveBeenCalledTimes(1);
     expect(generate.mock.calls[0][0].schema).not.toBe(restyleClassificationSchema);
-    expect(proposal.summary).toBe('Restyled by hand.');
+    expect(proposal.summary).toContain('Restyled by hand.');
   });
 });
