@@ -460,10 +460,10 @@ describe('Smart Category verdict freshness', () => {
         smartPrimary: 'updates',
         llmClassifiedMessageId: 'message_2',
       });
-      expect(accepted?.llmPending).toBeUndefined();
+      expect(accepted?.llmPending).toBe(true);
       expect(accepted?.llmCategory?.primary).toBe('updates');
       expect(noVerdict).toMatchObject({ llmClassifiedMessageId: 'message_2' });
-      expect(noVerdict?.llmPending).toBeUndefined();
+      expect(noVerdict?.llmPending).toBe(true);
       expect(noVerdict?.llmCategory).toBeUndefined();
       expect(noVerdict?.smartPrimary).not.toBe('finance_admin');
     } finally {

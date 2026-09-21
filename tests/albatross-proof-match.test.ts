@@ -6,6 +6,7 @@ import {
   rankWorkForProof,
   threadPrimaryCategory,
 } from '../lib/albatross/proof-match';
+import { assessment } from './fixtures/jev';
 
 describe('proof matching', () => {
   test('requires a lexical reason even when only one requirement is outstanding', () => {
@@ -109,4 +110,29 @@ describe('thread class helpers', () => {
     expect(proofOfferAllowed(null)).toBe(true);
     expect(proofOfferAllowed(undefined)).toBe(true);
   });
+});
+
+test('shared Jev and explicit user rules outrank legacy proof categories', () => {
+  expect(
+    threadPrimaryCategory({
+      latestMessageId: 'm1',
+      jev: assessment(),
+      smartCategory: { primary: 'main' },
+      llmCategory: { primary: 'noise' },
+    }),
+  ).toBe('main');
+  expect(
+    threadPrimaryCategory({
+      latestMessageId: 'm1',
+      jev: assessment({ purpose: 'promotion', obligations: [] }),
+      smartCategory: { primary: 'noise' },
+      llmCategory: { primary: 'main' },
+    }),
+  ).toBe('noise');
+  expect(
+    threadPrimaryCategory({
+      smartCategory: { model: 'user_rule', primary: 'noise' },
+      llmCategory: { primary: 'main' },
+    }),
+  ).toBe('noise');
 });

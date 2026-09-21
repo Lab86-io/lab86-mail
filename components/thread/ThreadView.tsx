@@ -36,6 +36,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import type { JevAssessment } from '@/lib/jev/contract';
 import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
@@ -47,6 +48,7 @@ import {
   canEmbedAttachmentPreview,
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
+import { JevMailDetails } from './JevMailDetails';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
@@ -126,6 +128,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
         summary?: string | null;
         summaryAt?: number | null;
         summaryModel?: string | null;
+        jev?: JevAssessment | null;
       }>('get_thread', {
         account,
         threadId,
@@ -522,6 +525,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
               providerThreadId as `threadId`); use the canonical thread id from
               the store so chips match the cards' sourceThreadId, not ''. */}
           <LinkedTaskChips threadId={threadId || ''} />
+          <JevMailDetails assessment={data.jev} />
           {/* A single message shows its sender and time in the header right
               below; repeating them here says nothing twice. */}
           {messages.length > 1 ? (

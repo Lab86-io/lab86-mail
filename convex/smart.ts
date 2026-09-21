@@ -1,4 +1,6 @@
 import { v } from 'convex/values';
+import { assessmentIsCurrent, attentionMatches, isAttentionView } from '../lib/jev/contract';
+import { smartCategoryFromJev } from '../lib/jev/mail';
 import {
   classifyThreadWithContext,
   includeInSmartCategory,
@@ -67,7 +69,8 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
           needsAttention: Boolean(row.llmCategory.needsAttention) && Boolean(row.unread),
         }
       : null;
-  const verdict = llm || det;
+  const jevCurrent = assessmentIsCurrent(row.jev, row.latestMessageId);
+  const verdict = jevCurrent ? smartCategoryFromJev(row.jev, det, Boolean(row.unread)) : llm || det;
   return {
     smartCategory: verdict,
     smartPrimary: verdict.primary,
@@ -75,7 +78,7 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
     classifiedAt: now(),
     // Every latest message gets the lightweight model pass. Exact user rules
     // still override its result, but do not prevent the pass from happening.
-    llmPending: !llmAttemptIsCurrent ? true : undefined,
+    llmPending: !jevCurrent && (row.jevAttempts || 0) < 3 ? true : undefined,
   };
 }
 
@@ -88,6 +91,18 @@ export function classificationFreshnessPatch(
     llmCategory: undefined,
     llmClassifiedAt: undefined,
     llmClassifiedMessageId: undefined,
+    jev: undefined,
+    jevVersion: 0,
+    jevStatus: 'pending',
+    jevAttempts: 0,
+    jevRetryAt: undefined,
+    jevError: undefined,
+    jevLeaseId: undefined,
+    jevLeaseUntil: undefined,
+    jevNeedsReply: false,
+    jevNeedsAction: false,
+    jevWaiting: false,
+    jevChange: false,
     areaClassifierVersion: undefined,
     areaClassifiedAt: undefined,
     areaClassifiedMessageId: undefined,
@@ -125,6 +140,10 @@ export function normalizeCorpusThread(row: any) {
     starred: Boolean(row.starred),
     messageCount: row.messageCount || 0,
     smartCategory: row.smartCategory || undefined,
+    jev: assessmentIsCurrent(row.jev, row.latestMessageId) ? row.jev : undefined,
+    jevStatus: row.jevStatus,
+    jevLastBriefRevision: row.jevLastBriefRevision,
+    jevLastBriefChangeId: row.jevLastBriefChangeId,
     cachedAt: row.updatedAt || row.lastDate || 0,
   };
 }
@@ -135,6 +154,7 @@ interface CategoryQueryArgs {
   category: string;
   limit: number;
   before?: number;
+  cursor?: string;
 }
 
 // Indexed category listing. Membership is primary === X, plus secondary === X
@@ -146,6 +166,37 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
   const { userId, category } = args;
   const limit = Math.min(Math.max(Math.floor(args.limit) || 50, 1), 200);
   const before = Number.isFinite(args.before) ? Number(args.before) : undefined;
+  if (isAttentionView(category)) {
+    const indexes = {
+      needs_reply: ['by_user_jev_reply', 'jevNeedsReply'],
+      needs_action: ['by_user_jev_action', 'jevNeedsAction'],
+      waiting_for: ['by_user_jev_waiting', 'jevWaiting'],
+      important_changes: ['by_user_jev_change', 'jevChange'],
+    } as const;
+    const [index, field] = indexes[category];
+    let source = ctx.db
+      .query('mailCorpusThreads')
+      .withIndex(index, (q: any) => q.eq('userId', userId).eq(field, true))
+      .order('desc');
+    if (args.accountIds?.length)
+      source = source.filter((q: any) =>
+        q.or(...args.accountIds!.map((id) => q.eq(q.field('accountId'), id))),
+      );
+    const page = await source.paginate({ cursor: args.cursor ?? null, numItems: limit });
+    return {
+      items: page.page
+        .map(normalizeCorpusThread)
+        .filter(
+          (thread: any) =>
+            assessmentIsCurrent(thread.jev, thread.jev?.sourceMessageId) &&
+            attentionMatches(thread.jev, category) &&
+            !thread.labels.some((label: string) => ['SPAM', 'TRASH'].includes(label.toUpperCase())) &&
+            !(thread.smartCategory?.model === 'user_rule' && thread.smartCategory?.primary === 'noise'),
+        ),
+      nextBefore: undefined,
+      nextCursor: page.isDone ? undefined : page.continueCursor,
+    };
+  }
   const accounts = args.accountIds?.length ? args.accountIds : [undefined];
   const isCustom = category.startsWith('custom:');
   const context = await loadSmartContext(ctx, userId);
@@ -213,7 +264,7 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
   // More matches than the page implies older pages exist; cursor on lastDate.
   const nextBefore =
     items.length > page.length && page.length ? Number(page[page.length - 1].lastDate) : undefined;
-  return { items: page, nextBefore };
+  return { items: page, nextBefore, nextCursor: undefined };
 }
 
 // Sweeps rows that predate write-time classification. Runs from a cron and

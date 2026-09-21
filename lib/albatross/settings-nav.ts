@@ -24,6 +24,7 @@ export interface SettingsTabMeta {
 }
 
 export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
+  jev: { group: 'behavior', description: 'Mail classification, relevance, and corrections.' },
   mailboxes: { group: 'workspace', description: 'Accounts, sync, and the search index.' },
   connections: { group: 'workspace', description: 'Tools that feed the brief and search.' },
   areas: { group: 'workspace', description: 'Where your mail and work belong.' },

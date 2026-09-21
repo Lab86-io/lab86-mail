@@ -189,6 +189,56 @@ export function hasPlatformAi() {
   return Boolean(openrouter || openai || anthropic);
 }
 
+/** Fixed Jev transport. It shares credential, entitlement and usage policy,
+ * but never resolves a generative model or the user's model picker. */
+const jevRuntimeDefaults = {
+  query: convexQuery,
+  requiresOwnKey: isUserOpenRouterKeyRequired,
+  entitlement: getAiBillingEntitlement,
+  decrypt: decryptSecret,
+  assertBudget: assertLab86Budget,
+  platformKey: () => process.env.OPENROUTER_API_KEY,
+};
+export async function resolveJevRuntime(
+  userId: string,
+  dependencies = jevRuntimeDefaults,
+): Promise<{
+  userId: string;
+  source: AiSource;
+  apiKey: string;
+}> {
+  const state = await dependencies.query<RuntimeState>(api.ai.getRuntimeState, { userId });
+  const wantsOwnKey = dependencies.requiresOwnKey() || state.settings?.mode === 'byok';
+  if (wantsOwnKey) {
+    if (state.key?.provider !== 'openrouter')
+      throw new Error('Jev requires an OpenRouter key in Intelligence settings.');
+    if (!dependencies.requiresOwnKey()) {
+      const entitlement = await dependencies.entitlement();
+      if (entitlement.plan === 'free') throw new Error('Your own API key requires an eligible plan.');
+    }
+    return { userId, source: 'byok', apiKey: dependencies.decrypt(state.key.encryptedKey) };
+  }
+  dependencies.assertBudget(state, await dependencies.entitlement(), 'jev_mail');
+  const apiKey = dependencies.platformKey();
+  if (!apiKey) throw new Error('Jev is not configured for this deployment.');
+  return { userId, source: 'lab86', apiKey };
+}
+
+export async function recordJevUsage(
+  runtime: { userId: string; source: AiSource },
+  feature: string,
+  result?: { model: string; usage: { input_tokens: number; output_tokens: number } },
+  record = recordUsage,
+) {
+  return record(
+    { ...runtime, provider: 'openrouter', modelName: result?.model || 'typesafe/jev-1.13', model: undefined },
+    feature,
+    result ? { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens } : undefined,
+    Boolean(result),
+    result ? undefined : 'Jev evaluation unavailable',
+  );
+}
+
 export async function resolveAiRuntime(input: {
   userId?: string | null;
   speed?: AiSpeed;

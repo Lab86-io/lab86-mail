@@ -146,7 +146,7 @@ describe('global search sources', () => {
       signal,
     );
     expect(calls).toEqual(
-      ['a', 'b'].map((account) => ['search_threads', { account, query: 'subject:Plan', max: 8 }, true]),
+      ['a', 'b'].map((account) => ['search_threads', { account, query: 'subject:Plan', max: 32 }, true]),
     );
     expect(result.items.map((item) => item.id)).toEqual(['mail:b:same', 'mail:a:same']);
     expect(result.items[0].target).toEqual({ kind: 'mail', account: 'b', threadId: 'same' });
@@ -183,14 +183,14 @@ describe('global search sources', () => {
       ),
     ).rejects.toThrow();
   });
-  test('mail results are bounded', async () => {
+  test('mail results are bounded without discarding upstream relevance', async () => {
     const result = await searchMail(
       'x',
       [{ accountId: 'a', email: 'a' }],
       mockTool(() => ({ items: Array.from({ length: 30 }, (_, i) => ({ _id: String(i), lastDate: i })) })),
     );
     expect(result.items).toHaveLength(16);
-    expect(result.items[0].timestamp).toBe(29);
+    expect(result.items[0].timestamp).toBe(0);
   });
   test('calendar preserves account, calendar and event identity plus dates', async () => {
     const signal = new AbortController().signal;

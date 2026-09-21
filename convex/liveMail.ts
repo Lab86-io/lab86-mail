@@ -156,20 +156,20 @@ export const listThreads = query({
           }))
           .filter((thread) => includeInSmartCategory(thread as any, category));
       }
-      items.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+      items = items.map((item, index) => ({ ...item, searchRank: index }));
       return { items: items.slice(0, limit), nextPageToken: undefined };
     }
 
     if (category) {
       // Indexed read over the persisted write-time verdicts — no provider
       // calls and no window-wide reclassification on the hot path.
-      const { items } = await queryCategoryThreads(ctx, {
+      const { items, nextCursor } = await queryCategoryThreads(ctx, {
         userId,
         accountIds: requestedAccounts.length ? requestedAccounts : null,
         category,
         limit,
       });
-      return { items, nextPageToken: undefined };
+      return { items, nextPageToken: nextCursor ? `jev:${nextCursor}` : undefined };
     }
 
     let rows: any[] = [];
@@ -240,6 +240,8 @@ export const getThread = query({
       messages: messages.map(normalizeMessage),
       summary: null,
       summaryAt: null,
+      jev: normalizeCorpusThread(thread).jev,
+      jevStatus: thread.jevStatus,
     };
   },
 });

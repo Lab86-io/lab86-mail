@@ -1,4 +1,5 @@
 import { readFilePage } from '../files/library-client';
+import { compareMailRelevance } from '../mail/search/ranking';
 import type { PrimaryView } from '../shared/types';
 
 export type SearchScope = 'all' | 'mail' | 'files' | 'calendar';
@@ -29,6 +30,9 @@ export interface SearchResult {
   detail: string;
   target: SearchTarget;
   timestamp?: number;
+  searchRelevance?: number;
+  searchOrder?: 'recent' | 'relevance';
+  searchRank?: number;
 }
 export interface SearchGroup {
   items: SearchResult[];
@@ -136,15 +140,21 @@ export async function searchMail(
           fromAddress?: string;
           snippet?: string;
           lastDate?: number;
+          searchRank?: number;
+          searchRelevance?: number;
+          searchOrder?: 'recent' | 'relevance';
         }>;
-      }>('search_threads', { account: account.accountId, query, max: 8 }, signal);
+      }>('search_threads', { account: account.accountId, query, max: 32 }, signal);
       return data.items.map(
-        (item): SearchResult => ({
+        (item, index): SearchResult => ({
           id: `mail:${account.accountId}:${item._id}`,
           title: item.subject || '(no subject)',
           detail: [item.fromAddress, account.email, item.snippet].filter(Boolean).join(' · '),
           target: { kind: 'mail', account: account.accountId, threadId: item._id },
           timestamp: item.lastDate,
+          searchRank: item.searchRank ?? index,
+          searchRelevance: item.searchRelevance,
+          searchOrder: item.searchOrder,
         }),
       );
     }),
@@ -153,7 +163,7 @@ export async function searchMail(
   return {
     items: results
       .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .sort((a, b) => compareMailRelevance({ ...a, lastDate: a.timestamp }, { ...b, lastDate: b.timestamp }))
       .slice(0, 16),
     warnings: results.flatMap((result, index) =>
       result.status === 'rejected'

@@ -12,6 +12,18 @@ import {
 import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
+import { briefAttention } from '../jev/brief';
+import { mapConcurrent } from '../jev/client';
+import {
+  correctionForMail,
+  DEFAULT_JEV_PREFERENCES,
+  hasObligation,
+  type JevCorrection,
+  type JevPreferences,
+  jevReason,
+} from '../jev/contract';
+import { explicitReplyRequested } from '../jev/fallback';
+import { loadJevPolicy } from '../jev/service';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { getNylasThread, listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -43,7 +55,6 @@ import { listSmartRules } from '../store/smart-rules';
 import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
-import { classifyThreadsBatched } from '../tools/ai';
 import { resolveBriefPlanTier } from './brief-plan';
 import {
   assignBriefLane,
@@ -57,6 +68,7 @@ import {
   selectBriefItems,
 } from './brief-score';
 import { briefServiceFromProvider } from './brief-services';
+import { classifyThreadWithContext } from './smart-categories';
 import {
   deterministicRecommendation,
   normalizeRecommendation,
@@ -109,8 +121,7 @@ const WEEK_CONTEXT_WINDOW = 7 * 86400_000;
 const MONTH_CONTEXT_WINDOW = 30 * 86400_000;
 const FUTURE_CONTEXT_WINDOW = 14 * 86400_000;
 
-// Lane priority for the clamp: the floor decides a minimum lane and the LLM may
-// only raise it, never demote below the floor.
+// Order enrichment by the evidence-derived lane; generated prose does not change eligibility.
 const LANE_PRIORITY: Record<ReportLane, number> = {
   reply_owed: 6,
   follow_up_owed: 5,
@@ -120,17 +131,6 @@ const LANE_PRIORITY: Record<ReportLane, number> = {
   fyi: 1,
   bulk: 0,
 };
-
-function laneMax(a: ReportLane, b: ReportLane): ReportLane {
-  return LANE_PRIORITY[a] >= LANE_PRIORITY[b] ? a : b;
-}
-
-function parseLane(value: unknown): ReportLane | null {
-  const v = String(value || '')
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
-  return (LANE_PRIORITY as Record<string, number>)[v] !== undefined ? (v as ReportLane) : null;
-}
 
 // How wide to cast the candidate net. 'week' is the fast first pass (just the
 // last several days, fewer candidates, less enrichment) so a brief appears
@@ -205,6 +205,13 @@ export async function generateDailyReport(input: {
     listSmartLabels(),
     listTrackedThreads({ limit: 1000 }),
   ]);
+  const jevPolicy = input.userId
+    ? await loadJevPolicy(input.userId).catch(() => ({
+        preferences: DEFAULT_JEV_PREFERENCES,
+        corrections: [] as JevCorrection[],
+        revision: 0,
+      }))
+    : { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] as JevCorrection[], revision: 0 };
   const trackedByKey = new Map(tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   // "Self" is the set of EMAIL ADDRESSES on this user's connected accounts.
   // `accounts` above are opaque accountIds used for transport, while sender
@@ -245,6 +252,20 @@ export async function generateDailyReport(input: {
       }
     } catch (err: any) {
       errors.push(`${account}: ${err?.message || 'sent scan failed'}`);
+    }
+  }
+
+  const attentionKeys = new Set<string>();
+  if (input.userId) {
+    const attention = await convexQuery<Thread[]>((api as any).jev.attentionCandidates, {
+      userId: input.userId,
+      accountIds: accounts,
+    }).catch(() => []);
+    for (const thread of attention) {
+      const key = `${thread.account}:${thread._id}`;
+      candidates.set(key, thread);
+      attentionKeys.add(key);
+      humanKeys.add(key);
     }
   }
 
@@ -289,17 +310,23 @@ export async function generateDailyReport(input: {
   const byDateDesc = (a: Thread, b: Thread) => Number(b.lastDate || 0) - Number(a.lastDate || 0);
   const all = [...candidates.values()];
   // Human/tracked candidates first (newest-first within the group), then the
-  // rest. Slicing to CANDIDATE_LIMIT therefore truncates automated mail, never
-  // a real person — regardless of how old the human thread is.
+  // rest. Indexed Jev obligations are considered first, including old threads;
+  // the finite scan is separate from the fully paginated attention views.
   const prioritized = [
-    ...all.filter((t) => humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
+    ...all.filter((t) => attentionKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
+    ...all
+      .filter((t) => !attentionKeys.has(`${t.account}:${t._id}`) && humanKeys.has(`${t.account}:${t._id}`))
+      .sort(byDateDesc),
     ...all.filter((t) => !humanKeys.has(`${t.account}:${t._id}`)).sort(byDateDesc),
   ];
-  const bounded = dedupeCandidates(prioritized, trackedByKey).slice(0, profile.candidateLimit);
+  const bounded = dedupeCandidates(prioritized, trackedByKey).slice(
+    0,
+    Math.max(profile.candidateLimit, attentionKeys.size),
+  );
 
   // ---- Load messages + harvest prior correspondents ------------------------
   const messagesByKey = new Map<string, Message[]>();
-  for (const thread of bounded) {
+  await mapConcurrent(bounded, 8, async (thread) => {
     const key = `${thread.account}:${thread._id}`;
     const messages = await loadThreadMessages(thread.account, thread._id, input.userId);
     messagesByKey.set(key, messages);
@@ -312,31 +339,32 @@ export async function generateDailyReport(input: {
           const email = emailFromHeader(part)?.toLowerCase();
           if (!email || self.has(email)) continue;
           sentAllowlist.add(email);
-          const domain = email.split('@')[1];
-          if (domain) sentAllowlist.add(domain);
         }
       }
     }
-  }
+  });
 
   // ---- Tier 1: batched smart classification (local-first) ------------------
-  const smartList = await classifyThreadsBatched(
-    bounded.map((thread) => ({
-      id: thread._id,
-      account: thread.account,
-      fromAddress: thread.fromAddress,
-      subject: thread.subject,
-      snippet: thread.snippet,
-      labels: thread.labels,
-      unread: thread.unread,
-      date: thread.lastDate,
-    })),
-    { rules, customLabels },
-  ).catch(() => [] as Array<{ id: string; model: string } & SmartCategory>);
+  const storedThreads = input.userId
+    ? await convexQuery<Thread[]>((api as any).jev.threadAssessments, {
+        userId: input.userId,
+        threads: bounded.slice(0, 600).map((thread) => ({ accountId: thread.account, threadId: thread._id })),
+      }).catch(() => [])
+    : [];
+  const storedByKey = new Map(storedThreads.map((thread) => [`${thread.account}:${thread._id}`, thread]));
   const smartByKey = new Map<string, SmartCategory>();
-  for (const verdict of smartList) {
-    const { id, ...rest } = verdict;
-    smartByKey.set(id, rest as SmartCategory);
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const stored = storedByKey.get(key);
+    if (stored)
+      Object.assign(thread, {
+        jev: stored.jev,
+        jevStatus: stored.jevStatus,
+        smartCategory: stored.smartCategory,
+        jevLastBriefRevision: stored.jevLastBriefRevision,
+        jevLastBriefChangeId: stored.jevLastBriefChangeId,
+      });
+    smartByKey.set(key, thread.smartCategory || classifyThreadWithContext(thread, { rules, customLabels }));
   }
 
   // ---- Stage 1: deterministic safety floor for every candidate -------------
@@ -348,8 +376,10 @@ export async function generateDailyReport(input: {
       computeFloor(thread, messagesByKey.get(key) || [], now, {
         self,
         sentAllowlist,
-        tracked: trackedByKey.has(key),
-        smart: smartByKey.get(thread._id) || null,
+        tracked: Boolean(trackedByKey.get(key) && trackedByKey.get(key)?.source !== 'report'),
+        smart: smartByKey.get(`${thread.account}:${thread._id}`) || null,
+        preferences: jevPolicy.preferences,
+        corrections: jevPolicy.corrections,
       }),
     );
   }
@@ -362,7 +392,7 @@ export async function generateDailyReport(input: {
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
     const floor = floors.get(key)!;
-    const smart = smartByKey.get(thread._id) || null;
+    const smart = smartByKey.get(`${thread.account}:${thread._id}`) || null;
     const signals = briefScoreSignals({
       newestInboundTo: floor.newestInboundTo,
       selfAddresses: self,
@@ -376,8 +406,12 @@ export async function generateDailyReport(input: {
       bulkReasons: floor.bulkReasons,
       automated: floor.automated,
     });
+    signals.needsAction = floor.needsAction;
+    signals.meaningfulChange = floor.meaningfulChange;
+    signals.waitingOnOther = floor.followUpOwed;
+    // Positive eligibility is required; permitted newsletters need no invented relationship.
     signalsByKey.set(key, signals);
-    scores.set(key, scoreBriefCandidate(signals));
+    scores.set(key, floor.briefEligible ? Math.max(1, scoreBriefCandidate(signals)) : -100);
   }
 
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
@@ -391,7 +425,7 @@ export async function generateDailyReport(input: {
       .filter((thread) => {
         const key = `${thread.account}:${thread._id}`;
         const floor = floors.get(key)!;
-        const smart = smartByKey.get(thread._id);
+        const smart = smartByKey.get(`${thread.account}:${thread._id}`);
         return (
           aiAvailable &&
           (floor.protected ||
@@ -466,7 +500,7 @@ export async function generateDailyReport(input: {
   for (const thread of bounded) {
     const key = `${thread.account}:${thread._id}`;
     const messages = messagesByKey.get(key) || [];
-    const smart = smartByKey.get(thread._id) || null;
+    const smart = smartByKey.get(`${thread.account}:${thread._id}`) || null;
     const floor = floors.get(key)!;
     const trackedItem = trackedByKey.get(key);
     const insight = await buildThreadInsight(thread, messages, smart, floor, Boolean(trackedItem), now, {
@@ -618,6 +652,9 @@ function dedupeCandidates(sorted: Thread[], trackedByKey: Map<string, TrackedThr
 // ---- Stage 1: the deterministic safety floor -------------------------------
 
 interface FloorSignals {
+  briefEligible: boolean;
+  needsAction: boolean;
+  meaningfulChange: boolean;
   replyOwed: boolean;
   followUpOwed: boolean;
   isPersonal: boolean;
@@ -673,14 +710,19 @@ function computeOwed(messages: Message[], now: number, self: Set<string>) {
     const fromSelf = Boolean(fromEmail) && self.has(fromEmail);
     const noReply = isNoReplyLike(newest.from);
     if (!fromSelf && !noReply && fromEmail) {
-      replyOwed = true;
+      replyOwed = explicitReplyRequested(String(newest.textBody || newest.snippet || ''));
     } else if (fromSelf) {
       const earlierInboundHuman = sorted.slice(0, -1).some((m) => {
         const email = emailFromHeader(m.from) || '';
         return Boolean(email) && !self.has(email) && !isNoReplyLike(m.from);
       });
       const ageDays = (now - Number(newest.date || 0)) / 86400_000;
-      if (earlierInboundHuman && ageDays >= 3) followUpOwed = true;
+      if (
+        earlierInboundHuman &&
+        ageDays >= 3 &&
+        explicitReplyRequested(String(newest.textBody || newest.snippet || ''))
+      )
+        followUpOwed = true;
     }
   }
   return { replyOwed, followUpOwed };
@@ -690,7 +732,14 @@ function computeFloor(
   thread: Thread,
   messages: Message[],
   now: number,
-  ctx: { self: Set<string>; sentAllowlist: Set<string>; tracked: boolean; smart: SmartCategory | null },
+  ctx: {
+    self: Set<string>;
+    sentAllowlist: Set<string>;
+    tracked: boolean;
+    smart: SmartCategory | null;
+    preferences?: JevPreferences;
+    corrections?: JevCorrection[];
+  },
 ): FloorSignals {
   const labels = unionLabels(thread, messages);
   const isPersonal = labels.includes('CATEGORY_PERSONAL');
@@ -709,7 +758,7 @@ function computeFloor(
   const senderIsSelf = Boolean(senderAddr) && ctx.self.has(senderAddr);
   const noReply = isNoReplyLike(from);
 
-  const { replyOwed, followUpOwed } = computeOwed(messages, now, ctx.self);
+  let { replyOwed, followUpOwed } = computeOwed(messages, now, ctx.self);
 
   // Reliable bulk signals only (list-id / unsubscribe). Subject-keyword signals
   // like "offer"/"sale" are intentionally excluded so a real person isn't
@@ -763,7 +812,6 @@ function computeFloor(
     (senderIsSelf ? '' : senderAddr) ||
     ''
   ).toLowerCase();
-  const counterpartyDomain = counterparty.split('@')[1] || '';
 
   // isHumanLike sees the *unioned* labels, so a CATEGORY_PERSONAL that only the
   // newest message carries still counts (e.g. a job offer whose subject word
@@ -779,22 +827,21 @@ function computeFloor(
     : false;
   const isHuman = !userForcedNoise && (userForcedMain || threadSenderHuman || counterpartyHuman);
 
-  const isPriorCorrespondent =
-    Boolean(counterparty) &&
-    (ctx.sentAllowlist.has(counterparty) ||
-      (Boolean(counterpartyDomain) && ctx.sentAllowlist.has(counterpartyDomain)));
+  const isPriorCorrespondent = Boolean(counterparty) && ctx.sentAllowlist.has(counterparty);
   const isNewSender = isHuman && ctx.sentAllowlist.size > 0 && Boolean(counterparty) && !isPriorCorrespondent;
 
   // Commitments / due dates only count for non-automated human-or-personal
   // mail. This kills the rent-notice false positive where a weekday word
   // tripped date extraction — automated notices never get a due date.
-  const allowCommitments = !automated && (isHuman || isPersonal);
+  const allowCommitments = thread.jev
+    ? hasObligation(thread.jev, 'reply') || hasObligation(thread.jev, 'action') || thread.jev.meaningfulChange
+    : !automated && (isHuman || isPersonal);
   const commitments = allowCommitments ? extractCommitments(threadText(thread, messages, 18_000), now) : [];
   const timeSensitive = commitments.some(
     (c) => c.dueAt && c.dueAt >= now && c.dueAt < now + TIME_SENSITIVE_WINDOW,
   );
 
-  const isProtected =
+  let isProtected =
     !userForcedNoise &&
     isHuman &&
     !automated &&
@@ -807,12 +854,44 @@ function computeFloor(
       ctx.tracked ||
       userForcedMain);
 
+  const newestInbound = [...messages]
+    .reverse()
+    .find((message) => !ctx.self.has((emailFromHeader(message.from) || '').toLowerCase()));
+  const headers = newestInbound?.headers || {};
+  const listHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === 'list-id')?.[1];
+  const listId = String(listHeader || '').match(/<([^>]+)>/)?.[1] || String(listHeader || '').trim();
+  const correction = correctionForMail(ctx.corrections || [], {
+    accountId: thread.account,
+    threadId: thread._id,
+    sender: counterparty || senderAddr,
+    listId,
+  });
+  const waitingEvidence = thread.jev?.obligations.find((item) => item.kind === 'waiting')?.evidence.messageId;
+  const attention = briefAttention({
+    assessment: thread.jev,
+    smart: ctx.smart,
+    preferences: ctx.preferences || DEFAULT_JEV_PREFERENCES,
+    correction,
+    now,
+    waitingSince: messages.find((message) => message._id === waitingEvidence)?.date || thread.lastDate,
+    fallbackReply: replyOwed && isHuman && !automated,
+    fallbackBulk: ctx.smart?.primary === 'noise' ? 'promotion' : undefined,
+    tracked: ctx.tracked,
+    previouslySurfaced: Boolean(thread.jev && thread.jevLastBriefRevision === thread.jev.sourceRevision),
+    changePreviouslySurfaced: Boolean(
+      thread.jev?.changeEvidence && thread.jevLastBriefChangeId === thread.jev.changeEvidence.messageId,
+    ),
+  });
+  replyOwed = attention.reply;
+  followUpOwed = attention.followUp;
+  isProtected = attention.eligible;
+
   let lane: ReportLane;
   if (!isProtected) lane = 'bulk';
   else if (replyOwed) lane = 'reply_owed';
   else if (followUpOwed) lane = 'follow_up_owed';
   else if (isNewSender) lane = 'new_people';
-  else if (timeSensitive) lane = 'time_sensitive';
+  else if (timeSensitive || attention.action || attention.change) lane = 'time_sensitive';
   else if (ctx.tracked) lane = 'tracked';
   else lane = 'fyi';
 
@@ -830,6 +909,9 @@ function computeFloor(
   }
 
   return {
+    briefEligible: attention.eligible,
+    needsAction: attention.action,
+    meaningfulChange: attention.change,
     replyOwed,
     followUpOwed,
     isPersonal,
@@ -892,6 +974,7 @@ async function buildThreadInsight(
     smart,
     now,
   });
+  if (thread.jev) reason = jevReason(thread.jev);
   let openLoops = baseOpenLoops;
   let nextAction = deterministicRecommendation({
     lane: floor.lane,
@@ -908,7 +991,7 @@ async function buildThreadInsight(
         feature: 'daily_report_insight',
         speed: 'primary',
         system:
-          'You are a deep personal email analyst for the user. Use the full thread, calendar, and memory context. Never demote a thread that is from a real person, is in Gmail\'s personal or important category, or owes a reply — you may only raise its priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
+          'You are a deep personal email analyst for the user. Use the full thread, calendar, and memory context. Describe the supplied verified obligations and selection reason. Do not infer a reply duty from sender, category or message direction. Do not change eligibility or priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
         prompt: [
           `Now: ${new Date(now).toString()}`,
           `Floor lane (minimum — you may only raise it): ${floor.lane}`,
@@ -931,7 +1014,7 @@ async function buildThreadInsight(
             .slice(0, 5);
         }
         // Clamp: the LLM can only promote above the deterministic floor lane.
-        lane = laneMax(floor.lane, parseLane(parsed.suggestedLane) || floor.lane);
+        lane = floor.lane;
         nextAction = recommendationFor({
           candidate: normalizeRecommendation(parsed.nextAction),
           lane,
@@ -981,6 +1064,10 @@ async function buildThreadInsight(
     isPersonal: floor.isPersonal,
     isImportant: floor.isImportant,
     isPriorCorrespondent: floor.isPriorCorrespondent,
+    briefEligible: floor.briefEligible,
+    needsAction: floor.needsAction,
+    meaningfulChange: floor.meaningfulChange,
+    jev: thread.jev || undefined,
     floorProtected: floor.protected,
     lane,
     surfacedBecause,
@@ -1042,6 +1129,7 @@ export async function composeReport(input: {
       account: insight.account,
       threadId: insight.threadId,
       subject: stripEmoji(insight.subject),
+      jev: insight.jev,
       people: insight.people,
       whyItMatters: stripEmoji(insight.reason || insight.summary),
       nextAction: recommendationForInsight(insight, tracked),
@@ -1083,13 +1171,15 @@ export async function composeReport(input: {
   for (const insight of input.insights) {
     const key = `${insight.account}:${insight.threadId}`;
     const item = toItem(insight);
-    if (hiddenByUser(item)) continue;
+    if (hiddenByUser(item) || insight.briefEligible === false) continue;
     const signals = input.signals?.get(key) ?? signalsFromInsight(insight, input.now);
     const score = input.scores?.get(key) ?? scoreBriefCandidate(signals);
     const lane = assignBriefLane({
       replyOwed: insight.needsReply,
       deadlineWithin48h: signals.deadlineWithin48h,
       needsReply: signals.needsReply && insight.floorProtected,
+      needsAction: insight.needsAction,
+      meaningfulChange: insight.meaningfulChange,
     });
     candidates.push({
       key,
@@ -1148,6 +1238,7 @@ export async function composeReport(input: {
     answer,
     today,
     know,
+    overflow: selection.overflow.map((entry) => entry.item),
     tasks: reportTasks,
     calendar: reportCalendar,
     mcp: input.mcpContext ?? [],
@@ -1160,7 +1251,8 @@ export async function composeReport(input: {
     replyOwed: replyOwed.length,
     dueSoon: timeSensitive.length,
     bulkTailCount: 0,
-    noise: Math.max(0, input.insights.length - selectedCount),
+    noise: Math.max(0, input.insights.length - selectedCount - selection.overflow.length),
+    overflow: selection.overflow.length,
     selected: selectedCount,
     unread: 0,
     openTasks: reportTasks.filter((task) => !task.completedAt).length,

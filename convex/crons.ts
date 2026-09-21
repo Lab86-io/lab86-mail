@@ -21,6 +21,8 @@ export const CONTINUOUS_EXECUTION_CRON_NAMES = {
 // coming back, so this cron is just the ignition; once the backlog is empty it
 // is a single cheap indexed read per run.
 crons.interval('classify unclassified corpus threads', { minutes: 10 }, internal.smart.classifyBacklog, {});
+crons.interval('queue Jev corpus assessments', { minutes: 10 }, (internal as any).jev.queueUnassessed, {});
+crons.interval('Jev mail classification', { minutes: 5 }, (internal as any).jev.tick, {});
 
 // File the morning Daily Brief. Runs at the top of every hour and fires
 // per-user when their local clock hits 07:00 — the action reads each user's

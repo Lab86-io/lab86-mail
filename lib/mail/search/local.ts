@@ -43,7 +43,11 @@ export function filterCorpusMessagesByAst(messages: CorpusMessageDocument[], ast
   return messages.filter((message) => ast.clauses.every((clause) => matchesClause(message, clause)));
 }
 
-export function corpusMessagesToThreads(messages: CorpusMessageDocument[], accountId: string) {
+export function corpusMessagesToThreads(
+  messages: CorpusMessageDocument[],
+  accountId: string,
+  order: 'recent' | 'relevant' = 'recent',
+) {
   const byThread = new Map<string, CorpusMessageDocument[]>();
   for (const message of messages) {
     const group = byThread.get(message.providerThreadId) || [];
@@ -54,6 +58,7 @@ export function corpusMessagesToThreads(messages: CorpusMessageDocument[], accou
     .map((threadMessages) => {
       const sorted = [...threadMessages].sort((a, b) => b.receivedAt - a.receivedAt);
       const latest = sorted[0];
+      const bestMatch = threadMessages[0];
       const labels = [...new Set(threadMessages.flatMap((message) => message.labels || []))];
       return {
         _id: latest.providerThreadId,
@@ -61,14 +66,22 @@ export function corpusMessagesToThreads(messages: CorpusMessageDocument[], accou
         subject: latest.subject || '(no subject)',
         fromAddress: latest.from || '',
         lastDate: latest.receivedAt,
-        snippet: latest.snippet || latest.textBody?.slice(0, 240) || '',
+        snippet:
+          (order === 'relevant'
+            ? bestMatch.snippet || bestMatch.textBody?.slice(0, 1600)
+            : latest.snippet || latest.textBody?.slice(0, 240)) || '',
+        searchRank: order === 'relevant' ? messages.indexOf(bestMatch) : undefined,
         labels,
         unread: threadMessages.some((message) => Boolean(message.unread) || hasLabel(message, 'UNREAD')),
         starred: threadMessages.some((message) => Boolean(message.starred) || hasLabel(message, 'STARRED')),
         cachedAt: latest.updatedAt || Date.now(),
       };
     })
-    .sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
+    .sort((a, b) =>
+      order === 'relevant'
+        ? (a.searchRank ?? 0) - (b.searchRank ?? 0)
+        : Number(b.lastDate || 0) - Number(a.lastDate || 0),
+    );
 }
 
 function collectLocalSearchTerm(clause: SearchClause, terms: string[], dropped: SearchUnsupportedClause[]) {

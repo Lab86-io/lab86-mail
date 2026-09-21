@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   assignBriefLane,
   BRIEF_ITEM_BUDGET,
-  BRIEF_LANE_CAPS,
   briefScoreSignals,
   budgetForTier,
   DEADLINE_WINDOW_MS,
@@ -70,11 +69,13 @@ describe('briefScoreSignals', () => {
     expect(briefScoreSignals({ ...base, newestInboundTo: ['other@example.test'] }).directToYou).toBe(false);
   });
 
-  test('detects a replied-to sender by address or domain', () => {
+  test('requires the exact replied-to address; domain familiarity does not transfer', () => {
     expect(briefScoreSignals({ ...base, sentAllowlist: new Set(['maya@partner.test']) }).repliedBefore).toBe(
       true,
     );
-    expect(briefScoreSignals({ ...base, sentAllowlist: new Set(['partner.test']) }).repliedBefore).toBe(true);
+    expect(briefScoreSignals({ ...base, sentAllowlist: new Set(['partner.test']) }).repliedBefore).toBe(
+      false,
+    );
     expect(
       briefScoreSignals({ ...base, counterparty: null, sentAllowlist: new Set(['partner.test']) })
         .repliedBefore,
@@ -146,7 +147,7 @@ describe('selectBriefItems', () => {
     expect(picked.noise).toEqual([]);
   });
 
-  test('applies lane caps for answer and know before the budget', () => {
+  test('allows a fourth reply instead of hiding it behind a lane cap', () => {
     const picked = selectBriefItems(
       [
         item('a1', 'answer', 9),
@@ -157,8 +158,8 @@ describe('selectBriefItems', () => {
       ],
       9,
     );
-    expect(picked.answer).toHaveLength(BRIEF_LANE_CAPS.answer!);
-    expect(picked.overflow.map((entry) => entry.key)).toEqual(['a4']);
+    expect(picked.answer).toHaveLength(4);
+    expect(picked.overflow).toEqual([]);
     expect(picked.know.map((entry) => entry.key)).toEqual(['k1']);
   });
 
