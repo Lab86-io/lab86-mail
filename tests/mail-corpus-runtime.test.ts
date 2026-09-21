@@ -396,7 +396,8 @@ describe('corpus reads', () => {
       accountId: scope.accountId,
       query: 'giraffe',
     });
-    expect(rows.map((r) => r.providerMessageId)).toEqual(['message_2', 'message_1']);
+    // Equal-relevance search results retain the index order, independent of recency.
+    expect(rows.map((r) => r.providerMessageId)).toEqual(['message_1', 'message_2']);
     const bounded = await t.query(api.mailCorpus.searchCorpusMessages, {
       internalSecret: SECRET,
       userId: USER,
@@ -671,9 +672,10 @@ describe('LLM-once queue', () => {
       smartPrimary: 'orders',
       llmClassifiedMessageId: 'message_1',
     });
-    expect(row?.llmPending).toBeUndefined();
+    // Legacy verdicts cannot close the new Jev classification queue.
+    expect(row?.llmPending).toBe(true);
 
-    // A garbage verdict closes the row out without storing anything.
+    // A missing legacy verdict still leaves Jev evaluation pending.
     await t.run((ctx) => ctx.db.patch(row!._id, { llmPending: true, llmCategory: undefined }));
     const closed = await t.mutation(api.mailCorpus.storeLlmVerdicts, {
       internalSecret: SECRET,
@@ -681,7 +683,7 @@ describe('LLM-once queue', () => {
       items: [{ accountId: scope.accountId, providerThreadId: 'thread_1', messageId: 'message_1' }],
     });
     expect(closed).toEqual({ stored: 0 });
-    expect((await t.run((ctx) => ctx.db.query('mailCorpusThreads').unique()))?.llmPending).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.query('mailCorpusThreads').unique()))?.llmPending).toBe(true);
   });
 
   test('listSmartCategoryThreads pages the shared category query', async () => {

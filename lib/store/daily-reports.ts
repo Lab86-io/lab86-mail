@@ -1,10 +1,13 @@
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
+import { projectBriefMail } from '../jev/report';
+import { loadJevPolicy, markJevBriefItems } from '../jev/service';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
+import type { Thread } from '../shared/types';
 import {
   DAILY_REPORT_ARTIFACT_ERROR_STAGES,
   type DailyReport,
@@ -31,6 +34,9 @@ export function setDailyReportPersistenceForTest(persist: typeof kvUpsert) {
 
 export async function saveDailyReport(report: DailyReport) {
   await kvUpsert('dailyReport', report._id, report);
+  if (isConvexConfigured() && (report.artifactStatus === 'rendered' || report.artifactStatus === 'ready')) {
+    await markJevBriefItems(report, requireStoreUserId()).catch(() => undefined);
+  }
   return report;
 }
 
@@ -41,7 +47,7 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
-const readDefaults = { query: convexQuery, configured: isConvexConfigured };
+const readDefaults = { query: convexQuery, configured: isConvexConfigured, loadPolicy: loadJevPolicy };
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
   readDependencies = { ...readDefaults, ...overrides };
@@ -87,7 +93,29 @@ async function readReportRows<T>(
 
 export async function getLatestDailyReport(kind?: DailyReport['kind']) {
   const [latest] = await readReportRows<DailyReport>(1, false, kind);
-  return latest ? migrateDailyReportForRead(latest) : null;
+  if (!latest) return null;
+  const report = await migrateDailyReportForRead(latest);
+  if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
+  const items = [
+    ...(report.sections.answer || []),
+    ...(report.sections.today || []),
+    ...(report.sections.know || []),
+    ...(report.sections.overflow || []),
+  ];
+  if (!items.length) return report;
+  try {
+    const userId = requireStoreUserId();
+    const [policy, threads] = await Promise.all([
+      readDependencies.loadPolicy(userId),
+      readDependencies.query<Thread[]>((api as any).jev.threadAssessments, {
+        userId,
+        threads: items.slice(0, 300).map((item) => ({ accountId: item.account, threadId: item.threadId })),
+      }),
+    ]);
+    return projectBriefMail(report, threads, policy);
+  } catch {
+    return report;
+  }
 }
 
 export async function listDailyReports(limit = 20) {
@@ -199,6 +227,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       ...(Array.isArray(sections.answer) ? { answer: items(sections.answer) } : {}),
       ...(Array.isArray(sections.today) ? { today: items(sections.today) } : {}),
       ...(Array.isArray(sections.know) ? { know: items(sections.know) } : {}),
+      ...(Array.isArray(sections.overflow) ? { overflow: items(sections.overflow) } : {}),
       tasks,
       calendar,
       mcp,
@@ -219,6 +248,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       unread: stats.unread ?? 0,
       ...(typeof stats.noise === 'number' ? { noise: stats.noise } : {}),
       ...(typeof stats.selected === 'number' ? { selected: stats.selected } : {}),
+      ...(typeof stats.overflow === 'number' ? { overflow: stats.overflow } : {}),
       openTasks,
       completedTasks,
       calendarEvents: stats.calendarEvents ?? calendar.length,

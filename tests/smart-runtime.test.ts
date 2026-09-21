@@ -95,7 +95,7 @@ describe('classifyCorpusThread precedence', () => {
     const patch = classifyCorpusThread(row, {});
     expect(patch.smartPrimary).toBe('orders');
     expect(patch.smartCategory.needsAttention).toBe(false);
-    expect(patch.llmPending).toBeUndefined();
+    expect(patch.llmPending).toBe(true);
   });
 
   test('a stale LLM verdict is discarded and the model pass reopens', () => {

@@ -21,6 +21,8 @@ import {
   filterCorpusMessagesByAst,
 } from '@/lib/mail/search/local';
 import { parseMailSearchQuery } from '@/lib/mail/search/parser';
+import { rerankMail } from '../jev/search';
+import { matchingMailExcerpt } from '../mail/search/ranking';
 import { requireNylas } from './client';
 import {
   emailList,
@@ -247,6 +249,85 @@ async function searchLocalCorpusThreads({
 }) {
   const ast = parseMailSearchQuery(query);
   const plan = compileAstToLocalCorpusQuery(ast);
+  if (plan.query) {
+    const prefix = `${LOCAL_PAGE_TOKEN_PREFIX}relevant:`;
+    let cursor: string | undefined;
+    let offset = 0;
+    let rankOffset = 0;
+    if (pageToken?.startsWith(prefix)) {
+      const decoded = JSON.parse(Buffer.from(pageToken.slice(prefix.length), 'base64url').toString());
+      if (
+        decoded.query !== query ||
+        decoded.account !== row.accountId ||
+        !Number.isInteger(decoded.offset) ||
+        decoded.offset < 0
+      )
+        throw new Error('Invalid search cursor.');
+      cursor = typeof decoded.cursor === 'string' ? decoded.cursor : undefined;
+      offset = decoded.offset;
+      rankOffset =
+        Number.isSafeInteger(decoded.rankOffset) && decoded.rankOffset >= 0 ? decoded.rankOffset : 0;
+    }
+    const startCursor = cursor;
+    const collected: CorpusMessageDocument[] = [];
+    const target = Math.max(80, Math.min(240, max * 4));
+    for (let window = 0; window < 8; window++) {
+      const page = await convexQuery<{ items: CorpusMessageDocument[]; nextCursor?: string }>(
+        mailCorpusApi.searchCorpusMessagesPage,
+        {
+          userId: row.userId,
+          accountId: row.accountId,
+          query: plan.query,
+          after: plan.after,
+          before: plan.before,
+          cursor,
+          limit: target,
+        },
+      );
+      collected.push(
+        ...filterCorpusMessagesByAst(page.items, ast).map((message) => ({
+          ...message,
+          snippet: matchingMailExcerpt(message.textBody || message.snippet, plan.query),
+        })),
+      );
+      cursor = page.nextCursor;
+      if (!cursor || collected.length >= target) break;
+    }
+    const grouped = corpusMessagesToThreads(collected, row.accountId, 'relevant').map((thread) => ({
+      ...thread,
+      searchRank: (thread.searchRank || 0) + rankOffset,
+    }));
+    const stored = await convexQuery<any[]>((api as any).jev.threadAssessments, {
+      userId: row.userId,
+      threads: grouped.slice(0, 300).map((thread) => ({ accountId: row.accountId, threadId: thread._id })),
+    }).catch(() => []);
+    const byId = new Map(stored.map((thread) => [thread._id, thread]));
+    const ranked = await rerankMail(
+      row.userId,
+      query,
+      grouped.map((thread) => ({
+        ...thread,
+        jev: byId.get(thread._id)?.jev,
+        smartCategory: byId.get(thread._id)?.smartCategory,
+      })),
+    );
+    const items = ranked.slice(offset, offset + max);
+    const moreInBlock = offset + max < ranked.length;
+    const next = moreInBlock
+      ? { cursor: startCursor, offset: offset + max, rankOffset }
+      : cursor
+        ? { cursor, offset: 0, rankOffset: rankOffset + collected.length }
+        : null;
+    return {
+      ast,
+      dropped: plan.dropped,
+      items,
+      nextPageToken: next
+        ? prefix +
+          Buffer.from(JSON.stringify({ ...next, query, account: row.accountId })).toString('base64url')
+        : undefined,
+    };
+  }
   const cursorBefore = localPageTokenBefore(pageToken);
   let scanBefore =
     cursorBefore !== null && plan.before !== undefined

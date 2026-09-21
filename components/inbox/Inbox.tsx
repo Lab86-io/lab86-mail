@@ -76,6 +76,7 @@ import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { focusMailResult, registerMailSearchFocus } from '@/lib/mail/search/focus-contract';
+import { compareMailRelevance } from '@/lib/mail/search/ranking';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
@@ -97,6 +98,9 @@ const INBOX_PAGE_SIZE = 50;
 const SKELETON_ROW_KEYS = Array.from({ length: 12 }, (_, index) => `skeleton-row-${index + 1}`);
 
 export interface ThreadRow {
+  searchRank?: number;
+  searchRelevance?: number;
+  searchOrder?: 'recent' | 'relevance';
   _id: string;
   account?: string;
   subject?: string;
@@ -381,7 +385,11 @@ export function Inbox() {
           ),
         );
         const merged = results.flatMap((result) => result.items);
-        merged.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+        merged.sort((a, b) =>
+          !smartCategory && (a.searchRank !== undefined || b.searchRank !== undefined)
+            ? compareMailRelevance(a, b)
+            : (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
+        );
         const nextPageTokens = Object.fromEntries(
           results
             .filter((result) => result.nextPageToken)
@@ -456,7 +464,9 @@ export function Inbox() {
   };
 
   const liveItems =
-    liveInbox.status === 'success' ? (liveInbox.data?.items as ThreadRow[] | undefined) : undefined;
+    liveInbox.status === 'success' && (smartCategory || query === DEFAULT_QUERY)
+      ? (liveInbox.data?.items as ThreadRow[] | undefined)
+      : undefined;
   // Each item knows its own account (set by the fan-out above), so row ids remain
   // stable in ALL_ACCOUNTS view and bulk operations can dispatch per mailbox.
   const rowKey = useCallback((item: ThreadRow) => `${item.account || account}:${item._id}`, [account]);
@@ -467,7 +477,7 @@ export function Inbox() {
     }
     for (const item of data?.pages.flatMap((page) => page.items) || []) {
       const key = `${item.account || account}:${item._id}`;
-      if (!byKey.has(key)) byKey.set(key, item);
+      if (!byKey.has(key) || (!smartCategory && item.searchRank !== undefined)) byKey.set(key, item);
     }
     const active = suppressions.filter((s) => suppressionHides(s, smartCategory));
     const rows = [...byKey.values()].filter((item) => {
@@ -475,7 +485,11 @@ export function Inbox() {
       const email = (emailFromHeader(item.from || item.fromAddress) || '').toLowerCase();
       return !email || !active.some((s) => s.senderEmail === email);
     });
-    return rows.sort((a, b) => (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0));
+    return rows.sort((a, b) =>
+      !smartCategory && (a.searchRank !== undefined || b.searchRank !== undefined)
+        ? compareMailRelevance(a, b)
+        : (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
+    );
   }, [account, data?.pages, liveItems, suppressions, smartCategory]);
   const visibleRowKeys = useMemo(() => items.map((item) => rowKey(item)), [items, rowKey]);
   const smartCategoryBadge = smartCategory && smartCategory !== 'main' ? activeSmartLabel : '';

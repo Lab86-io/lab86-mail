@@ -992,3 +992,95 @@ describe('buildNylasStructuredSearchQueryParams', () => {
     });
   });
 });
+
+describe('Jev relevance retrieval pipeline', () => {
+  test('selective text search advances empty filtered pages and preserves ranked leftovers for the next page', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onConvex('mailCorpus:getSyncState', () => ({ grantId: 'grant_1', corpusReady: true }));
+      h.onConvex('jev:threadAssessments', () => []);
+      h.onConvex('mailCorpus:searchCorpusMessagesPage', (args) =>
+        args.cursor
+          ? {
+              items: [
+                corpusMessage({
+                  providerMessageId: 'important',
+                  providerThreadId: 'important',
+                  from: 'maya@university.test',
+                  receivedAt: 1_600_000_000_000,
+                  subject: 'Budget',
+                  textBody: 'The approved budget',
+                  searchText: 'budget approved',
+                  snippet: 'The approved budget',
+                }),
+                corpusMessage({
+                  providerMessageId: 'newer',
+                  providerThreadId: 'newer',
+                  from: 'maya@university.test',
+                  receivedAt: 1_700_000_000_000,
+                  subject: 'Budget',
+                  textBody: 'Budget FYI',
+                  searchText: 'budget fyi',
+                  snippet: 'Budget FYI',
+                }),
+              ],
+            }
+          : {
+              items: [
+                corpusMessage({
+                  from: 'athletics@university.test',
+                  subject: 'Budget',
+                  searchText: 'budget athletics',
+                }),
+              ],
+              nextCursor: 'more-scoped-matches',
+            },
+      );
+      const first = await searchNylasThreads({
+        userId: 'user_1',
+        account: 'acct_1',
+        query: 'from:maya@university.test budget',
+        max: 1,
+      });
+      expect(first?.searchTier).toBe('local');
+      expect(first?.items[0]._id).toBe('important');
+      expect(first?.items[0].snippet).toBe('The approved budget');
+      expect(first?.nextPageToken).toStartWith('local:relevant:');
+      const second = await searchNylasThreads({
+        userId: 'user_1',
+        account: 'acct_1',
+        query: 'from:maya@university.test budget',
+        max: 1,
+        pageToken: first?.nextPageToken,
+      });
+      expect(second?.items[0]._id).toBe('newer');
+      expect(second?.nextPageToken).toBeUndefined();
+      expect(h.nylasCalls).toEqual([]);
+      expect(
+        h.convexCalls
+          .filter((c) => c.path === 'mailCorpus:searchCorpusMessagesPage')
+          .map((c) => c.args.cursor),
+      ).toEqual([undefined, 'more-scoped-matches', undefined, 'more-scoped-matches']);
+    });
+  });
+  test('bounded text scans provide a continuation even when all eight windows fail explicit filters', async () => {
+    await withHarness(async (h) => {
+      h.onConvex('accounts:getConnectedAccount', () => account());
+      h.onConvex('mailCorpus:getSyncState', () => ({ grantId: 'grant_1', corpusReady: true }));
+      h.onConvex('jev:threadAssessments', () => []);
+      h.onConvex('mailCorpus:searchCorpusMessagesPage', (args) => ({
+        items: [corpusMessage({ from: 'other@test', searchText: 'budget' })],
+        nextCursor: String(Number(args.cursor || 0) + 1),
+      }));
+      const result = await searchNylasThreads({
+        userId: 'user_1',
+        account: 'acct_1',
+        query: 'from:maya@university.test budget',
+        max: 1,
+      });
+      expect(result?.items).toEqual([]);
+      expect(result?.nextPageToken).toStartWith('local:relevant:');
+      expect(h.convexCalls.filter((c) => c.path === 'mailCorpus:searchCorpusMessagesPage')).toHaveLength(8);
+    });
+  });
+});

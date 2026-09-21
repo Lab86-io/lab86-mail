@@ -1,16 +1,10 @@
 import { getAiRequestContext, runWithAiRequestContext } from '../ai/context';
-import { hasAiForCurrentUser } from '../ai/gateway';
-import { api, convexMutation } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import { listSmartLabels } from '../store/smart-labels';
-import { listSmartRules } from '../store/smart-rules';
-import { classifyThreadsBatched } from '../tools/ai';
+import { runJevSweep } from '../jev/service';
 
-// LLM-once classification sweep. Write-time classification flags threads the
-// deterministic pass isn't confident about (llmPending); this drains that
-// queue on the nano tier — one verdict per thread, persisted forever on the
-// corpus row. Triggered after sync activity and on category reads, debounced
-// per user; safe to over-kick.
+// Persisted Jev assessments, refreshed when message content changes. The
+// historical llmPending queue name is retained for compatibility. Leases and
+// bounded retries live in Convex, so concurrent servers cannot apply stale work.
 const SWEEP_BATCH = 40;
 const MAX_BATCHES_PER_KICK = 5;
 const KICK_DEBOUNCE_MS = 5_000;
@@ -80,61 +74,7 @@ export async function runLlmClassificationSweep(userId: string) {
   sweeping.add(userId);
   let result: { classified: number; moreRemaining?: boolean } = { classified: 0 };
   try {
-    result = await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
-      if (!(await hasAiForCurrentUser('classify_threads'))) return { classified: 0 };
-      const [rules, labels] = await Promise.all([listSmartRules(), listSmartLabels()]);
-      const swept = await drainPendingSweepPages<any>({
-        loadPage: () =>
-          convexMutation<{ items: any[]; moreRemaining: boolean }>((api as any).mailCorpus.listLlmPending, {
-            userId,
-            limit: SWEEP_BATCH,
-          }),
-        handleItems: async (pending) => {
-          const verdicts = await classifyThreadsBatched(
-            pending.map((row) => ({
-              id: `${row.accountId}:${row.providerThreadId}`,
-              account: row.accountId,
-              fromAddress: row.fromAddress,
-              subject: row.subject,
-              snippet: row.snippet,
-              labels: row.labels,
-              unread: row.unread,
-              date: row.lastDate,
-              bodyText: row.bodyText,
-            })),
-            { rules, customLabels: labels, force: true, speed: 'nano' },
-          );
-          const verdictById = new Map(verdicts.map((v) => [v.id, v]));
-          // Every listed row gets closed out — rows whose verdict didn't come
-          // back keep their deterministic classification (one attempt, no loop).
-          const items = pending.map((row) => {
-            const verdict = verdictById.get(`${row.accountId}:${row.providerThreadId}`);
-            const fromModel = verdict && verdict.model !== 'deterministic' && verdict.model !== 'user_rule';
-            if (!fromModel) {
-              return {
-                accountId: row.accountId,
-                providerThreadId: row.providerThreadId,
-                messageId: row.messageId,
-              };
-            }
-            const { id: _id, ...category } = verdict as any;
-            return {
-              accountId: row.accountId,
-              providerThreadId: row.providerThreadId,
-              messageId: row.messageId,
-              verdict: { ...category, classifiedAt: Date.now() },
-            };
-          });
-          const batchResult = await convexMutation<{ stored: number }>(
-            (api as any).mailCorpus.storeLlmVerdicts,
-            { userId, items },
-          );
-          return batchResult.stored;
-        },
-      });
-      if (swept.classified) console.log(`[llm-classify] stored ${swept.classified} verdicts for ${userId}`);
-      return swept;
-    });
+    result = await runWithAiRequestContext({ userId, agent: 'ai' }, () => runJevSweep(userId));
     return result;
   } finally {
     sweeping.delete(userId);

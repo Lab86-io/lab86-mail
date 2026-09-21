@@ -81,3 +81,28 @@ test('summary history stops on exhaustion and requests no artifact bodies', asyn
     { userId: 'reader', edition: undefined, cursor: null, limit: 8, summaryOnly: true },
   ]);
 });
+
+test('latest edition reflects current scoped Jev facts while full history remains a snapshot', async () => {
+  const { report: fixture, thread, assessment, policy } = await import('./fixtures/jev');
+  const saved = { ...fixture(), generatedAt: Date.now() };
+  const calls: any[] = [];
+  setDailyReportReaderForTest({
+    configured: () => true,
+    loadPolicy: async () => policy,
+    query: (async (_fn, args) => {
+      calls.push(args);
+      return args.threads
+        ? [thread({ jev: assessment({ sourceRevision: 'resolved', obligations: [] }) })]
+        : { page: [saved], isDone: true, continueCursor: '' };
+    }) as any,
+  });
+  await context(async () => {
+    expect((await getLatestDailyReport())?.sections.answer).toEqual([]);
+    expect((await listDailyReports(1))[0].sections.answer).toHaveLength(1);
+  });
+  expect(calls.find((c) => c.threads)).toMatchObject({
+    userId: 'reader',
+    threads: [{ accountId: 'account-a', threadId: 'thread-a' }],
+  });
+  expect(saved.sections.answer).toHaveLength(1);
+});

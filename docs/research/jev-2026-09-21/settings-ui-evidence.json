@@ -1,0 +1,38 @@
+{
+  "passed": true,
+  "evidence": [
+    {
+      "width": 390,
+      "keyboardToggle": true,
+      "preferencesSurviveReload": true,
+      "corrections": true,
+      "recheck": true,
+      "evidence": true,
+      "backlogNavigation": true,
+      "modelPicker": false,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 768,
+      "keyboardToggle": true,
+      "preferencesSurviveReload": true,
+      "corrections": true,
+      "recheck": true,
+      "evidence": true,
+      "backlogNavigation": true,
+      "modelPicker": false,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 1440,
+      "keyboardToggle": true,
+      "preferencesSurviveReload": true,
+      "corrections": true,
+      "recheck": true,
+      "evidence": true,
+      "backlogNavigation": true,
+      "modelPicker": false,
+      "horizontalOverflow": false
+    }
+  ]
+}

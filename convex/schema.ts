@@ -315,6 +315,22 @@ export default defineSchema({
     llmClassifiedAt: v.optional(v.number()),
     llmClassifiedMessageId: v.optional(v.string()),
     llmPending: v.optional(v.boolean()),
+    jev: v.optional(v.any()),
+    jevEvidenceMessageIds: v.optional(v.array(v.string())),
+    jevVersion: v.optional(v.number()),
+    jevStatus: v.optional(v.string()),
+    jevAttempts: v.optional(v.number()),
+    jevRetryAt: v.optional(v.number()),
+    jevError: v.optional(v.string()),
+    jevLeaseId: v.optional(v.string()),
+    jevLeaseUntil: v.optional(v.number()),
+    jevNeedsReply: v.optional(v.boolean()),
+    jevNeedsAction: v.optional(v.boolean()),
+    jevWaiting: v.optional(v.boolean()),
+    jevChange: v.optional(v.boolean()),
+    jevLastBriefRevision: v.optional(v.string()),
+    jevLastBriefChangeId: v.optional(v.string()),
+    jevLastBriefAt: v.optional(v.number()),
     // Area routing watermark. Areas are a SPARSE overlay: most threads belong to
     // zero areas, so "has no areaArtifactLinks row" cannot mean "not yet
     // classified" — a zero-area verdict is a real, successful answer. This
@@ -344,6 +360,11 @@ export default defineSchema({
     .index('by_user_primary_unread', ['userId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_account_primary_unread', ['userId', 'accountId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_llm_pending', ['userId', 'llmPending', 'lastDate'])
+    .index('by_jev_version', ['jevVersion'])
+    .index('by_user_jev_reply', ['userId', 'jevNeedsReply', 'lastDate'])
+    .index('by_user_jev_action', ['userId', 'jevNeedsAction', 'lastDate'])
+    .index('by_user_jev_waiting', ['userId', 'jevWaiting', 'lastDate'])
+    .index('by_user_jev_change', ['userId', 'jevChange', 'lastDate'])
     .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
     .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.

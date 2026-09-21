@@ -146,9 +146,9 @@ describe('letterLanesFromSections', () => {
       },
       'free',
     );
-    // free budget: 5. Answer caps at 3, then Today takes the rest.
-    expect(lanes.answer.map((row) => row.threadId)).toEqual(['r1', 'r2', 'r3']);
-    expect(lanes.today.map((row) => row.threadId)).toEqual(['t1', 't2']);
+    // Free budget: 5. All four reply obligations fit before the next Today item.
+    expect(lanes.answer.map((row) => row.threadId)).toEqual(['r1', 'r2', 'r3', 'r4']);
+    expect(lanes.today.map((row) => row.threadId)).toEqual(['t1']);
     expect(lanes.know).toEqual([]);
   });
 

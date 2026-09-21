@@ -1,3 +1,5 @@
+import { attentionMatches, isAttentionView } from '../jev/contract';
+import { explicitReplyRequested } from '../jev/fallback';
 import { emailFromHeader } from '../shared/format';
 import type {
   SmartCategory,
@@ -200,7 +202,7 @@ export function isHumanLike(thread: Partial<Thread> & { from?: string; fromAddre
   // mail and blocklisted/platform senders are excluded.
   const personalCat = (thread.labels || []).includes('CATEGORY_PERSONAL');
   const hardList =
-    /\b(list-id|mailing list|bulk)\b/i.test(h) ||
+    /\b(list-id|mailing list|bulk|unsubscribe)\b/i.test(h) ||
     HUMAN_BLOCKLIST.some((token) => lower.includes(token)) ||
     /\b(linkedin|etsy|wsj|dowjones|nytimes|substack)\b/i.test(domain);
   if (personalCat && !hardList) return true;
@@ -425,10 +427,10 @@ export function classifyThreadWithContext(
           ? 'Personal-category mail from a person.'
           : 'Gmail flagged this as important and it is from a person.',
         {
-          secondary: ['needs_reply'],
+          secondary: explicitReplyRequested(h) ? ['needs_reply'] : [],
           confidence: 0.82,
           needsAttention: true,
-          suggestedAction: 'reply',
+          suggestedAction: explicitReplyRequested(h) ? 'reply' : 'read',
           signals: [isPersonalCat ? 'category_personal' : 'gmail_important', 'human'],
         },
       ),
@@ -645,6 +647,10 @@ export function classifyThreadWithContext(
 
 export function includeInSmartCategory(thread: Partial<Thread>, category: SmartCategoryId | string) {
   const smart = thread.smartCategory || classifyThreadDeterministic(thread);
+  if (isAttentionView(category) && thread.jev)
+    return smart.model === 'user_rule' && smart.primary === 'noise'
+      ? false
+      : attentionMatches(thread.jev, category);
   if (category.startsWith('custom:')) {
     return (smart.customLabels || []).includes(category.slice('custom:'.length));
   }

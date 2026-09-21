@@ -37,9 +37,14 @@ export const MAILBOXES: Array<{ query: string; label: string }> = [
 
 export const SMART_CATEGORIES: Array<{ id: string; label: string }> = [
   { id: 'main', label: 'Main' },
+  { id: 'needs_reply', label: 'Needs reply' },
+  { id: 'needs_action', label: 'Actions' },
+  { id: 'waiting_for', label: 'Waiting for' },
+  { id: 'important_changes', label: 'Changes' },
   { id: 'codes', label: 'Codes' },
   { id: 'orders', label: 'Orders' },
   { id: 'noise', label: 'Noise' },
+  { id: 'review', label: 'Review' },
 ];
 
 export function MailNav() {

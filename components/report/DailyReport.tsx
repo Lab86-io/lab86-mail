@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { Button } from '@/components/ui/button';
@@ -825,7 +826,7 @@ export function DailyReport({
       if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
       if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
-      return false;
+      return selectedId ? false : 30_000;
     },
   });
   // The legacy HTML artifact hides the tasks and threads the reader already
@@ -1185,7 +1186,19 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
-                  footer={embedded ? null : <BriefFooter report={report} />}
+                  footer={
+                    <>
+                      <BriefMailBacklog
+                        items={asLane(report.sections.overflow) || []}
+                        onOpen={(account, threadId) => {
+                          const state = useClientStore.getState();
+                          state.setThreadAccount(account);
+                          state.setSelectedThread(threadId);
+                        }}
+                      />
+                      {embedded ? null : <BriefFooter report={report} />}
+                    </>
+                  }
                 />
               </motion.div>
             ) : fallbackLetter && report ? (
@@ -1227,6 +1240,14 @@ export function DailyReport({
                           Some sources failed: {report.errors.join('; ')}
                         </p>
                       ) : null}
+                      <BriefMailBacklog
+                        items={asLane(report.sections.overflow) || []}
+                        onOpen={(account, threadId) => {
+                          const state = useClientStore.getState();
+                          state.setThreadAccount(account);
+                          state.setSelectedThread(threadId);
+                        }}
+                      />
                       {embedded ? null : <BriefFooter report={report} />}
                     </>
                   }
