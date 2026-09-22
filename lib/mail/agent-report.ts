@@ -112,15 +112,16 @@ export function carriedDaysFor(item: Pick<DailyReportItem, 'firstSurfacedAt'>, g
   return Math.floor((generatedAt - first) / 86_400_000);
 }
 
-async function loadSinceLastEditionFromConvex(
+export async function loadSinceLastEditionFromConvex(
   userId: string,
   since: number,
+  query: <T>(fn: unknown, args: Record<string, unknown>) => Promise<T> = convexQuery,
 ): Promise<DailyReportSinceLastEdition> {
   const [completions, operations] = await Promise.all([
-    convexQuery<any[]>((api as any).albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(
+    query<any[]>((api as any).albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(
       () => [] as any[],
     ),
-    convexQuery<any[]>((api as any).operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
+    query<any[]>((api as any).operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
   ]);
   return {
     previousGeneratedAt: since,
