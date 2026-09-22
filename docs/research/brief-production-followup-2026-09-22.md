@@ -17,3 +17,9 @@ The Bun-only preview had an unrelated CSS-module bundling error; final map verif
 The first generated edition repeated an old PR review warning as active even though it cited a later merge notification elsewhere. Both prose and layout writers now share explicit evidence rules: reconcile exact item identities and timestamps; newer direct completion evidence supersedes old summaries; old failures with no matching resolution must be dated and qualified as unverified. This does not infer that an unrelated newer release fixes an older rejected build, or mark work complete from silence.
 
 Focused tests verify the writer request policy and public tile URL, attribution, and native zoom contract. The subsequent production regeneration is the live check of the updated editorial instructions; prompt guidance cannot guarantee factual correctness in every future model response.
+
+## Release runner availability
+
+The follow-up's CI and staging deployment jobs remained queued without a runner assignment, including a cancelled/retried PR CI run. The organization runner listing reported 420 offline runners and no online runner. All local checks and the separate Apple build/archive checks passed. Public provider status pages showed no active incident, so this does not establish a platform-wide outage or its cause.
+
+The three web workflows now accept `WEB_WORKFLOW_RUNNER`, retaining the existing Blacksmith label when unset. Setting the repository variable to `ubuntu-24.04` allows validation and release on GitHub-hosted Linux without removing tests, changing secrets, or bypassing required checks. Native workflows are untouched. [GitHub documents configuration variables in `runs-on`](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#vars-context).
