@@ -763,7 +763,7 @@ function BriefEmailPreview({
         </div>
         {node.sentAt ? (
           <time className="shrink-0 text-[11px] text-[var(--color-text-muted)]">
-            {formatBriefTime(node.sentAt)}
+            {formatBriefTime(node.sentAt, context.timezone)}
           </time>
         ) : null}
       </header>
@@ -970,7 +970,7 @@ function BriefEntityRow({
           )}
           {entity?.startAt ? (
             <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-              {formatBriefTime(entity.startAt)}
+              {formatBriefTime(entity.startAt, context.timezone)}
             </p>
           ) : null}
         </div>
@@ -1310,10 +1310,10 @@ export function briefNodePresentationClass(node: { emphasis: string; tone: strin
 }
 
 function formatBriefTime(value: number, timezone?: string) {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
-    timeZone: timezone,
+    timeZone: timezone || 'UTC',
   }).format(new Date(value));
 }

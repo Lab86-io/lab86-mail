@@ -467,7 +467,7 @@ function DraftEditor({ initial, onSave }: { initial: string; onSave: (body: stri
       <label className="block text-xs font-medium">
         Edit draft
         <textarea
-          className="mt-1 min-h-40 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-sm"
+          className="mt-1 min-h-40 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-base sm:text-sm"
           value={body}
           maxLength={20000}
           onChange={(event) => setBody(event.target.value)}

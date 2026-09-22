@@ -48,7 +48,11 @@ try {
   await page.goto(`${process.env.EDITORIAL_PREVIEW_URL || 'http://127.0.0.1:18863'}/?catalogue`, {
     waitUntil: 'networkidle',
   });
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-brief-component]').length === 28,
+    undefined,
+    { timeout: 15000 },
+  );
   assert.equal(await page.locator('[data-brief-component]').count(), 28);
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),

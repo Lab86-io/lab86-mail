@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createBriefComponentRoutes } from '../app/api/briefs/components/route';
@@ -10,10 +11,44 @@ import { briefComponentStore } from '../lib/brief/component-state';
 import { composeEditorialDocument } from '../lib/brief/editorial';
 import { componentResponseRefSchema } from '../lib/brief/response';
 import { readBriefResponseContext } from '../lib/brief/response-context';
-import { kvUpsert } from '../lib/store/kv';
+import * as hosted from '../lib/hosted/convex';
+import * as hostedEnv from '../lib/hosted/env';
+import { kvCompareAndSwap, kvUpsert } from '../lib/store/kv';
 import { briefComponentFixtures } from './fixtures/brief-components';
 import { editorialFixture } from './fixtures/editorial';
 import './tools/harness';
+
+test('hosted component writes carry the authenticated tenant and expected revision to Convex', async () => {
+  const configured = spyOn(hostedEnv, 'isConvexConfigured').mockReturnValue(true);
+  const mutation = spyOn(hosted, 'convexMutation').mockResolvedValue(false);
+  try {
+    const doc = { revision: 'next', value: ['review'] };
+    const result = await runWithAiRequestContext({ userId: 'hosted-owner' }, () =>
+      kvCompareAndSwap('briefComponentState', 'edition:choice', 'previous', doc, 'edition'),
+    );
+    expect(result).toBe(false);
+    expect(mutation).toHaveBeenCalledTimes(1);
+    const [fn, args] = mutation.mock.calls[0];
+    expect(getFunctionName(fn)).toBe('userData:compareAndSwapDoc');
+    expect(args).toEqual({
+      userId: 'hosted-owner',
+      kind: 'briefComponentState',
+      key: 'edition:choice',
+      expectedRevision: 'previous',
+      doc,
+      ref: 'edition',
+    });
+    await expect(
+      runWithAiRequestContext({ userId: undefined }, () =>
+        kvCompareAndSwap('briefComponentState', 'edition:choice', null, doc),
+      ),
+    ).rejects.toThrow('No user on request context');
+    expect(mutation).toHaveBeenCalledTimes(1);
+  } finally {
+    mutation.mockRestore();
+    configured.mockRestore();
+  }
+});
 
 async function seed(userId: string, id: string) {
   const { edition, letter, modules, plan } = editorialFixture();

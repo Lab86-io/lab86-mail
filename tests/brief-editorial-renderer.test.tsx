@@ -2,7 +2,40 @@ import { expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
+import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
+import { briefRefKey } from '../lib/brief/hydration';
+import { BriefNodeSchema } from '../lib/shared/brief-document';
 import { editorialFixture } from './fixtures/editorial';
+
+test('email and hydrated event times use the edition timezone consistently', () => {
+  const at = Date.parse('2026-09-22T15:00:00Z');
+  const ref = { kind: 'event' as const, id: 'review', account: 'owner' };
+  const context: BriefNodeContext = {
+    timezone: 'America/Los_Angeles',
+    entities: new Map([[briefRefKey(ref), { ...ref, title: 'Review', startAt: at, gone: false }]]),
+    hiddenRefs: new Set(),
+    completedRefs: new Map(),
+    onAction: () => {},
+    onCanvasAction: () => {},
+  };
+  for (const input of [
+    {
+      kind: 'email_preview',
+      title: 'Message',
+      sender: 'Maya',
+      snippet: 'Review',
+      sentAt: at,
+      ref: { kind: 'thread', id: 'message', account: 'owner' },
+      sourceRefs: [{ kind: 'thread', id: 'message', account: 'owner' }],
+    },
+    { kind: 'entity_list', items: [{ ref, framing: {}, actions: [] }] },
+  ]) {
+    const node = BriefNodeSchema.parse(input);
+    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} />);
+    expect(html).toContain('Tue 8:00 AM');
+    expect(html).not.toContain('3:00 PM');
+  }
+});
 
 function render(liveSections: boolean, enabled = true, legacy = false) {
   const { edition, letter } = editorialFixture();

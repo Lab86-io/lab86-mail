@@ -486,7 +486,11 @@ export async function composeDailyBrief(
     generate: deps.generate,
     evidence: composed.editorialEvidence,
   });
-  layout.editorial.plan.areas = composed.areas;
+  layout.editorial.plan.areas = composed.areas.map((area) => ({
+    areaId: area.areaId.slice(0, 240),
+    name: area.name.slice(0, 500),
+    line: area.line.slice(0, 4000),
+  }));
   return { ...composed, document: layout.document, editorial: layout.editorial, layoutFailed: layout.failed };
 }
 

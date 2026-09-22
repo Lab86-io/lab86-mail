@@ -12,15 +12,36 @@ import {
   composeEditorialDocument,
   defaultEditorialPlan,
 } from '../lib/brief/editorial';
-import { collectBriefRefs } from '../lib/brief/hydration';
+import { briefRefKey, collectBriefRefs, hydratedEntityKey } from '../lib/brief/hydration';
 import { projectBriefMail } from '../lib/jev/report';
 import { createDailyEditorialSession, writeDailyEditorial } from '../lib/mail/brief-editorial';
-import { parseBriefDocument } from '../lib/shared/brief-document';
+import { BriefNodeSchema, parseBriefDocument } from '../lib/shared/brief-document';
 import { briefComponentFixtures } from './fixtures/brief-components';
 import { editorialFixture } from './fixtures/editorial';
 import { assessment, NOW, policy, thread } from './fixtures/jev';
 
 const toolOptions = { toolCallId: 'test', messages: [] };
+
+test('authored source replacements retain account-scoped hydration refs and reject invalid stored props', () => {
+  const { letter, modules, plan } = editorialFixture();
+  plan.regions[1].tree = {
+    kind: 'component',
+    id: 'decision-story',
+    component: 'editorial-text',
+    props: briefComponentFixtures['editorial-text'],
+    sources: ['thread:account-a:thread-a', 'calendar'],
+    summary: 'The decision before the launch review',
+  };
+  const document = composeEditorialDocument(letter, modules, plan);
+  expect(collectBriefRefs(document)).toEqual(collectBriefRefs(letter));
+  const ref = collectBriefRefs(document).find((item) => item.id === 'thread-a')!;
+  expect(hydratedEntityKey({ ...ref, kind: 'thread' })).toBe(briefRefKey(ref));
+  expect(hydratedEntityKey({ kind: 'thread', id: ref.id, account: 'other' })).not.toBe(briefRefKey(ref));
+  const stored = document.regions[1].tree;
+  const invalid = BriefNodeSchema.safeParse({ ...stored, component: 'option-list', props: { options: [] } });
+  expect(invalid.success).toBe(false);
+  if (!invalid.success) expect(invalid.error.issues.some((issue) => issue.path.includes('props'))).toBe(true);
+});
 
 test('every Tool UI family is discoverable, validates against its real schema, compiles, survives storage and has a renderer', () => {
   const families = readdirSync(new URL('../components/tool-ui', import.meta.url), { withFileTypes: true })

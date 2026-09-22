@@ -261,8 +261,13 @@ export function projectBriefMail(
       next.document = composeEditorialDocument(letter, modules, report.editorial.plan, false);
     } catch {
       const plan = defaultEditorialPlan(modules);
-      next.document = composeEditorialDocument(letter, modules, plan);
-      next.editorial = { plan, mode: 'fallback' };
+      try {
+        next.document = composeEditorialDocument(letter, modules, plan);
+        next.editorial = { plan, mode: 'fallback' };
+      } catch {
+        next.document = letter;
+        delete next.editorial;
+      }
     }
   }
   next.composition = compositionFromReport(next);

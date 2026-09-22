@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
+import * as editorial from '../lib/brief/editorial';
 import {
   composeEditorialDocument,
   defaultEditorialPlan,
@@ -116,6 +117,44 @@ test('invalid stored plans are ignored without breaking older editions', () => {
   expect(migrateDailyReport(report(), NOW).editorial).toBeUndefined();
 });
 
+test('live refresh repairs a malformed stored layout while preserving source actions', () => {
+  const { edition } = editorialFixture();
+  edition.editorial!.plan.regions = [];
+  const refreshed = projectBriefMail(
+    edition,
+    [thread({ jev: assessment({ sourceRevision: 'changed' }) })],
+    policy,
+    NOW + 1000,
+  );
+  expect(refreshed.editorial?.mode).toBe('fallback');
+  expect(refreshed.editorial?.plan.regions.length).toBeGreaterThan(0);
+  expect(lintBriefDocument(refreshed.document!)).toEqual([]);
+  expect(collectBriefRefs(refreshed.document!).some((ref) => ref.id === 'thread-a')).toBe(true);
+  expect(JSON.stringify(refreshed.document)).toContain('"action":"draft_reply"');
+});
+
+test('live refresh still returns the source letter if both layout attempts fail', () => {
+  const { edition } = editorialFixture();
+  const compile = spyOn(editorial, 'composeEditorialDocument').mockImplementation(() => {
+    throw new Error('Editorial layout exceeds document limits');
+  });
+  try {
+    const refreshed = projectBriefMail(
+      edition,
+      [thread({ jev: assessment({ sourceRevision: 'changed' }) })],
+      policy,
+      NOW + 1000,
+    );
+    expect(compile).toHaveBeenCalledTimes(2);
+    expect(refreshed.document?.layout).not.toBe('editorial');
+    expect(refreshed.editorial).toBeUndefined();
+    expect(collectBriefRefs(refreshed.document!).some((ref) => ref.id === 'thread-a')).toBe(true);
+    expect(JSON.stringify(refreshed.document)).toContain('"action":"draft_reply"');
+  } finally {
+    compile.mockRestore();
+  }
+});
+
 test('all-day calendar events do not acquire a midnight appointment in the timeline', () => {
   const { edition } = editorialFixture();
   edition.sections.calendar![0].allDay = true;
@@ -200,6 +239,30 @@ test('the active daily pipeline calls prose then design and persists the design 
   expect(finalized.editorial).toEqual(composed.editorial);
   expect(finalized.sections.answer?.[0].line).toBe('Maya needs your decision.');
   expect(finalized.html).toBeTruthy();
+});
+
+test('saved area context respects the plan schema even when user content is oversized', async () => {
+  const { edition } = editorialFixture();
+  edition.sections.albatross = {
+    includedAreas: [{ areaId: 'area-a', name: 'A'.repeat(600), reason: 'x'.repeat(5000) }],
+    askBeforeCentering: [],
+    activeIntents: [],
+    activeProjects: [],
+    contextReview: [],
+    completions: [],
+  };
+  const composed = await withToolContext(() =>
+    composeDailyBrief(edition, null, {
+      generate: null,
+      loadMessages: async () => [],
+      loadWeather: async () => null,
+    }),
+  );
+  const restored = migrateDailyReport(finalizeBudgetReport(edition, composed), NOW);
+  expect(restored.editorial).toBeDefined();
+  expect(restored.editorial?.plan.areas).toEqual([
+    { areaId: 'area-a', name: 'A'.repeat(500), line: 'x'.repeat(4000) },
+  ]);
 });
 
 test('text-only provider responses work, including providers that throw when output is read', async () => {
