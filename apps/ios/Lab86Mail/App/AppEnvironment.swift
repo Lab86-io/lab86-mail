@@ -33,6 +33,8 @@ final class AppEnvironment {
     let assistantDrafts: AssistantDraftStore
     let mobileClient: MobileV1Client?
     let briefHydration: BriefHydrationClient?
+    // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
+    let preparedWork: PreparedWorkClient?
     let outboxProcessor: CommandOutboxProcessor?
     let accountStore: AccountStore
     // The current Albatross conversation. Held here so switching destinations
@@ -81,6 +83,10 @@ final class AppEnvironment {
                 baseURL: apiBaseURL,
                 tokenProvider: tokenProvider
             )
+            preparedWork = PreparedWorkClient(
+                baseURL: apiBaseURL,
+                tokenProvider: tokenProvider
+            )
             bootstrapSource = mobileClient
             outboxProcessor = CommandOutboxProcessor(
                 outbox: commandOutbox,
@@ -89,6 +95,7 @@ final class AppEnvironment {
         } else {
             mobileClient = nil
             briefHydration = nil
+            preparedWork = nil
             outboxProcessor = nil
             bootstrapSource = UnavailableMobileBootstrapSource()
         }
