@@ -83,7 +83,7 @@ describe('live Jev demonstration', () => {
     const malformed = new NextRequest('http://localhost/api/jev/demo', { method: 'POST', body: '{' });
     expect((await createJevDemoRoute(validAuth)(malformed)).status).toBe(400);
     expect(validAuth.evaluateJev).not.toHaveBeenCalled();
-    expect(validAuth.enforceUserRateLimit).not.toHaveBeenCalled();
+    expect(validAuth.enforceUserRateLimit).toHaveBeenCalledTimes(7);
     await expect(
       createJevDemoRoute(
         dependencies({
@@ -100,10 +100,12 @@ describe('live Jev demonstration', () => {
         throw new RateLimitError('Try again shortly.', 2000, 10);
       },
     });
-    const response = await createJevDemoRoute(limited)(request());
+    const limitedRequest = request();
+    const response = await createJevDemoRoute(limited)(limitedRequest);
     expect(response.status).toBe(429);
     expect(response.headers.get('Retry-After')).toBe('2');
     expect(limited.evaluateJev).not.toHaveBeenCalled();
+    expect(limitedRequest.bodyUsed).toBe(false);
     const unavailable = dependencies({
       evaluateJev: async () => {
         throw new Error('private-secret');
@@ -114,6 +116,37 @@ describe('live Jev demonstration', () => {
     expect(await failed.text()).not.toContain('private-secret');
     expect(unavailable.recordJevUsage).toHaveBeenCalledTimes(1);
     expect(unavailable.recordJevUsage.mock.calls[0]).toHaveLength(2);
+  });
+  test('bounds declared and chunked bytes before JSON parsing, including a false small content length', async () => {
+    const deps = dependencies();
+    const route = createJevDemoRoute(deps);
+    const declared = new NextRequest('http://localhost/api/jev/demo', {
+      method: 'POST',
+      headers: { 'Content-Length': '32769' },
+      body: '{}',
+    });
+    expect((await route(declared)).status).toBe(413);
+    for (const contentLength of [undefined, '1']) {
+      const cancelled = mock(() => undefined);
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(20_000).fill(32));
+        },
+        cancel: cancelled,
+      });
+      const streamed = new NextRequest('http://localhost/api/jev/demo', {
+        method: 'POST',
+        body: stream,
+        duplex: 'half',
+        headers: contentLength ? { 'Content-Length': contentLength } : {},
+      } as any);
+      expect((await route(streamed)).status).toBe(413);
+      expect(cancelled).toHaveBeenCalledTimes(1);
+    }
+    expect(deps.enforceUserRateLimit).toHaveBeenCalledTimes(3);
+    expect(deps.evaluateJev).not.toHaveBeenCalled();
+    const multilingual = { ...example, body: '字'.repeat(2400), reply: '字'.repeat(2400) };
+    expect((await route(request(multilingual))).status).toBe(200);
   });
   test('examples show policy effects and resolution without relying on unread state', () => {
     for (const sample of JEV_DEMO_EXAMPLES)
