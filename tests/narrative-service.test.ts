@@ -153,6 +153,47 @@ describe('narrative agent run', () => {
     expect(calls).toEqual(['brief']);
   });
 
+  test('later area batches reuse only narrative preparation and recheck source consent and freshness', async () => {
+    let now = 0;
+    let sources = ['mcp:granola'];
+    let enabled = true;
+    let syncedAt = 1;
+    const calls: string[] = [];
+    __setNarrativeDepsForTest({
+      now: () => now,
+      refreshSources: async (_userId, selected) => {
+        calls.push(selected ? 'opted-in' : 'brief');
+        return [];
+      },
+      query: (async () => ({
+        settings: { enabled, sources, revision: 1 },
+        groups: ['mcp'],
+        sources: [{ id: sources[0], lastSyncedAt: syncedAt }],
+      })) as any,
+      mutation: (async (fn: any) => {
+        calls.push(getFunctionName(fn));
+        return { done: true, changed: 0 };
+      }) as any,
+    });
+    await prepareBriefContext('pilot');
+    calls.length = 0;
+    await prepareBriefContext('pilot');
+    expect(calls).toEqual(['brief', 'opted-in']);
+    sources = ['mcp:github'];
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(1);
+    now = 61_000;
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(2);
+    syncedAt = 2;
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(3);
+    enabled = false;
+    calls.length = 0;
+    await prepareBriefContext('pilot');
+    expect(calls).toEqual(['brief']);
+  });
+
   test('GLM uses schema-free JSON mode but other writers retain schema-enforced output', async () => {
     const glm = setup();
     expect((await refreshNarrative('pilot')).status).toBe('ready');

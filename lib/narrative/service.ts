@@ -22,11 +22,13 @@ const defaults = {
   generate: generateTextForCurrentUser,
   runtime: resolveAiRuntime,
   refreshSources: refreshBriefSources,
+  now: Date.now,
   limits: { researchMs: 60_000, writeMs: 180_000 },
 };
 let deps = defaults;
 export function __setNarrativeDepsForTest(overrides: Partial<typeof defaults> = {}) {
   deps = { ...defaults, ...overrides };
+  preparationMemo.clear();
 }
 export function narrativeEnabled(userId?: string | null) {
   const allowed = (process.env.LAB86_NARRATIVE_USER_IDS || '')
@@ -271,6 +273,10 @@ async function ingestNarrativeEvidence(
   }
 }
 
+const preparationMemo = new Map<string, { stamp: string; until: number }>();
+function preparationStamp(state: any) {
+  return JSON.stringify([state.settings, state.groups, state.sources]);
+}
 const preparationFlights = new Map<string, Promise<Awaited<ReturnType<typeof refreshBriefSources>>>>();
 /** Refresh before composing daily/area pages. Compile new observations without
  * waiting for a second model writer; the editorial agent can read this evidence. */
@@ -280,7 +286,8 @@ export function prepareBriefContext(userId: string) {
   const operation = (async () => {
     const checks = await deps.refreshSources(userId);
     if (!narrativeEnabled(userId)) return checks;
-    const state = await deps.query<any>(functions.status, { userId });
+    for (const [key, memo] of preparationMemo) if (memo.until <= deps.now()) preparationMemo.delete(key);
+    let state = await deps.query<any>(functions.status, { userId });
     if (state?.settings?.enabled) {
       const optedInChecks = await deps.refreshSources(userId, state.settings.sources || []);
       for (const check of optedInChecks) {
@@ -288,9 +295,32 @@ export function prepareBriefContext(userId: string) {
         if (index >= 0) checks[index] = check;
         else checks.push(check);
       }
-      await ingestNarrativeEvidence(userId, state.groups || [], AbortSignal.timeout(30_000));
-      await deps.mutation(functions.compile, { userId });
-      await deps.mutation(functions.prepareBrief, { userId });
+      const refreshed = await deps.query<any>(functions.status, { userId });
+      if (
+        !refreshed?.settings?.enabled ||
+        JSON.stringify(refreshed.settings.sources) !== JSON.stringify(state.settings.sources)
+      ) {
+        preparationMemo.delete(userId);
+        return checks;
+      }
+      state = refreshed;
+      // Source checks and current consent are always read. Only the repeated
+      // deterministic preparation is shared across nearby area worker batches.
+      const memo = preparationMemo.get(userId);
+      if (!memo || memo.stamp !== preparationStamp(state)) {
+        await ingestNarrativeEvidence(userId, state.groups || [], AbortSignal.timeout(30_000));
+        await deps.mutation(functions.compile, { userId });
+        await deps.mutation(functions.prepareBrief, { userId });
+        const prepared = await deps.query<any>(functions.status, { userId });
+        if (
+          prepared?.settings?.enabled &&
+          JSON.stringify(prepared.settings.sources) === JSON.stringify(state.settings.sources)
+        ) {
+          preparationMemo.set(userId, { stamp: preparationStamp(prepared), until: deps.now() + 60_000 });
+        }
+      }
+    } else {
+      preparationMemo.delete(userId);
     }
     return checks;
   })().finally(() => preparationFlights.delete(userId));

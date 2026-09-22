@@ -61,7 +61,12 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
-const readDefaults = { query: convexQuery, configured: isConvexConfigured, loadPolicy: loadJevPolicy };
+const readDefaults = {
+  query: convexQuery,
+  configured: isConvexConfigured,
+  loadPolicy: loadJevPolicy,
+  load: getDailyReport,
+};
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
   readDependencies = { ...readDefaults, ...overrides };
@@ -86,6 +91,8 @@ async function readReportRows<T>(
               kind: report.kind,
               generatedAt: report.generatedAt,
               title: report.title,
+              artifactStatus: report.artifactStatus,
+              editorial: report.editorial ? { mode: report.editorial.mode } : undefined,
             }
           : report,
       ) as T[];
@@ -106,7 +113,7 @@ async function readReportRows<T>(
 }
 
 export async function getLatestDailyReport(kind?: DailyReport['kind'], preferEditorial = false) {
-  const rows = await readReportRows<DailyReport>(preferEditorial ? 8 : 1, false, kind);
+  const rows = await readReportRows<DailyReport>(preferEditorial ? 8 : 1, preferEditorial, kind);
   let latest = rows[0];
   if (!latest) return null;
   // Reader views keep a recent completed edition while another is composing
@@ -121,7 +128,10 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], preferEdi
           latest.generatedAt - row.generatedAt <= 24 * 3600_000,
       ) ?? latest;
   }
-  const report = await migrateDailyReportForRead(latest);
+  const report = preferEditorial
+    ? await readDependencies.load(latest._id)
+    : await migrateDailyReportForRead(latest);
+  if (!report) return null;
   if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
   const items = [
     ...(report.sections.answer || []),

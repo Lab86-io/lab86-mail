@@ -141,6 +141,8 @@ export const dailyReportPage = query({
               kind: row.doc.kind || 'manual',
               generatedAt: row.doc.generatedAt || 0,
               title: row.doc.title || 'Daily Report',
+              artifactStatus: row.doc.artifactStatus,
+              editorial: row.doc.editorial ? { mode: row.doc.editorial.mode } : undefined,
             }
           : row.doc,
       ),

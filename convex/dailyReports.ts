@@ -58,6 +58,43 @@ export const reportTargets = internalQuery({
   },
 });
 
+// Two users fit in a single network batch. The next action resumes by user
+// identity, skipping that user's other accounts without dropping later users.
+const TARGET_BATCH_SIZE = 2;
+export const reportTargetPage = internalQuery({
+  args: { afterUserId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const accounts = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_status_user', (q) =>
+        args.afterUserId
+          ? q.eq('status', 'connected').gt('userId', args.afterUserId)
+          : q.eq('status', 'connected'),
+      )
+      .take(TARGET_BATCH_SIZE);
+    const userIds = [...new Set(accounts.map((account) => account.userId))];
+    const targets = await Promise.all(
+      userIds.map(async (userId) => {
+        const calendars = await ctx.db
+          .query('calendars')
+          .withIndex('by_user', (q) => q.eq('userId', userId))
+          .collect();
+        let timezone = DEFAULT_TZ;
+        let found = false;
+        for (const calendar of calendars) {
+          if (!calendar.timezone || /^(UTC|GMT|Etc\/)/i.test(calendar.timezone)) continue;
+          if (calendar.isPrimary || !found) {
+            timezone = calendar.timezone;
+            found = true;
+          }
+        }
+        return { userId, timezone };
+      }),
+    );
+    return { targets, nextUserId: accounts.length === TARGET_BATCH_SIZE ? userIds.at(-1) : undefined };
+  },
+});
+
 // The local calendar date (YYYY-MM-DD) in `timezone` at instant `at`.
 export function localDateKey(timezone: string, at: Date): string {
   try {
@@ -131,8 +168,8 @@ export function localHour(timezone: string, at: Date): number | null {
 // route waits until the edition is written so a scheduled morning brief cannot
 // stop at the interim structured layout.
 export const tick = internalAction({
-  args: {},
-  handler: async (ctx) => {
+  args: { afterUserId: v.optional(v.string()), at: v.optional(v.number()) },
+  handler: async (ctx, args) => {
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
     if (!appUrl || !secret) {
@@ -144,8 +181,10 @@ export const tick = internalAction({
       return;
     }
 
-    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
-    const at = new Date();
+    const { targets, nextUserId } = await ctx.runQuery(internal.dailyReports.reportTargetPage, {
+      afterUserId: args.afterUserId,
+    });
+    const at = new Date(args.at ?? Date.now());
     // The morning hour fires every target. Inside the catch-up window only
     // the users with no edition for the local date fire again.
     const editionByUser = new Map<string, boolean>();
@@ -183,6 +222,11 @@ export const tick = internalAction({
         { label: 'area-briefs cron', concurrency: 2, timeoutMs: 570_000 },
       ),
     ]);
+    if (nextUserId)
+      await ctx.scheduler.runAfter(0, internal.dailyReports.tick, {
+        afterUserId: nextUserId,
+        at: at.getTime(),
+      });
     console.log(
       `[daily-report cron] tick fired ${fired}/${due.length} editions, ${briefed}/${due.length} area-brief refreshes`,
     );
@@ -193,8 +237,8 @@ export const tick = internalAction({
 // brief without force. The generator compares the bounded source revision and
 // skips unchanged areas, so a quiet area costs one query and no model call.
 export const areaRefreshTick = internalAction({
-  args: {},
-  handler: async (ctx) => {
+  args: { afterUserId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
     if (!appUrl || !secret) {
@@ -205,13 +249,17 @@ export const areaRefreshTick = internalAction({
       console.log('[area-refresh cron] skipped on staging target');
       return;
     }
-    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
+    const { targets, nextUserId } = await ctx.runQuery(internal.dailyReports.reportTargetPage, {
+      afterUserId: args.afterUserId,
+    });
     const refreshed = await fanOutInternalPost(
       `${appUrl}/api/cron/area-briefs`,
       secret,
       targets.map((target) => ({ userId: target.userId, force: false })),
       { label: 'area-refresh cron', concurrency: 2, timeoutMs: 570_000 },
     );
+    if (nextUserId)
+      await ctx.scheduler.runAfter(0, internal.dailyReports.areaRefreshTick, { afterUserId: nextUserId });
     console.log(`[area-refresh cron] refreshed ${refreshed}/${targets.length} users`);
   },
 });

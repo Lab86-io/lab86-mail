@@ -351,7 +351,7 @@ describe('budget document regions', () => {
     const connected = document.regions[7].tree as any;
     expect(connected.title).toBe('Connected tools');
     expect(connected.items).toHaveLength(1);
-    expect(connected.items[0].ref).toEqual({ kind: 'mcp', id: '1', label: 'PR 1' });
+    expect(connected.items[0].ref).toEqual({ kind: 'mcp', id: 'github:1', label: 'PR 1' });
     expect(connected.items[0].framing.reason).toBe('GitHub pull request, open, assigned to you');
     expect(connected.items[0].actions[0]).toMatchObject({
       action: 'open_url',
@@ -681,4 +681,17 @@ describe('convex: catch-up pass and telemetry', () => {
       ).rejects.toThrow();
     });
   });
+});
+
+test('connected rows from different servers retain distinct reference keys', () => {
+  const document = composeBudgetBriefDocument({
+    report: report({ mcp: [mcp('shared', { server: 'github' }), mcp('shared', { server: 'granola' })] }),
+    prose: { lede: 'Two connected updates.', weekAhead: '', lines: {} },
+    areas: [],
+    timezone: TZ,
+  });
+  const region = document.regions.find((row) => row.id === 'connected')!;
+  const refs = (region.tree as any).items.map((row: any) => row.ref.id);
+  expect(new Set(refs).size).toBe(2);
+  expect(refs.sort()).toEqual(['github:shared', 'granola:shared']);
 });

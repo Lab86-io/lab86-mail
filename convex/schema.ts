@@ -143,7 +143,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    .index('by_status_user', ['status', 'userId']),
 
   providerGrants: defineTable({
     userId: v.string(),

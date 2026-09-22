@@ -21,18 +21,29 @@ const report = (i: number) => ({
 });
 
 test('reader keeps a recent editorial edition during recovery without hiding the active generation from workers', async () => {
+  const reads: any[] = [];
+  const loaded: string[] = [];
   let newest: any = { ...report(100), editorial: { mode: 'fallback' } };
   const completed = { ...report(90), editorial: { mode: 'generated' } };
   setDailyReportReaderForTest({
     configured: () => true,
-    query: (async (_fn, args) => ({
-      page: [newest, completed].slice(0, args.limit),
-      isDone: true,
-      continueCursor: '',
-    })) as any,
+    load: (async (id: string) => {
+      loaded.push(id);
+      return id === newest._id ? newest : completed;
+    }) as any,
+    query: (async (_fn, args) => {
+      reads.push(args);
+      return {
+        page: [newest, completed].slice(0, args.limit),
+        isDone: true,
+        continueCursor: '',
+      };
+    }) as any,
   });
   await context(async () => {
     expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-90');
+    expect(reads[0].summaryOnly).toBe(true);
+    expect(loaded).toEqual(['edition-90']);
     expect((await getLatestDailyReport())?._id).toBe('edition-100');
     newest = { ...report(100), editorial: { mode: 'generated' } };
     expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-100');

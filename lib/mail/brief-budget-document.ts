@@ -214,7 +214,7 @@ function connectedItem(item: DailyReportMcpItem) {
   return {
     ref: {
       kind: 'mcp' as const,
-      id: item.externalId || item.url || item.title,
+      id: `${item.server}:${item.externalId || item.url || item.title}`,
       label: item.title,
     },
     framing: {
