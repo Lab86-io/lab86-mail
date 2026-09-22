@@ -135,15 +135,20 @@ struct PreparedWorkTests {
                         "evidence":"nope"},
                "userFiles":[{"name":"edited.md","content":"changed"}],
                "sources":[{"title":"no id"},{"_id":"s1"}]},
+              {"_id":"huge","revision":1e30},
+              {"_id":"fraction","revision":2.6},
               {"revision":1},
               "garbage"
             ]}
             """.utf8
         )
         let items = try PreparedItem.decodeList(data)
-        #expect(items.count == 1)
+        #expect(items.count == 3)
         let item = try #require(items.first)
         #expect(item.revision == 0)
+        // A revision outside Int range never traps; a fraction rounds.
+        #expect(items[1].revision == 0)
+        #expect(items[2].revision == 3)
         #expect(item.needsRefresh == false)
         #expect(item.userNotes == "")
         #expect(item.draft?.questions == ["Real question"])

@@ -290,7 +290,7 @@ extension PreparedItem {
         }
         self.init(
             id: id,
-            revision: json["revision"]?.number.map { Int($0) } ?? 0,
+            revision: json["revision"]?.number.flatMap { $0.isFinite ? Int(exactly: $0.rounded()) : nil } ?? 0,
             draft: PreparedDraft(json: json["draft"]),
             workID: json["workId"]?.string,
             userNotes: json["userNotes"]?.string ?? "",

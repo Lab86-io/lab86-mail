@@ -14,7 +14,9 @@ struct PreparedWorkSection: View {
 
     var body: some View {
         if let client = environment.preparedWork {
-            content(client)
+            // The poll lives on a container that always appears, so the
+            // first load runs while the store is still empty and hidden.
+            VStack(spacing: 0) { content(client) }
                 .task(id: scenePhase) {
                     guard scenePhase == .active else { return }
                     while !Task.isCancelled {
@@ -201,7 +203,7 @@ struct PreparedWorkCard: View {
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                     }
                     .onChange(of: notes) { _, newValue in
-                        if newValue != item.userNotes { dirty = true }
+                        dirty = newValue != item.userNotes
                     }
                     .accessibilityLabel("Your answers and notes")
                 HStack(spacing: 12) {
