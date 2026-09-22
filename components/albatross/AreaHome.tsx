@@ -685,6 +685,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
           <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)] pt-14">
             <BriefCanvas
               value={home.livingBrief.document}
+              surface="area"
               hideInactive
               composing={home.livingBrief.status === 'generating' || artifactRefreshing}
             />

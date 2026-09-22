@@ -33,3 +33,15 @@ describe('BriefCanvas navigation', () => {
     expect(target.opened).toHaveLength(1);
   });
 });
+
+describe('BriefCanvas action guard', () => {
+  test('an action the executor does not know fails with the visible copy', async () => {
+    const { BRIEF_UNKNOWN_ACTION_COPY, executeBriefAction } = await import(
+      '../components/report/brief-canvas/BriefCanvas'
+    );
+    expect(BRIEF_UNKNOWN_ACTION_COPY).toBe('The brief cannot run this action yet.');
+    await expect(executeBriefAction('summon_dragon', {}, () => {})).rejects.toThrow(
+      BRIEF_UNKNOWN_ACTION_COPY,
+    );
+  });
+});

@@ -783,6 +783,9 @@ export const queueBriefReady = mutation({
     reportId: v.string(),
     localDate: v.string(),
     title: v.optional(v.string()),
+    // The first sentences of the lede (brief round 2026-09-22). Falls back to
+    // the fixed line when the edition has no prose.
+    body: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -817,7 +820,10 @@ export const queueBriefReady = mutation({
         title: String(args.title || 'Your Daily Brief is ready')
           .trim()
           .slice(0, 180),
-        body: 'Weather, today’s pressure, and your stated intent for tomorrow are assembled.',
+        body:
+          String(args.body || '')
+            .trim()
+            .slice(0, 180) || 'Weather, today’s pressure, and your stated intent for tomorrow are assembled.',
         deepLink: `/brief?id=${encodeURIComponent(args.reportId)}`,
         dedupeKey,
         scheduledFor: ts,

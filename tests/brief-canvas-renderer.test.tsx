@@ -776,3 +776,56 @@ describe('current briefs reconcile terminal Work without changing historical edi
     }
   });
 });
+
+describe('brief telemetry', () => {
+  test('a settled row action posts one event with the edition, surface, region, ref, and outcome', async () => {
+    const { letterBriefDocumentFixture } = await import('../lib/shared/brief-document-fixtures');
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, init });
+      const body = url.includes('/resolve') ? { ok: true, entities: [] } : { ok: true };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <QueryClientProvider client={queryClient}>
+            <BriefCanvas value={letterBriefDocumentFixture} reportId="report-7" surface="area" />
+          </QueryClientProvider>,
+        );
+      });
+      const open = renderer.root
+        .findAllByType('button')
+        .find(
+          (button) =>
+            button.props['data-brief-letter-action-name'] === 'open_thread' &&
+            button.props['data-brief-letter-action'] === true,
+        );
+      expect(open).toBeDefined();
+      await act(async () => open?.props.onClick());
+      await act(async () => {});
+      const events = calls.filter((call) => call.url === '/api/brief/events');
+      expect(events).toHaveLength(1);
+      expect(events[0]?.init?.method).toBe('POST');
+      expect(JSON.parse(String(events[0]?.init?.body))).toEqual({
+        reportId: 'report-7',
+        surface: 'area',
+        regionId: 'answer',
+        action: 'open_thread',
+        ref: { kind: 'thread', id: 'thread-review-deck', account: 'jakob@example.com' },
+        outcome: 'opened',
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      renderer?.unmount();
+      queryClient.clear();
+    }
+  });
+});

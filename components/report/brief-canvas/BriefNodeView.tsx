@@ -50,6 +50,11 @@ const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((m
   ),
 });
 
+/** Where an action came from. The region id feeds brief telemetry. */
+export interface BriefActionMeta {
+  regionId?: string;
+}
+
 export interface BriefNodeContext {
   entities: Map<string, BriefHydratedEntity>;
   hiddenRefs: Set<string>;
@@ -58,8 +63,21 @@ export interface BriefNodeContext {
     action: BriefActionV2,
     payload: BriefActionPayload,
     sourceRef?: BriefSourceRefV2,
+    meta?: BriefActionMeta,
   ) => Promise<void> | void;
   onCanvasAction: (action: string, payload: BriefActionPayload) => void;
+}
+
+/**
+ * Binds a region id to every action of a subtree. Region renderers call it
+ * once, so the recursive node views never carry the id themselves.
+ */
+export function withBriefRegion(context: BriefNodeContext, regionId: string): BriefNodeContext {
+  return {
+    ...context,
+    onAction: (action, payload, sourceRef, meta) =>
+      context.onAction(action, payload, sourceRef, { regionId, ...meta }),
+  };
 }
 
 export function BriefNodeView({

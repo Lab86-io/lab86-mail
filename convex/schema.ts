@@ -2752,4 +2752,22 @@ export default defineSchema({
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_card', ['cardId']),
+
+  // One row per user action on a brief item (brief round 2026-09-22). The
+  // generator reads nothing from here yet; the rows measure which regions and
+  // actions earn use, so scoring changes can be checked against real use.
+  briefItemEvents: defineTable({
+    userId: v.string(),
+    reportId: v.optional(v.string()),
+    surface: v.union(v.literal('daily'), v.literal('area')),
+    regionId: v.string(),
+    action: v.string(),
+    refKind: v.string(),
+    refId: v.string(),
+    refAccount: v.optional(v.string()),
+    outcome: v.union(v.literal('done'), v.literal('failed'), v.literal('undone'), v.literal('opened')),
+    createdAt: v.number(),
+  })
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_user_report', ['userId', 'reportId']),
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -95,20 +95,56 @@ function BriefActionControl({
   );
 
   if (tier !== 'review') return button;
+  return (
+    <BriefReviewPopover
+      action={action}
+      payload={payload}
+      open={open}
+      onOpenChange={setOpen}
+      pending={pending}
+      onConfirm={run}
+    >
+      {button}
+    </BriefReviewPopover>
+  );
+}
+
+/**
+ * The review contract: a consequential action confirms before it runs. The
+ * letter rows and the canvas action controls share this one popover, so the
+ * copy from `briefActionReviewCopy` reads the same everywhere.
+ */
+export function BriefReviewPopover({
+  action,
+  payload,
+  open,
+  onOpenChange,
+  pending,
+  onConfirm,
+  children,
+}: {
+  action: BriefActionV2;
+  payload: BriefActionPayload;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  pending: boolean;
+  onConfirm: () => void | Promise<void>;
+  children: ReactNode;
+}) {
   const copy = briefActionReviewCopy(action, payload);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>{button}</PopoverTrigger>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent align="start" className="w-80">
         <PopoverHeader>
           <PopoverTitle>{copy.title}</PopoverTitle>
           <PopoverDescription>{copy.detail}</PopoverDescription>
         </PopoverHeader>
         <div className="mt-4 flex justify-end gap-2">
-          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="button" size="sm" disabled={pending} onClick={run}>
+          <Button type="button" size="sm" disabled={pending} onClick={() => void onConfirm()}>
             {pending ? <Loader2 className="animate-spin" /> : <Check />}
             {copy.confirm}
           </Button>

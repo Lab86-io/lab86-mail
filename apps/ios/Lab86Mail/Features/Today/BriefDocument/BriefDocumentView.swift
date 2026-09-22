@@ -12,12 +12,21 @@ struct BriefDocumentView: View {
     // Today draws the lede above the document. The area page does not, so it
     // asks the document to render its own `lede` region.
     var rendersLede: Bool = false
+    // Telemetry (brief round 2026-09-22): which surface the document renders
+    // on and, for a daily edition, its report id.
+    var surface: BriefTelemetrySurface = .daily
+    var reportID: String? = nil
+    // Hide rows whose work, task, or card ref the server reports inactive.
+    // On only for the latest daily edition and for an area brief; never
+    // while browsing history. This matches the web's `hideInactive`.
+    var hideInactive: Bool = false
     let onReview: (ArtifactReviewRequest) -> Void
 
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.openURL) private var openURL
     @State private var entities: [String: BriefHydratedEntity] = [:]
     @State private var hiddenRefs: Set<String> = []
+    @State private var inactiveRefs: Set<String> = []
     @State private var completedRefs: [String: Bool] = [:]
     @State private var hydrationFailed = false
     @State private var undo: BriefUndo?
@@ -35,6 +44,9 @@ struct BriefDocumentView: View {
         .padding(.horizontal)
         .padding(.vertical, 18)
         .task(id: document.generatedAt) { await hydratePinnedRefs() }
+        .task(id: BriefInactivePolling.key(hideInactive: hideInactive, generatedAt: document.generatedAt)) {
+            await pollInactiveRefs()
+        }
         .safeAreaInset(edge: .bottom) {
             if let undo {
                 HStack(spacing: 12) {
@@ -66,15 +78,23 @@ struct BriefDocumentView: View {
     // did not recognise (older editions, Work plans, tool nodes) goes through
     // the node renderer unchanged.
     @ViewBuilder private func sectionView(_ section: BriefLetterSection) -> some View {
+        // Every action remembers the region it came from, for telemetry.
+        let regionID = section.regionID
+        let perform: (BriefDocumentAction, BriefSourceRef?) async -> Void = { action, ref in
+            await self.perform(action, ref, regionID: regionID)
+        }
         switch section {
         case .lede(let text):
             BriefLedeText(text: text)
+        case .yesterday(let text), .week(let text):
+            BriefLetterParagraph(text: text)
         case .lane(let lane, let items):
             BriefLaneSection(
                 lane: lane,
                 items: items,
                 entities: entities,
-                hiddenRefs: hiddenRefs,
+                hiddenRefs: allHiddenRefs,
+                completedRefs: completedRefs,
                 editionKey: editionKey,
                 onAction: perform
             )
@@ -89,11 +109,16 @@ struct BriefDocumentView: View {
                 node: region.tree,
                 regionSummary: region.summary,
                 entities: entities,
-                hiddenRefs: hiddenRefs,
+                hiddenRefs: allHiddenRefs,
                 completedRefs: completedRefs,
                 onAction: perform
             )
         }
+    }
+
+    // Rows the user hid plus rows the server reports inactive.
+    private var allHiddenRefs: Set<String> {
+        hideInactive ? hiddenRefs.union(inactiveRefs) : hiddenRefs
     }
 
     // Rows rise once per edition, not on every hydration pass.
@@ -143,7 +168,66 @@ enum BriefDocumentStatus: Equatable {
     }
 }
 
+// The two surfaces the shared renderer reports telemetry for.
+enum BriefTelemetrySurface: String, Sendable {
+    case daily
+    case area
+}
+
+// When the inactive poll runs. One task per (flag, edition) pair: turning
+// the flag off cancels the loop, and a new edition starts a fresh one.
+enum BriefInactivePolling {
+    static let interval: Duration = .seconds(30)
+
+    static func key(hideInactive: Bool, generatedAt: Double) -> String {
+        hideInactive ? "on:\(generatedAt)" : "off"
+    }
+}
+
 extension BriefDocumentView {
+    // Asks the server which work, task, and card refs are inactive, once on
+    // load and then every 30 seconds while the document stays on screen.
+    // The task cancels when the view leaves or `hideInactive` turns off.
+    private func pollInactiveRefs() async {
+        guard hideInactive, let client = environment.briefHydration else {
+            inactiveRefs = []
+            return
+        }
+        let refs = collectRefs().filter { BriefInactiveRefs.kinds.contains($0.kind) }
+        guard !refs.isEmpty else {
+            inactiveRefs = []
+            return
+        }
+        while !Task.isCancelled {
+            if let inactive = try? await client.inactiveRefs(refs) {
+                inactiveRefs = inactive
+            }
+            guard (try? await Task.sleep(for: BriefInactivePolling.interval)) != nil else { return }
+        }
+    }
+
+    // One telemetry row per settled action. Fire and forget: a failure to
+    // post never blocks or reports.
+    private func record(
+        _ action: String,
+        regionID: String,
+        payload: BriefActionPayload,
+        sourceRef: BriefSourceRef?,
+        outcome: String
+    ) {
+        guard let client = environment.briefHydration,
+              let ref = BriefEventRecord.Ref(sourceRef: sourceRef, payload: payload) else { return }
+        let event = BriefEventRecord(
+            reportId: reportID,
+            surface: surface.rawValue,
+            regionId: regionID,
+            action: action,
+            ref: ref,
+            outcome: outcome
+        )
+        Task.detached(priority: .utility) { try? await client.recordEvent(event) }
+    }
+
     private func hydratePinnedRefs() async {
         guard let client = environment.briefHydration else { return }
         let refs = collectRefs()
@@ -182,13 +266,18 @@ extension BriefDocumentView {
     }
 
     @MainActor
-    private func perform(_ action: BriefDocumentAction, _ sourceRef: BriefSourceRef?) async {
+    private func perform(
+        _ action: BriefDocumentAction,
+        _ sourceRef: BriefSourceRef?,
+        regionID: String
+    ) async {
         guard BriefActionPolicy.known.contains(action.action) else { return }
         var payload = BriefActionPayload(action: action, sourceRef: sourceRef)
         if payload.areaID == nil { payload.areaID = scopeAreaID }
         switch BriefActionPolicy.tier(action.action) {
         case .navigation:
             navigate(action.action, payload)
+            record(action.action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "opened")
         case .review:
             onReview(
                 ArtifactReviewRequest(
@@ -197,8 +286,11 @@ extension BriefDocumentView {
                     source: document.title
                 )
             )
+            // The review sheet owns the rest of the flow; the brief only
+            // knows the user opened it.
+            record(action.action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "opened")
         case .immediate:
-            await applyImmediate(action.action, payload, sourceRef: sourceRef)
+            await applyImmediate(action.action, payload, sourceRef: sourceRef, regionID: regionID)
         }
     }
 
@@ -206,7 +298,8 @@ extension BriefDocumentView {
     private func applyImmediate(
         _ action: String,
         _ payload: BriefActionPayload,
-        sourceRef: BriefSourceRef?
+        sourceRef: BriefSourceRef?,
+        regionID: String
     ) async {
         let key = sourceRef?.key ?? payload.refKey
         let previousCompleted = key.flatMap { completedRefs[$0] }
@@ -220,10 +313,13 @@ extension BriefDocumentView {
             undo = BriefUndo(
                 action: action,
                 payload: payload,
+                sourceRef: sourceRef,
                 sourceRefKey: key,
                 previousCompleted: previousCompleted,
+                regionID: regionID,
                 message: immediateMessage(action, payload)
             )
+            record(action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "done")
             await environment.store.refreshToday()
         } catch {
             if hides, let key { hiddenRefs.remove(key) }
@@ -231,6 +327,7 @@ extension BriefDocumentView {
                 completedRefs[key] = previousCompleted
             }
             actionError = error.localizedDescription
+            record(action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "failed")
         }
     }
 
@@ -371,6 +468,7 @@ extension BriefDocumentView {
                 hiddenRefs.remove(key)
                 completedRefs[key] = item.previousCompleted
             }
+            record(item.action, regionID: item.regionID, payload: payload, sourceRef: item.sourceRef, outcome: "undone")
             await environment.store.refreshToday()
         } catch {
             actionError = error.localizedDescription
@@ -450,12 +548,16 @@ private struct BriefUndo: Identifiable {
     let id = UUID()
     let action: String
     let payload: BriefActionPayload
+    let sourceRef: BriefSourceRef?
     let sourceRefKey: String?
     let previousCompleted: Bool?
+    let regionID: String
     let message: String
 }
 
-private enum BriefActionPolicy {
+// The action tiers the renderer knows. Shared with the letter rows, which
+// only render known actions.
+enum BriefActionPolicy {
     enum Tier { case immediate, review, navigation }
 
     static let immediate: Set<String> = [
@@ -1413,6 +1515,28 @@ private extension View {
             surfaceCard(cornerRadius: cornerRadius)
         default:
             overlay { RoundedRectangle(cornerRadius: cornerRadius).stroke(.quaternary) }
+        }
+    }
+}
+
+extension BriefEventRecord.Ref {
+    // The item a telemetry row is about: the row's source ref when there is
+    // one, else the identity the payload names. Nil when neither exists.
+    init?(sourceRef: BriefSourceRef?, payload: BriefActionPayload) {
+        if let sourceRef {
+            self.init(kind: sourceRef.kind, id: sourceRef.id, account: sourceRef.account)
+        } else if let threadID = payload.threadID {
+            self.init(kind: "thread", id: threadID, account: payload.account)
+        } else if let cardID = payload.cardID {
+            self.init(kind: "task", id: cardID, account: nil)
+        } else if let eventID = payload.eventID {
+            self.init(kind: "event", id: eventID, account: payload.account)
+        } else if let workID = payload.workID {
+            self.init(kind: "work", id: workID, account: nil)
+        } else if let areaID = payload.areaID {
+            self.init(kind: "area", id: areaID, account: nil)
+        } else {
+            return nil
         }
     }
 }

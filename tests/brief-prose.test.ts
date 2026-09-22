@@ -164,6 +164,7 @@ describe('parseBriefProse', () => {
           { line: 'No key.' },
         ],
         weekAhead: 'Thursday is open. AI says hi. Friday too.',
+        yesterday: 'You wanted the deck done. It is done. Nothing else moved. One more.',
       })}`,
       ['k1', 'k2'],
     );
@@ -171,6 +172,7 @@ describe('parseBriefProse', () => {
       lede: 'One. Two. Three. Four.',
       lines: { k1: 'Fine line.' },
       weekAhead: 'Thursday is open. Friday too.',
+      yesterday: 'You wanted the deck done. It is done. Nothing else moved.',
     });
   });
 

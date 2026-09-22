@@ -93,6 +93,12 @@ struct TodayView: View {
             }
         }
         .onDisappear { narrative.clear() }
+        // A `brief_ready` notification names its edition. Open that one, not
+        // the latest. The request is read once.
+        .task(id: environment.navigation.pendingBriefEditionID) {
+            guard let editionID = environment.navigation.consumeBriefEdition() else { return }
+            await store.selectDailyReport(id: editionID)
+        }
     }
 
     private func reloadNarrative() async {
@@ -202,8 +208,14 @@ struct TodayView: View {
                     BriefDocumentView(
                         document: document,
                         isComposing: report.artifactStatus == "composing",
+                        surface: .daily,
+                        reportID: report.id,
+                        hideInactive: store.showsLatestDailyReport,
                         onReview: { artifactReview = $0 }
                     )
+                    BriefMailBacklog(items: report.overflow) { item in
+                        environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
+                    }
                     DailyBriefFooter(report: report)
                         .padding(.bottom, 32)
                 }
@@ -409,8 +421,14 @@ struct TodayView: View {
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",
+                    surface: .daily,
+                    reportID: report.id,
+                    hideInactive: store.showsLatestDailyReport,
                     onReview: { artifactReview = $0 }
                 )
+                BriefMailBacklog(items: report.overflow) { item in
+                    environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
+                }
                 DailyBriefFooter(report: report)
             } else {
                 DailyBriefView(

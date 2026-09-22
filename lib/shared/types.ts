@@ -422,9 +422,26 @@ export interface DailyReportItem {
   // The display name of the newest sender, for renderers that show the item
   // before hydration completes.
   sender?: string;
+  // When this thread first entered a brief edition (brief round 2026-09-22).
+  // Carried from the previous edition so the letter can say "Day 3".
+  firstSurfacedAt?: number | null;
 }
 
 export type BriefBudgetLane = 'answer' | 'today' | 'know';
+
+// What moved since the previous edition (brief round 2026-09-22): completed
+// work and the operations the agent applied while no surface was open.
+export interface DailyReportSinceLastEdition {
+  previousGeneratedAt: number | null;
+  completions: Array<{
+    artifactKind: string;
+    artifactId: string;
+    title: string;
+    areaId?: string;
+    completedAt: number;
+  }>;
+  agentActions: Array<{ tool: string; surface: string; summary: string; createdAt: number }>;
+}
 
 // The model-written prose of a budget brief. Everything else in the edition is
 // deterministic.
@@ -433,6 +450,9 @@ export interface DailyReportProse {
   lede: string;
   // The forward look, at most four sentences, with concrete weekday names.
   weekAhead: string;
+  // The look back, at most three sentences: the check-in, what completed, and
+  // what the agent did since the previous edition (brief round 2026-09-22).
+  yesterday?: string;
   // Which model wrote the prose, or 'local' for the deterministic fallback.
   model: string;
 }
@@ -494,6 +514,10 @@ export interface DailyReportMcpItem {
   author?: string | null;
   url?: string | null;
   updatedAt?: number | null;
+  // Relevance inputs (brief round 2026-09-22).
+  assignedToUser?: boolean;
+  repository?: string | null;
+  summary?: string | null;
 }
 
 export const DAILY_REPORT_ARTIFACT_ERROR_STAGES = [
@@ -576,10 +600,13 @@ export interface DailyReport {
     today?: DailyReportItem[];
     know?: DailyReportItem[];
     overflow?: DailyReportItem[];
+    // Threads the user waits on that earned no lane (brief round 2026-09-22).
+    waiting?: DailyReportItem[];
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
     mcp?: DailyReportMcpItem[];
     albatross?: AlbatrossDailyReportContext;
+    since?: DailyReportSinceLastEdition;
     noiseSummary?: string;
   };
   stats: {

@@ -445,6 +445,7 @@ export const deleteUserCascade = mutation({
       'rateLimits',
       'userDocs',
       'aiOperations',
+      'briefItemEvents',
       'suggestions',
       'calendars',
       'calendarSyncStates',

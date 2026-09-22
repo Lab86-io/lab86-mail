@@ -10,6 +10,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
+import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
@@ -813,6 +814,19 @@ export function DailyReport({
   });
   const history = historyQuery.data?.reports || [];
 
+  // A notification or the /brief?id= deep link names one edition. The latest
+  // edition still renders as "latest", so the live overlay stays on.
+  const requestedReportId = useBriefEditionRequest((s) => s.reportId);
+  const clearRequestedReportId = useBriefEditionRequest((s) => s.clear);
+  const latestHistoryId = history[0]?._id ?? null;
+  const historyPending = historyQuery.isPending;
+  useEffect(() => {
+    if (!requestedReportId) return;
+    if (historyPending) return;
+    setSelectedId(requestedReportId === latestHistoryId ? null : requestedReportId);
+    clearRequestedReportId();
+  }, [clearRequestedReportId, historyPending, latestHistoryId, requestedReportId]);
+
   const reportQuery = useQuery({
     queryKey: ['daily-report', selectedId ?? 'latest'],
     queryFn: async () =>
@@ -1183,6 +1197,7 @@ export function DailyReport({
                 <BriefCanvas
                   key={report._id}
                   hideInactive={!selectedId}
+                  reportId={report._id}
                   value={report.document}
                   composing={report.artifactStatus === 'composing'}
                   onChanged={invalidate}
@@ -1214,6 +1229,7 @@ export function DailyReport({
                 <BriefCanvas
                   key={report._id}
                   hideInactive={!selectedId}
+                  reportId={report._id}
                   value={fallbackLetter}
                   onChanged={invalidate}
                   masthead={!embedded}

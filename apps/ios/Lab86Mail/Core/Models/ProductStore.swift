@@ -92,6 +92,16 @@ final class ProductStore {
     // as the legacy migration/fallback string.
     var dailyReport: DailyReportModel?
     var dailyReportHistory: [DailyReportModel] = []
+    // The id of the newest edition the server returned. Set on every
+    // `get_latest_daily_report`; `selectDailyReport` leaves it alone.
+    var latestDailyReportID: String?
+
+    // True while the shown edition is the newest one (or no newer edition is
+    // known yet). Inactive-row hiding stays on in that state and turns off
+    // while browsing history, the same as the web's `hideInactive`.
+    var showsLatestDailyReport: Bool {
+        DailyReportSelection.isLatest(shownID: dailyReport?.id, latestID: latestDailyReportID)
+    }
     var dailyBrief: String?
     var isLoading = false
     var errorMessage: String?
@@ -554,6 +564,7 @@ final class ProductStore {
             let result = try await tools.invoke("get_latest_daily_report")
             let report = DailyReportModel(json: result["report"])
             dailyReport = report
+            latestDailyReportID = report?.id
             dailyBrief = report?.legacyText ?? Self.briefText(from: result["report"])
             await persistCache()
         } catch {
@@ -574,6 +585,7 @@ final class ProductStore {
     }
 
     func selectDailyReport(id: String) async {
+        if dailyReport?.id == id { return }
         do {
             let result = try await tools.invoke("get_daily_report", arguments: ["id": .string(id)])
             guard let report = DailyReportModel(json: result["report"]) else {
@@ -2990,5 +3002,17 @@ final class ProductStore {
             ?? report["title"]?.stringValue
             ?? report["sections"]?["summary"]?.stringValue
             ?? report["sections"]?["overview"]?.stringValue
+    }
+}
+
+
+// Pure rule for the "latest edition" state (brief round 2026-09-22). No
+// known latest id means the app has not asked yet; the shown edition then
+// counts as latest so inactive hiding stays on.
+enum DailyReportSelection {
+    static func isLatest(shownID: String?, latestID: String?) -> Bool {
+        guard let latestID else { return true }
+        guard let shownID else { return true }
+        return shownID == latestID
     }
 }

@@ -20,7 +20,12 @@ interface DailyReportCronDependencies {
     kind: 'morning' | 'evening' | 'manual';
     userTimezone?: string;
   }) => Promise<any>;
-  queueBriefReady: (input: { userId: string; reportId: string; localDate: string }) => Promise<any>;
+  queueBriefReady: (input: {
+    userId: string;
+    reportId: string;
+    localDate: string;
+    body?: string;
+  }) => Promise<any>;
   dispatchNativeNotification: (userId: string, notificationId: string) => Promise<unknown>;
 }
 
@@ -31,11 +36,12 @@ const defaultDependencies: DailyReportCronDependencies = {
     runWithAiRequestContext({ userId, agent: 'ai', userTimezone }, () =>
       generateAgentReport({ kind, userId }),
     ),
-  queueBriefReady: ({ userId, reportId, localDate }) =>
+  queueBriefReady: ({ userId, reportId, localDate, body }) =>
     convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, {
       userId,
       reportId,
       localDate,
+      body,
     }),
   dispatchNativeNotification,
 };
@@ -53,6 +59,22 @@ export function localDateForTimezone(generatedAt: number, timezone?: string) {
       return parts;
     }, {});
   return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+}
+
+// The push body: the first sentences of the lede, cut at a sentence end when
+// one fits inside the limit. Empty when the edition has no prose, so the
+// notification keeps its fixed line.
+export const BRIEF_NOTIFICATION_BODY_MAX = 180;
+export function briefNotificationBody(report: { prose?: { lede?: string }; narrative?: string }): string {
+  const text = String(report?.prose?.lede || report?.narrative || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  if (text.length <= BRIEF_NOTIFICATION_BODY_MAX) return text;
+  const head = text.slice(0, BRIEF_NOTIFICATION_BODY_MAX);
+  const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('? '), head.lastIndexOf('! '));
+  if (end > 40) return head.slice(0, end + 1);
+  return `${head.slice(0, BRIEF_NOTIFICATION_BODY_MAX - 1).trimEnd()}…`;
 }
 
 // Called by the Convex hourly cron (convex/dailyReports.ts) for one user when
@@ -91,6 +113,7 @@ export function createDailyReportPost(deps: DailyReportCronDependencies = defaul
             userId,
             reportId: report._id,
             localDate,
+            body: briefNotificationBody(report) || undefined,
           });
           briefNotification = queued?.notificationId
             ? await deps.dispatchNativeNotification(userId, String(queued.notificationId))

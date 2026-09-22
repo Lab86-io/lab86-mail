@@ -29,6 +29,10 @@ crons.interval('Jev mail classification', { minutes: 5 }, (internal as any).jev.
 // calendar timezone and calls back into the app to generate. (Mornings only;
 // manual generation covers the rest.)
 crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.tick, {});
+// Area living briefs refresh every 3 hours without force; unchanged areas are
+// skipped by the source-revision check. Cast: the generated `internal` type
+// only gains `areaRefreshTick` after codegen on deploy.
+crons.interval('area brief refresh', { hours: 3 }, (internal as any).dailyReports.areaRefreshTick, {});
 
 // Poll each connected user's calendars for changes every 15 minutes — a
 // safety net over the webhook-driven event deltas.

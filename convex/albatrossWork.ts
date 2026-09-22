@@ -1053,6 +1053,55 @@ export const projectProgressSummary = query({
   },
 });
 
+// Completed work since an instant, with titles (brief round 2026-09-22). The
+// morning brief reads this to say what moved since the previous edition.
+export const completionsSince = query({
+  args: { ...callerArgs, since: v.number(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 12, 1), 40);
+    const events = await ctx.db
+      .query('completionEvents')
+      .withIndex('by_user_completedAt', (q) => q.eq('userId', userId).gte('completedAt', args.since))
+      .order('desc')
+      .take(limit);
+    const rows: Array<{
+      artifactKind: string;
+      artifactId: string;
+      title: string;
+      areaId?: string;
+      completedAt: number;
+      shape?: string;
+    }> = [];
+    for (const event of events) {
+      let title = '';
+      if (event.artifactKind === 'task') {
+        const cardId = ctx.db.normalizeId('cards', event.artifactId);
+        const card = cardId ? await ctx.db.get(cardId) : null;
+        if (card?.userId === userId) title = card.title;
+      } else if (event.artifactKind === 'intent' || event.artifactKind === 'intent_plan') {
+        const intentId = ctx.db.normalizeId('albatrossIntents', event.intentId || event.artifactId);
+        const intent = intentId ? await ctx.db.get(intentId) : null;
+        if (intent?.userId === userId) title = intent.title || intent.rawText || '';
+      } else if (event.artifactKind === 'project') {
+        const projectId = event.projectId ?? ctx.db.normalizeId('albatrossProjects', event.artifactId);
+        const project = projectId ? await ctx.db.get(projectId) : null;
+        if (project?.userId === userId) title = project.title;
+      }
+      if (!title) continue;
+      rows.push({
+        artifactKind: event.artifactKind,
+        artifactId: event.artifactId,
+        title: String(title).slice(0, 240),
+        areaId: event.areaId,
+        completedAt: event.completedAt,
+        shape: event.shape,
+      });
+    }
+    return rows;
+  },
+});
+
 export const getProjectPane = query({
   args: { ...callerArgs, projectId: v.id('albatrossProjects') },
   handler: async (ctx, args) => {
