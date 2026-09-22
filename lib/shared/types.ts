@@ -1,4 +1,5 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
+import type { EditorialPlan } from '../brief/editorial';
 import type { JevAssessment } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
@@ -563,6 +564,8 @@ export interface DailyReport {
   // Native cross-platform composition document. Stored beside legacy HTML
   // during rollout so older web/iOS clients retain a deterministic fallback.
   document?: BriefDocumentV2;
+  // One authored arrangement, replayed against refreshed content on live reads.
+  editorial?: { plan: EditorialPlan; mode: 'generated' | 'fallback' };
   // Generation phase for the artifact: 'composing' while the agent writes the
   // first (week) HTML, 'enriching' while the broader month pass runs in the
   // background over an already-rendered edition, 'rendered' once final.

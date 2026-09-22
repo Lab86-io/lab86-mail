@@ -118,7 +118,7 @@ export function TodayWorkspace({ at, revision }: { at: number; revision: number 
       </div>
       {generation.isError || generation.data?.mode === 'evidence' ? (
         <p role="status" className="text-xs text-[var(--color-text-muted)]">
-          The layout writer is unavailable. Your source cards are still usable.{' '}
+          The context writer is unavailable. Your source cards are still usable.{' '}
           <Button
             variant="ghost"
             size="sm"
@@ -126,7 +126,7 @@ export function TodayWorkspace({ at, revision }: { at: number; revision: number 
             type="button"
             onClick={() => generation.mutate()}
           >
-            Retry layout
+            Retry context
           </Button>
         </p>
       ) : null}

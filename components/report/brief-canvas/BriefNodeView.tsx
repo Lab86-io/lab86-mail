@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
+import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
+import { PreparedWork } from '@/components/report/PreparedWork';
 import { Chart } from '@/components/tool-ui/chart';
 import { CitationList } from '@/components/tool-ui/citation';
 import { CodeDiff } from '@/components/tool-ui/code-diff';
@@ -56,6 +58,9 @@ export interface BriefActionMeta {
 }
 
 export interface BriefNodeContext {
+  /** Live personal modules belong only to the current daily edition. */
+  liveSections?: boolean;
+  timezone?: string;
   entities: Map<string, BriefHydratedEntity>;
   hiddenRefs: Set<string>;
   completedRefs: Map<string, boolean>;
@@ -104,6 +109,13 @@ export function BriefNodeView({
   }
   const common = topLevel ? '' : nodeClass(node);
   switch (node.kind) {
+    case 'live_section':
+      if (!context.liveSections) return null;
+      return node.section === 'narrative' ? (
+        <NarrativeBrief at={node.at} fallback={null} />
+      ) : (
+        <PreparedWork />
+      );
     case 'stack':
       return (
         <div
@@ -305,6 +317,7 @@ function BriefLeaf({
           }))}
           emptyText={node.emptyText}
           variant={node.variant}
+          className={nodeClass(node)}
           context={context}
         />
       );
@@ -461,7 +474,7 @@ function BriefLeaf({
                       <span>{item.label}</span>
                       {item.at ? (
                         <time className="text-xs font-normal text-[var(--color-text-muted)]">
-                          {formatBriefTime(item.at)}
+                          {formatBriefTime(item.at, context.timezone)}
                         </time>
                       ) : null}
                     </div>
@@ -831,17 +844,19 @@ function BriefEntityList({
   emptyText,
   variant,
   context,
+  className,
 }: {
   title?: string;
   items: EntityRow[];
   emptyText?: string;
   variant: 'rows' | 'cards' | 'compact';
   context: BriefNodeContext;
+  className?: string;
 }) {
   const visible = items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
   if (!visible.length) return emptyText ? <BriefEmpty text={emptyText} /> : null;
   return (
-    <section className="space-y-2.5">
+    <section className={cn('space-y-2.5', className)}>
       {title ? <h3 className="font-display text-lg font-semibold">{title}</h3> : null}
       <div
         className={cn(
@@ -894,7 +909,10 @@ function BriefEntityRow({
             </span>
           ) : null}
           <div className="flex min-w-0 items-center gap-2">
-            <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>
+            <p
+              data-brief-entity-title
+              className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}
+            >
               {title}
             </p>
             {item.handoff?.itemCount && item.handoff.itemCount > 1 ? (
@@ -1287,10 +1305,11 @@ export function briefNodePresentationClass(node: { emphasis: string; tone: strin
   );
 }
 
-function formatBriefTime(value: number) {
+function formatBriefTime(value: number, timezone?: string) {
   return new Intl.DateTimeFormat(undefined, {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: timezone,
   }).format(new Date(value));
 }

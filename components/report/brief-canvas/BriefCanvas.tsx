@@ -70,6 +70,7 @@ export function BriefCanvas({
   hideInactive = false,
   surface = 'daily',
   reportId,
+  liveSections = false,
 }: {
   value: unknown;
   hideInactive?: boolean;
@@ -77,6 +78,7 @@ export function BriefCanvas({
   surface?: BriefEventSurface;
   /** The edition id, when the document belongs to a stored edition. */
   reportId?: string | null;
+  liveSections?: boolean;
   composing?: boolean;
   onChanged?: () => void;
   masthead?: boolean;
@@ -361,6 +363,8 @@ export function BriefCanvas({
   );
 
   const context: BriefNodeContext = {
+    liveSections,
+    timezone: document.timezone,
     entities,
     hiddenRefs: new Set([
       ...hiddenRefs,
@@ -393,14 +397,16 @@ export function BriefCanvas({
   // summary. Under Today, which already names the day, or under the masthead,
   // the letter has no header at all unless there is a notice to show.
   const notice = composing || hydration.isError;
-  const showTitle = !masthead && !(letterKind && embedded);
-  const showSummary = !letterKind;
+  const authored = document.layout === 'editorial';
+  const showTitle = !masthead && !((letterKind || authored) && embedded);
+  const showSummary = !letterKind && !authored;
   const headerVisible = notice || showTitle || showSummary;
 
   return (
     <article
       className={cn(
         '@container/brief-canvas brief-canvas',
+        authored && 'brief-canvas--authored',
         embedded ? 'brief-canvas--embedded' : 'scrollable h-full overflow-y-auto bg-[var(--color-content)]',
       )}
       data-brief-document-version={document.version}
@@ -472,7 +478,7 @@ export function BriefCanvas({
         <BriefEditorialGrid>
           {document.regions.map((region) => (
             <section key={region.id} data-brief-region={region.id} className="contents">
-              {columnBlocks(region.tree).map((block, index) => (
+              {columnBlocks(region.tree, authored).map((block, index) => (
                 <BriefEditorialGridItem
                   key={block.node.id ?? `${block.node.kind}-${index}`}
                   className={cn('@container', block.wrapperClass)}
@@ -481,7 +487,9 @@ export function BriefCanvas({
                   <div
                     data-brief-story-card
                     className={cn(
-                      'min-w-0 rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                      authored
+                        ? 'brief-authored-story min-w-0'
+                        : 'min-w-0 rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
                       block.cardClass,
                     )}
                   >
@@ -905,13 +913,16 @@ function BriefEditorialGridItem({
 
 /* Region roots that are plain stacks flatten so the packed grid can balance
  * at story granularity instead of treating a whole region as one slab. */
-function columnBlocks(tree: BriefNode): Array<{
+function columnBlocks(
+  tree: BriefNode,
+  preserveStructure = false,
+): Array<{
   node: BriefNode;
   wrapperClass: string;
   cardClass: string;
   spacing: 'airy' | 'standard' | 'dense';
 }> {
-  if (tree.kind === 'stack' && tree.children.length) {
+  if (!preserveStructure && tree.kind === 'stack' && tree.children.length) {
     return tree.children.map((node) => ({
       node,
       wrapperClass: footprintClass(node),

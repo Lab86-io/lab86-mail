@@ -1,0 +1,241 @@
+import { expect, test } from 'bun:test';
+import {
+  composeEditorialDocument,
+  defaultEditorialPlan,
+  editorialModules,
+  hasLiveBriefSection,
+} from '../lib/brief/editorial';
+import { collectBriefRefs } from '../lib/brief/hydration';
+import { briefLetterKind } from '../lib/brief/letter';
+import { projectBriefMail } from '../lib/jev/report';
+import { composeDailyBrief, finalizeBudgetReport } from '../lib/mail/agent-report';
+import { composeBudgetBriefDocument } from '../lib/mail/brief-budget-document';
+import { writeDailyEditorial } from '../lib/mail/brief-editorial';
+import { lintBriefDocument, parseBriefDocument } from '../lib/shared/brief-document';
+import { migrateDailyReport } from '../lib/store/daily-reports';
+import { editorialFixture } from './fixtures/editorial';
+import { assessment, NOW, policy, report, thread } from './fixtures/jev';
+import { withToolContext } from './tools/harness';
+
+test('an authored page preserves grounded sources, calendar actions, task completion, and explicit layout identity', () => {
+  const { edition, letter } = editorialFixture();
+  const document = parseBriefDocument(edition.document);
+  expect(document.layout).toBe('editorial');
+  expect(briefLetterKind(document)).toBeNull();
+  expect(lintBriefDocument(document)).toEqual([]);
+  expect(collectBriefRefs(document)).toEqual(collectBriefRefs(letter));
+  expect(document.regions[1].tree.kind).toBe('split');
+  const json = JSON.stringify(document);
+  expect(json).toContain('"action":"open_event"');
+  expect(json).toContain('"action":"draft_reply"');
+  expect(json).toContain('"action":"toggle_task"');
+  expect(json).toContain('"cardId":"check"');
+  expect(hasLiveBriefSection(document, 'narrative')).toBe(true);
+  expect(hasLiveBriefSection(document, 'prepared_work')).toBe(true);
+});
+
+test('the compiler rejects omissions, repeats, invented records, arbitrary payloads, and incompatible presentations', () => {
+  const { modules, letter, plan } = editorialFixture();
+  const compile = (input: unknown) => composeEditorialDocument(letter, modules, input);
+  expect(() => compile({ ...plan, regions: plan.regions.slice(1) })).toThrow('omits');
+  expect(() =>
+    compile({ ...plan, regions: [...plan.regions, { ...plan.regions[0], id: 'duplicate' }] }),
+  ).toThrow('repeats');
+  for (const tree of [
+    { kind: 'module', id: 'invented' },
+    { kind: 'module', id: 'lede', payload: { url: 'https://example.test' } },
+    { kind: 'module', id: 'lede', presentation: 'checklist' },
+  ])
+    expect(() =>
+      compile({ ...plan, regions: [{ ...plan.regions[0], tree }, ...plan.regions.slice(1)] }),
+    ).toThrow();
+});
+
+test('materialized depth is checked before compatibility repair could replace source content', () => {
+  const { modules, letter, plan } = editorialFixture();
+  const lead = plan.regions[0];
+  const tree = {
+    kind: 'stack',
+    children: [{ kind: 'stack', children: [{ kind: 'stack', children: [lead.tree] }] }],
+  };
+  expect(() =>
+    composeEditorialDocument(letter, modules, {
+      ...plan,
+      regions: [{ ...lead, tree }, ...plan.regions.slice(1)],
+    }),
+  ).toThrow();
+});
+
+test('stored composition survives migration and live updates; new mail appears once and resolved actions disappear', () => {
+  const { edition } = editorialFixture();
+  const saved = JSON.stringify(edition);
+  const read = migrateDailyReport(edition, NOW);
+  expect(read.editorial).toEqual(edition.editorial);
+  const live = projectBriefMail(
+    read,
+    [
+      thread({ jev: assessment({ sourceRevision: 'updated-request' }) }),
+      thread({
+        _id: 'new-request',
+        subject: 'New request',
+        lastDate: NOW + 1000,
+        jev: assessment({ sourceRevision: 'new' }),
+      }),
+    ],
+    policy,
+    NOW + 2000,
+  );
+  expect(live.document?.regions[1].tree.kind).toBe('split');
+  expect(live.editorial?.plan).toEqual(edition.editorial?.plan);
+  expect(JSON.stringify(live.document)).toContain('support still needs an owner');
+  expect(collectBriefRefs(live.document!).filter((ref) => ref.id === 'new-request')).toHaveLength(1);
+  const resolved = projectBriefMail(
+    live,
+    [thread({ jev: assessment({ sourceRevision: 'resolved', obligations: [] }) })],
+    policy,
+    NOW + 3000,
+  );
+  expect(collectBriefRefs(resolved.document!).some((ref) => ref.id === 'thread-a')).toBe(false);
+  expect(collectBriefRefs(resolved.document!).some((ref) => ref.id === 'review')).toBe(true);
+  expect(JSON.stringify(edition)).toBe(saved);
+  expect(
+    projectBriefMail(
+      edition,
+      [thread({ jev: assessment({ sourceRevision: 'resolved', obligations: [] }) })],
+      policy,
+      NOW + 2 * 86_400_000,
+    ),
+  ).toBe(edition);
+});
+
+test('invalid stored plans are ignored without breaking older editions', () => {
+  const { edition } = editorialFixture();
+  expect(
+    migrateDailyReport({ ...edition, editorial: { plan: { version: 99 } } }, NOW).editorial,
+  ).toBeUndefined();
+  expect(migrateDailyReport(report(), NOW).editorial).toBeUndefined();
+});
+
+test('all-day calendar events do not acquire a midnight appointment in the timeline', () => {
+  const { edition } = editorialFixture();
+  edition.sections.calendar![0].allDay = true;
+  const letter = composeBudgetBriefDocument({
+    report: edition,
+    prose: { ...edition.prose!, lines: {} },
+    timezone: 'America/New_York',
+  });
+  const timeline = editorialModules(edition, letter).find((module) => module.id === 'calendar')!.presentations
+    .timeline;
+  expect(timeline?.kind).toBe('timeline');
+  if (timeline?.kind === 'timeline') {
+    expect(timeline.items[0].at).toBeUndefined();
+    expect(timeline.items[0].detail).toBe('All day');
+  }
+});
+
+test('the writer receives the actual module catalogue and can design a different page', async () => {
+  const { edition, letter, modules } = editorialFixture();
+  const plan = defaultEditorialPlan(modules);
+  plan.regions.reverse();
+  const result = await writeDailyEditorial(edition, letter, {
+    generate: (async (options: any) => {
+      expect(options.feature).toBe('daily_brief_layout');
+      expect(options.prompt).toContain('Maya');
+      expect(options.prompt).toContain('"timeline"');
+      expect(options.prompt).toContain('"checklist"');
+      return { output: plan };
+    }) as any,
+  });
+  expect(result.editorial.mode).toBe('generated');
+  expect(result.document.regions[0].id).toBe(`editorial-${plan.regions[0].id}`);
+});
+
+test('bad JSON, unsupported layout, provider failure, and missing AI all leave a complete usable brief', async () => {
+  const { edition, letter } = editorialFixture();
+  const replies = [
+    async () => ({ text: 'not JSON' }),
+    async () => ({ output: { version: 1, regions: [] } }),
+    async () => {
+      throw new Error('Provider unavailable');
+    },
+    null,
+  ];
+  for (const generate of replies) {
+    const result = await writeDailyEditorial(edition, letter, { generate: generate as any });
+    expect(result.editorial.mode).toBe('fallback');
+    expect(result.failed).toBe(generate !== null);
+    expect(collectBriefRefs(result.document)).toEqual(collectBriefRefs(letter));
+    expect(lintBriefDocument(result.document)).toEqual([]);
+  }
+});
+
+test('the active daily pipeline calls prose then design and persists the design with final source prose', async () => {
+  const { edition, modules } = editorialFixture();
+  const calls: string[] = [];
+  const composed = await withToolContext(() =>
+    composeDailyBrief(edition, null, {
+      loadMessages: async () => [],
+      loadWeather: async () => null,
+      generate: (async (options: any) => {
+        calls.push(options.feature);
+        if (options.feature === 'daily_brief_prose')
+          return {
+            text: JSON.stringify({
+              lede: 'Read the budget before the review.',
+              yesterday: 'The release checklist is complete.',
+              items: [{ key: 'account-a:thread-a', line: 'Maya needs your decision.' }],
+              weekAhead: 'Prepare for Thursday.',
+            }),
+          };
+        // This run has no area pulse loader, so only select the supplied IDs.
+        const ids = new Set(JSON.parse(options.prompt).modules.map((module: any) => module.id));
+        return { output: defaultEditorialPlan(modules.filter((module) => ids.has(module.id))) };
+      }) as any,
+    }),
+  );
+  expect(calls).toEqual(['daily_brief_prose', 'daily_brief_layout']);
+  expect(composed.editorial?.mode).toBe('generated');
+  const finalized = finalizeBudgetReport(edition, composed);
+  expect(finalized.artifactSource).toBe('document-v2');
+  expect(finalized.editorial).toEqual(composed.editorial);
+  expect(finalized.sections.answer?.[0].line).toBe('Maya needs your decision.');
+  expect(finalized.html).toBeTruthy();
+});
+
+test('text-only provider responses work, including providers that throw when output is read', async () => {
+  const { edition, letter, plan } = editorialFixture();
+  const result = await writeDailyEditorial(edition, letter, {
+    generate: (async () => ({
+      get output() {
+        throw new Error('No structured output');
+      },
+      text: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\``,
+    })) as any,
+  });
+  expect(result.editorial.mode).toBe('generated');
+});
+
+test('the daily pipeline settles a failed design as a usable edition with a recorded nonfatal error', async () => {
+  const { edition } = editorialFixture();
+  const composed = await withToolContext(() =>
+    composeDailyBrief(edition, null, {
+      loadMessages: async () => [],
+      loadWeather: async () => null,
+      generate: (async (options: any) => {
+        if (options.feature === 'daily_brief_layout') throw new DOMException('Timeout', 'TimeoutError');
+        return {
+          text: JSON.stringify({
+            lede: 'Read the budget before the review.',
+            items: [],
+            weekAhead: 'Prepare for Thursday.',
+          }),
+        };
+      }) as any,
+    }),
+  );
+  const result = finalizeBudgetReport(edition, composed);
+  expect(result.artifactStatus).toBe('ready');
+  expect(result.editorial?.mode).toBe('fallback');
+  expect(result.artifactErrors?.at(-1)?.stage).toBe('document_v2');
+  expect(collectBriefRefs(result.document!).some((ref) => ref.id === 'thread-a')).toBe(true);
+});

@@ -271,6 +271,12 @@ const checklistItemSchema = z.object({
 const editorialLeafSchemas = [
   z.object({
     ...commonNodeShape,
+    kind: z.literal('live_section'),
+    section: z.enum(['narrative', 'prepared_work']),
+    at: z.number().finite().nonnegative(),
+  }),
+  z.object({
+    ...commonNodeShape,
     kind: z.literal('text'),
     role: z.enum(['lede', 'kicker', 'body', 'aside', 'caption']).default('body'),
     text: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.body),
@@ -576,6 +582,7 @@ export const BriefRegionSchema = z.object({
 
 export const BriefDocumentV2Schema = z.object({
   version: z.literal(BRIEF_DOCUMENT_VERSION),
+  layout: z.literal('editorial').optional(),
   title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
   summary: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.summary),
   generatedAt: z.number().finite().nonnegative(),
@@ -600,6 +607,7 @@ export interface BriefDocumentParseResult {
 
 const layoutKinds = new Set(['stack', 'grid', 'split', 'hero', 'group']);
 const leafKinds = new Set([
+  'live_section',
   'entity_list',
   'query_list',
   'stat',
@@ -683,6 +691,7 @@ export function repairBriefDocument(value: unknown): unknown {
 
   return {
     version: BRIEF_DOCUMENT_VERSION,
+    ...(raw?.layout === 'editorial' ? { layout: 'editorial' } : {}),
     title,
     summary,
     generatedAt,
@@ -869,6 +878,10 @@ function repairLeaf(
   const ref = (value: unknown) => repairRef(value);
 
   switch (kind) {
+    case 'live_section':
+      return node.section === 'narrative' || node.section === 'prepared_work'
+        ? { kind, ...common, section: node.section, at: Math.max(0, finiteNumber(node.at) ?? 0) }
+        : fallbackNode(summary);
     case 'text':
       return {
         kind,

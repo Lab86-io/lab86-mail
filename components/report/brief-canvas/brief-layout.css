@@ -20,6 +20,26 @@
   padding: 12px var(--brief-text-inset, 12px);
 }
 
+/* Authored daily compositions share the letter's inset and paper surface.
+ * The tree owns grouping; only an explicitly chosen module supplies a card. */
+.brief-canvas--authored > [data-brief-editorial-grid] {
+  padding: 12px var(--brief-text-inset, 12px);
+}
+.brief-authored-story {
+  overflow-wrap: anywhere;
+}
+.brief-canvas--authored .brief-emphasis-primary [data-brief-entity-title] {
+  font-family: var(--font-display);
+  font-size: clamp(18px, 2cqi, 24px);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+  overflow: visible;
+}
+.brief-canvas--authored [data-brief-grid-span]:has(> div > .brief-authored-story:empty) {
+  display: none;
+}
+
 /* Today hangs the same plate above its own content, so it shares the inset. */
 .brief-wall {
   --brief-frame-width: clamp(20px, 4.5cqi, 46px);

@@ -1,3 +1,4 @@
+import { editorialPlanSchema } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
@@ -114,6 +115,7 @@ export async function getLatestDailyReport(kind?: DailyReport['kind']) {
     ...(report.sections.today || []),
     ...(report.sections.know || []),
     ...(report.sections.overflow || []),
+    ...(report.sections.waiting || []),
   ];
   try {
     const userId = requireStoreUserId();
@@ -211,6 +213,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
 
   const stats = (raw.stats ?? {}) as Partial<DailyReport['stats']>;
   const artifactErrors = sanitizeArtifactErrors((raw as any).artifactErrors);
+  const editorialPlan = editorialPlanSchema.safeParse(raw.editorial?.plan);
   // Prefer stored counts; fall back to deriving them from the sections so a
   // legacy doc that predates a given stat still shows a truthful number.
   const replyOwedCount = stats.replyOwed ?? stats.needsReply ?? replyOwed.length;
@@ -233,12 +236,21 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
         ? {
             lede: String(raw.prose.lede ?? ''),
             weekAhead: String(raw.prose.weekAhead ?? ''),
+            ...(typeof raw.prose.yesterday === 'string' ? { yesterday: raw.prose.yesterday } : {}),
             model: String(raw.prose.model ?? 'local'),
           }
         : undefined,
     handoffs: parseTriageHandoffs(raw.handoffs),
     composition: raw.composition,
     document: migrateBriefDocument(raw.document),
+    ...(editorialPlan.success
+      ? {
+          editorial: {
+            plan: editorialPlan.data,
+            mode: raw.editorial?.mode === 'generated' ? ('generated' as const) : ('fallback' as const),
+          },
+        }
+      : {}),
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     artifactSource: raw.artifactSource,
@@ -257,6 +269,8 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       ...(Array.isArray(sections.today) ? { today: items(sections.today) } : {}),
       ...(Array.isArray(sections.know) ? { know: items(sections.know) } : {}),
       ...(Array.isArray(sections.overflow) ? { overflow: items(sections.overflow) } : {}),
+      ...(Array.isArray(sections.waiting) ? { waiting: items(sections.waiting) } : {}),
+      ...(sections.since ? { since: sections.since } : {}),
       tasks,
       calendar,
       mcp,

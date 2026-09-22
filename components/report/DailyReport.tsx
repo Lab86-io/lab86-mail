@@ -19,6 +19,7 @@ import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
+import { hasLiveBriefSection } from '@/lib/brief/editorial';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import {
@@ -1199,6 +1200,7 @@ export function DailyReport({
                   hideInactive={!selectedId}
                   reportId={report._id}
                   value={report.document}
+                  liveSections={!selectedId}
                   composing={report.artifactStatus === 'composing'}
                   onChanged={invalidate}
                   // Today already carries the dateline masthead. A second one
@@ -1208,7 +1210,9 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   footer={
                     <>
-                      {!selectedId ? <PreparedWork /> : null}
+                      {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
+                        <PreparedWork />
+                      ) : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
                         onOpen={openBacklogThread}
@@ -1231,6 +1235,7 @@ export function DailyReport({
                   hideInactive={!selectedId}
                   reportId={report._id}
                   value={fallbackLetter}
+                  liveSections={!selectedId}
                   onChanged={invalidate}
                   masthead={!embedded}
                   embedded={embedded}
