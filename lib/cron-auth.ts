@@ -15,4 +15,3 @@ export function isInternalCronRequest(req: NextRequest): boolean {
     timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
   );
 }
-
