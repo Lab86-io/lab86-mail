@@ -20,6 +20,27 @@ const report = (i: number) => ({
   artifactStatus: 'ready',
 });
 
+test('reader keeps a recent editorial edition during recovery without hiding the active generation from workers', async () => {
+  let newest: any = { ...report(100), editorial: { mode: 'fallback' } };
+  const completed = { ...report(90), editorial: { mode: 'generated' } };
+  setDailyReportReaderForTest({
+    configured: () => true,
+    query: (async (_fn, args) => ({
+      page: [newest, completed].slice(0, args.limit),
+      isDone: true,
+      continueCursor: '',
+    })) as any,
+  });
+  await context(async () => {
+    expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-90');
+    expect((await getLatestDailyReport())?._id).toBe('edition-100');
+    newest = { ...report(100), editorial: { mode: 'generated' } };
+    expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-100');
+    newest = { ...report(86_400_100), status: 'partial' };
+    expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-86400100');
+  });
+});
+
 test('a saved Brief succeeds despite synchronous owner or asynchronous attention-marking failures', async () => {
   for (const syncFailure of [true, false]) {
     const saved: unknown[] = [];

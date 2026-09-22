@@ -8,6 +8,7 @@ import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
 import {
   B2C_BYOK_MONTHLY_PRICE_USD,
+  BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
   resolveAiBudgetPolicy,
   shouldDepleteLab86Budget,
@@ -40,20 +41,7 @@ const AGENT_REASONING_EFFORT = (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT ||
 // Brief quality is controlled by evidence selection, not by sharing a small
 // output allowance between mandatory reasoning and the finished page. Omitting
 // the SDK limit lets each provider apply its model's supported output limit.
-const UNCAPPED_BRIEF_FEATURES = new Set([
-  'daily_report_insight',
-  'daily_report_narrative',
-  'daily_report_artifact',
-  'daily_brief_prose',
-  'daily_brief_layout',
-  'albatross_area_pulse',
-  'albatross_area_artifact',
-  'narrative_workspace',
-  'narrative_retrieval',
-  'narrative_research',
-  'narrative_write',
-  'narrative_meeting_prep',
-]);
+
 // Other product features retain their existing request ceilings.
 const FEATURE_MAX_TOKENS: Record<string, number> = {
   summarize_thread: 1500,
@@ -93,15 +81,10 @@ const DEFAULT_AGENT_FALLBACKS = [
 // Features that get retry + cross-provider failover. The interactive agent AND
 // the Daily Brief artifact both need it — a single provider blip on the brief
 // was silently degrading it to the plain native renderer.
-const FAILOVER_FEATURES = new Set([
-  'agent',
-  'daily_report_artifact',
-  'daily_brief_layout',
-  'albatross_area_artifact',
-]);
+const FAILOVER_FEATURES = new Set(['agent', ...BRIEF_GENERATION_FEATURES]);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number | undefined {
-  if (UNCAPPED_BRIEF_FEATURES.has(feature)) return undefined;
+  if (BRIEF_GENERATION_FEATURES.has(feature)) return undefined;
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
 }
 type PlatformPreference = {
@@ -397,15 +380,30 @@ export async function generateTextForCurrentUser(
             const result = await dependencies.generateText({
               ...rest,
               ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
-              // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+              // Brief writers omit application ceilings; other features keep their budgets.
               maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
               model: activeRuntime.model,
             });
+            if (BRIEF_GENERATION_FEATURES.has(feature) && result.finishReason === 'length') {
+              await dependencies.recordUsage(
+                activeRuntime,
+                feature,
+                result.totalUsage ?? result.usage,
+                false,
+                'Incomplete brief response',
+              );
+              const incomplete = new Error('Brief provider exhausted its own output allowance');
+              incomplete.name = 'BriefIncompleteResponse';
+              throw incomplete;
+            }
             await dependencies.recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
             return result;
           } catch (err: any) {
             lastErr = err;
-            const canRetrySameModel = attempt < maxAttempts && isTransientGenerateParseError(err);
+            const canRetrySameModel =
+              attempt < maxAttempts &&
+              (isTransientGenerateParseError(err) ||
+                (BRIEF_GENERATION_FEATURES.has(feature) && Number(err?.statusCode) === 429));
             const canTryFallback =
               runtimeIndex < runtimes.length - 1 && isAgentFallbackEligible(err, feature, activeRuntime);
             if (canRetrySameModel) {
@@ -609,8 +607,9 @@ function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): Res
 
 function isTransientGenerateParseError(err: any) {
   return (
-    err?.message === 'Invalid JSON response' &&
-    (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500)
+    err?.name === 'BriefIncompleteResponse' ||
+    (err?.message === 'Invalid JSON response' &&
+      (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500))
   );
 }
 

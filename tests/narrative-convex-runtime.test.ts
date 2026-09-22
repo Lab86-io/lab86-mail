@@ -1032,6 +1032,15 @@ describe('shared narrative runtime', () => {
     await t.mutation(f.finish, { ...args, runId: 'first' });
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).not.toBeNull();
   });
+  test('requested brief refreshes have no daily generation quota', async () => {
+    const t = harness();
+    await enable(t);
+    for (let run = 0; run < 26; run++) {
+      const runId = `manual-${run}`;
+      expect(await t.mutation(f.claim, { ...args, runId, kind: 'manual' })).not.toBeNull();
+      await t.mutation(f.finish, { ...args, runId });
+    }
+  });
   test('erase revokes access immediately and cleans stored copies', async () => {
     const t = harness();
     await enable(t);

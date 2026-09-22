@@ -183,7 +183,10 @@ export async function loadNarrativeWorkspace(
             : undefined,
         completion,
       });
-      composition = fallback;
+      if (cached?.mode === 'generated') {
+        composition = cached.composition;
+        mode = 'generated';
+      } else composition = fallback;
     }
     const current = await deps.snapshot(userId, at);
     if (!current || stampOf(current) !== stamp)

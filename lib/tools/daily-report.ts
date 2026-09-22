@@ -105,7 +105,7 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind));
+    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind, true));
     return { report: report ? attachDailyReportArt(report) : null };
   },
 });

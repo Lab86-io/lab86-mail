@@ -48,6 +48,21 @@ export function estimateAiUsageCost(input: AiUsageCostInput) {
   };
 }
 
+export const BRIEF_GENERATION_FEATURES = new Set([
+  'daily_report_insight',
+  'daily_report_narrative',
+  'daily_report_artifact',
+  'daily_brief_prose',
+  'daily_brief_layout',
+  'albatross_area_pulse',
+  'albatross_area_artifact',
+  'narrative_workspace',
+  'narrative_retrieval',
+  'narrative_research',
+  'narrative_write',
+  'narrative_meeting_prep',
+]);
+
 export function resolveAiBudgetPolicy(input: AiBudgetPolicyInput) {
   const monthlyCredits = Math.max(0, input.monthlyCredits);
   const creditsUsed = Math.max(0, input.creditsUsed);
@@ -61,7 +76,7 @@ export function resolveAiBudgetPolicy(input: AiBudgetPolicyInput) {
     ratio,
     softLimited,
     exhausted,
-    forceFastModel: softLimited || exhausted,
+    forceFastModel: (softLimited || exhausted) && !BRIEF_GENERATION_FEATURES.has(input.feature),
     hardStopped: !subscribed || (chat && exhausted),
     chat,
   };

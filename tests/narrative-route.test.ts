@@ -44,6 +44,15 @@ const configure = {
   model: 'z-ai/glm-5.3-flash',
 };
 describe('narrative API boundary', () => {
+  test('manual brief refresh is not rejected by the generic write quota', async () => {
+    const state = setup({
+      rateLimit: async () => {
+        throw new RateLimitError('Old quota', 1000, 30);
+      },
+    });
+    expect((await state.POST(req({ action: 'refresh' }))).status).toBe(202);
+    expect(state.queued).toHaveLength(1);
+  });
   test('saving enabled preferences requests a fresh manual brief', async () => {
     const calls: unknown[][] = [];
     const state = setup({

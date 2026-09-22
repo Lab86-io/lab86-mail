@@ -302,7 +302,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
   if (!narrativeEnabled(userId)) return { status: 'disabled' };
   const runId = randomUUID();
   const prefs = await deps.mutation<any>(functions.claim, { userId, runId, kind });
-  if (!prefs) return { status: 'busy_or_budget_limited' };
+  if (!prefs) return { status: 'busy' };
   const signal = AbortSignal.timeout(420_000);
   let sourceCount = 0,
     publishedCount = 0,
@@ -335,7 +335,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
     if (chapters.length) model = await resolveNarrativeModel(userId, prefs.model);
     // One durable publication per run: a slow historical chapter cannot turn a
     // completed morning brief into a failed refresh. Pending chapters are picked
-    // up by subsequent coalesced/hourly runs within the existing daily budget.
+    // up by subsequent coalesced/hourly runs without limiting how many editions the user may request.
     for (const chapter of chapters.slice(0, 1)) {
       signal.throwIfAborted();
       const detail = await readNarrative(userId, chapter._id, false, signal);

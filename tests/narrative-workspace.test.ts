@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
+import { NextRequest } from 'next/server';
+import { createWorkspaceRoutes } from '../app/api/narrative/workspace/route';
 import { generateTextForCurrentUser } from '../lib/ai/gateway';
 import * as hosted from '../lib/hosted/convex';
 import type { NarrativeEntry } from '../lib/narrative/core';
@@ -67,6 +69,37 @@ function harness() {
 }
 beforeEach(clearWorkspaceCache);
 describe('Today workspace composition and trust boundary', () => {
+  test('explicit generation bypasses the old workspace request quota', async () => {
+    const deps = {
+      user: async () => ({ userId: 'owner' }) as any,
+      rate: async () => {
+        throw new Error('The old rate limiter must not run');
+      },
+      load: async () => ({ enabled: true, stamp: 's', mode: 'generated', threads: [] }) as any,
+      feedback: async () => ({ ok: true }) as any,
+    };
+    const response = await createWorkspaceRoutes(deps).POST(
+      new NextRequest('https://example.test/api/narrative/workspace', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'generate', at: now }),
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  test('a failed renewal retains the last successful composition for the same source revision', async () => {
+    const deps = harness();
+    const first = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+    const clock = Date.now;
+    try {
+      const later = clock() + 31 * 60_000;
+      Date.now = () => later;
+      deps.generate.mockRejectedValueOnce(new Error('Provider unavailable'));
+      expect(await loadNarrativeWorkspace('owner', now, true, undefined, deps)).toEqual(first);
+    } finally {
+      Date.now = clock;
+    }
+  });
   test('the workspace and gateway leave reasoning output uncapped instead of returning length-truncated source cards', async () => {
     const deps = harness();
     const requests: any[] = [];

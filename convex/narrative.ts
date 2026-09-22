@@ -1019,12 +1019,10 @@ export const compact = mutation({
     const prefs = await settings(ctx, args.userId);
     if (!prefs?.enabled || prefs.cleaning) return { done: true, scanned: 0, chapters: 0 };
     const group = `compaction-v${COMPACTION_POLICY_VERSION}`;
-    const previous = args.recent
-      ? null
-      : await ctx.db
-          .query('narrativeCursors')
-          .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
-          .unique();
+    const previous = await ctx.db
+      .query('narrativeCursors')
+      .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
+      .unique();
     const page = await ctx.db
       .query('narrativeEntries')
       .withIndex('by_user_level_time', (q) => q.eq('userId', args.userId).eq('level', 'observation'))
@@ -1059,10 +1057,8 @@ export const compact = mutation({
       until: Date.now(),
       updatedAt: Date.now(),
     };
-    if (!args.recent) {
-      if (previous) await ctx.db.patch(previous._id, cursorDoc);
-      else await ctx.db.insert('narrativeCursors', cursorDoc);
-    }
+    if (previous) await ctx.db.patch(previous._id, cursorDoc);
+    else await ctx.db.insert('narrativeCursors', cursorDoc);
     return { done: page.isDone, scanned: page.page.length, chapters: buckets.size };
   },
 });
@@ -1311,7 +1307,6 @@ export const claim = mutation({
     if (!prefs?.enabled || prefs.cleaning || (prefs.leaseUntil || 0) > now) return null;
     const date = new Date(now).toISOString().slice(0, 10),
       runs = prefs.dailyRunDate === date ? prefs.dailyRuns || 0 : 0;
-    if (runs >= 24) return null;
     await ctx.db.patch(prefs._id, {
       lease: args.runId,
       leaseUntil: now + 480_000,

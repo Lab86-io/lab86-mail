@@ -258,7 +258,7 @@ async function runAgentReport(input: {
       tier,
     });
     if (sourceChecks.some((check) => check.status === 'unavailable'))
-      structured.errors.push(briefSourceCoverage(sourceChecks));
+      structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.

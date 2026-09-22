@@ -427,7 +427,7 @@ describe('Brief Document v2 generators', () => {
     try {
       await writeAreaPulse({ area: { areaId: 'a', name: 'Studio' } }, { userId: 'user-1' });
       expect(bounds[0]).toEqual({ ms: 8000, label: 'Area pulse context' });
-      expect(bounds[1].ms).toBeLessThanOrEqual(60000);
+      expect(bounds[1].ms).toBeLessThanOrEqual(120000);
       expect(bounds[1].label).toBe('Area pulse composition');
       expect(prompt).toContain('Studio');
     } finally {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { maxOutputTokensForFeature } from '../lib/ai/gateway';
+import { resolveAiBudgetPolicy } from '../lib/ai/budget';
+import { generateTextForCurrentUser, maxOutputTokensForFeature } from '../lib/ai/gateway';
 import { briefSourceCoverage, createBriefSourceRefresher } from '../lib/mail/brief-source-refresh';
 
 function harness(overrides: Record<string, any> = {}) {
@@ -130,9 +131,49 @@ test('every brief writer is uncapped while unrelated gateway budgets remain inta
   ]) {
     expect(maxOutputTokensForFeature(feature)).toBeUndefined();
     expect(maxOutputTokensForFeature(feature, 1800)).toBeUndefined();
+    expect(resolveAiBudgetPolicy({ feature, monthlyCredits: 10, creditsUsed: 20 }).forceFastModel).toBe(
+      false,
+    );
+    expect(resolveAiBudgetPolicy({ feature, monthlyCredits: 10, creditsUsed: 20 }).hardStopped).toBe(false);
   }
   expect(maxOutputTokensForFeature('agent')).toBe(12000);
   expect(maxOutputTokensForFeature('summarize_thread')).toBe(1500);
   expect(maxOutputTokensForFeature('other', 50)).toBe(50);
   expect(maxOutputTokensForFeature('other')).toBe(24000);
+});
+
+test('brief writers recover from provider rate limits and exhausted provider output through another model', async () => {
+  for (const feature of [
+    'narrative_workspace',
+    'daily_brief_prose',
+    'daily_brief_layout',
+    'albatross_area_pulse',
+  ]) {
+    const requests: any[] = [];
+    const runtime = {
+      userId: 'owner',
+      source: 'lab86',
+      provider: 'openrouter',
+      modelName: 'z-ai/glm-5.3-flash',
+      model: 'glm',
+    } as any;
+    const result = await generateTextForCurrentUser(
+      { feature, maxOutputTokens: 1800, maxRetries: 0 },
+      {
+        resolveAiRuntime: async () => runtime,
+        fallbackRuntimes: () => [{ ...runtime, modelName: 'fallback', model: 'fallback' }],
+        recordUsage: async () => undefined,
+        generateText: (async (request: any) => {
+          requests.push(request);
+          if (requests.length === 1) throw Object.assign(new Error('Rate limited'), { statusCode: 429 });
+          return request.model === 'glm'
+            ? { text: '', finishReason: 'length', usage: {} }
+            : { text: 'Finished editorial', finishReason: 'stop', usage: {} };
+        }) as any,
+      },
+    );
+    expect(result.text).toBe('Finished editorial');
+    expect(requests.map((request) => request.model)).toEqual(['glm', 'glm', 'fallback']);
+    expect(requests.every((request) => request.maxOutputTokens === undefined)).toBe(true);
+  }
 });

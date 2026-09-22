@@ -105,9 +105,22 @@ async function readReportRows<T>(
   return rows;
 }
 
-export async function getLatestDailyReport(kind?: DailyReport['kind']) {
-  const [latest] = await readReportRows<DailyReport>(1, false, kind);
+export async function getLatestDailyReport(kind?: DailyReport['kind'], preferEditorial = false) {
+  const rows = await readReportRows<DailyReport>(preferEditorial ? 8 : 1, false, kind);
+  let latest = rows[0];
   if (!latest) return null;
+  // Reader views keep a recent completed edition while another is composing
+  // or recovering. Its original date/id remain intact. Generation deduplication
+  // still reads the actual newest record through the default path above.
+  if (preferEditorial && latest.editorial?.mode !== 'generated') {
+    latest =
+      rows.find(
+        (row) =>
+          row.editorial?.mode === 'generated' &&
+          row.artifactStatus === 'ready' &&
+          latest.generatedAt - row.generatedAt <= 24 * 3600_000,
+      ) ?? latest;
+  }
   const report = await migrateDailyReportForRead(latest);
   if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
   const items = [

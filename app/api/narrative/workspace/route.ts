@@ -33,18 +33,20 @@ export function createWorkspaceRoutes(deps = defaults) {
   const handle = (write: boolean) => async (request: NextRequest) => {
     try {
       const user = await deps.user();
-      await deps.rate({
-        userId: user.userId,
-        key: `narrative-workspace-${write ? 'write' : 'read'}`,
-        limit: write ? 12 : 60,
-        windowMs: 60_000,
-      });
       const input = write
         ? command.parse(await request.json())
         : {
             action: 'read' as const,
             at: atSchema.parse(request.nextUrl.searchParams.get('at') || undefined),
           };
+      if (input.action !== 'generate') {
+        await deps.rate({
+          userId: user.userId,
+          key: `narrative-workspace-${write ? 'write' : 'read'}`,
+          limit: write ? 12 : 60,
+          windowMs: 60_000,
+        });
+      }
       const result =
         input.action === 'defer' || input.action === 'correct'
           ? await deps.feedback(user.userId, input)
