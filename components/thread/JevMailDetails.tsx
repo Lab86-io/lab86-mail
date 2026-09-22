@@ -2,16 +2,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
+import { settingsRequest } from '@/components/settings/JevSection';
 import { type JevAssessment, jevReason } from '@/lib/jev/contract';
 
 export function JevMailDetails({ assessment }: { assessment?: JevAssessment | null }) {
   const settings = useQuery({
     queryKey: ['jev-settings'],
-    queryFn: async () => {
-      const response = await fetch('/api/jev/settings');
-      if (!response.ok) throw new Error('Settings unavailable');
-      return response.json();
-    },
+    queryFn: () => settingsRequest(),
     staleTime: 60_000,
     enabled: Boolean(assessment),
   });

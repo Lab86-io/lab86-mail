@@ -34,7 +34,10 @@ function downloadFile(file: PreparedDraft['files'][number]) {
   const link = document.createElement('a');
   link.href = url;
   link.download = file.name;
+  link.hidden = true;
+  document.body.appendChild(link);
   link.click();
+  link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export function PreparedWorkCard({

@@ -16,6 +16,7 @@ import {
   isIndexedFile,
   matchesSearch,
   mergeSearchItems,
+  retrySearchQueries,
   SEARCH_SCOPES,
   type SearchGroup,
   type SearchResult,
@@ -318,13 +319,14 @@ function SearchContent({
             type="button"
             className="pb-2 text-[var(--color-accent)] hover:underline"
             onClick={() => {
+              if (label === 'Files') {
+                void retrySearchQueries([result, library, indexed, semantic]);
+                return;
+              }
               void result.refetch();
               if (label.startsWith('Mail')) {
                 void accounts.refetch();
                 if (natural) void translation.refetch();
-              }
-              if (label === 'Files') {
-                void library.refetch();
               }
             }}
           >
@@ -464,14 +466,15 @@ function SearchContent({
                   {
                     ...cloud,
                     data: { items: [], warnings: cloud.data?.warnings || [] },
-                    isFetching: cloud.isFetching || library.isFetching || indexed.isFetching,
+                    isFetching:
+                      cloud.isFetching || library.isFetching || indexed.isFetching || semantic.isFetching,
                   },
                   files,
                   [
                     library.error ? 'Albatross library is unavailable.' : '',
                     ...(library.data?.warnings || []),
                     ...(semantic.data?.warnings || []),
-                    indexed.error ? 'Content search is temporarily unavailable.' : '',
+                    indexed.error || semantic.error ? 'Content search is temporarily unavailable.' : '',
                   ].filter(Boolean),
                 )
               : null}

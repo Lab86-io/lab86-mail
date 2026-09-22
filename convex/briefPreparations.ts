@@ -11,7 +11,12 @@ import { requireInternalSecret } from './lib';
 import { scheduleNarrativeSource } from './narrative';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
-async function eligible(ctx: any, userId: string, source: any) {
+async function eligible(
+  ctx: any,
+  userId: string,
+  source: any,
+  policy?: Awaited<ReturnType<typeof loadJevSettings>>,
+) {
   if (!(await contentAccess(ctx, userId, source, 'brief'))) return false;
   if (source.source !== 'mail')
     return Boolean(
@@ -27,7 +32,7 @@ async function eligible(ctx: any, userId: string, source: any) {
     )
     .unique();
   if (!thread || !assessmentIsCurrent(thread.jev, thread.latestMessageId)) return false;
-  const policy = await loadJevSettings(ctx, userId);
+  policy ??= await loadJevSettings(ctx, userId);
   return briefAttention({
     assessment: thread.jev,
     smart: thread.smartCategory,
@@ -70,6 +75,7 @@ export const list = query({
   args: caller,
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    const policy = await loadJevSettings(ctx, args.userId);
     const rows = await ctx.db
       .query('briefPreparations')
       .withIndex('by_user_status', (q) => q.eq('userId', args.userId).eq('status', 'pending'))
@@ -80,7 +86,7 @@ export const list = query({
       const source = await ctx.db.get(row.seedId);
       if (!source || !(await contentAccess(ctx, args.userId, source, 'brief'))) continue;
       const pendingClassification = !source.labels && source.status === 'pending';
-      if (!pendingClassification && !(await eligible(ctx, args.userId, source))) continue;
+      if (!pendingClassification && !(await eligible(ctx, args.userId, source, policy))) continue;
       const sources = await currentSources(ctx, args.userId, row);
       if (!sources) continue;
       const changed = sources.some(
@@ -109,6 +115,7 @@ export const claim = mutation({
   args: caller,
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    const policy = await loadJevSettings(ctx, args.userId);
     const preferences = await contentPreferences(ctx, args.userId);
     if (!preferences.enabled || !preferences.prepare) return null;
     const existing = await ctx.db
@@ -128,7 +135,7 @@ export const claim = mutation({
         continue;
       }
       const source = await ctx.db.get(row.seedId);
-      if (!source || !(await eligible(ctx, args.userId, source))) {
+      if (!source || !(await eligible(ctx, args.userId, source, policy))) {
         // Pending reclassification does not resolve a proposal. Explicit current resolution does.
         const inaccessible = !source || !(await contentAccess(ctx, args.userId, source, 'brief'));
         const classified = Boolean(source?.labels);
@@ -154,7 +161,7 @@ export const claim = mutation({
       .order('desc')
       .take(100);
     for (const seed of recent) {
-      if (seed.modifiedAt < Date.now() - 14 * 86400_000 || !(await eligible(ctx, args.userId, seed)))
+      if (seed.modifiedAt < Date.now() - 14 * 86400_000 || !(await eligible(ctx, args.userId, seed, policy)))
         continue;
       if (seed.labels?.workId?.startsWith('proposal:')) {
         const proposalId = ctx.db.normalizeId(
@@ -234,6 +241,7 @@ export const complete = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    const policy = await loadJevSettings(ctx, args.userId);
     const row = await owned(ctx, args);
     if (row.status !== 'pending' || row.lease !== args.lease) return false;
     const seed = await ctx.db.get(row.seedId as Id<'contentItems'>);
@@ -243,7 +251,7 @@ export const complete = mutation({
       !(await relatedWorkIsActive(ctx, args.userId, row.workId)) ||
       !seed ||
       seed.version !== args.seedVersion ||
-      !(await eligible(ctx, args.userId, seed));
+      !(await eligible(ctx, args.userId, seed, policy));
     for (const ref of args.sources) {
       const source = await ctx.db.get(ref.id);
       if (
@@ -337,6 +345,7 @@ export const update = mutation({
       await ctx.db.patch(row._id, { ...patch, needsRefresh: true, nextAttemptAt: 0 });
       return { queued: true };
     }
+    const policy = await loadJevSettings(ctx, args.userId);
     const sources = await currentSources(ctx, args.userId, row);
     const seed = await ctx.db.get(row.seedId as Id<'contentItems'>);
     if (
@@ -344,7 +353,7 @@ export const update = mutation({
       row.needsRefresh ||
       !seed ||
       seed.version !== row.seedVersion ||
-      !(await eligible(ctx, args.userId, seed)) ||
+      !(await eligible(ctx, args.userId, seed, policy)) ||
       !sources ||
       sources.some((s) => row.sources.find((r: any) => r._id === s._id)?.version !== s.version)
     )

@@ -758,7 +758,7 @@ function computeFloor(
   const senderIsSelf = Boolean(senderAddr) && ctx.self.has(senderAddr);
   const noReply = isNoReplyLike(from);
 
-  let { replyOwed, followUpOwed } = computeOwed(messages, now, ctx.self);
+  let { replyOwed } = computeOwed(messages, now, ctx.self);
 
   // Reliable bulk signals only (list-id / unsubscribe). Subject-keyword signals
   // like "offer"/"sale" are intentionally excluded so a real person isn't
@@ -841,19 +841,6 @@ function computeFloor(
     (c) => c.dueAt && c.dueAt >= now && c.dueAt < now + TIME_SENSITIVE_WINDOW,
   );
 
-  let isProtected =
-    !userForcedNoise &&
-    isHuman &&
-    !automated &&
-    (replyOwed ||
-      followUpOwed ||
-      isPersonal ||
-      isImportant ||
-      isNewSender ||
-      isPriorCorrespondent ||
-      ctx.tracked ||
-      userForcedMain);
-
   const newestInbound = [...messages]
     .reverse()
     .find((message) => !ctx.self.has((emailFromHeader(message.from) || '').toLowerCase()));
@@ -883,8 +870,8 @@ function computeFloor(
     ),
   });
   replyOwed = attention.reply;
-  followUpOwed = attention.followUp;
-  isProtected = attention.eligible;
+  const followUpOwed = attention.followUp;
+  const isProtected = attention.eligible;
 
   let lane: ReportLane;
   if (!isProtected) lane = 'bulk';
@@ -982,7 +969,7 @@ async function buildThreadInsight(
     subject: thread.subject,
     openLoops: baseOpenLoops,
   });
-  let lane = floor.lane;
+  const lane = floor.lane;
   let model = 'local';
 
   if (context.enrich && (await hasAiForCurrentUser())) {
@@ -1013,8 +1000,6 @@ async function buildThreadInsight(
             .filter(Boolean)
             .slice(0, 5);
         }
-        // Clamp: the LLM can only promote above the deterministic floor lane.
-        lane = floor.lane;
         nextAction = recommendationFor({
           candidate: normalizeRecommendation(parsed.nextAction),
           lane,

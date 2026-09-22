@@ -174,7 +174,10 @@ export function MailNavView({
             >
               <span className="truncate">{category.label}</span>
               {smartCategory === category.id ? (
-                <span className="ml-auto text-[var(--color-accent)]">✓</span>
+                <span className="ml-auto text-[var(--color-accent)]">
+                  <span aria-hidden="true">✓</span>
+                  <span className="sr-only">Selected</span>
+                </span>
               ) : null}
             </DropdownMenuItem>
           ))}
@@ -188,7 +191,10 @@ export function MailNavView({
             >
               {mailbox.label}
               {selection.folder?.query === mailbox.query ? (
-                <span className="ml-auto text-[var(--color-accent)]">✓</span>
+                <span className="ml-auto text-[var(--color-accent)]">
+                  <span aria-hidden="true">✓</span>
+                  <span className="sr-only">Selected</span>
+                </span>
               ) : null}
             </DropdownMenuItem>
           ))}

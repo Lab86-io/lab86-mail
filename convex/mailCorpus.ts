@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
+import { matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
@@ -23,6 +24,19 @@ function latestCorpusMessage(a: any, b: any) {
   if (a.receivedAt !== b.receivedAt) return a.receivedAt > b.receivedAt ? a : b;
   if (a._creationTime !== b._creationTime) return a._creationTime > b._creationTime ? a : b;
   return String(a.providerMessageId).localeCompare(String(b.providerMessageId)) >= 0 ? a : b;
+}
+function orderedContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(orderedContent);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, orderedContent(entry)]),
+    );
+  return value;
+}
+function stableContent(value: unknown) {
+  return JSON.stringify(orderedContent(value));
 }
 
 const syncStatusValidator = v.union(
@@ -247,14 +261,16 @@ export const upsertCorpusBatch = mutation({
       for (const key of ['textBody', 'headers', 'attachments', 'cc', 'bcc'] as const)
         if (message[key] === undefined) delete patch[key];
       if (existing?.textBody && message.textBody === undefined) {
-        patch.searchText = buildCorpusSearchText({ ...existing, ...message, textBody: existing.textBody });
+        const defined = Object.fromEntries(
+          Object.entries(message).filter(([, value]) => value !== undefined),
+        );
+        patch.searchText = buildCorpusSearchText({ ...existing, ...defined, textBody: existing.textBody });
       }
       if (
         existing &&
         ['subject', 'from', 'to', 'cc', 'textBody', 'headers', 'attachments'].some(
           (key) =>
-            Object.hasOwn(patch, key) &&
-            JSON.stringify((existing as any)[key]) !== JSON.stringify(patch[key]),
+            Object.hasOwn(patch, key) && stableContent((existing as any)[key]) !== stableContent(patch[key]),
         )
       )
         changedContentThreads.add(message.providerThreadId);
@@ -634,9 +650,15 @@ export const searchCorpusMessagesPage = query({
     if (args.before !== undefined) source = source.filter((q) => q.lte(q.field('receivedAt'), args.before!));
     const page = await source.paginate({
       cursor: args.cursor ?? null,
-      numItems: clampLimit(args.limit, 100, 300),
+      numItems: clampLimit(args.limit, 50, 50),
     });
-    return { items: page.page, nextCursor: page.isDone ? undefined : page.continueCursor };
+    return {
+      items: page.page.map(({ htmlBody: _html, textBody, ...row }) => ({
+        ...row,
+        textBody: textBody ? matchingMailExcerpt(textBody, args.query) : undefined,
+      })),
+      nextCursor: page.isDone ? undefined : page.continueCursor,
+    };
   },
 });
 

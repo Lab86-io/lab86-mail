@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 import { safeDeltaUrl } from '../lib/content/cloud-sync';
 import {
@@ -29,6 +29,33 @@ afterAll(() => {
 });
 const content = (api as any).content;
 const preparations = (api as any).briefPreparations;
+test('content census advances bounded connected pages across ticks and wraps without starving later users', async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 55; i++)
+      await ctx.db.insert('cloudFileConnections', {
+        userId: `user-${i}`,
+        connectionId: `drive-${i}`,
+        provider: 'google_drive',
+        accountKey: String(i),
+        scopes: [],
+        status: i < 53 ? 'connected' : 'disconnected',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+  });
+  const first = await t.mutation((internal as any).content.users, { source: 'cloudFileConnections' });
+  const second = await t.mutation((internal as any).content.users, { source: 'cloudFileConnections' });
+  expect(first).toHaveLength(50);
+  expect(second).toHaveLength(3);
+  expect(new Set([...first, ...second]).size).toBe(53);
+  expect([...first, ...second]).not.toContain('user-53');
+  expect(await t.mutation((internal as any).content.users, { source: 'cloudFileConnections' })).toEqual(
+    first,
+  );
+  expect(await t.mutation((internal as any).content.users, { source: 'connectedAccounts' })).toEqual([]);
+  expect(await t.mutation((internal as any).content.users, { source: 'mcpConnections' })).toEqual([]);
+});
 const labels = {
   kind: 'request',
   actionable: true,
@@ -442,4 +469,33 @@ test('PDF extraction reads selectable text without a browser', async () => {
   const value = await extractContent(new TextEncoder().encode(pdf), 'application/pdf', 'approval.pdf');
   expect(value.text).toContain('Signed approval is required.');
   expect(value.partial).toBe(false);
+});
+
+test('content tombstones without text are accepted and malformed attachment identifiers fail closed', async () => {
+  const t = convexTest(schema, modules);
+  await seed(t);
+  const { text: _text, ...withoutBody } = source('deleted');
+  expect(await t.mutation(content.upsert, { ...scope, items: [{ ...withoutBody, deleted: true }] })).toEqual({
+    changed: 1,
+  });
+  expect(await t.query(content.search, { ...scope, query: 'approval' })).toEqual([]);
+  await t.run((ctx) =>
+    ctx.db.insert('connectedAccounts', {
+      userId: 'owner',
+      accountId: 'mail',
+      email: 'owner@example.test',
+      provider: 'google',
+      grantId: 'grant',
+      status: 'connected',
+      scopes: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+  for (const id of ['null', '{}', '[1,"attachment"]', '["message"]'])
+    await t.mutation(content.upsert, {
+      ...scope,
+      items: [{ ...source(), source: 'attachment', connectionId: 'mail', externalId: id }],
+    });
+  expect(await t.query(content.search, { ...scope, query: 'approval' })).toEqual([]);
 });

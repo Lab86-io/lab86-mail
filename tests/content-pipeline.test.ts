@@ -153,6 +153,21 @@ describe('connected content sync', () => {
     expect(value.text).toContain('Approval requirement');
     expect(value.text).not.toContain('<w:');
   });
+  test('Office extraction refuses over-limit expansion metadata before decompressing', async () => {
+    const zip = new JSZip();
+    zip.file('word/document.xml', '<w:t>Approval</w:t>', { createFolders: false });
+    const bytes = await zip.generateAsync({ type: 'nodebuffer' });
+    const central = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    expect(central).toBeGreaterThan(0);
+    bytes.writeUInt32LE(17 * 1024 * 1024, central + 24);
+    expect(
+      await extractContent(
+        bytes,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'requirements.docx',
+      ),
+    ).toEqual({ text: '', partial: true });
+  });
 });
 
 test('Brief admits a new personal request intraday, excludes noise, and preserves the saved edition', () => {

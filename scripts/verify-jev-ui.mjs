@@ -36,10 +36,16 @@ try {
     await page.getByRole('textbox', { name: 'Correction value' }).fill('athletics@university.test');
     await page.getByRole('button', { name: 'Add correction' }).click();
     await page.getByRole('button', { name: 'Remove correction for athletics@university.test' }).waitFor();
+    assert.equal(await page.getByRole('textbox', { name: 'Correction value' }).inputValue(), '');
     let state = await (await fetch(`${origin}/__preview/state`)).json();
     assert.equal(state.state.preferences.followUpDays, 7);
     assert.equal(state.state.preferences.briefPromotions, true);
     assert.equal(state.state.corrections[0].scope, 'sender');
+    await page.getByRole('textbox', { name: 'Correction value' }).fill('athletics@university.test');
+    await page.getByRole('button', { name: 'Add correction' }).click();
+    await page.waitForFunction(() => document.querySelector('#jev-correction-value')?.value === '');
+    state = await (await fetch(`${origin}/__preview/state`)).json();
+    assert.equal(state.state.corrections.length, 1);
     await page.reload();
     await page.getByRole('button', { name: 'Remove correction for athletics@university.test' }).waitFor();
     assert.equal(

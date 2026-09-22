@@ -105,3 +105,16 @@ test('usage records the returned version, actual tokens and failures without ema
     }).estimatedCostUsd,
   ).toBe(0.042);
 });
+
+test('disabled personal keys use platform billing unless the deployment requires a personal key', async () => {
+  const d = deps({
+    query: async () => ({
+      settings: { enabled: false, mode: 'byok' },
+      key: { provider: 'openrouter', encryptedKey: 'encrypted' },
+    }),
+  });
+  expect((await resolveJevRuntime('owner', d)).source).toBe('lab86');
+  expect(d.decrypt).not.toHaveBeenCalled();
+  expect(d.assertBudget).toHaveBeenCalled();
+  expect((await resolveJevRuntime('owner', { ...d, requiresOwnKey: () => true })).source).toBe('byok');
+});

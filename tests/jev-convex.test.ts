@@ -104,6 +104,14 @@ async function row(t: ReturnType<typeof convexTest>, account = 'a', id = 't') {
 }
 
 describe('Jev persisted state and tenancy', () => {
+  test('claiming cannot replace the corpus revision when its newest message is not synced', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const before = await row(t);
+    await t.run((ctx) => ctx.db.patch(before!._id, { latestMessageId: 'not-yet-synced' }));
+    expect((await claim(t)).items).toEqual([]);
+    expect((await row(t))?.latestMessageId).toBe('not-yet-synced');
+  });
   test('requires internal authorization and isolates user/account collisions', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
@@ -397,4 +405,78 @@ test('metadata refresh cannot reopen a permanently failed Jev attempt into an un
   expect((await row(t))?.llmPending).toBeUndefined();
   await seed(t, 'a', 'owner', 't', 'New actual content.');
   expect((await row(t))?.llmPending).toBe(true);
+});
+
+test('Jev user discovery visits later connected accounts and retains an independent recurring cursor', async () => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx) => {
+    for (let i = 0; i < 54; i++)
+      await ctx.db.insert('connectedAccounts', {
+        userId: `user-${i}`,
+        accountId: `account-${i}`,
+        grantId: `grant-${i}`,
+        email: `${i}@example.test`,
+        provider: 'google',
+        scopes: [],
+        status: i < 52 ? 'connected' : 'disconnected',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+  });
+  const a = await t.mutation((internal as any).jev.usersWithMail, {});
+  const b = await t.mutation((internal as any).jev.usersWithMail, {});
+  const c = await t.mutation((internal as any).jev.usersWithMail, {});
+  expect(a).toHaveLength(24);
+  expect(b).toHaveLength(24);
+  expect(c).toHaveLength(4);
+  expect(new Set([...a, ...b, ...c]).size).toBe(52);
+  expect(await t.mutation((internal as any).jev.usersWithMail, {})).toEqual(a);
+});
+
+test('reordered metadata preserves classification, and search pages omit HTML while retaining deep matches', async () => {
+  const t = convexTest(schema, modules);
+  await seed(t);
+  const input = (await claim(t)).items[0];
+  await save(t, input);
+  const message = await t.run((ctx) => ctx.db.query('mailCorpusMessages').first());
+  await t.run((ctx) => ctx.db.patch(message!._id, { headers: { a: '1', b: '2' }, cc: 'copy@example.test' }));
+  await t.mutation(api.mailCorpus.upsertCorpusBatch, {
+    ...scope,
+    accountId: 'a',
+    grantId: 'grant-a',
+    provider: 'google',
+    threads: [],
+    messages: [
+      {
+        providerMessageId: 'm-t',
+        providerThreadId: 't',
+        subject: 'Budget approval',
+        from: 'maya@example.test',
+        to: 'owner@example.test',
+        receivedAt: NOW,
+        snippet: 'Please confirm the budget.',
+        searchText: 'budget',
+        labels: ['INBOX'],
+        headers: { b: '2', a: '1' },
+      },
+    ],
+  });
+  expect((await row(t))?.jev?.sourceRevision).toBe(input.sourceRevision);
+  const refreshed = await t.run((ctx) => ctx.db.get(message!._id));
+  expect(refreshed?.searchText).toContain('copy@example.test');
+  await t.run((ctx) =>
+    ctx.db.patch(message!._id, {
+      htmlBody: 'x'.repeat(200_000),
+      textBody: `${'x'.repeat(20_000)} budget approval matters`,
+      searchText: 'budget approval matters',
+    }),
+  );
+  const result = await t.query(api.mailCorpus.searchCorpusMessagesPage, {
+    ...scope,
+    accountId: 'a',
+    query: 'budget',
+  });
+  expect(result.items[0].textBody).toContain('budget approval matters');
+  expect(result.items[0].textBody!.length).toBeLessThanOrEqual(1600);
+  expect((result.items[0] as any).htmlBody).toBeUndefined();
 });

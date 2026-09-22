@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { getFunctionName } from 'convex/server';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
@@ -16,6 +17,19 @@ const userId = 'reply-user';
 const ownEmail = 'me@example.com';
 const sender = 'jolie@example.com';
 const sentAt = Date.now() - 100_000;
+
+test('the Brief caps active work after prioritizing resumed conversations', () => {
+  const resumedWork = Array.from({ length: 12 }, (_, i) => ({
+    id: `resumed-${i}`,
+    title: `Work ${i}`,
+    reply: { from: sender, subject: 'Update', reason: 'Ready' },
+  }));
+  const context = buildAlbatrossDailyReportContextFromLive({
+    resumedWork,
+    applications: [{ intentId: 'other', status: 'queued' }],
+  });
+  expect(context.activeIntents.map((row) => row.id)).toEqual(resumedWork.slice(0, 6).map((row) => row.id));
+});
 
 async function setup() {
   const t = convexTest(schema, modules);
@@ -120,6 +134,49 @@ async function setup() {
 }
 
 describe('waiting for an email reply', () => {
+  test('bounded reply scans resume at their durable cursor and reject stale checkpoints', async () => {
+    const s = await setup();
+    await s.record();
+    const initial = await s.user.query(api.albatrossReplies.waiting, {});
+    const base = s.deps();
+    const visited: number[] = [];
+    const dependencies = {
+      ...base,
+      convexQuery: (async (fn: any, args: any) => {
+        if (getFunctionName(fn) !== 'albatrossReplies:messages') return base.convexQuery(fn, args);
+        const page = Number(args.paginationOpts.cursor || 0);
+        visited.push(page);
+        return { page: [], isDone: page === 12, continueCursor: String(page + 1) };
+      }) as any,
+    };
+    expect(await checkWaitingReplies({ userId }, dependencies)).toMatchObject({
+      unavailable: true,
+      resumed: 0,
+    });
+    expect(visited).toEqual(Array.from({ length: 10 }, (_, i) => i));
+    expect((await s.user.query(api.albatrossReplies.waiting, {})).scanCursor).toBe('10');
+    expect(
+      await s.user.mutation(api.albatrossReplies.checkpoint, {
+        watchKey: initial.watchKey,
+        previousCursor: null,
+        cursor: 'stale',
+      }),
+    ).toBe(false);
+    expect(await checkWaitingReplies({ userId }, dependencies)).toMatchObject({
+      unavailable: false,
+      resumed: 0,
+    });
+    expect(visited.slice(10)).toEqual([10, 11, 12]);
+    expect((await s.user.query(api.albatrossReplies.waiting, {})).scanCursor).toBeNull();
+    await s.user.mutation(api.albatrossWorkV2.releaseWork, { workId: s.workId });
+    expect(
+      await s.user.mutation(api.albatrossReplies.checkpoint, {
+        watchKey: initial.watchKey,
+        previousCursor: null,
+        cursor: 'old-watch',
+      }),
+    ).toBe(false);
+  });
   test('saves progress and a watch atomically; retries neither duplicate the report nor move the cutoff', async () => {
     const s = await setup();
     const first = await s.record();

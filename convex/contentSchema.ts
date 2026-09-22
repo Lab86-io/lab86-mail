@@ -2,6 +2,10 @@ import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 export const contentTables = {
+  contentSyncCursors: defineTable({
+    source: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  }).index('by_source', ['source']),
   contentItems: defineTable({
     userId: v.string(),
     key: v.string(),

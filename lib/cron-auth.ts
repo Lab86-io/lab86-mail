@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { NextRequest } from 'next/server';
 
 // Shared gate for internal cron routes called by Convex scheduled actions. The
@@ -9,5 +10,9 @@ export function isInternalCronRequest(req: NextRequest): boolean {
     req.headers.get('x-lab86-internal-secret') ||
     req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ||
     '';
-  return provided === expected;
+  return (
+    Buffer.byteLength(provided) === Buffer.byteLength(expected) &&
+    timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+  );
 }
+

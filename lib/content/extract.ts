@@ -72,11 +72,17 @@ export async function extractContent(
     let expanded = 0;
     for (const path of paths.slice(0, 100)) {
       const entry = zip.files[path];
-      expanded += Number((entry as any)._data?.uncompressedSize || 0);
-      if (expanded > 16 * 1024 * 1024) {
+      const declaredSize = (entry as any)._data?.uncompressedSize;
+      if (
+        typeof declaredSize !== 'number' ||
+        !Number.isFinite(declaredSize) ||
+        declaredSize < 0 ||
+        expanded + declaredSize > 16 * 1024 * 1024
+      ) {
         partial = true;
         break;
       }
+      expanded += declaredSize;
       const xml = await entry.async('string');
       text += `\n[${path}]\n${convert(xml.replace(/<\/(?:w:p|a:p|row)>/g, '\n'), { wordwrap: false })}`;
       if (text.length > MAX_CONTENT_CHARS) {

@@ -22,15 +22,15 @@ export interface JevSettingsState {
   sampleLimit: number;
   lastEvaluatedAt: number | null;
 }
-async function settingsRequest(body?: unknown) {
+export async function settingsRequest(body?: unknown) {
   const response = await fetch(
     '/api/jev/settings',
     body
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : { cache: 'no-store' },
   );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Jev settings could not load.');
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result) throw new Error(result?.error || 'Jev settings could not load.');
   return result;
 }
 const controls: Array<{
@@ -80,12 +80,16 @@ export function JevSettingsPanel({
   state: JevSettingsState;
   busy: boolean;
   error?: string;
-  onSave: (preferences: JevPreferences, corrections: JevCorrection[]) => void;
+  onSave: (preferences: JevPreferences, corrections: JevCorrection[], onSuccess?: () => void) => void;
   onReprocess: () => void;
 }) {
   const [scope, setScope] = useState<JevCorrection['scope']>('sender');
   const [match, setMatch] = useState('');
   const [brief, setBrief] = useState<JevCorrection['brief']>('exclude');
+  const normalizedMatch = scope === 'thread' ? match.trim() : match.trim().toLowerCase();
+  const matchingCorrection = state.corrections.find(
+    (rule) => rule.scope === scope && rule.match === normalizedMatch && !rule.accountId,
+  );
   const selectClass =
     'rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-2 text-sm';
   return (
@@ -253,15 +257,23 @@ export function JevSettingsPanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (!match.trim()) return;
-            onSave(state.preferences, [
-              ...state.corrections,
-              {
-                id: crypto.randomUUID(),
-                scope,
-                match: scope === 'thread' ? match.trim() : match.trim().toLowerCase(),
-                brief,
+            onSave(
+              state.preferences,
+              [
+                ...state.corrections.filter((rule) => rule.id !== matchingCorrection?.id),
+                {
+                  id: matchingCorrection?.id || crypto.randomUUID(),
+                  scope,
+                  match: normalizedMatch,
+                  brief,
+                },
+              ],
+              () => {
+                setMatch('');
+                setScope('sender');
+                setBrief('exclude');
               },
-            ]);
+            );
           }}
         >
           <label className="space-y-1 text-xs">
@@ -310,7 +322,11 @@ export function JevSettingsPanel({
               <option value="include">Include</option>
             </select>
           </label>
-          <Button type="submit" size="sm" disabled={busy || !match.trim() || state.corrections.length >= 100}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={busy || !match.trim() || (state.corrections.length >= 100 && !matchingCorrection)}
+          >
             Add correction
           </Button>
         </form>
@@ -369,8 +385,11 @@ export function JevSection() {
         state={query.data}
         busy={save.isPending}
         error={save.error?.message}
-        onSave={(preferences, corrections) =>
-          save.mutate({ action: 'save', preferences, corrections, revision: query.data.revision })
+        onSave={(preferences, corrections, onSuccess) =>
+          save.mutate(
+            { action: 'save', preferences, corrections, revision: query.data.revision },
+            { onSuccess },
+          )
         }
         onReprocess={() => save.mutate({ action: 'reprocess' })}
       />

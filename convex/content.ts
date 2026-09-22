@@ -1,7 +1,14 @@
 import { v } from 'convex/values';
 import { contentChunks, contentLabelsSchema, MAX_CONTENT_CHARS } from '../lib/content/contract';
 import { internal } from './_generated/api';
-import { action, internalAction, internalQuery, mutation, query } from './_generated/server';
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from './_generated/server';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
@@ -48,6 +55,8 @@ export async function contentAccess(ctx: any, userId: string, item: any, purpose
     } catch {
       return false;
     }
+    if (!Array.isArray(ids) || ids.length !== 2 || ids.some((id) => typeof id !== 'string' || !id))
+      return false;
     const message = await ctx.db
       .query('mailCorpusMessages')
       .withIndex('by_account_message', (q: any) =>
@@ -232,12 +241,12 @@ export const upsert = mutation({
         connectionId: String(input.connectionId),
         externalId: String(input.externalId),
         title: String(input.title).slice(0, 500),
-        text: input.deleted ? '' : String(input.text).slice(0, MAX_CONTENT_CHARS),
+        text: input.deleted ? '' : String(input.text ?? '').slice(0, MAX_CONTENT_CHARS),
         url: input.url,
         version: String(input.version),
         modifiedAt: Number(input.modifiedAt),
         indexedAt: Date.now(),
-        partial: Boolean(input.partial || input.text.length > MAX_CONTENT_CHARS),
+        partial: Boolean(input.partial || String(input.text ?? '').length > MAX_CONTENT_CHARS),
         deleted: Boolean(input.deleted),
         labels: undefined,
         status: input.deleted ? 'deleted' : 'pending',
@@ -641,23 +650,39 @@ export const workCandidates = query({
     ];
   },
 });
-export const users = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await Promise.all(
-      ['connectedAccounts', 'mcpConnections', 'cloudFileConnections'].map((table) =>
-        (ctx.db.query(table as any) as any).collect(),
-      ),
-    );
-    return [
-      ...new Set(
-        rows
-          .flat()
-          .filter((r: any) => r.status === 'connected')
-          .map((r: any) => r.userId),
-      ),
-    ];
+export async function nextConnectedUsers(
+  ctx: any,
+  source: 'connectedAccounts' | 'mcpConnections' | 'cloudFileConnections',
+  cursorKey = source as string,
+  pageSize = 50,
+) {
+  const saved = await ctx.db
+    .query('contentSyncCursors')
+    .withIndex('by_source', (q: any) => q.eq('source', cursorKey))
+    .unique();
+  const page = await ctx.db
+    .query(source)
+    .withIndex('by_status', (q: any) => q.eq('status', 'connected'))
+    .paginate({
+      cursor: saved?.cursor ?? null,
+      numItems: pageSize,
+      maximumRowsRead: pageSize,
+      maximumBytesRead: 512 * 1024,
+    });
+  const cursor = page.isDone ? null : page.continueCursor;
+  if (saved) await ctx.db.patch(saved._id, { cursor });
+  else await ctx.db.insert('contentSyncCursors', { source: cursorKey, cursor });
+  return [...new Set<string>(page.page.map((row: any) => row.userId))];
+}
+export const users = internalMutation({
+  args: {
+    source: v.union(
+      v.literal('connectedAccounts'),
+      v.literal('mcpConnections'),
+      v.literal('cloudFileConnections'),
+    ),
   },
+  handler: (ctx, args) => nextConnectedUsers(ctx, args.source),
 });
 export const tick = internalAction({
   args: {},
@@ -665,7 +690,12 @@ export const tick = internalAction({
     const url = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
-    const users = await ctx.runQuery((internal as any).content.users, {});
+    const pages = await Promise.all(
+      ['connectedAccounts', 'mcpConnections', 'cloudFileConnections'].map((source) =>
+        ctx.runMutation((internal as any).content.users, { source }),
+      ),
+    );
+    const users = [...new Set(pages.flat())];
     await fanOutInternalPost(
       `${url.replace(/\/$/, '')}/api/cron/content`,
       secret,

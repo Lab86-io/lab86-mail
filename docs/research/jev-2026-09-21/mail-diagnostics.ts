@@ -1,6 +1,7 @@
-// Historical defect reproduction for base commit e1e95b49. Its assertions describe the old behavior; current regressions live in tests/jev-*.test.ts.
-/** Read-only synthetic reproduction of current production helpers.
- * Run: bun docs/research/jev-2026-09-21/mail-diagnostics.ts
+/** Historical synthetic reproduction, valid only against commit e1e95b49.
+ * Its assertions describe the former Brief scoring and lane caps, not current helpers.
+ * Run only with e1e95b49 checked out: bun docs/research/jev-2026-09-21/mail-diagnostics.ts
+ * Current regressions: tests/brief-score.test.ts and tests/jev-*.test.ts.
  * No model calls, mailbox access, or production writes.
  */
 import { strict as assert } from 'node:assert';
