@@ -178,6 +178,10 @@ export const updateWorkState = mutation({
     if (args.state !== 'archived' && isTerminalWork(work)) await restoreWorkArtifacts(ctx, work, ts);
     await ctx.db.patch(args.workId, {
       workState: args.state,
+      ...(args.state !== 'waiting' ? { replyWatch: undefined } : {}),
+      ...(['paused', 'archived'].includes(args.state)
+        ? { mailWatchAt: undefined, mailWatchClaimedAt: undefined }
+        : {}),
       status:
         args.state === 'archived'
           ? 'archived'
@@ -256,7 +260,11 @@ export const inactiveBriefRefs = query({
       if (ref.kind === 'work') {
         const id = ctx.db.normalizeId('albatrossIntents', ref.id);
         const work = id ? await ctx.db.get(id) : null;
-        if (work?.userId === userId && isTerminalWork(work)) inactive.push(ref.id);
+        if (
+          work?.userId === userId &&
+          (isTerminalWork(work) || (work.workState === 'waiting' && work.replyWatch))
+        )
+          inactive.push(ref.id);
       }
       if (ref.kind === 'work' || ref.kind === 'project') {
         const projectId = ctx.db.normalizeId('albatrossProjects', ref.id);
@@ -275,7 +283,11 @@ export const inactiveBriefRefs = query({
             ? ctx.db.normalizeId('albatrossIntents', card.source.intentId)
             : null;
         const work = workId ? await ctx.db.get(workId) : null;
-        if (work?.userId === userId && isTerminalWork(work)) inactive.push(ref.id);
+        if (
+          work?.userId === userId &&
+          (isTerminalWork(work) || (work.workState === 'waiting' && work.replyWatch))
+        )
+          inactive.push(ref.id);
       }
     }
     return inactive;
@@ -304,6 +316,9 @@ export const releaseWork = mutation({
     const ts = now();
     await ctx.db.patch(args.workId, {
       workState: 'released',
+      replyWatch: undefined,
+      mailWatchAt: undefined,
+      mailWatchClaimedAt: undefined,
       status: 'archived',
       releaseReason: bounded(args.reason, 400),
       releaseProposedBy: args.proposedBy ?? 'user',
@@ -353,6 +368,7 @@ export const reopenWork = mutation({
     const ts = now();
     await ctx.db.patch(args.workId, {
       workState: 'active',
+      replyWatch: undefined,
       status: 'ready',
       releaseReason: undefined,
       releaseProposedBy: undefined,
@@ -1151,6 +1167,7 @@ export const attachProof = mutation({
     const currentState =
       work.workState || (['done', 'archived'].includes(work.status) ? work.status : 'active');
     if (
+      args.settleContract !== false &&
       !['done', 'released', 'archived', 'paused', 'waiting'].includes(currentState) &&
       mayCloseAutomatically(updatedContract, evidence) &&
       !evidence.some((item) => item.trust === 'rejected')
@@ -1173,7 +1190,7 @@ export const beginEvidenceReconcile = internalMutation({
     if (!work?.lastEvidenceAt) return null;
     const ts = now();
     const state = work.workState || work.status;
-    if (['done', 'released', 'archived'].includes(state)) return null;
+    if (['done', 'released', 'archived', 'waiting', 'paused'].includes(state)) return null;
     if ((work.lastEvidenceReconcileAt || 0) >= work.lastEvidenceAt) return null;
     if (
       work.evidenceReconcileClaimedAt &&
@@ -1540,6 +1557,7 @@ export const answerQuestion = mutation({
   args: {
     ...callerArgs,
     questionId: v.id('albatrossWorkQuestions'),
+    expectedWorkId: v.optional(v.string()),
     answer: v.string(),
     answeredOptionId: v.optional(v.string()),
   },
@@ -1547,6 +1565,9 @@ export const answerQuestion = mutation({
     const userId = await resolveUserId(ctx, args);
     const question = await ctx.db.get(args.questionId);
     if (!question || question.userId !== userId) throw new Error('Question not found.');
+    if (args.expectedWorkId && String(question.workId) !== args.expectedWorkId) {
+      throw new Error('Question is not attached to this Work.');
+    }
     if (question.status !== 'pending') {
       return {
         workId: question.workId ? String(question.workId) : undefined,
@@ -1582,9 +1603,9 @@ export const answerQuestion = mutation({
         await ctx.db.patch(question.workId, { questions: legacyQuestions });
         await completeWorkInMutation(ctx, work, ts);
       } else {
-        shouldAdvance = true;
+        shouldAdvance = !['waiting', 'paused'].includes(work.workState || '');
         await ctx.db.patch(question.workId, {
-          agentState: 'researching',
+          agentState: shouldAdvance ? 'researching' : 'idle',
           status: work.status === 'needs_answers' ? 'captured' : work.status,
           questions: legacyQuestions,
           ...userTouch(ts),
@@ -1675,6 +1696,7 @@ export const livePendingQuestions = query({
       clarification: 1,
     };
     return rows
+      .filter((row) => !(row.work?.workState === 'waiting' && row.work.replyWatch))
       .filter(
         (row) =>
           row.work?.userId === userId || row.project?.userId === userId || row.routine?.userId === userId,
@@ -1923,6 +1945,7 @@ async function projectedWorkRows(
       rawText: row.rawText,
       status: row.status,
       workState: row.workState || null,
+      ...(row.replyWatch ? { replyWatch: row.replyWatch } : {}),
       agentState: row.agentState || null,
       planError: row.planError || null,
       priority: row.priority || null,
@@ -2062,6 +2085,7 @@ export const evidenceReconcileCandidates = internalQuery({
     return rows
       .filter(
         (row) =>
+          !['waiting', 'paused'].includes(row.workState || '') &&
           Boolean(row.lastEvidenceAt) &&
           (row.lastEvidenceReconcileAt || 0) < (row.lastEvidenceAt || 0) &&
           (!row.evidenceReconcileClaimedAt ||
@@ -2140,15 +2164,16 @@ export const mailWatchCandidates = internalQuery({
     const open = rows.filter(
       (row) =>
         ['active', 'waiting', 'blocked'].includes(row.workState || 'active') &&
-        !isDormant(row, ts) &&
+        (Boolean(row.replyWatch && row.workState === 'waiting') || !isDormant(row, ts)) &&
         // The shape policy decides which shapes the watcher may poll.
-        shapeAllows(row.shape, 'mailWatch') &&
+        (Boolean(row.replyWatch && row.workState === 'waiting') || shapeAllows(row.shape, 'mailWatch')) &&
         (!row.mailWatchClaimedAt || ts - row.mailWatchClaimedAt >= MAIL_WATCH_LEASE_MS),
     );
     const candidates: Array<{ userId: string; workId: string }> = [];
     for (const row of open) {
       if (candidates.length >= 4) break;
-      if (!(await openMailStepRemains(ctx, row))) continue;
+      if (!(row.replyWatch && row.workState === 'waiting') && !(await openMailStepRemains(ctx, row)))
+        continue;
       candidates.push({ userId: row.userId, workId: String(row._id) });
     }
     return candidates;
@@ -2161,6 +2186,7 @@ export const beginMailWatch = internalMutation({
     const ts = now();
     const work = await ctx.db.get(args.workId);
     if (!work?.mailWatchAt) return null;
+    if (!['active', 'waiting', 'blocked'].includes(workLifecycle(work))) return null;
     if (work.mailWatchClaimedAt && ts - work.mailWatchClaimedAt < MAIL_WATCH_LEASE_MS) return null;
     await ctx.db.patch(args.workId, { mailWatchClaimedAt: ts });
     return { userId: work.userId, workId: String(args.workId) };
@@ -2172,14 +2198,18 @@ export const completeMailWatch = mutation({
   args: { ...callerArgs, workId: v.id('albatrossIntents'), stillWatching: v.boolean() },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
+    const work = await requireWork(ctx, args.workId, userId);
     const ts = now();
+    const stillWatching =
+      ['active', 'waiting', 'blocked'].includes(workLifecycle(work)) &&
+      (Boolean(work.replyWatch && work.workState === 'waiting') ||
+        (args.stillWatching && (await openMailStepRemains(ctx, work))));
     await ctx.db.patch(args.workId, {
-      mailWatchAt: args.stillWatching ? ts : undefined,
+      mailWatchAt: stillWatching ? ts : undefined,
       mailWatchClaimedAt: undefined,
       updatedAt: ts,
     });
-    return { stillWatching: args.stillWatching };
+    return { stillWatching };
   },
 });
 

@@ -10,6 +10,18 @@ import {
 } from '../lib/albatross/work-state';
 
 describe('needsYou', () => {
+  test('an explicit reply watch keeps unanswered questions quiet until the reply arrives', () => {
+    const work = {
+      workState: 'waiting',
+      openQuestions: 3,
+      status: 'needs_answers',
+      replyWatch: { requirement: 'Advice from Jolie' },
+    };
+    expect(needsYou(work)).toBe(false);
+    expect(workStateKey(work)).toBe('waiting');
+    expect(railWorkBadge([work])).toBeNull();
+    expect(needsYou({ ...work, workState: 'active', replyWatch: undefined })).toBe(true);
+  });
   // The bug this replaces: the Areas pane said "0 active" while three real
   // questions about a live Albatross waited in a notification popover. Every
   // surface decided for itself what needed the user, and they disagreed.

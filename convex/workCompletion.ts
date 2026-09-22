@@ -56,6 +56,7 @@ export async function completeWorkInMutation(ctx: MutationCtx, work: Doc<'albatr
     pendingPlanId: undefined,
     mailWatchAt: undefined,
     mailWatchClaimedAt: undefined,
+    replyWatch: undefined,
     evidenceReconcileClaimedAt: undefined,
     horizonWakeAt: undefined,
     lastEvidenceReconcileAt: work.lastEvidenceAt,

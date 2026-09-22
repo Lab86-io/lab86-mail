@@ -1,3 +1,4 @@
+import { assessmentIsCurrent } from '../jev/contract';
 import type { ContractProof } from './contract';
 
 /**
@@ -14,13 +15,22 @@ export function proofOfferAllowed(category: string | null | undefined): boolean 
 export function threadPrimaryCategory(
   row:
     | {
+        jev?: unknown;
+        latestMessageId?: string;
         llmCategory?: { primary?: unknown } | null;
         smartPrimary?: unknown;
-        smartCategory?: { primary?: unknown } | null;
+        smartCategory?: { primary?: unknown; model?: unknown } | null;
       }
     | null
     | undefined,
 ): string | null {
+  const current = row?.smartCategory?.primary;
+  if (
+    (row?.smartCategory?.model === 'user_rule' || assessmentIsCurrent(row?.jev, row?.latestMessageId)) &&
+    typeof current === 'string' &&
+    current
+  )
+    return current;
   const llm = row?.llmCategory?.primary;
   if (typeof llm === 'string' && llm) return llm;
   const smartPrimary = row?.smartPrimary;

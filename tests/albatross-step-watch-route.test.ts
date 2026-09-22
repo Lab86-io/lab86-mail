@@ -43,6 +43,55 @@ const marketingThread = {
 };
 
 describe('step watch conductor route', () => {
+  test('a saved reply watch runs without a planned mail-confirmation step', async () => {
+    const watch = {
+      id: 'watch-1',
+      accountId: 'personal',
+      threadId: 'llc',
+      senderEmails: ['jolie@example.com'],
+      requirement: 'LLC advice',
+      after: 100,
+      startedAt: 200,
+    };
+    const mutations: any[] = [];
+    const completeWorkStep = mock(async () => ({ ok: true }));
+    const post = createStepWatchPost({
+      isInternalCronRequest: () => true,
+      convexQuery: (async (fn: any) => {
+        const { getFunctionName } = await import('convex/server');
+        const name = getFunctionName(fn);
+        if (name.endsWith(':workDetail')) return { work: { workState: 'waiting', replyWatch: watch } };
+        if (name.endsWith(':waiting'))
+          return { selfEmails: ['me@example.com'], watches: [{ workId: 'work-1', title: 'LLC', watch }] };
+        return {
+          page: [
+            {
+              _id: 'message-1',
+              accountId: 'personal',
+              providerThreadId: 'llc',
+              from: 'jolie@example.com',
+              subject: 'LLC advice',
+              snippet: 'The requested advice',
+              receivedAt: 300,
+              labels: [],
+            },
+          ],
+          isDone: true,
+          continueCursor: '',
+        };
+      }) as any,
+      convexMutation: (async (_fn: any, args: any) => {
+        mutations.push(args);
+        return { resumed: true };
+      }) as any,
+      evidenceSatisfies: async () => ({ satisfies: true, reason: 'Advice arrived' }),
+      completeWorkStep: completeWorkStep as any,
+    });
+    const response = await post(watchRequest({ userId: 'user-1', workId: 'work-1' }));
+    expect(await response.json()).toMatchObject({ ok: true, resumed: 1, completedSteps: 0 });
+    expect(completeWorkStep).not.toHaveBeenCalled();
+    expect(mutations.some((args) => args.watchId === 'watch-1' && args.messageId === 'message-1')).toBe(true);
+  });
   test('rejects requests that are not internal cron calls', async () => {
     const convexMutation = mock(async () => undefined);
     const post = createStepWatchPost({

@@ -1,0 +1,17 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { isInternalCronRequest } from '@/lib/cron-auth';
+import { runLlmClassificationSweep } from '@/lib/mail/llm-classify';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export async function POST(request: NextRequest) {
+  if (!isInternalCronRequest(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const body = await request.json().catch(() => null);
+  if (typeof body?.userId !== 'string' || !body.userId || body.userId.length > 200)
+    return NextResponse.json({ error: 'A user is required.' }, { status: 400 });
+  try {
+    return NextResponse.json({ ok: true, ...(await runLlmClassificationSweep(body.userId)) });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Jev classification is unavailable.' }, { status: 503 });
+  }
+}

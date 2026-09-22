@@ -13,7 +13,7 @@ export type BriefLane = 'answer' | 'today' | 'know';
 export const BRIEF_LANES: readonly BriefLane[] = ['answer', 'today', 'know'] as const;
 
 // Per-lane caps. `today` has no cap of its own; the budget bounds it.
-export const BRIEF_LANE_CAPS: Partial<Record<BriefLane, number>> = { answer: 3, know: 3 };
+export const BRIEF_LANE_CAPS: Partial<Record<BriefLane, number>> = { know: 3 };
 
 // Weights from the refinement doc. `needsReply` maps the doc's llmCategory rule
 // onto the real Smart Category enum: `needs_reply` is the only reply-shaped
@@ -25,6 +25,9 @@ export const BRIEF_SCORE_WEIGHTS = {
   deadlineWithin48h: 3,
   needsReply: 2,
   bulkSender: -4,
+  needsAction: 5,
+  meaningfulChange: 5,
+  waitingOnOther: 2,
 } as const;
 
 export const DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -32,7 +35,7 @@ export const DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
 export interface BriefScoreSignals {
   // The newest inbound message names one of the user's addresses in To.
   directToYou: boolean;
-  // The user has sent mail to this sender (or the sender's domain) before.
+  // The user has sent mail to this sender before.
   repliedBefore: boolean;
   // The thread holds at least one message from the user.
   participated: boolean;
@@ -42,6 +45,9 @@ export interface BriefScoreSignals {
   needsReply: boolean;
   // A list or bulk sender signal (unsubscribe header, list id).
   bulkSender: boolean;
+  needsAction?: boolean;
+  meaningfulChange?: boolean;
+  waitingOnOther?: boolean;
 }
 
 export function scoreBriefCandidate(signals: BriefScoreSignals): number {
@@ -52,6 +58,9 @@ export function scoreBriefCandidate(signals: BriefScoreSignals): number {
   if (signals.deadlineWithin48h) score += BRIEF_SCORE_WEIGHTS.deadlineWithin48h;
   if (signals.needsReply) score += BRIEF_SCORE_WEIGHTS.needsReply;
   if (signals.bulkSender) score += BRIEF_SCORE_WEIGHTS.bulkSender;
+  if (signals.needsAction) score += BRIEF_SCORE_WEIGHTS.needsAction;
+  if (signals.meaningfulChange) score += BRIEF_SCORE_WEIGHTS.meaningfulChange;
+  if (signals.waitingOnOther) score += BRIEF_SCORE_WEIGHTS.waitingOnOther;
   return score;
 }
 
@@ -62,7 +71,7 @@ export interface BriefSignalInput {
   selfAddresses: Iterable<string>;
   // Lower-cased address of the person the user talks to in this thread.
   counterparty: string | null | undefined;
-  // Lower-cased addresses and domains the user has written to before.
+  // Lower-cased addresses the user has written to before.
   sentAllowlist: Set<string>;
   // Count of messages in the thread that the user sent.
   outboundCount: number;
@@ -83,10 +92,7 @@ export function briefScoreSignals(input: BriefSignalInput): BriefScoreSignals {
   const self = new Set([...input.selfAddresses].map((value) => value.toLowerCase()));
   const directToYou = input.newestInboundTo.some((address) => self.has(address.toLowerCase()));
   const counterparty = (input.counterparty || '').toLowerCase();
-  const domain = counterparty.split('@')[1] || '';
-  const repliedBefore =
-    Boolean(counterparty) &&
-    (input.sentAllowlist.has(counterparty) || (Boolean(domain) && input.sentAllowlist.has(domain)));
+  const repliedBefore = Boolean(counterparty) && input.sentAllowlist.has(counterparty);
   const participated = input.outboundCount > 0;
   const deadlineWithin48h = input.dueAts.some(
     (dueAt) => typeof dueAt === 'number' && dueAt >= input.now && dueAt < input.now + DEADLINE_WINDOW_MS,
@@ -105,9 +111,11 @@ export function assignBriefLane(input: {
   replyOwed: boolean;
   deadlineWithin48h: boolean;
   needsReply?: boolean;
+  needsAction?: boolean;
+  meaningfulChange?: boolean;
 }): BriefLane {
   if (input.replyOwed || input.needsReply) return 'answer';
-  if (input.deadlineWithin48h) return 'today';
+  if (input.deadlineWithin48h || input.needsAction || input.meaningfulChange) return 'today';
   return 'know';
 }
 

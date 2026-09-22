@@ -1,4 +1,5 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
+import type { JevAssessment } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
 import type { TriageHandoffV1 } from './triage-handoff';
@@ -38,6 +39,13 @@ export interface Thread {
     at: number;
   } | null;
   smartCategory?: SmartCategory | null;
+  jev?: JevAssessment | null;
+  jevStatus?: string;
+  jevLastBriefRevision?: string;
+  jevLastBriefChangeId?: string;
+  searchRank?: number;
+  searchRelevance?: number;
+  searchOrder?: 'recent' | 'relevance';
   readState?: {
     openedAt?: number;
     lastMarkedReadAt?: number;
@@ -344,6 +352,10 @@ export interface TrackedThread {
 }
 
 export interface ThreadInsight {
+  briefEligible?: boolean;
+  needsAction?: boolean;
+  meaningfulChange?: boolean;
+  jev?: JevAssessment;
   _id: string;
   account: AccountEmail;
   threadId: string;
@@ -384,6 +396,7 @@ export interface ThreadInsight {
 }
 
 export interface DailyReportItem {
+  jev?: JevAssessment;
   account: AccountEmail;
   threadId: string;
   subject: string;
@@ -556,12 +569,13 @@ export interface DailyReport {
     tracked: DailyReportItem[];
     fyi: DailyReportItem[];
     bulkTail: DailyReportItem[];
-    // Budget lanes. `answer` holds at most 3, `know` at most 3, and the three
+    // Budget lanes. `know` holds at most 3, and the three lanes
     // together hold at most the tier budget. Absent on editions older than
     // 2026-09-03.
     answer?: DailyReportItem[];
     today?: DailyReportItem[];
     know?: DailyReportItem[];
+    overflow?: DailyReportItem[];
     tasks?: DailyReportTaskItem[];
     calendar?: DailyReportCalendarItem[];
     mcp?: DailyReportMcpItem[];
@@ -580,6 +594,7 @@ export interface DailyReport {
     noise?: number;
     // Mail items the edition selected across the three budget lanes.
     selected?: number;
+    overflow?: number;
     openTasks?: number;
     completedTasks?: number;
     calendarEvents?: number;

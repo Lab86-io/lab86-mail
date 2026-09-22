@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
+import { ATTENTION_VIEWS, isAttentionView } from '../jev/contract';
 import { ingestThreadIntoCorpus, maybeKickCorpusBackfill } from '../mail/corpus-sync';
 import { DEFAULT_MAIL_QUERY, SMART_CATEGORY_CANDIDATE_QUERIES } from '../mail/search/constants';
 import {
@@ -160,7 +161,11 @@ export const searchThreads = defineTool({
   },
 });
 
-const SmartCategorySchema = z.union([z.enum(SMART_CATEGORY_IDS), z.string().regex(/^custom:.+/)]);
+const SmartCategorySchema = z.union([
+  z.enum(SMART_CATEGORY_IDS),
+  z.enum(ATTENTION_VIEWS),
+  z.string().regex(/^custom:.+/),
+]);
 
 export const listSmartCategory = defineTool({
   name: 'list_smart_category',
@@ -183,6 +188,23 @@ export const listSmartCategory = defineTool({
     nextPageToken: z.string().optional(),
   }),
   async handler({ account, category, query, max, pageToken }, ctx) {
+    if (!ctx.userId) throw new Error('Sign in required for hosted mail access.');
+    if (!isConvexConfigured()) throw new Error('Mail index is not available.');
+    const localCursorPayload = pageToken?.startsWith(LOCAL_CURSOR_PREFIX)
+      ? pageToken.slice(LOCAL_CURSOR_PREFIX.length)
+      : undefined;
+    const jevCursorPayload = pageToken?.startsWith('jev:') ? pageToken.slice(4) : undefined;
+    if (
+      (localCursorPayload !== undefined &&
+        (!localCursorPayload.trim() || !Number.isFinite(Number(localCursorPayload)))) ||
+      (jevCursorPayload !== undefined && !jevCursorPayload.trim())
+    ) {
+      throw new Error('Invalid corpus cursor. Refresh the Mail view.');
+    }
+    const corpusCursor = localCursorPayload !== undefined || jevCursorPayload !== undefined;
+    if (isAttentionView(category) && pageToken && !corpusCursor) {
+      throw new Error('Invalid attention-view cursor. Refresh the Mail view.');
+    }
     // The user is looking at categories — opportunistically drain any threads
     // still waiting for their one LLM verdict (debounced, runs off-request).
     if (ctx.userId) {
@@ -192,30 +214,41 @@ export const listSmartCategory = defineTool({
     }
     // Primary path: indexed corpus read over persisted write-time verdicts.
     // No provider calls and no writes — this is a pure local query.
-    if (ctx.userId && isConvexConfigured() && (!pageToken || pageToken.startsWith(LOCAL_CURSOR_PREFIX))) {
-      const before = pageToken ? Number(pageToken.slice(LOCAL_CURSOR_PREFIX.length)) : undefined;
-      const result = await convexQuery<{ items: any[]; nextBefore?: number }>(
+    {
+      const before = localCursorPayload !== undefined ? Number(localCursorPayload) : undefined;
+      const result = await convexQuery<{ items: any[]; nextBefore?: number; nextCursor?: string }>(
         (api as any).mailCorpus.listSmartCategoryThreads,
         {
           userId: ctx.userId,
           accountId: account,
           category,
           limit: max,
-          before: Number.isFinite(before) ? before : undefined,
+          before,
+          cursor: jevCursorPayload,
         },
-      ).catch(() => null);
-      if (result) {
-        const corpusEmpty = result.items.length === 0 && pageToken === undefined;
-        if (!corpusEmpty || (await accountHasCorpusRows(ctx.userId, account))) {
-          return {
-            account,
-            category,
-            query: query || '',
-            items: result.items,
-            nextPageToken:
-              result.nextBefore !== undefined ? `${LOCAL_CURSOR_PREFIX}${result.nextBefore}` : undefined,
-          };
-        }
+      );
+      // A failed corpus read must remain retryable, not silently switch the
+      // category to provider semantics. Provider cursors can continue only
+      // while both this category and the account's corpus are still empty.
+      if (
+        isAttentionView(category) ||
+        result.items.length > 0 ||
+        corpusCursor ||
+        result.nextCursor !== undefined ||
+        result.nextBefore !== undefined ||
+        (await accountHasCorpusRows(ctx.userId, account))
+      ) {
+        return {
+          account,
+          category,
+          query: query || '',
+          items: result.items,
+          nextPageToken: result.nextCursor
+            ? `jev:${result.nextCursor}`
+            : result.nextBefore !== undefined
+              ? `${LOCAL_CURSOR_PREFIX}${result.nextBefore}`
+              : undefined,
+        };
       }
     }
 
@@ -236,7 +269,7 @@ export const listSmartCategory = defineTool({
         account,
         query: candidateQuery,
         max: Math.min(80, Math.max(max * 2, 60)),
-        pageToken: pageToken?.startsWith(LOCAL_CURSOR_PREFIX) ? undefined : pageToken,
+        pageToken: corpusCursor ? undefined : pageToken,
       }),
       'Connected Nylas account not found.',
     );
@@ -262,7 +295,7 @@ async function accountHasCorpusRows(userId: string, accountId: string) {
   const state = await convexQuery<any | null>((api as any).mailCorpus.getSyncState, {
     userId,
     accountId,
-  }).catch(() => null);
+  });
   return Boolean(state && (state.messagesSynced || state.corpusReady));
 }
 

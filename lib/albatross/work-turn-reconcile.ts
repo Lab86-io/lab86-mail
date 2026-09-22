@@ -421,7 +421,7 @@ export async function reconcileWorkTurn(input: ReconcileWorkTurnInput): Promise<
       });
       const freshState = fresh?.work?.workState || fresh?.work?.status;
       // An answered completion question may have closed the Work just now.
-      if (['done', 'released', 'archived'].includes(freshState)) {
+      if (['done', 'released', 'archived', 'waiting', 'paused'].includes(freshState)) {
         return {
           status: 'ok',
           artifactsRecorded: artifacts.length + shapeWrites.length,

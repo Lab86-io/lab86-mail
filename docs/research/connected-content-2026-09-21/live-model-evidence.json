@@ -1,0 +1,209 @@
+{
+  "at": "2026-09-22T01:36:13.801Z",
+  "syntheticSources": true,
+  "retrieval": "fixed synthetic corpus; provider calls are live",
+  "model": "openai/gpt-5.5",
+  "classifications": [
+    {
+      "source": "launch-request",
+      "repeatedLabelsEqual": false,
+      "runs": [
+        {
+          "ms": 544,
+          "labels": {
+            "kind": "request",
+            "actionable": true,
+            "resolved": false,
+            "workId": null,
+            "confidence": 0.66,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 238,
+          "labels": {
+            "kind": "request",
+            "actionable": true,
+            "resolved": false,
+            "workId": null,
+            "confidence": 0.65,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 276,
+          "labels": {
+            "kind": "request",
+            "actionable": true,
+            "resolved": false,
+            "workId": null,
+            "confidence": 0.66,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        }
+      ]
+    },
+    {
+      "source": "athletics",
+      "repeatedLabelsEqual": true,
+      "runs": [
+        {
+          "ms": 234,
+          "labels": {
+            "kind": "noise",
+            "actionable": false,
+            "resolved": false,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 302,
+          "labels": {
+            "kind": "noise",
+            "actionable": false,
+            "resolved": false,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 263,
+          "labels": {
+            "kind": "noise",
+            "actionable": false,
+            "resolved": false,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        }
+      ]
+    },
+    {
+      "source": "resolved",
+      "repeatedLabelsEqual": true,
+      "runs": [
+        {
+          "ms": 274,
+          "labels": {
+            "kind": "update",
+            "actionable": false,
+            "resolved": true,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 307,
+          "labels": {
+            "kind": "update",
+            "actionable": false,
+            "resolved": true,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        },
+        {
+          "ms": 331,
+          "labels": {
+            "kind": "update",
+            "actionable": false,
+            "resolved": true,
+            "workId": null,
+            "confidence": 1,
+            "model": "typesafe/jev-1.13-20260917"
+          }
+        }
+      ]
+    }
+  ],
+  "embeddings": {
+    "ms": 696,
+    "count": 4,
+    "dimensions": 1536
+  },
+  "preparation": {
+    "prepared": true,
+    "ms": 14667,
+    "generations": [
+      {
+        "feature": "brief_preparation_research",
+        "ms": 2955
+      },
+      {
+        "feature": "brief_preparation",
+        "ms": 11708
+      }
+    ]
+  },
+  "draft": {
+    "title": "Prepare Orion launch checklist for review",
+    "shape": "quick",
+    "situation": "Jakob has been asked to prepare and own the Orion launch checklist by Friday. The user note is explicit: prepare a checklist for review and do not deploy anything.",
+    "background": "The current requirements say Orion release needs signed security approval, smoke tests in staging, and a recorded rollback owner. They also state that production deployment is blocked until security approval is recorded. The launch date has not been agreed, and the launch request says nobody has completed the checklist yet.",
+    "assessment": "This is a checklist-preparation task, not a deployment task. The biggest launch blocker is signed security approval. Other required pre-launch items are staging smoke tests and rollback-owner recording. There is an uncertainty/contradiction risk around timing: the checklist is due Friday, but the launch date itself is not agreed, so the checklist should avoid implying a launch date or readiness until approvals are recorded.",
+    "recommendation": "Review the attached draft checklist, fill in the missing owner/status fields, and route it for review. Do not deploy or mark launch-ready until signed security approval is recorded.",
+    "questions": [
+      "Who is the security approver, and where should the signed approval be recorded?",
+      "Who should be listed as the rollback owner?",
+      "What staging smoke test evidence or run link should be attached once complete?",
+      "Who needs to review or approve the checklist before Friday?"
+    ],
+    "steps": [
+      "Review the draft checklist file for accuracy against current requirements.",
+      "Fill in named owners for security approval, smoke tests, rollback, and final checklist review.",
+      "Add links or locations for evidence records if available.",
+      "Send the checklist for review only; do not deploy or execute launch steps.",
+      "Keep launch status as blocked until signed security approval is recorded."
+    ],
+    "files": [
+      {
+        "name": "orion-launch-checklist-draft.md",
+        "content": "# Orion Launch Checklist — Draft for Review\n\nOwner: Jakob  \nPurpose: Checklist preparation for review only. Do **not** deploy from this checklist.\n\n## Current status\n\n- [ ] Checklist reviewed and accepted\n- [ ] Launch date agreed\n- [ ] Signed security approval recorded\n- [ ] Staging smoke tests completed\n- [ ] Rollback owner recorded\n- [ ] Final launch readiness confirmed after all blockers are cleared\n\n## Required pre-launch items\n\n### 1. Security approval\n\n- Requirement: Signed security approval is required before launch.\n- Status: Not yet recorded / unknown.\n- Approver: TBD\n- Approval record location: TBD\n- Evidence/link: TBD\n\n**Launch gate:** No production deployment until signed security approval is recorded.\n\n### 2. Staging smoke tests\n\n- Requirement: Run smoke tests in staging.\n- Status: TBD\n- Test owner: TBD\n- Test date/time: TBD\n- Evidence/link: TBD\n- Result: TBD\n\n### 3. Rollback ownership\n\n- Requirement: Record a rollback owner before launch.\n- Status: TBD\n- Rollback owner: TBD\n- Rollback plan/link: TBD\n\n### 4. Launch date\n\n- Requirement/status: Launch date has not been agreed.\n- Proposed launch date: TBD\n- Decision owner: TBD\n- Notes: Do not assume a launch date until agreed.\n\n## Go / no-go checklist\n\nBefore any production deployment, confirm:\n\n- [ ] Signed security approval is recorded.\n- [ ] Staging smoke tests passed and evidence is linked.\n- [ ] Rollback owner is recorded.\n- [ ] Launch date/time is agreed.\n- [ ] Required reviewers have approved this checklist.\n- [ ] No unresolved blockers remain.\n\n## Current blockers / open items\n\n| Item | Required? | Owner | Status | Notes |\n|---|---:|---|---|---|\n| Signed security approval | Yes | TBD | Blocked / unknown | Required before launch and before production deployment |\n| Staging smoke tests | Yes | TBD | TBD | Must be run in staging |\n| Rollback owner | Yes | TBD | TBD | Must be recorded before launch |\n| Launch date | Yes | TBD | Not agreed | Do not imply readiness until agreed |\n| Checklist review | Yes | Jakob / TBD reviewers | Draft | Checklist due Friday |\n\n## Review notes\n\n- This checklist is based only on the current supplied requirements.\n- This document does not authorize deployment.\n- Production deployment remains blocked until signed security approval is recorded.\n"
+      }
+    ],
+    "evidence": [
+      {
+        "sourceId": "launch-request",
+        "quote": "Please prepare the Orion launch checklist by Friday. You own the checklist."
+      },
+      {
+        "sourceId": "launch-request",
+        "quote": "We still need signed security approval before launch."
+      },
+      {
+        "sourceId": "launch-request",
+        "quote": "Use the current requirements document."
+      },
+      {
+        "sourceId": "launch-request",
+        "quote": "Nobody has completed this task yet."
+      },
+      {
+        "sourceId": "requirements",
+        "quote": "The release requires signed security approval."
+      },
+      {
+        "sourceId": "requirements",
+        "quote": "Run smoke tests in staging."
+      },
+      {
+        "sourceId": "requirements",
+        "quote": "Record a rollback owner before launch."
+      },
+      {
+        "sourceId": "requirements",
+        "quote": "No production deployment until security approval is recorded."
+      },
+      {
+        "sourceId": "requirements",
+        "quote": "The launch date has not been agreed."
+      }
+    ]
+  }
+}

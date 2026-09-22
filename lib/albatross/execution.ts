@@ -17,6 +17,7 @@ export interface ExecutionWorkRow extends HorizonWorkLike {
   rawText: string;
   status: string;
   workState?: string | null;
+  replyWatch?: { requirement: string } | null;
   agentState?: string | null;
   planError?: string | null;
   openQuestions: number;
@@ -84,6 +85,7 @@ function closed(row: ExecutionWorkRow) {
 
 function needsUser(row: ExecutionWorkRow) {
   if (closed(row)) return false;
+  if (row.workState === 'waiting' && row.replyWatch) return false;
   return (
     row.openQuestions > 0 ||
     row.agentState === 'needs_input' ||

@@ -1,0 +1,63 @@
+{
+  "scope": "Synthetic current-helper reproductions; not the historical Syracuse incident.",
+  "passedAssertions": 11,
+  "domainInheritedBroadcast": {
+    "signals": {
+      "directToYou": true,
+      "repliedBefore": true,
+      "participated": false,
+      "deadlineWithin48h": false,
+      "needsReply": false,
+      "bulkSender": true
+    },
+    "score": 2,
+    "selected": ["account:broadcast"]
+  },
+  "primaryTabBroadcast": {
+    "primary": "main",
+    "secondary": ["needs_reply"],
+    "customLabels": [],
+    "confidence": 0.82,
+    "reason": "Personal-category mail from a person.",
+    "needsAttention": true,
+    "suggestedAction": "reply",
+    "isHumanLike": true,
+    "isAutomated": true,
+    "allowNoReplyInMain": false,
+    "bulkSignals": ["unsubscribe", "newsletter_or_marketing"],
+    "ruleHits": [],
+    "signals": ["category_personal", "human"],
+    "classifiedAt": 1790028184543,
+    "model": "deterministic"
+  },
+  "explicitlyNoReplyNeeded": {
+    "primary": "main",
+    "secondary": ["needs_reply"],
+    "customLabels": [],
+    "confidence": 0.82,
+    "reason": "Personal-category mail from a person.",
+    "needsAttention": true,
+    "suggestedAction": "reply",
+    "isHumanLike": true,
+    "isAutomated": false,
+    "allowNoReplyInMain": false,
+    "bulkSignals": [],
+    "ruleHits": [],
+    "signals": ["category_personal", "human"],
+    "classifiedAt": 1790028184543,
+    "model": "deterministic"
+  },
+  "replyLaneCap": {
+    "budget": 7,
+    "answer": ["account:request1", "account:request2", "account:request3"],
+    "know": ["account:broadcast"],
+    "overflow": ["account:request4"],
+    "used": 4
+  },
+  "search": {
+    "suppliedRelevanceOrder": ["conversation", "broadcast"],
+    "localOutputOrder": ["broadcast", "conversation"],
+    "globalInputOrder": ["conversation", "broadcast"],
+    "globalOutputOrder": ["mail:a:broadcast", "mail:a:conversation"]
+  }
+}

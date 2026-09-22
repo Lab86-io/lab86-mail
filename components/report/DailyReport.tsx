@@ -7,8 +7,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextVortex, type VortexSource } from '@/components/albatross/ContextVortex';
 import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
+import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
+import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -23,7 +25,7 @@ import {
   confirmDailyReportAction,
   DEFAULT_ARTIFACT_FRAME_HEIGHT,
 } from '@/lib/daily-report-action-review';
-import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
+import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/daily-report-navigation';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
@@ -781,6 +783,10 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
   );
 }
 
+function openBacklogThread(account: string, threadId: string) {
+  openBriefMailThread(account, threadId, useClientStore.getState());
+}
+
 export function DailyReport({
   embedded = false,
   onOpenLegacy,
@@ -825,7 +831,7 @@ export function DailyReport({
       if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
       if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
-      return false;
+      return selectedId ? false : 30_000;
     },
   });
   // The legacy HTML artifact hides the tasks and threads the reader already
@@ -1185,7 +1191,16 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
-                  footer={embedded ? null : <BriefFooter report={report} />}
+                  footer={
+                    <>
+                      {!selectedId ? <PreparedWork /> : null}
+                      <BriefMailBacklog
+                        items={asLane(report.sections.overflow) || []}
+                        onOpen={openBacklogThread}
+                      />
+                      {embedded ? null : <BriefFooter report={report} />}
+                    </>
+                  }
                 />
               </motion.div>
             ) : fallbackLetter && report ? (
@@ -1227,6 +1242,11 @@ export function DailyReport({
                           Some sources failed: {report.errors.join('; ')}
                         </p>
                       ) : null}
+                      {!selectedId ? <PreparedWork /> : null}
+                      <BriefMailBacklog
+                        items={asLane(report.sections.overflow) || []}
+                        onOpen={openBacklogThread}
+                      />
                       {embedded ? null : <BriefFooter report={report} />}
                     </>
                   }

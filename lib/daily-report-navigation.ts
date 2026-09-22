@@ -1,5 +1,19 @@
 import { safeExternalUrl } from './shared/url';
 
+export function openBriefMailThread(
+  account: string,
+  threadId: string,
+  navigation: {
+    setThreadAccount: (account: string) => void;
+    setSelectedThread: (threadId: string) => void;
+    setPrimaryView: (view: 'mail') => void;
+  },
+) {
+  navigation.setThreadAccount(account);
+  navigation.setSelectedThread(threadId);
+  navigation.setPrimaryView('mail');
+}
+
 type DailyReportNavigationPayload = Record<string, unknown>;
 
 export type DailyReportNavigationResult =

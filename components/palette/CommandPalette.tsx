@@ -13,7 +13,10 @@ import { useClientStore } from '@/lib/client-state';
 import { DEFAULT_MAIL_QUERY, QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
 import { isGlobalMailSearchShortcut } from '@/lib/mail/search/focus-contract';
 import {
+  isIndexedFile,
   matchesSearch,
+  mergeSearchItems,
+  retrySearchQueries,
   SEARCH_SCOPES,
   type SearchGroup,
   type SearchResult,
@@ -22,6 +25,7 @@ import {
   searchCalendar,
   searchCloudFiles,
   searchFileLibrary,
+  searchIndexedContent,
   searchMail,
   searchPages,
 } from '@/lib/search/global-search';
@@ -188,6 +192,20 @@ function SearchContent({
     retry: false,
   });
   const pages = scope === 'all' ? searchPages(trimmed) : [];
+  const indexed = useQuery({
+    queryKey: ['global-search', 'indexed-content', query],
+    queryFn: ({ signal }) => searchIndexedContent(query, false, signal),
+    enabled: searchEnabled && (scope === 'all' || scope === 'files'),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const semantic = useQuery({
+    queryKey: ['global-search', 'semantic-content', query],
+    queryFn: ({ signal }) => searchIndexedContent(query, true, signal),
+    enabled: searchEnabled && (scope === 'all' || scope === 'files'),
+    staleTime: 60_000,
+    retry: false,
+  });
   const narrative = useQuery({
     queryKey: ['global-search', 'narrative', query],
     queryFn: async ({ signal }) => {
@@ -208,7 +226,12 @@ function SearchContent({
     staleTime: 0,
     retry: false,
   });
-  const files = library.data?.items || [];
+  const indexedItems = mergeSearchItems(semantic.data?.items || [], indexed.data?.items || []);
+  const files = mergeSearchItems(
+    indexedItems.filter(isIndexedFile),
+    library.data?.items || [],
+    cloud.data?.items || [],
+  );
   const go = (path: string) => {
     // Chat opens around the existing page. Rewriting the URL here would strip
     // an open file's document ID and dispatch a destructive Files navigation.
@@ -296,13 +319,14 @@ function SearchContent({
             type="button"
             className="pb-2 text-[var(--color-accent)] hover:underline"
             onClick={() => {
+              if (label === 'Files') {
+                void retrySearchQueries([result, library, indexed, semantic]);
+                return;
+              }
               void result.refetch();
               if (label.startsWith('Mail')) {
                 void accounts.refetch();
                 if (natural) void translation.refetch();
-              }
-              if (label === 'Files') {
-                void library.refetch();
               }
             }}
           >
@@ -439,13 +463,26 @@ function SearchContent({
             {scope === 'all' || scope === 'files'
               ? section(
                   'Files',
-                  { ...cloud, isFetching: cloud.isFetching || library.isFetching },
+                  {
+                    ...cloud,
+                    data: { items: [], warnings: cloud.data?.warnings || [] },
+                    isFetching:
+                      cloud.isFetching || library.isFetching || indexed.isFetching || semantic.isFetching,
+                  },
                   files,
                   [
                     library.error ? 'Albatross library is unavailable.' : '',
                     ...(library.data?.warnings || []),
+                    ...(semantic.data?.warnings || []),
+                    indexed.error || semantic.error ? 'Content search is temporarily unavailable.' : '',
                   ].filter(Boolean),
                 )
+              : null}
+            {scope === 'all'
+              ? section('Connected tools', {
+                  ...indexed,
+                  data: { items: indexedItems.filter((item) => !isIndexedFile(item)), warnings: [] },
+                })
               : null}
             {scope === 'all' || scope === 'calendar' ? section('Calendar', calendar) : null}
           </>

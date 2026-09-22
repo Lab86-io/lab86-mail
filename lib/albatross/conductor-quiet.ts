@@ -14,6 +14,7 @@ export type AdvanceTrigger = 'user' | 'conductor' | 'evidence';
 export interface QuietRuleWork extends HorizonWorkLike {
   createdAt: number;
   lastUserTouchAt?: number | null;
+  workState?: string | null;
 }
 
 /** The last time the user acted. A capture is a touch, so rows without the field use createdAt. */
@@ -42,6 +43,7 @@ export type QuietVerdict = 'move' | 'dormant' | 'quiet';
  * - `conductor`: move only Work the user touched recently or a wake returned.
  */
 export function conductorVerdict(work: QuietRuleWork, trigger: AdvanceTrigger, nowMs: number): QuietVerdict {
+  if (work.workState === 'waiting' || work.workState === 'paused') return 'quiet';
   if (trigger === 'user') return 'move';
   if (isDormant(work, nowMs)) return 'dormant';
   if (trigger === 'evidence') return 'move';

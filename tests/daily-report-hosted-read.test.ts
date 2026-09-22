@@ -4,6 +4,7 @@ import {
   getLatestDailyReport,
   listDailyReportSummaries,
   listDailyReports,
+  saveDailyReport,
   setDailyReportReaderForTest,
 } from '../lib/store/daily-reports';
 
@@ -17,6 +18,33 @@ const report = (i: number) => ({
   title: `Edition ${i}`,
   status: 'ready',
   artifactStatus: 'ready',
+});
+
+test('a saved Brief succeeds despite synchronous owner or asynchronous attention-marking failures', async () => {
+  for (const syncFailure of [true, false]) {
+    const saved: unknown[] = [];
+    const value = report(1);
+    expect(
+      await saveDailyReport(
+        value as any,
+        {
+          persist: async (_kind: string, _key: string, doc: unknown) => {
+            saved.push(doc);
+            return doc;
+          },
+          configured: () => true,
+          owner: () => {
+            if (syncFailure) throw new Error('No owner');
+            return 'reader';
+          },
+          mark: async () => {
+            throw new Error('Unavailable');
+          },
+        } as any,
+      ),
+    ).toBe(value);
+    expect(saved).toEqual([value]);
+  }
 });
 
 test('hosted latest asks for exactly one edition in the current user context', async () => {
@@ -80,4 +108,29 @@ test('summary history stops on exhaustion and requests no artifact bodies', asyn
   expect(calls).toEqual([
     { userId: 'reader', edition: undefined, cursor: null, limit: 8, summaryOnly: true },
   ]);
+});
+
+test('latest edition reflects current scoped Jev facts while full history remains a snapshot', async () => {
+  const { report: fixture, thread, assessment, policy } = await import('./fixtures/jev');
+  const saved = { ...fixture(), generatedAt: Date.now() };
+  const calls: any[] = [];
+  setDailyReportReaderForTest({
+    configured: () => true,
+    loadPolicy: async () => policy,
+    query: (async (_fn, args) => {
+      calls.push(args);
+      return args.threads
+        ? [thread({ jev: assessment({ sourceRevision: 'resolved', obligations: [] }) })]
+        : { page: [saved], isDone: true, continueCursor: '' };
+    }) as any,
+  });
+  await context(async () => {
+    expect((await getLatestDailyReport())?.sections.answer).toEqual([]);
+    expect((await listDailyReports(1))[0].sections.answer).toHaveLength(1);
+  });
+  expect(calls.find((c) => c.threads)).toMatchObject({
+    userId: 'reader',
+    threads: [{ accountId: 'account-a', threadId: 'thread-a' }],
+  });
+  expect(saved.sections.answer).toHaveLength(1);
 });

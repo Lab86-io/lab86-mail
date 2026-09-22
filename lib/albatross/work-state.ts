@@ -21,6 +21,7 @@ export interface WorkStateInput {
   openQuestions?: number;
   planError?: string | null;
   nextStep?: string | null;
+  replyWatch?: { requirement: string } | null;
 }
 
 /**
@@ -29,6 +30,7 @@ export interface WorkStateInput {
  */
 export function needsYou(work: WorkStateInput): boolean {
   if (isClosed(work)) return false;
+  if (work.workState === 'waiting' && work.replyWatch) return false;
   if ((work.openQuestions ?? 0) > 0) return true;
   if (work.agentState === 'needs_input') return true;
   if (work.agentState === 'error' || work.planError) return true;

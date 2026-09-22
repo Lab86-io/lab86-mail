@@ -1,4 +1,6 @@
 import { v } from 'convex/values';
+import { buildCorpusSearchText } from '../lib/mail/corpus';
+import { matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
@@ -22,6 +24,19 @@ function latestCorpusMessage(a: any, b: any) {
   if (a.receivedAt !== b.receivedAt) return a.receivedAt > b.receivedAt ? a : b;
   if (a._creationTime !== b._creationTime) return a._creationTime > b._creationTime ? a : b;
   return String(a.providerMessageId).localeCompare(String(b.providerMessageId)) >= 0 ? a : b;
+}
+function orderedContent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(orderedContent);
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, orderedContent(entry)]),
+    );
+  return value;
+}
+function stableContent(value: unknown) {
+  return JSON.stringify(orderedContent(value));
 }
 
 const syncStatusValidator = v.union(
@@ -206,6 +221,7 @@ export const upsertCorpusBatch = mutation({
     requireInternalSecret(args.internalSecret);
     const ts = now();
     let insertedMessages = 0;
+    const changedContentThreads = new Set<string>();
     for (const message of args.messages) {
       const existing = await ctx.db
         .query('mailCorpusMessages')
@@ -227,7 +243,7 @@ export const upsertCorpusBatch = mutation({
         bcc: message.bcc,
         receivedAt: message.receivedAt,
         snippet: message.snippet,
-        textBody: trimCorpusText(message.textBody),
+        textBody: String(message.textBody ?? '').slice(0, 32_000),
         searchText: trimCorpusText(message.searchText),
         labels: message.labels,
         unread: message.unread,
@@ -241,6 +257,23 @@ export const upsertCorpusBatch = mutation({
       // when the batch carried a body: patch(.., {htmlBody: undefined}) would
       // strip a body an earlier hydration already stored.
       if (message.htmlBody !== undefined) patch.htmlBody = trimCorpusHtml(message.htmlBody);
+      // Partial metadata sync must not erase previously hydrated bodies/headers.
+      for (const key of ['textBody', 'headers', 'attachments', 'cc', 'bcc'] as const)
+        if (message[key] === undefined) delete patch[key];
+      if (existing?.textBody && message.textBody === undefined) {
+        const defined = Object.fromEntries(
+          Object.entries(message).filter(([, value]) => value !== undefined),
+        );
+        patch.searchText = buildCorpusSearchText({ ...existing, ...defined, textBody: existing.textBody });
+      }
+      if (
+        existing &&
+        ['subject', 'from', 'to', 'cc', 'textBody', 'headers', 'attachments'].some(
+          (key) =>
+            Object.hasOwn(patch, key) && stableContent((existing as any)[key]) !== stableContent(patch[key]),
+        )
+      )
+        changedContentThreads.add(message.providerThreadId);
       if (existing) {
         await ctx.db.patch(existing._id, patch);
       } else {
@@ -329,7 +362,10 @@ export const upsertCorpusBatch = mutation({
       // A verdict belongs to one concrete latest message. Preserve it for
       // idempotent re-syncs, but clear it when a new message becomes latest so
       // both Smart Categories and sparse Area routing reconsider the thread.
-      const freshnessPatch = classificationFreshnessPatch(existing?.latestMessageId, patch.latestMessageId);
+      const freshnessPatch = classificationFreshnessPatch(
+        changedContentThreads.has(providerThreadId) ? undefined : existing?.latestMessageId,
+        patch.latestMessageId,
+      );
       const classifyRow = existing
         ? { ...existing, ...patch, ...freshnessPatch }
         : { ...patch, ...freshnessPatch };
@@ -586,10 +622,43 @@ export const searchCorpusMessages = query({
       return builder;
     });
     const rows = await search.take(limit * 3);
-    return rows
-      .filter((row) => withinReceivedAtBounds(row, args))
-      .sort((a, b) => b.receivedAt - a.receivedAt)
-      .slice(0, limit);
+    return rows.filter((row) => withinReceivedAtBounds(row, args)).slice(0, limit);
+  },
+});
+
+// Opaque relevance cursor: selective local filters can advance through the
+// search index without replacing relevance with a received-at window.
+export const searchCorpusMessagesPage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    query: v.string(),
+    after: v.optional(v.number()),
+    before: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    let source = ctx.db
+      .query('mailCorpusMessages')
+      .withSearchIndex('by_search_text', (q) =>
+        q.search('searchText', args.query).eq('userId', args.userId).eq('accountId', args.accountId),
+      );
+    if (args.after !== undefined) source = source.filter((q) => q.gte(q.field('receivedAt'), args.after!));
+    if (args.before !== undefined) source = source.filter((q) => q.lte(q.field('receivedAt'), args.before!));
+    const page = await source.paginate({
+      cursor: args.cursor ?? null,
+      numItems: clampLimit(args.limit, 50, 50),
+    });
+    return {
+      items: page.page.map(({ htmlBody: _html, textBody, ...row }) => ({
+        ...row,
+        textBody: textBody ? matchingMailExcerpt(textBody, args.query) : undefined,
+      })),
+      nextCursor: page.isDone ? undefined : page.continueCursor,
+    };
   },
 });
 
@@ -714,17 +783,19 @@ export const listSmartCategoryThreads = query({
     category: v.string(),
     limit: v.optional(v.number()),
     before: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    const { items, nextBefore } = await queryCategoryThreads(ctx, {
+    const { items, nextBefore, nextCursor } = await queryCategoryThreads(ctx, {
       userId: args.userId,
       accountIds: args.accountId ? [args.accountId] : null,
       category: args.category,
       limit: clampLimit(args.limit, 50, 200),
       before: args.before,
+      cursor: args.cursor,
     });
-    return { items, nextBefore };
+    return { items, nextBefore, nextCursor };
   },
 });
 
@@ -929,7 +1000,6 @@ export const storeLlmVerdicts = mutation({
         llmClassifiedAt: ts,
         llmClassifiedMessageId: item.messageId,
         ...merged,
-        llmPending: undefined,
       });
       if (llmCategory) stored += 1;
     }

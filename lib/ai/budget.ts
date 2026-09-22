@@ -79,6 +79,8 @@ function ratesForModel(provider: AiProvider, model: string) {
   const normalized = model.toLowerCase().split(':')[0];
   // OpenRouter catalog, verified 2026-09-08. Runs separately check live prices.
   if (normalized === 'z-ai/glm-5.3-flash') return rate(0.075, 0.015, 0.075, 0.25);
+  if (normalized.startsWith('typesafe/jev-1.13')) return rate(0.042, 0.042, 0.042, 0);
+  if (normalized === 'openai/text-embedding-3-small') return rate(0.02, 0.02, 0.02, 0);
   if (provider === 'anthropic' || normalized.includes('anthropic/') || normalized.includes('claude')) {
     if (normalized.includes('haiku')) {
       return rate(1, 0.1, 1.25, 5);

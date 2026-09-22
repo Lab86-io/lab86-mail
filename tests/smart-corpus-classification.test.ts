@@ -18,6 +18,18 @@ describe('per-message Smart Category model queue', () => {
       llmCategory: undefined,
       llmClassifiedAt: undefined,
       llmClassifiedMessageId: undefined,
+      jev: undefined,
+      jevVersion: 0,
+      jevStatus: 'pending',
+      jevAttempts: 0,
+      jevRetryAt: undefined,
+      jevError: undefined,
+      jevLeaseId: undefined,
+      jevLeaseUntil: undefined,
+      jevNeedsReply: false,
+      jevNeedsAction: false,
+      jevWaiting: false,
+      jevChange: false,
       areaClassifierVersion: undefined,
       areaClassifiedAt: undefined,
       areaClassifiedMessageId: undefined,
@@ -31,7 +43,7 @@ describe('per-message Smart Category model queue', () => {
     expect(result.llmPending).toBe(true);
   });
 
-  test('a verdict for the current message closes pending while preserving live unread attention', () => {
+  test('a legacy verdict remains usable while its Jev evaluation is pending', () => {
     const result = classifyCorpusThread(
       row({
         latestMessageId: 'message_2',
@@ -49,7 +61,7 @@ describe('per-message Smart Category model queue', () => {
       { rules: [], customLabels: [] },
       'Use 123456 to sign in.',
     );
-    expect(result.llmPending).toBeUndefined();
+    expect(result.llmPending).toBe(true);
     expect(result.smartCategory.needsAttention).toBe(true);
   });
 
@@ -75,13 +87,13 @@ describe('per-message Smart Category model queue', () => {
     expect(result.smartPrimary).not.toBe('finance_admin');
   });
 
-  test('a current model attempt with no verdict stays deterministic without retrying', () => {
+  test('an unsuccessful legacy attempt does not prevent the Jev migration', () => {
     const result = classifyCorpusThread(
       row({ latestMessageId: 'message_2', llmClassifiedMessageId: 'message_2' }),
       { rules: [], customLabels: [] },
       'Use 123456 to sign in.',
     );
     expect(result.smartPrimary).toBeTruthy();
-    expect(result.llmPending).toBeUndefined();
+    expect(result.llmPending).toBe(true);
   });
 });

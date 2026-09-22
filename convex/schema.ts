@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { contentTables } from './contentSchema';
 import { narrativeTables } from './narrativeSchema';
 
 const albatrossSourceRef = v.object({
@@ -72,6 +73,7 @@ const albatrossConfirmationRef = v.object({
 
 export default defineSchema({
   ...narrativeTables,
+  ...contentTables,
   mailOutbox: defineTable({
     userId: v.string(),
     key: v.string(),
@@ -140,7 +142,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId']),
+    .index('by_grant', ['grantId'])
+    .index('by_status', ['status']),
 
   providerGrants: defineTable({
     userId: v.string(),
@@ -315,6 +318,22 @@ export default defineSchema({
     llmClassifiedAt: v.optional(v.number()),
     llmClassifiedMessageId: v.optional(v.string()),
     llmPending: v.optional(v.boolean()),
+    jev: v.optional(v.any()),
+    jevEvidenceMessageIds: v.optional(v.array(v.string())),
+    jevVersion: v.optional(v.number()),
+    jevStatus: v.optional(v.string()),
+    jevAttempts: v.optional(v.number()),
+    jevRetryAt: v.optional(v.number()),
+    jevError: v.optional(v.string()),
+    jevLeaseId: v.optional(v.string()),
+    jevLeaseUntil: v.optional(v.number()),
+    jevNeedsReply: v.optional(v.boolean()),
+    jevNeedsAction: v.optional(v.boolean()),
+    jevWaiting: v.optional(v.boolean()),
+    jevChange: v.optional(v.boolean()),
+    jevLastBriefRevision: v.optional(v.string()),
+    jevLastBriefChangeId: v.optional(v.string()),
+    jevLastBriefAt: v.optional(v.number()),
     // Area routing watermark. Areas are a SPARSE overlay: most threads belong to
     // zero areas, so "has no areaArtifactLinks row" cannot mean "not yet
     // classified" — a zero-area verdict is a real, successful answer. This
@@ -344,6 +363,11 @@ export default defineSchema({
     .index('by_user_primary_unread', ['userId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_account_primary_unread', ['userId', 'accountId', 'smartPrimary', 'unread', 'lastDate'])
     .index('by_user_llm_pending', ['userId', 'llmPending', 'lastDate'])
+    .index('by_jev_version', ['jevVersion'])
+    .index('by_user_jev_reply', ['userId', 'jevNeedsReply', 'lastDate'])
+    .index('by_user_jev_action', ['userId', 'jevNeedsAction', 'lastDate'])
+    .index('by_user_jev_waiting', ['userId', 'jevWaiting', 'lastDate'])
+    .index('by_user_jev_change', ['userId', 'jevChange', 'lastDate'])
     .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
     .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
@@ -378,6 +402,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
+    .index('by_user_received', ['userId', 'receivedAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread_received', ['userId', 'accountId', 'providerThreadId', 'receivedAt'])
@@ -1150,6 +1175,28 @@ export default defineSchema({
     // an expected mail confirmation. The watcher conductor polls these.
     mailWatchAt: v.optional(v.number()),
     mailWatchClaimedAt: v.optional(v.number()),
+    replyWatch: v.optional(
+      v.object({
+        id: v.string(),
+        accountId: v.string(),
+        threadId: v.string(),
+        senderEmails: v.array(v.string()),
+        requirement: v.string(),
+        after: v.number(),
+        startedAt: v.number(),
+      }),
+    ),
+    replyReceivedAt: v.optional(v.number()),
+    replyArrived: v.optional(
+      v.object({
+        accountId: v.string(),
+        threadId: v.string(),
+        messageId: v.string(),
+        from: v.string(),
+        subject: v.string(),
+        reason: v.string(),
+      }),
+    ),
     pendingStepEvidence: v.optional(
       v.object({
         planId: v.string(),
@@ -1272,6 +1319,7 @@ export default defineSchema({
     .index('by_user_project', ['userId', 'primaryProjectId'])
     .index('by_pending_step_evidence', ['pendingStepEvidenceAt'])
     .index('by_mail_watch', ['mailWatchAt'])
+    .index('by_user_reply_received', ['userId', 'replyReceivedAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
     .index('by_capture', ['captureId']),
 
@@ -1806,7 +1854,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_user_provider_account', ['userId', 'provider', 'accountKey']),
+    .index('by_user_provider_account', ['userId', 'provider', 'accountKey'])
+    .index('by_status', ['status']),
 
   cloudFileCredentials: defineTable({
     userId: v.string(),

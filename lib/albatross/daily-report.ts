@@ -94,6 +94,12 @@ interface BuildAlbatrossDailyReportFromLiveInput {
   areas?: any[];
   checkins?: any[];
   intentWork?: any[];
+  resumedWork?: Array<{
+    id: string;
+    title: string;
+    areaId?: string;
+    reply: { from: string; subject: string; reason: string };
+  }>;
   workStates?: Array<{ id: string; workState?: string; status?: string }>;
 }
 
@@ -196,6 +202,7 @@ function alignmentWorkFromRows(
   if (!alignment) return alignment;
   const rows = intentWork
     .filter((row) => !isTerminalWork(row))
+    .filter((row) => !['waiting', 'paused'].includes(row.workState || ''))
     .filter((row) => !row.checkinLocalDate || String(row.checkinLocalDate) === alignment.localDate)
     .slice(0, 8)
     .map((row) => ({
@@ -342,7 +349,11 @@ export function buildAlbatrossDailyReportContext(
 export function buildAlbatrossDailyReportContextFromLive(
   input: BuildAlbatrossDailyReportFromLiveInput = {},
 ): AlbatrossDailyReportContext {
-  const closedIds = new Set((input.workStates || []).filter(isTerminalWork).map((row) => row.id));
+  const closedIds = new Set(
+    (input.workStates || [])
+      .filter((row) => isTerminalWork(row) || ['waiting', 'paused'].includes(row.workState || ''))
+      .map((row) => row.id),
+  );
   const projects = input.projects ?? [];
   const approvals = (input.approvals ?? []).filter((row) => !closedIds.has(row.intentId));
   const applications = input.applications ?? [];
@@ -390,6 +401,18 @@ export function buildAlbatrossDailyReportContextFromLive(
       status: application.status,
     }))
     .slice(0, 6);
+
+  for (const work of [...(input.resumedWork || [])].reverse()) {
+    const existing = activeIntents.findIndex((row) => row.id === work.id);
+    if (existing >= 0) activeIntents.splice(existing, 1);
+    activeIntents.unshift({
+      id: work.id,
+      text: `${work.title} is active again: the reply from ${work.reply.from} arrived (${work.reply.subject}). ${work.reply.reason}`,
+      areaId: work.areaId,
+      status: 'active',
+    });
+  }
+  activeIntents.splice(6);
 
   const areaIds = new Set<string>();
   for (const row of [...activeProjects, ...activeIntents]) {
@@ -534,6 +557,7 @@ export async function loadLiveAlbatrossDailyReportContext(
       areas: live?.areas,
       checkins: live?.checkins,
       intentWork: (live as any)?.intentWork,
+      resumedWork: live?.resumedWork,
     });
   } catch (err: any) {
     console.warn('Daily report Albatross context failed:', err?.message || err);

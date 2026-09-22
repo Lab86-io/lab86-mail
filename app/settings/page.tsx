@@ -33,6 +33,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
+import { JevSection } from '@/components/settings/JevSection';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -78,6 +79,7 @@ export default function SettingsPage() {
 }
 
 const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
+  jev: () => <JevSection />,
   appearance: () => (
     <section>
       <SectionHeading

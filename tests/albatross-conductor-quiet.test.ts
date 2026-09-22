@@ -13,6 +13,13 @@ const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
 describe('the conductor quiet rule', () => {
+  test('waiting and paused Work stay quiet even after a recent touch or unrelated evidence', () => {
+    for (const workState of ['waiting', 'paused']) {
+      for (const trigger of ['user', 'evidence', 'conductor'] as const) {
+        expect(conductorVerdict({ createdAt: NOW, workState }, trigger, NOW)).toBe('quiet');
+      }
+    }
+  });
   test('a capture is a touch when the field is missing', () => {
     expect(lastUserTouch({ createdAt: 5 })).toBe(5);
     expect(lastUserTouch({ createdAt: 5, lastUserTouchAt: 9 })).toBe(9);

@@ -1,4 +1,6 @@
+import { type ContentItem, sourceLink } from '../content/contract';
 import { readFilePage } from '../files/library-client';
+import { compareMailRelevance } from '../mail/search/ranking';
 import type { PrimaryView } from '../shared/types';
 
 export type SearchScope = 'all' | 'mail' | 'files' | 'calendar';
@@ -29,10 +31,67 @@ export interface SearchResult {
   detail: string;
   target: SearchTarget;
   timestamp?: number;
+  searchRelevance?: number;
+  searchOrder?: 'recent' | 'relevance';
+  searchRank?: number;
+  contentSource?: string;
 }
 export interface SearchGroup {
   items: SearchResult[];
   warnings: string[];
+}
+
+export async function searchIndexedContent(
+  query: string,
+  semantic: boolean,
+  signal?: AbortSignal,
+  fetcher = fetch,
+): Promise<SearchGroup> {
+  const response = await fetcher(
+    `/api/content?view=search&q=${encodeURIComponent(query)}&semantic=${semantic}`,
+    { signal, cache: 'no-store' },
+  );
+  if (!response.ok) throw new Error('Indexed content could not be searched.');
+  const data = await response.json();
+  if (!Array.isArray(data.items)) throw new Error('Indexed content returned an incomplete response.');
+  const items: SearchResult[] = data.items.flatMap((item: ContentItem) => {
+    const url = sourceLink(item);
+    if (!url || item.source === 'mail') return [];
+    const target: SearchTarget =
+      item.source === 'document'
+        ? { kind: 'document', documentId: item.externalId }
+        : { kind: 'external', url };
+    return [
+      {
+        id: ['google_drive', 'onedrive'].includes(item.source)
+          ? `cloud:${item.connectionId}:${item.externalId}`
+          : item.source === 'document'
+            ? `document:${item.externalId}`
+            : `content:${item._id}`,
+        contentSource: item.source,
+        title: item.title,
+        detail: `${item.source.replaceAll('_', ' ')} · ${item.text.slice(0, 200)}${item.partial ? ' · Partial content' : ''}`,
+        timestamp: item.modifiedAt,
+        target,
+      },
+    ];
+  });
+  return {
+    items,
+    warnings: data.semanticUnavailable ? ['Search by meaning is unavailable; showing text matches.'] : [],
+  };
+}
+
+export function mergeSearchItems(...lists: SearchResult[][]): SearchResult[] {
+  const result = new Map<string, SearchResult>();
+  for (const item of lists.flat()) {
+    const key = item.target.kind === 'document' ? `document:${item.target.documentId}` : item.id;
+    if (!result.has(key)) result.set(key, item);
+  }
+  return [...result.values()];
+}
+export function isIndexedFile(item: SearchResult) {
+  return ['document', 'attachment', 'google_drive', 'onedrive'].includes(item.contentSource || '');
 }
 
 export const SEARCH_PAGES: SearchResult[] = [
@@ -136,15 +195,22 @@ export async function searchMail(
           fromAddress?: string;
           snippet?: string;
           lastDate?: number;
+          searchRank?: number;
+          contentSource?: string;
+          searchRelevance?: number;
+          searchOrder?: 'recent' | 'relevance';
         }>;
-      }>('search_threads', { account: account.accountId, query, max: 8 }, signal);
+      }>('search_threads', { account: account.accountId, query, max: 32 }, signal);
       return data.items.map(
-        (item): SearchResult => ({
+        (item, index): SearchResult => ({
           id: `mail:${account.accountId}:${item._id}`,
           title: item.subject || '(no subject)',
           detail: [item.fromAddress, account.email, item.snippet].filter(Boolean).join(' · '),
           target: { kind: 'mail', account: account.accountId, threadId: item._id },
           timestamp: item.lastDate,
+          searchRank: item.searchRank ?? index,
+          searchRelevance: item.searchRelevance,
+          searchOrder: item.searchOrder,
         }),
       );
     }),
@@ -153,7 +219,7 @@ export async function searchMail(
   return {
     items: results
       .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      .sort((a, b) => compareMailRelevance({ ...a, lastDate: a.timestamp }, { ...b, lastDate: b.timestamp }))
       .slice(0, 16),
     warnings: results.flatMap((result, index) =>
       result.status === 'rejected'
@@ -365,4 +431,8 @@ export function searchFilePath(target: Extract<SearchTarget, { kind: 'document' 
     params.set('mime', target.mimeType);
   }
   return `/?${params}`;
+}
+/** Retry every contributing source even if one query rejects immediately. */
+export async function retrySearchQueries(queries: Array<{ refetch: () => unknown }>) {
+  return Promise.allSettled(queries.map((query) => Promise.resolve().then(() => query.refetch())));
 }
