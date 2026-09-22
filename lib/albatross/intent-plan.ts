@@ -1,6 +1,7 @@
-import { stepCountIs, tool } from 'ai';
+import { type ModelMessage, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
+import { withToolTimeout } from '@/lib/ai/tool-timeout';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { BRIEF_DOCUMENT_V2_SYSTEM_PROMPT } from '@/lib/mail/brief-document-prompt';
 import { briefServicesFromIds } from '@/lib/mail/brief-services';
@@ -695,22 +696,35 @@ function plannerResearchTool(input: {
   userId: string;
   userTimezone?: string;
   refs: PlanContextRef[];
+  signal?: AbortSignal;
 }) {
   return tool({
     description: input.source.description,
     inputSchema: input.source.input as any,
     execute: async (args: any) => {
-      const result = await deps.invokeTool(input.source, args, {
-        agent: 'ai',
-        userId: input.userId,
-        userTimezone: input.userTimezone,
-      });
+      const result = await withToolTimeout(
+        (abortSignal) =>
+          deps.invokeTool(input.source, args, {
+            agent: 'ai',
+            userId: input.userId,
+            userTimezone: input.userTimezone,
+            abortSignal,
+          }),
+        input.source.name,
+        { timeoutMs: 20_000, signal: input.signal },
+      );
+      input.signal?.throwIfAborted();
       return attachResearchRefs(input.source.name, result, input.refs, args);
     },
   });
 }
 
-function plannerResearchTools(input: { userId: string; userTimezone?: string; refs: PlanContextRef[] }) {
+function plannerResearchTools(input: {
+  userId: string;
+  userTimezone?: string;
+  refs: PlanContextRef[];
+  signal?: AbortSignal;
+}) {
   const sources = [
     corpusSearch,
     calendarSearchEvents,
@@ -726,6 +740,92 @@ function plannerResearchTools(input: { userId: string; userTimezone?: string; re
   return Object.fromEntries(
     sources.map((source) => [source.name, plannerResearchTool({ source, ...input })]),
   );
+}
+
+/** Research must leave room for a final answer. A step limit alone can stop on
+ * a tool result, and a slow provider can exhaust the entire request before it
+ * reaches that limit. Keep completed turns and finish without tools on either
+ * boundary; never turn an unavailable source into invented evidence. */
+async function generatePlanText(
+  input: GenerateIntentPlanInput,
+  prompt: string,
+  refs: PlanContextRef[],
+  planSignal: AbortSignal,
+  planRemainingMs: number,
+) {
+  const options = {
+    feature: 'albatross_plan',
+    speed: 'primary' as const,
+    userId: input.userId,
+    userEmail: input.userEmail,
+    userName: input.userName,
+    system: PLAN_SYSTEM,
+    maxRetries: 0,
+    // Reasoning models must not spend the interactive deadline on hidden
+    // thinking in every research turn and again in the final writing pass.
+    providerOptions: { openai: { reasoningEffort: 'low' } },
+  };
+  let messages: ModelMessage[] = [{ role: 'user', content: prompt }];
+  let researchSignal: AbortSignal | undefined;
+  try {
+    const result = await withToolTimeout(
+      (signal) => {
+        researchSignal = signal;
+        const narrativeTools =
+          input.userId && narrativeEnabled(input.userId)
+            ? Object.fromEntries(
+                Object.entries(deps.narrativeResearchTools(input.userId, signal)).map(([name, spec]) => [
+                  name,
+                  {
+                    ...spec,
+                    execute: async (...args: any[]) => {
+                      const result = await (spec.execute as any)(...args);
+                      signal.throwIfAborted();
+                      return attachNarrativeResearchRefs(result, refs);
+                    },
+                  },
+                ]),
+              )
+            : {};
+        return deps.generateTextForCurrentUser({
+          ...options,
+          prompt,
+          abortSignal: signal,
+          tools: {
+            ...plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs, signal }),
+            ...narrativeTools,
+          },
+          stopWhen: stepCountIs(5),
+          prepareStep: ({ stepNumber }: { stepNumber: number }) =>
+            stepNumber >= 4 ? { toolChoice: 'none' } : {},
+          onStepFinish: ({ response }: { response: { messages: ModelMessage[] } }) => {
+            if (!signal.aborted) messages = [{ role: 'user', content: prompt }, ...response.messages];
+          },
+        });
+      },
+      'Plan research',
+      { timeoutMs: Math.max(1, Math.min(90_000, planRemainingMs - 60_000)), signal: planSignal },
+    );
+    if (result.text.trim() && result.finishReason !== 'tool-calls') return result;
+  } catch (error) {
+    // Only the research deadline is recoverable. Auth, billing, provider and
+    // validation failures retain their original error, as does the outer limit.
+    if (!researchSignal?.aborted || planSignal.aborted) throw error;
+  }
+  planSignal.throwIfAborted();
+  return deps.generateTextForCurrentUser({
+    ...options,
+    abortSignal: planSignal,
+    messages: [
+      ...messages,
+      {
+        role: 'user',
+        content:
+          'Research is complete. Return the final plan JSON now using only the supplied context and completed research. Record missing or unavailable evidence as uncertainty in assumptions or a question; do not invent results. No more tool calls.',
+      },
+    ],
+    toolChoice: 'none',
+  });
 }
 
 function currentWorkBlock(workbench: any, detail: any) {
@@ -991,35 +1091,8 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
 
     const planRemainingMs = Math.max(1, 150_000 - (Date.now() - planStartedAt));
     const planSignal = AbortSignal.timeout(planRemainingMs);
-    const narrativeTools =
-      input.userId && narrativeEnabled(input.userId)
-        ? Object.fromEntries(
-            Object.entries(deps.narrativeResearchTools(input.userId, planSignal)).map(([name, spec]) => [
-              name,
-              {
-                ...spec,
-                execute: async (...args: any[]) =>
-                  attachNarrativeResearchRefs(await (spec.execute as any)(...args), refs),
-              },
-            ]),
-          )
-        : {};
     const { text } = await withDeadline(
-      deps.generateTextForCurrentUser({
-        feature: 'albatross_plan',
-        abortSignal: planSignal,
-        speed: 'primary',
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        system: PLAN_SYSTEM,
-        prompt,
-        tools: {
-          ...plannerResearchTools({ userId: input.userId, userTimezone: input.timezone, refs }),
-          ...narrativeTools,
-        },
-        stopWhen: stepCountIs(12),
-      }),
+      generatePlanText(input, prompt, refs, planSignal, planRemainingMs),
       planRemainingMs,
       'Plan generation',
     );
