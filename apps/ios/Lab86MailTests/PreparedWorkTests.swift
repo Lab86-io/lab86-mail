@@ -252,8 +252,11 @@ struct PreparedWorkTests {
             #if os(iOS)
             let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
             let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
-            #expect(fileAttributes[.protectionKey] as? FileProtectionType == .complete)
-            #expect(directoryAttributes[.protectionKey] as? FileProtectionType == .complete)
+            // FileManager bridges protection attributes back as NSString values.
+            let fileProtection = try #require(fileAttributes[.protectionKey] as? String)
+            let directoryProtection = try #require(directoryAttributes[.protectionKey] as? String)
+            #expect(fileProtection == FileProtectionType.complete.rawValue)
+            #expect(directoryProtection == FileProtectionType.complete.rawValue)
             #endif
         }
     }
