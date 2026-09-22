@@ -246,10 +246,25 @@ struct PreparedWorkTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         // Existing directories also need their protection upgraded.
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileManager = PreparedFileManagerSpy()
         for content in [file.content, "Revised private draft"] {
-            let url = try PreparedWorkPolicy.stageFile(PreparedFile(name: file.name, content: content), itemID: itemID)
+            fileManager.reset()
+            var requestedOptions: Data.WritingOptions?
+            let url = try PreparedWorkPolicy.stageFile(
+                PreparedFile(name: file.name, content: content), itemID: itemID, fileManager: fileManager
+            ) { data, destination, options in
+                requestedOptions = options
+                try data.write(to: destination, options: options)
+            }
             #expect(try String(contentsOf: url, encoding: .utf8) == content)
-            #if os(iOS)
+            #expect(requestedOptions?.contains(.atomic) == true)
+            #expect(requestedOptions?.contains(.completeFileProtection) == true)
+            #expect(fileManager.createdProtection == .complete)
+            #expect(fileManager.updatedProtection == .complete)
+            #expect(fileManager.updatedPath == directory.path)
+            // Simulator has no data-protection metadata. Exercise the real
+            // filesystem above and verify its protection metadata on devices.
+            #if os(iOS) && !targetEnvironment(simulator)
             let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
             let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
             // FileManager bridges protection attributes back as NSString values.
@@ -439,6 +454,41 @@ private final class ScriptedTransport: PreparedWorkTransport, @unchecked Sendabl
             workID: action.operation == .adopt ? workID : nil,
             dismissed: action.operation == .dismiss
         )
+    }
+}
+
+private final class PreparedFileManagerSpy: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var creationProtection: FileProtectionType?
+    private var replacementProtection: FileProtectionType?
+    private var replacementPath: String?
+
+    var createdProtection: FileProtectionType? { lock.withLock { creationProtection } }
+    var updatedProtection: FileProtectionType? { lock.withLock { replacementProtection } }
+    var updatedPath: String? { lock.withLock { replacementPath } }
+
+    func reset() {
+        lock.withLock {
+            creationProtection = nil
+            replacementProtection = nil
+            replacementPath = nil
+        }
+    }
+
+    override func createDirectory(
+        at url: URL, withIntermediateDirectories createIntermediates: Bool,
+        attributes: [FileAttributeKey: Any]? = nil
+    ) throws {
+        lock.withLock { creationProtection = attributes?[.protectionKey] as? FileProtectionType }
+        try super.createDirectory(at: url, withIntermediateDirectories: createIntermediates, attributes: attributes)
+    }
+
+    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
+        lock.withLock {
+            replacementProtection = attributes[.protectionKey] as? FileProtectionType
+            replacementPath = path
+        }
+        try super.setAttributes(attributes, ofItemAtPath: path)
     }
 }
 

@@ -82,18 +82,25 @@ enum PreparedWorkPolicy {
 
     /// Preview and share files contain private source material. Protect both
     /// the preparation directory and each atomic replacement while locked.
-    static func stageFile(_ file: PreparedFile, itemID: String) throws -> URL {
+    static func stageFile(
+        _ file: PreparedFile,
+        itemID: String,
+        fileManager: FileManager = .default,
+        write: (Data, URL, Data.WritingOptions) throws -> Void = { data, url, options in
+            try data.write(to: url, options: options)
+        }
+    ) throws -> URL {
         let url = temporaryURL(for: file, itemID: itemID)
-        try FileManager.default.createDirectory(
+        try fileManager.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.complete]
         )
-        try FileManager.default.setAttributes(
+        try fileManager.setAttributes(
             [.protectionKey: FileProtectionType.complete],
             ofItemAtPath: url.deletingLastPathComponent().path
         )
-        try Data(file.content.utf8).write(to: url, options: [.atomic, .completeFileProtection])
+        try write(Data(file.content.utf8), url, [.atomic, .completeFileProtection])
         return url
     }
 
