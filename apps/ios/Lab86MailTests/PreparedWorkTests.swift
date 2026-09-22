@@ -467,6 +467,11 @@ private final class PreparedFileManagerSpy: FileManager, @unchecked Sendable {
     var updatedProtection: FileProtectionType? { lock.withLock { replacementProtection } }
     var updatedPath: String? { lock.withLock { replacementPath } }
 
+    private func protection(_ attributes: [FileAttributeKey: Any]?) -> FileProtectionType? {
+        let value = attributes?[.protectionKey]
+        return (value as? FileProtectionType) ?? (value as? String).map(FileProtectionType.init(rawValue:))
+    }
+
     func reset() {
         lock.withLock {
             creationProtection = nil
@@ -479,13 +484,13 @@ private final class PreparedFileManagerSpy: FileManager, @unchecked Sendable {
         at url: URL, withIntermediateDirectories createIntermediates: Bool,
         attributes: [FileAttributeKey: Any]? = nil
     ) throws {
-        lock.withLock { creationProtection = attributes?[.protectionKey] as? FileProtectionType }
+        lock.withLock { creationProtection = protection(attributes) }
         try super.createDirectory(at: url, withIntermediateDirectories: createIntermediates, attributes: attributes)
     }
 
     override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
         lock.withLock {
-            replacementProtection = attributes[.protectionKey] as? FileProtectionType
+            replacementProtection = protection(attributes)
             replacementPath = path
         }
         try super.setAttributes(attributes, ofItemAtPath: path)
