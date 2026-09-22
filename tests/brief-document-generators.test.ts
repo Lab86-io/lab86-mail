@@ -215,14 +215,18 @@ describe('Brief Document v2 generators', () => {
       reason: 'She asked for the July 31 date; one line back closes it.',
       sender: 'Maya',
     });
-    expect(answer.items[0].actions).toEqual([
-      {
-        action: 'open_thread',
-        label: 'Open',
-        payload: { account: 'jakob@example.com', threadId: 'thread-maya' },
-        style: 'quiet',
-      },
+    // Open first (the row tap), then the review and immediate actions both
+    // clients already run (brief round 2026-09-22).
+    expect(answer.items[0].actions.map((action: any) => [action.action, action.label])).toEqual([
+      ['open_thread', 'Open'],
+      ['draft_reply', 'Reply'],
+      ['dismiss_thread', 'Not needed'],
     ]);
+    expect(answer.items[0].actions[0].payload).toMatchObject({
+      account: 'jakob@example.com',
+      threadId: 'thread-maya',
+      subject: 'Launch date',
+    });
 
     const today = document.regions[2].tree as any;
     expect(today.items[0].ref.kind).toBe('event');
@@ -314,6 +318,8 @@ describe('Brief Document v2 generators', () => {
       nextMove: 'Next: Write the artifact.',
       openQuestion: 'Which venue?',
       prose: 'Studio has 1 active Work item and 1 open task.',
+      weekAhead: '',
+      sinceLastBrief: '',
       model: 'local',
     });
 
@@ -331,6 +337,8 @@ describe('Brief Document v2 generators', () => {
       nextMove: 'Next: Write the artifact.',
       openQuestion: 'Which venue?',
       prose: 'One. Two. Three.',
+      weekAhead: '',
+      sinceLastBrief: '',
     });
     expect(parseAreaPulse('no json here', fallback)).toBeNull();
   });

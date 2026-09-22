@@ -117,6 +117,8 @@ const REPORT_LANE_LIMITS: Record<Exclude<ReportLane, 'bulk'>, number> = {
   tracked: 5,
   fyi: 0,
 };
+// Threads the user waits on, shown under the lanes (brief round 2026-09-22).
+export const WAITING_LIMIT = 4;
 const WEEK_CONTEXT_WINDOW = 7 * 86400_000;
 const MONTH_CONTEXT_WINDOW = 30 * 86400_000;
 const FUTURE_CONTEXT_WINDOW = 14 * 86400_000;
@@ -1209,6 +1211,40 @@ export async function composeReport(input: {
     }));
   const visibleTrackedItems = trackedItems.filter((item) => !hiddenByUser(item));
 
+  // Waiting (brief round 2026-09-22): threads the user waits on that earned
+  // no lane. A Jev waiting obligation, a follow-up owed, or a tracked thread
+  // in the waiting state. Longest wait first, so the oldest nudge is on top.
+  // Overflow threads already render in the backlog, so they never repeat here.
+  const selectedKeys = new Set(
+    [...answer, ...today, ...know, ...selection.overflow.map((entry) => entry.item)].map(
+      (item) => `${item.account}:${item.threadId}`,
+    ),
+  );
+  const waitingByKey = new Map<string, DailyReportItem>();
+  for (const insight of input.insights) {
+    const key = `${insight.account}:${insight.threadId}`;
+    if (selectedKeys.has(key) || insight.briefEligible === false) continue;
+    const waits = insight.waitingOnSomeone || hasObligation(insight.jev, 'waiting');
+    if (!waits) continue;
+    const item = toItem(insight);
+    if (hiddenByUser(item)) continue;
+    waitingByKey.set(key, {
+      ...item,
+      sender: personName(insight.people[0] || '') || undefined,
+      whyItMatters:
+        insight.jev && hasObligation(insight.jev, 'waiting') ? jevReason(insight.jev) : item.whyItMatters,
+    });
+  }
+  for (const item of visibleTrackedItems) {
+    const key = `${item.account}:${item.threadId}`;
+    const tracked = trackedKeys.get(key);
+    if (selectedKeys.has(key) || waitingByKey.has(key) || tracked?.status !== 'waiting') continue;
+    waitingByKey.set(key, { ...item, sender: personName(item.people[0] || '') || undefined });
+  }
+  const waiting = [...waitingByKey.values()]
+    .sort((a, b) => (a.receivedAt ?? 0) - (b.receivedAt ?? 0))
+    .slice(0, WAITING_LIMIT);
+
   let narrative = '';
   const sections: DailyReport['sections'] = {
     replyOwed,
@@ -1224,6 +1260,7 @@ export async function composeReport(input: {
     today,
     know,
     overflow: selection.overflow.map((entry) => entry.item),
+    waiting,
     tasks: reportTasks,
     calendar: reportCalendar,
     mcp: input.mcpContext ?? [],
@@ -1350,12 +1387,16 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
     const rows = await convexQuery<any[]>((api as any).mcp.listItemsForBrief, { userId, limit: 25 });
     return (rows || []).map((row) => ({
       server: row.server,
+      externalId: row.externalId ? String(row.externalId) : undefined,
       kind: row.kind,
       title: row.title,
       state: row.state ?? null,
       author: row.author ?? null,
       url: row.url ?? null,
       updatedAt: row.updatedAtSource ?? null,
+      assignedToUser: Boolean(row.assignedToUser),
+      repository: row.repository ?? null,
+      summary: row.summary ? String(row.summary).slice(0, 400) : null,
     }));
   } catch {
     return [];

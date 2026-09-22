@@ -185,6 +185,9 @@ final class NavigationModel {
     var sheet: SheetDestination?
     var pendingCapture: String?
     var pendingMailSearch: String?
+    // A `brief_ready` notification names its edition (`/brief?id=`). Today
+    // consumes this and selects that edition, not the latest one.
+    var pendingBriefEditionID: String?
     var pendingCalendarDay: Date?
     // Chrome-free surfaces (the area brief hides its navigation bar) raise
     // this to ask the compact shell to reveal the source list; the shell
@@ -451,7 +454,9 @@ final class NavigationModel {
             if let value = item.value { query[item.name] = value }
         }
         let route = [url.host, url.path].compactMap { $0 }.joined(separator: "/").lowercased()
-        if route.contains("thread"), let account = query["account"] ?? query["accountId"],
+        if let editionID = Self.briefEditionID(route: route, query: query) {
+            openBriefEdition(id: editionID)
+        } else if route.contains("thread"), let account = query["account"] ?? query["accountId"],
            let thread = query["thread"] ?? query["threadId"] ?? query["id"] {
             openThread(accountID: account, threadID: thread)
         } else if route.contains("event"), let account = query["account"] ?? query["accountId"],
@@ -485,6 +490,24 @@ final class NavigationModel {
         } else {
             selectPrimary(.today)
         }
+    }
+
+    // Opens Today on one daily edition. Today reads and clears the request.
+    func openBriefEdition(id: String) {
+        selectPrimary(.today)
+        pendingBriefEditionID = id
+    }
+
+    func consumeBriefEdition() -> String? {
+        defer { pendingBriefEditionID = nil }
+        return pendingBriefEditionID
+    }
+
+    // `/brief?id=<reportId>` names an edition. `/brief` alone opens Today.
+    static func briefEditionID(route: String, query: [String: String]) -> String? {
+        guard route.split(separator: "/").contains("brief") else { return nil }
+        guard let id = query["id"] ?? query["reportId"], !id.isEmpty else { return nil }
+        return id
     }
 
     func open(route: String) {

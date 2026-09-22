@@ -93,6 +93,19 @@ struct TodayView: View {
             }
         }
         .onDisappear { narrative.clear() }
+        // A `brief_ready` notification names its edition. Open that one, not
+        // the latest. The request is read once.
+        .task(id: environment.navigation.pendingBriefEditionID) {
+            // Read the id without clearing it: clearing changes this task's
+            // key and cancels the request. The request is cleared after it
+            // settles, which re-runs the task once with a nil id (a no-op).
+            guard let editionID = environment.navigation.pendingBriefEditionID else { return }
+            await store.selectDailyReport(id: editionID)
+            // A newer request may have replaced this one while the edition
+            // loaded. Only the request this task served is cleared.
+            guard !Task.isCancelled, environment.navigation.pendingBriefEditionID == editionID else { return }
+            _ = environment.navigation.consumeBriefEdition()
+        }
     }
 
     private func reloadNarrative() async {
@@ -202,8 +215,14 @@ struct TodayView: View {
                     BriefDocumentView(
                         document: document,
                         isComposing: report.artifactStatus == "composing",
+                        surface: .daily,
+                        reportID: report.id,
+                        hideInactive: store.showsLatestDailyReport,
                         onReview: { artifactReview = $0 }
                     )
+                    BriefMailBacklog(items: report.overflow) { item in
+                        environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
+                    }
                     DailyBriefFooter(report: report)
                         .padding(.bottom, 32)
                 }
@@ -409,8 +428,14 @@ struct TodayView: View {
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",
+                    surface: .daily,
+                    reportID: report.id,
+                    hideInactive: store.showsLatestDailyReport,
                     onReview: { artifactReview = $0 }
                 )
+                BriefMailBacklog(items: report.overflow) { item in
+                    environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
+                }
                 DailyBriefFooter(report: report)
             } else {
                 DailyBriefView(

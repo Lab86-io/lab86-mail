@@ -15,6 +15,8 @@ export const maxDuration = 300;
 // local morning hour, alongside the Daily Brief: every active area's living
 // brief is rewritten from the latest Work, mail, calendar, and task context.
 // force skips the unchanged-revision short-circuit — mornings always rewrite.
+// The 3-hourly refresh cron posts force:false, so an area whose bounded
+// context has not changed costs one query and no model call.
 export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -30,6 +32,7 @@ export async function POST(req: NextRequest) {
     // empty/invalid body handled below
   }
   const userId = String(body?.userId || '').trim();
+  const force = body?.force !== false;
   if (!userId) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
       const worker = async () => {
         for (let areaId = queue.shift(); areaId; areaId = queue.shift()) {
           try {
-            await generateAreaLivingBrief({ userId, areaId, force: true });
+            await generateAreaLivingBrief({ userId, areaId, force });
             refreshed += 1;
           } catch (err: any) {
             // One area failing (model hiccup, empty context) must not stop the
@@ -58,7 +61,10 @@ export async function POST(req: NextRequest) {
       };
       await Promise.all(Array.from({ length: Math.min(3, areas.length) }, worker));
     });
-    return NextResponse.json({ ok: true, userId, areas: areas.length, refreshed, errors }, { status: 200 });
+    return NextResponse.json(
+      { ok: true, userId, force, areas: areas.length, refreshed, errors },
+      { status: 200 },
+    );
   } catch (err: any) {
     console.error('[cron/area-briefs] regeneration failed', userId, err);
     return NextResponse.json(

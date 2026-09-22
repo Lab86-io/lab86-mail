@@ -710,12 +710,23 @@ public struct BriefFraming: Codable, Hashable, Sendable {
     // The sender's display name (2026-09-03 budget brief). Optional so older
     // editions and unknown keys decode unchanged.
     public let sender: String?
+    // A short carry-over label such as "Day 3" when the same item appeared in
+    // an earlier edition (brief round 2026-09-22). Clients show it after the
+    // sender. Optional so older editions decode unchanged.
+    public let age: String?
 
-    public init(reason: String? = nil, lane: String? = nil, prep: String? = nil, sender: String? = nil) {
+    public init(
+        reason: String? = nil,
+        lane: String? = nil,
+        prep: String? = nil,
+        sender: String? = nil,
+        age: String? = nil
+    ) {
         self.reason = reason
         self.lane = lane
         self.prep = prep
         self.sender = sender
+        self.age = age
     }
 }
 

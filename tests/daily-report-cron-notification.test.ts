@@ -18,6 +18,7 @@ function dependencies() {
       _id: 'report_1',
       generatedAt: Date.parse('2026-07-25T02:30:00.000Z'),
       artifactStatus: 'ready',
+      prose: { lede: 'Maya waits on the venue. Friday is open.', weekAhead: '', model: 'local' },
     })),
     queueBriefReady: mock(async () => ({ notificationId: 'notification_1', created: true })),
     dispatchNativeNotification: mock(async () => ({ sent: 1 })),
@@ -45,6 +46,7 @@ describe('daily report cron brief-ready notification', () => {
       userId: 'user_1',
       reportId: 'report_1',
       localDate: '2026-07-24',
+      body: 'Maya waits on the venue. Friday is open.',
     });
     expect(deps.dispatchNativeNotification.mock.calls[0]).toEqual(['user_1', 'notification_1']);
     expect(await response.json()).toMatchObject({

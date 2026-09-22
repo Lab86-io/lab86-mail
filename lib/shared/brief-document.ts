@@ -98,6 +98,9 @@ const framingSchema = z.object({
   // Display name of the newest sender (budget brief, 2026-09-03). Renderers
   // show it before hydration completes; hydration keeps the live address.
   sender: z.string().max(200).optional(),
+  // A short carry-over label such as "Day 3" when the same item appeared in
+  // an earlier edition (brief round 2026-09-22). Clients show it after the sender.
+  age: z.string().max(40).optional(),
 });
 
 const handoffEvidenceSchema = z.object({
@@ -942,6 +945,7 @@ function repairLeaf(
                   ...(clippedString(framing.sender, 200)
                     ? { sender: clippedString(framing.sender, 200) }
                     : {}),
+                  ...(clippedString(framing.age, 40) ? { age: clippedString(framing.age, 40) } : {}),
                 },
                 ...(handoff ? { handoff } : {}),
                 actions: cleanActions(item.actions),

@@ -16,6 +16,8 @@ export const areaPulseValidator = v.object({
   nextMove: v.string(),
   openQuestion: v.string(),
   prose: v.string(),
+  weekAhead: v.optional(v.string()),
+  sinceLastBrief: v.optional(v.string()),
   model: v.optional(v.string()),
 });
 
@@ -57,6 +59,8 @@ export const saveAreaPulse = mutation({
       nextMove: bounded(args.pulse.nextMove, 400),
       openQuestion: bounded(args.pulse.openQuestion, 400),
       prose: bounded(args.pulse.prose, 900),
+      ...(args.pulse.weekAhead ? { weekAhead: bounded(args.pulse.weekAhead, 600) } : {}),
+      ...(args.pulse.sinceLastBrief ? { sinceLastBrief: bounded(args.pulse.sinceLastBrief, 400) } : {}),
       ...(args.pulse.model ? { model: bounded(args.pulse.model, 120) } : {}),
     };
     if (existing) {

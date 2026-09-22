@@ -83,3 +83,71 @@ export function briefActionReviewCopy(action: BriefActionV2, payload: BriefActio
       };
   }
 }
+
+// ---- Telemetry ---------------------------------------------------------------
+
+export type BriefEventSurface = 'daily' | 'area';
+export type BriefEventOutcome = 'done' | 'failed' | 'undone' | 'opened';
+
+export interface BriefEventRequest {
+  reportId?: string;
+  surface: BriefEventSurface;
+  regionId: string;
+  action: string;
+  ref: { kind: string; id: string; account?: string };
+  outcome: BriefEventOutcome;
+}
+
+/**
+ * Builds the `POST /api/brief/events` body for one settled action. Returns
+ * null when the region or the item is unknown, so nothing half-formed posts.
+ */
+export function briefEventRequest(input: {
+  reportId?: string | null;
+  surface?: BriefEventSurface;
+  regionId?: string | null;
+  action: string;
+  ref?: BriefSourceRefV2 | null;
+  payload?: BriefActionPayload;
+  outcome: BriefEventOutcome;
+}): BriefEventRequest | null {
+  const regionId = input.regionId?.trim();
+  if (!regionId) return null;
+  const ref = input.ref ?? refFromPayload(input.payload ?? {});
+  if (!ref) return null;
+  return {
+    ...(input.reportId ? { reportId: input.reportId } : {}),
+    surface: input.surface ?? 'daily',
+    regionId,
+    action: input.action,
+    ref: { kind: ref.kind, id: ref.id, ...(ref.account ? { account: ref.account } : {}) },
+    outcome: input.outcome,
+  };
+}
+
+function refFromPayload(payload: BriefActionPayload): BriefSourceRefV2 | null {
+  const text = (key: string) => {
+    const value = payload[key];
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  };
+  const account = text('account');
+  if (text('threadId')) return { kind: 'thread', id: text('threadId')!, account };
+  if (text('cardId')) return { kind: 'card', id: text('cardId')! };
+  if (text('eventId')) return { kind: 'event', id: text('eventId')!, account };
+  return null;
+}
+
+/** Fire-and-forget. A failure to post never reaches the action path. */
+export function postBriefEvent(request: BriefEventRequest | null) {
+  if (!request || typeof fetch !== 'function') return;
+  try {
+    fetch('/api/brief/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request),
+      keepalive: true,
+    }).catch(() => undefined);
+  } catch {
+    // Telemetry is best effort.
+  }
+}

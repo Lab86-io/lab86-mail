@@ -20,8 +20,21 @@ export const BRIEF_LETTER_MEASURE_PX = 620;
 
 export type BriefLetterKind = 'daily' | 'area';
 
-export const DAILY_LETTER_REGION_IDS = ['lede', 'answer', 'today', 'know', 'week-ahead', 'areas'] as const;
-export const AREA_LETTER_REGION_IDS = ['lede', 'pulse', 'ask', 'open-work'] as const;
+// Region ids of each letter layout, in render order (brief round 2026-09-22
+// added yesterday, waiting, tasks, connected, week, and mail).
+export const DAILY_LETTER_REGION_IDS = [
+  'lede',
+  'yesterday',
+  'answer',
+  'today',
+  'know',
+  'waiting',
+  'tasks',
+  'connected',
+  'week-ahead',
+  'areas',
+] as const;
+export const AREA_LETTER_REGION_IDS = ['lede', 'pulse', 'ask', 'week', 'mail', 'open-work'] as const;
 export const DAILY_LETTER_LANE_IDS: readonly BriefLane[] = ['answer', 'today', 'know'];
 
 const DAILY_LETTER_EVENT_LIMIT = 4;

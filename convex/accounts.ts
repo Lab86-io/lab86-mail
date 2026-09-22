@@ -282,6 +282,9 @@ const USER_BULK_TABLES = [
   'officeVersions',
   'officeSessions',
   'documentAssets',
+  // Append-only telemetry with no pruning; an active account outgrows one
+  // transaction, so it drains in batches like the other bulk tables.
+  'briefItemEvents',
 ] as const;
 
 const PURGE_BATCH = 250;
