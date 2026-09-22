@@ -194,6 +194,38 @@ describe('narrative agent run', () => {
     expect(calls).toEqual(['brief']);
   });
 
+  test('consent revoked during provider refresh stops preparation and clears its prior memo', async () => {
+    let enabled = true;
+    let revokeDuringRefresh = false;
+    const writes: string[] = [];
+    __setNarrativeDepsForTest({
+      refreshSources: async (_userId, selected) => {
+        if (selected && revokeDuringRefresh) {
+          enabled = false;
+          revokeDuringRefresh = false;
+        }
+        return [];
+      },
+      query: (async () => ({
+        settings: { enabled, sources: ['mcp:granola'], revision: 1 },
+        groups: ['mcp'],
+      })) as any,
+      mutation: (async (fn: any) => {
+        writes.push(getFunctionName(fn));
+        return { done: true, changed: 0 };
+      }) as any,
+    });
+    await prepareBriefContext('pilot');
+    const completedWrites = writes.length;
+    expect(completedWrites).toBeGreaterThan(0);
+    revokeDuringRefresh = true;
+    await prepareBriefContext('pilot');
+    expect(writes).toHaveLength(completedWrites);
+    enabled = true;
+    await prepareBriefContext('pilot');
+    expect(writes).toHaveLength(completedWrites * 2);
+  });
+
   test('GLM uses schema-free JSON mode but other writers retain schema-enforced output', async () => {
     const glm = setup();
     expect((await refreshNarrative('pilot')).status).toBe('ready');
