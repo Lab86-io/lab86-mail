@@ -42,7 +42,12 @@ export const generateDailyReportTool = defineTool({
   async handler({ kind, wait }, ctx) {
     if (isConvexConfigured()) {
       if (!ctx.userId) throw new Error('Sign in required');
-      const job = await enqueueBriefJob({ userId: ctx.userId, kind: 'daily', edition: kind });
+      const job = await enqueueBriefJob({
+        userId: ctx.userId,
+        kind: 'daily',
+        edition: kind,
+        timezone: ctx.userTimezone,
+      });
       if (wait) await waitForBriefJob(ctx.userId, job.jobId);
       return { report: job.reportId ? await getDailyReportStore(job.reportId) : null, started: job.started };
     }

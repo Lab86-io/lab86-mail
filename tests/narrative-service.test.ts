@@ -591,6 +591,17 @@ describe('narrative agent run', () => {
     await refreshNarrative('pilot');
     expect(writes.at(-1)?.args.error).not.toContain('PRIVATE');
   });
+  test('large source expansions disclose the smaller packet instead of pretending full coverage', async () => {
+    __setNarrativeDepsForTest({
+      query: (async () => ({ entries: [{ ...observation, text: 'Meeting notes '.repeat(2000) }] })) as any,
+    });
+    const result: any = await (narrativeResearchTools('pilot').narrative_search.execute as any)({
+      query: 'review',
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.excerpt.length).toBe(16000);
+    expect(result.note).toContain('individual observation');
+  });
   test('research can continue past the old call budget and still respects cancellation', async () => {
     setup();
     const tools = narrativeResearchTools('pilot');

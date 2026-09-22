@@ -1609,7 +1609,7 @@ export default defineSchema({
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),
     reportId: v.optional(v.string()),
-    state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed')),
+    state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed'), v.literal('cancelled')),
     active: v.boolean(),
     availableAt: v.number(),
     createdAt: v.number(),

@@ -433,7 +433,7 @@ export const deleteUserCascade = mutation({
       .withIndex('by_user_active', (q) => q.eq('userId', args.userId).eq('active', true))
       .collect();
     for (const job of jobs)
-      await ctx.db.patch(job._id, { active: false, state: 'completed', token: undefined });
+      await ctx.db.patch(job._id, { active: false, state: 'cancelled', token: undefined });
 
     const counts: Record<string, number> = {};
     // Small tables sweep inline. Bulk tables ('threads', 'messages',

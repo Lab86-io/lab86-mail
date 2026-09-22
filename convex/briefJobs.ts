@@ -1,11 +1,34 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
+import type { MutationCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { BRIEF_JOB_LEASE_MS } from './briefJobState';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
 const owned = { ...caller, id: v.id('briefJobs'), token: v.string() };
+
+async function markAreaGenerating(ctx: MutationCtx, userId: string, areaId: Id<'areas'>) {
+  const now = Date.now();
+  const brief = await ctx.db
+    .query('albatrossAreaBriefs')
+    .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', areaId))
+    .unique();
+  if (brief) await ctx.db.patch(brief._id, { status: 'generating', error: undefined, updatedAt: now });
+  else
+    await ctx.db.insert('albatrossAreaBriefs', {
+      userId,
+      areaId,
+      status: 'generating',
+      lede: '',
+      summary: '',
+      sourceRefs: [],
+      basedOnRevision: '',
+      createdAt: now,
+      updatedAt: now,
+    });
+}
 
 export const enqueue = mutation({
   args: {
@@ -24,15 +47,28 @@ export const enqueue = mutation({
       if (!area || area.userId !== args.userId) throw new Error('Area not found');
     }
     if (args.kind === 'daily' && (!args.reportId || !args.edition)) throw new Error('Edition required');
-    const scope = args.kind === 'area' ? `area:${args.areaId}` : args.kind;
+    const now = Date.now();
+    // A slow earlier edition must not prevent tomorrow's cron from starting.
+    // Each day's active edition is coalesced independently, without expiring it.
+    const scope =
+      args.kind === 'area'
+        ? `area:${args.areaId}`
+        : args.kind === 'daily'
+          ? `daily:${new Intl.DateTimeFormat('en-CA', { timeZone: args.timezone || 'UTC' }).format(now)}`
+          : args.kind;
     const active = await ctx.db
       .query('briefJobs')
       .withIndex('by_user_scope_active', (q) =>
         q.eq('userId', args.userId).eq('scope', scope).eq('active', true),
       )
       .unique();
-    if (active) return { jobId: active._id, reportId: active.reportId, started: false };
-    const now = Date.now();
+    if (active) {
+      if (args.kind === 'area' && args.force && !active.force) {
+        await ctx.db.patch(active._id, { force: true });
+        await markAreaGenerating(ctx, args.userId, args.areaId!);
+      }
+      return { jobId: active._id, reportId: active.reportId, started: false };
+    }
     const id = await ctx.db.insert('briefJobs', {
       userId: args.userId,
       scope,
@@ -71,23 +107,7 @@ export const enqueue = mutation({
         },
       });
     } else if (args.kind === 'area' && args.force) {
-      const brief = await ctx.db
-        .query('albatrossAreaBriefs')
-        .withIndex('by_user_area', (q) => q.eq('userId', args.userId).eq('areaId', args.areaId!))
-        .unique();
-      if (brief) await ctx.db.patch(brief._id, { status: 'generating', error: undefined, updatedAt: now });
-      else
-        await ctx.db.insert('albatrossAreaBriefs', {
-          userId: args.userId,
-          areaId: args.areaId!,
-          status: 'generating',
-          lede: '',
-          summary: '',
-          sourceRefs: [],
-          basedOnRevision: '',
-          createdAt: now,
-          updatedAt: now,
-        });
+      await markAreaGenerating(ctx, args.userId, args.areaId!);
     }
     await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [id] });
     return { jobId: id, reportId: args.reportId, started: true };
@@ -101,6 +121,19 @@ export const claim = mutation({
     const job = await ctx.db.get(args.id);
     const now = Date.now();
     if (!job || job.userId !== args.userId || !job.active || job.availableAt > now) return null;
+    if (job.kind === 'area') {
+      const area = job.areaId ? await ctx.db.get(job.areaId) : null;
+      if (!area || area.userId !== job.userId || area.status !== 'active') {
+        await ctx.db.patch(job._id, {
+          state: 'cancelled',
+          active: false,
+          token: undefined,
+          error: 'Area no longer active',
+          completedAt: now,
+        });
+        return null;
+      }
+    }
     const patch = {
       state: 'running' as const,
       token: args.token,
@@ -126,12 +159,20 @@ export const heartbeat = mutation({
 });
 
 export const settle = mutation({
-  args: { ...owned, error: v.optional(v.string()) },
+  args: { ...owned, error: v.optional(v.string()), force: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const job = await ctx.db.get(args.id);
     if (!job || job.userId !== args.userId || job.state !== 'running' || job.token !== args.token)
       return false;
+    // An explicit refresh arriving during an unchanged-revision check must
+    // still get a newly written area edition after that check finishes.
+    if (job.kind === 'area' && job.force && args.force === false && !args.error) {
+      await ctx.db.patch(job._id, { state: 'queued', token: undefined, availableAt: Date.now() });
+      await markAreaGenerating(ctx, job.userId, job.areaId!);
+      await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [job._id] });
+      return true;
+    }
     const retryAt = Date.now() + Math.min(300_000, 5_000 * 2 ** Math.min(job.attempts, 6));
     await ctx.db.patch(
       job._id,
@@ -152,7 +193,14 @@ export const settle = mutation({
             q.eq('userId', job.userId).eq('kind', 'dailyReport').eq('key', job.reportId!),
           )
           .unique();
-        if (report)
+        if (
+          report &&
+          !(
+            report.doc.status === 'ready' &&
+            report.doc.artifactStatus === 'ready' &&
+            report.doc.editorial?.mode === 'generated'
+          )
+        )
           await ctx.db.patch(report._id, {
             doc: {
               ...report.doc,

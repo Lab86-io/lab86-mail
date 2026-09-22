@@ -15,11 +15,14 @@ test('reading a long-running edition never ends its generation based on elapsed 
       html: '<html>Interim source layout</html>',
     };
     expect(migrateDailyReport(report).artifactStatus).toBe(artifactStatus);
-    await withToolContext(async () => {
-      await saveDailyReport(report);
-      expect((await getDailyReport(report._id))?.artifactStatus).toBe(artifactStatus);
-      expect((await kvGet<any>('dailyReport', report._id))?.artifactStatus).toBe(artifactStatus);
-    });
+    await withToolContext(
+      async () => {
+        await saveDailyReport(report);
+        expect((await getDailyReport(report._id))?.artifactStatus).toBe(artifactStatus);
+        expect((await kvGet<any>('dailyReport', report._id))?.artifactStatus).toBe(artifactStatus);
+      },
+      { userId: 'long-generation-test-owner' },
+    );
   }
 });
 

@@ -26,6 +26,7 @@ export async function waitForBriefJob(userId: string, id: string) {
   for (;;) {
     const job = await convexQuery<any>(functions.get, { userId, id });
     if (!job) throw new Error('Brief job not found');
+    if (job.state === 'cancelled') throw new Error(job.error || 'Brief job cancelled');
     if (job.state === 'completed') return job;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
@@ -92,7 +93,11 @@ export async function runBriefJob(userId: string, id: string, deps = defaults) {
         }
       },
     );
-    if (!lost) await deps.mutation(functions.settle, owner);
+    if (!lost)
+      await deps.mutation(functions.settle, {
+        ...owner,
+        ...(job.kind === 'area' ? { force: job.force === true } : {}),
+      });
   } catch {
     // Keep retrying failed provider calls without a daily quota or attempt cap.
     // Persist only a fixed diagnostic, never private provider/source text.

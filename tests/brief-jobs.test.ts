@@ -111,6 +111,40 @@ test('failed jobs retain the same edition and retry without an attempt quota', a
   await t.finishInProgressScheduledFunctions();
 });
 
+test('a later local day can start without cancelling a slow earlier edition', async () => {
+  const t = convexTest(schema, modules);
+  const first: any = await t.mutation(functions.enqueue, daily);
+  await t.finishInProgressScheduledFunctions();
+  const now = Date.now();
+  const clock = spyOn(Date, 'now').mockReturnValue(now + 2 * 86_400_000);
+  try {
+    const later: any = await t.mutation(functions.enqueue, { ...daily, reportId: 'later-edition' });
+    expect(later.started).toBe(true);
+    expect(later.jobId).not.toBe(first.jobId);
+    expect(await t.query(functions.get, { ...caller, id: first.jobId })).toMatchObject({ active: true });
+  } finally {
+    clock.mockRestore();
+  }
+  await t.finishInProgressScheduledFunctions();
+});
+
+test('a lost completion acknowledgment never downgrades the newly finished edition', async () => {
+  const t = convexTest(schema, modules);
+  const { jobId }: any = await t.mutation(functions.enqueue, daily);
+  const owner = { ...caller, id: jobId, token: 'worker' };
+  await t.mutation(functions.claim, owner);
+  await t.mutation(api.userData.upsertDoc, {
+    ...caller,
+    kind: 'dailyReport',
+    key: 'edition',
+    doc: { status: 'ready', artifactStatus: 'ready', editorial: { mode: 'generated' } },
+    briefJob: { id: jobId, token: owner.token },
+  });
+  await t.mutation(functions.settle, { ...owner, error: 'Completion acknowledgment interrupted' });
+  expect(await t.run((ctx) => ctx.db.query('userDocs').first())).toMatchObject({ doc: { status: 'ready' } });
+  await t.finishInProgressScheduledFunctions();
+});
+
 test('deleting an account revokes running writers before purging their data', async () => {
   const t = convexTest(schema, modules);
   const { jobId }: any = await t.mutation(functions.enqueue, daily);
@@ -180,6 +214,47 @@ test('area queues validate ownership and use separate jobs per area', async () =
   await t.mutation(functions.settle, { ...owner, error: 'Retry' });
   expect(await t.run((ctx) => ctx.db.query('albatrossAreaBriefs').first())).toMatchObject({
     status: 'generating',
+  });
+  await t.finishInProgressScheduledFunctions();
+});
+
+test('forced refresh is honored during a background area check, and archived areas cancel their jobs', async () => {
+  const t = convexTest(schema, modules);
+  const areaId = await t.run((ctx) =>
+    ctx.db.insert('areas', {
+      userId: 'owner',
+      name: 'Studio',
+      kind: 'project',
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+  const { jobId }: any = await t.mutation(functions.enqueue, {
+    ...caller,
+    kind: 'area',
+    areaId,
+    force: false,
+  });
+  const owner = { ...caller, id: jobId, token: 'check' };
+  expect(await t.mutation(functions.claim, owner)).toMatchObject({ force: false });
+  expect(await t.mutation(functions.enqueue, { ...caller, kind: 'area', areaId, force: true })).toMatchObject(
+    { jobId, started: false },
+  );
+  await t.mutation(functions.settle, { ...owner, force: false });
+  expect(await t.query(functions.get, { ...caller, id: jobId })).toMatchObject({
+    state: 'queued',
+    force: true,
+  });
+  const forced = { ...owner, token: 'forced' };
+  expect(await t.mutation(functions.claim, forced)).toMatchObject({ force: true });
+  await t.mutation(functions.settle, { ...forced, force: true });
+  const next: any = await t.mutation(functions.enqueue, { ...caller, kind: 'area', areaId, force: true });
+  await t.run((ctx) => ctx.db.patch(areaId, { status: 'archived' }));
+  expect(await t.mutation(functions.claim, { ...owner, id: next.jobId })).toBeNull();
+  expect(await t.query(functions.get, { ...caller, id: next.jobId })).toMatchObject({
+    state: 'cancelled',
+    active: false,
   });
   await t.finishInProgressScheduledFunctions();
 });
@@ -305,6 +380,8 @@ test('hosted manual generation uses the durable queue with optional waiting and 
     );
     query.mockResolvedValue(null);
     await expect(waitForBriefJob('owner', 'missing')).rejects.toThrow('not found');
+    query.mockResolvedValue({ state: 'cancelled' });
+    await expect(waitForBriefJob('owner', 'cancelled')).rejects.toThrow('cancelled');
   } finally {
     query.mockRestore();
     mutation.mockRestore();
