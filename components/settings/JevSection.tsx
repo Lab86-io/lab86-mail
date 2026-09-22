@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
+import { ContentSettings } from '@/components/settings/ContentSettings';
 import { JevDemo } from '@/components/settings/JevDemo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -207,6 +208,7 @@ export function JevSettingsPanel({
         </Button>
       </section>
       <JevDemo configured={state.configured} />
+      <ContentSettings />
       <section aria-labelledby="jev-corrections" className="space-y-3">
         <h3 id="jev-corrections" className="text-sm font-medium">
           Your Brief corrections

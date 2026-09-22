@@ -102,17 +102,33 @@ export async function getLatestDailyReport(kind?: DailyReport['kind']) {
     ...(report.sections.know || []),
     ...(report.sections.overflow || []),
   ];
-  if (!items.length) return report;
   try {
     const userId = requireStoreUserId();
-    const [policy, threads] = await Promise.all([
+    const [policy, threads, arrivals] = await Promise.all([
       readDependencies.loadPolicy(userId),
       readDependencies.query<Thread[]>((api as any).jev.threadAssessments, {
         userId,
         threads: items.slice(0, 300).map((item) => ({ accountId: item.account, threadId: item.threadId })),
       }),
+      readDependencies
+        .query<Thread[]>((api as any).jev.liveBriefCandidates, {
+          userId,
+          since: report.generatedAt,
+          accountIds: report.accounts,
+        })
+        .catch(() => []),
     ]);
-    return projectBriefMail(report, threads, policy);
+    return projectBriefMail(
+      report,
+      [
+        ...new Map(
+          [...(Array.isArray(threads) ? threads : []), ...(Array.isArray(arrivals) ? arrivals : [])].map(
+            (thread) => [`${thread.account}:${thread._id}`, thread],
+          ),
+        ).values(),
+      ],
+      policy,
+    );
   } catch {
     return report;
   }

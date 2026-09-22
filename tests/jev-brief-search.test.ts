@@ -309,11 +309,13 @@ describe('Jev sweep orchestration', () => {
     const input = { ...mailInput(), leaseId: 'lease' };
     const mutations: any[] = [];
     const usage = mock(async () => undefined);
+    const afterClassified = mock(() => undefined);
     const deps = {
       loadJevPolicy: async () => policy,
       resolveJevRuntime: async () => ({ userId: 'u', source: 'lab86', apiKey: 'test-only' }),
       evaluateJev: async () => responseFor(input),
       recordJevUsage: usage,
+      afterClassified,
       convexMutation: async (_ref: unknown, args: any) => {
         mutations.push(args);
         return args.items ? { stored: 1 } : { items: [input], moreRemaining: false };
@@ -323,6 +325,7 @@ describe('Jev sweep orchestration', () => {
     expect(mutations[1].items[0].assessment.obligations[0].evidence.messageId).toBe('m1');
     expect(mutations[1].userId).toBe('u');
     expect(usage).toHaveBeenCalledTimes(1);
+    expect(afterClassified).toHaveBeenCalledWith('u');
   });
   test('disabled users make no model calls; failures are retriable and empty queues stop', async () => {
     const input = { ...mailInput(), leaseId: 'lease' };

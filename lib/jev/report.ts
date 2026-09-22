@@ -5,6 +5,7 @@ import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import { emailFromHeader } from '../shared/format';
 import type { DailyReport, DailyReportItem, Thread } from '../shared/types';
+import { briefAttention } from './brief';
 import {
   correctionForMail,
   hasObligation,
@@ -107,6 +108,58 @@ export function projectBriefMail(
     timeSensitive: project(report.sections.timeSensitive),
     tracked: project(report.sections.tracked),
   };
+  const present = new Set(
+    [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow].map(
+      (item) => `${item.account}:${item.threadId}`,
+    ),
+  );
+  for (const current of threads) {
+    const key = `${current.account}:${current._id}`;
+    if (
+      present.has(key) ||
+      !report.accounts.includes(current.account) ||
+      current.lastDate <= report.generatedAt ||
+      current.lastDate > now ||
+      current.jev?.status !== 'accepted'
+    )
+      continue;
+    const assessment = current.jev;
+    const attention = briefAttention({
+      assessment,
+      smart: current.smartCategory,
+      preferences: policy.preferences,
+      correction: correctionForMail(policy.corrections, {
+        accountId: current.account,
+        threadId: current._id,
+        sender: assessment.sender || emailFromHeader(current.fromAddress) || '',
+        listId: assessment.listId,
+      }),
+      now,
+      waitingSince: current.lastDate,
+      fallbackReply: false,
+      tracked: false,
+    });
+    if (!attention.eligible) continue;
+    present.add(key);
+    changed = true;
+    sections.overflow.push({
+      account: current.account,
+      threadId: current._id,
+      subject: current.subject,
+      people: [current.fromAddress],
+      sender: current.fromAddress,
+      whyItMatters: jevReason(assessment),
+      line: jevReason(assessment),
+      nextAction: attention.reply ? 'Open the request and reply.' : 'Review the latest update.',
+      unread: current.unread,
+      receivedAt: current.lastDate,
+      jev: assessment,
+      openLoops: assessment.obligations.map((o) => o.evidence.text.slice(0, 240)),
+      score: attention.reply || attention.action ? 8 : 5,
+      budgetLane: attention.reply ? 'answer' : attention.action || attention.change ? 'today' : 'know',
+      lane: attention.reply ? 'reply_owed' : attention.followUp ? 'follow_up_owed' : 'time_sensitive',
+    });
+  }
   if (!changed) return report;
   const pool = [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow];
   const selection = selectBriefItems(
