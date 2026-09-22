@@ -80,6 +80,23 @@ enum PreparedWorkPolicy {
             .appending(path: safeName)
     }
 
+    /// Preview and share files contain private source material. Protect both
+    /// the preparation directory and each atomic replacement while locked.
+    static func stageFile(_ file: PreparedFile, itemID: String) throws -> URL {
+        let url = temporaryURL(for: file, itemID: itemID)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.complete]
+        )
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: url.deletingLastPathComponent().path
+        )
+        try Data(file.content.utf8).write(to: url, options: [.atomic, .completeFileProtection])
+        return url
+    }
+
     /// The message printed after a successful write.
     static func resultMessage(_ result: PreparedWorkActionResult) -> String {
         result.workID != nil ? "Saved to your work." : "Saved."

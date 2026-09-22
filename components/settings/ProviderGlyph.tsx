@@ -132,6 +132,7 @@ export function ProviderGlyph({
     <svg
       viewBox="0 0 24 24"
       role="img"
+      fill="currentColor"
       aria-label={title ?? provider}
       data-provider={provider}
       className={cn('size-4 shrink-0', className)}

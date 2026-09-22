@@ -367,16 +367,6 @@ struct PreparedWorkCard: View {
     }
 
     private func write(_ file: PreparedFile) -> URL? {
-        let url = PreparedWorkPolicy.temporaryURL(for: file, itemID: item.id)
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try Data(file.content.utf8).write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
-        }
+        try? PreparedWorkPolicy.stageFile(file, itemID: item.id)
     }
 }

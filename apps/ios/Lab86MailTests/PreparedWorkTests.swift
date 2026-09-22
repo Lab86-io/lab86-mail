@@ -239,6 +239,25 @@ struct PreparedWorkTests {
         #expect(PreparedWorkPolicy.temporaryURL(for: file, itemID: "prep_2") != url)
     }
 
+    @Test func stagedFilesKeepPrivateContentProtectedAcrossRewrites() throws {
+        let itemID = "test-\(UUID().uuidString)"
+        let file = PreparedFile(name: "private.md", content: "Original private draft")
+        let directory = PreparedWorkPolicy.temporaryURL(for: file, itemID: itemID).deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Existing directories also need their protection upgraded.
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for content in [file.content, "Revised private draft"] {
+            let url = try PreparedWorkPolicy.stageFile(PreparedFile(name: file.name, content: content), itemID: itemID)
+            #expect(try String(contentsOf: url, encoding: .utf8) == content)
+            #if os(iOS)
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let directoryAttributes = try FileManager.default.attributesOfItem(atPath: directory.path)
+            #expect(fileAttributes[.protectionKey] as? FileProtectionType == .complete)
+            #expect(directoryAttributes[.protectionKey] as? FileProtectionType == .complete)
+            #endif
+        }
+    }
+
     // MARK: - Action bodies
 
     private func json(_ action: PreparedWorkAction) throws -> [String: Any] {

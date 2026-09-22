@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { ModelPicker, type ModelPickerProps } from '../components/settings/ModelPicker';
+import { ProviderGlyph } from '../components/settings/ProviderGlyph';
 import { buildModelCatalog } from '../lib/ai/model-catalog';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,6 +11,14 @@ let view: ReactTestRenderer;
 const catalog = buildModelCatalog();
 const glm = 'z-ai/glm-5.3-flash';
 const base = { slot: 'normal' as const, value: glm, catalog, onChange: () => {} };
+
+test('provider logos inherit the theme foreground while retaining explicit brand fills', () => {
+  const mono = renderToStaticMarkup(<ProviderGlyph provider="openai" />);
+  expect(mono).toContain('fill="currentColor"');
+  const brand = renderToStaticMarkup(<ProviderGlyph provider="google" />);
+  expect(brand).toContain('fill="currentColor"');
+  expect(brand).toContain('fill="url(#google-lobe-icons-gemini-0-_R_0_)"');
+});
 afterEach(async () => {
   if (view) await act(async () => view.unmount());
 });
