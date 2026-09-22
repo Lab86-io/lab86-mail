@@ -1,0 +1,112 @@
+{
+  "at": "2026-09-22T00:18:47.976Z",
+  "synthetic": true,
+  "results": [
+    {
+      "example": "Athletics promotion",
+      "input": {
+        "sender": "athletics@university.test",
+        "subject": "Tickets for Saturday’s game",
+        "body": "Syracuse Athletics: Tickets on sale for Saturday. Get your seats now! You receive these promotional announcements as a subscriber. Unsubscribe.",
+        "reply": ""
+      },
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 422,
+        "category": "Noise",
+        "reason": "An optional promotion or invitation.",
+        "status": "accepted",
+        "purpose": "promotion",
+        "obligations": [],
+        "meaningfulChange": false,
+        "briefEligible": false,
+        "evidence": []
+      },
+      "usage": {
+        "input_tokens": 2604,
+        "output_tokens": 301,
+        "cost": 0.000109368
+      }
+    },
+    {
+      "example": "Personal approval request",
+      "input": {
+        "sender": "maya@university.test",
+        "subject": "Revised budget approval",
+        "body": "Can you confirm approval of the revised university budget by Friday?",
+        "reply": ""
+      },
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 385,
+        "category": "Main",
+        "reason": "An unresolved request needs your reply.",
+        "status": "uncertain",
+        "purpose": "conversation",
+        "obligations": ["reply"],
+        "meaningfulChange": false,
+        "briefEligible": true,
+        "evidence": ["Can you confirm approval of the revised university budget by Friday?"]
+      },
+      "usage": {
+        "input_tokens": 2513,
+        "output_tokens": 304,
+        "cost": 0.000105546
+      }
+    },
+    {
+      "example": "Request already answered",
+      "input": {
+        "sender": "maya@university.test",
+        "subject": "Revised budget approval",
+        "body": "Can you confirm approval of the revised university budget by Friday?",
+        "reply": "Approved, please proceed."
+      },
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 259,
+        "category": "Finance/Admin",
+        "reason": "No unresolved action is established in this conversation.",
+        "status": "accepted",
+        "purpose": "conversation",
+        "obligations": [],
+        "meaningfulChange": false,
+        "briefEligible": false,
+        "evidence": []
+      },
+      "usage": {
+        "input_tokens": 2712,
+        "output_tokens": 334,
+        "cost": 0.000113904
+      }
+    },
+    {
+      "example": "Purchased ticket cancelled",
+      "input": {
+        "sender": "tickets@rail.test",
+        "subject": "Your train has been cancelled",
+        "body": "Your purchased train ticket TKT-482 for the 10:00 service has been cancelled. Your refund has been issued automatically; no action is needed.",
+        "reply": ""
+      },
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 411,
+        "category": "Main",
+        "reason": "Something changed in an existing account, booking, or commitment.",
+        "status": "accepted",
+        "purpose": "transaction",
+        "obligations": [],
+        "meaningfulChange": true,
+        "briefEligible": true,
+        "evidence": [
+          "Your purchased train ticket TKT-482 for the 10:00 service has been cancelled. Your refund has been issued automatically; no action is needed."
+        ]
+      },
+      "usage": {
+        "input_tokens": 2626,
+        "output_tokens": 302,
+        "cost": 0.000110292
+      }
+    }
+  ]
+}

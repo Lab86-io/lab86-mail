@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
+import { JevDemo } from '@/components/settings/JevDemo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -205,6 +206,7 @@ export function JevSettingsPanel({
           Recheck existing mail
         </Button>
       </section>
+      <JevDemo configured={state.configured} />
       <section aria-labelledby="jev-corrections" className="space-y-3">
         <h3 id="jev-corrections" className="text-sm font-medium">
           Your Brief corrections

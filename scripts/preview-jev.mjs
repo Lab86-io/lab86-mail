@@ -3,7 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/postcss';
 import postcss from 'postcss';
+import { evaluateJev } from '../lib/jev/client';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
+import { demoMailInput, demoResult, jevDemoInputSchema } from '../lib/jev/demo';
+import { buildMailQuestions } from '../lib/jev/mail';
 import preview from './fixtures/jev-preview.html';
 
 const root = process.cwd();
@@ -41,6 +44,29 @@ const server = Bun.serve({
       return Response.json({ ok: true });
     }
     if (path === '/__preview/state') return Response.json({ state, calls });
+    if (path === '/api/jev/demo' && request.method === 'POST') {
+      if (process.env.JEV_DEMO_LIVE !== '1' || !process.env.OPENROUTER_API_KEY)
+        return Response.json(
+          { error: 'Enable JEV_DEMO_LIVE for a live provider demonstration.' },
+          { status: 503 },
+        );
+      const parsed = jevDemoInputSchema.safeParse(await request.json());
+      if (!parsed.success) return Response.json({ error: 'Invalid example.' }, { status: 400 });
+      const input = demoMailInput(parsed.data, Date.now());
+      const start = performance.now();
+      const response = await evaluateJev({
+        apiKey: process.env.OPENROUTER_API_KEY,
+        state: {
+          mailboxOwnerAddresses: input.selfAddresses,
+          messagesOldestToNewest: input.messages,
+          contextComplete: true,
+        },
+        questions: buildMailQuestions(input),
+      });
+      return Response.json(
+        demoResult(input, response, state.preferences, Math.round(performance.now() - start), Date.now()),
+      );
+    }
     if (path !== '/api/jev/settings') return new Response('Synthetic preview only', { status: 404 });
     if (request.method === 'GET') return Response.json(state);
     const body = await request.json();

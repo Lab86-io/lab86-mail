@@ -1,0 +1,92 @@
+{
+  "at": "2026-09-22T00:23:02.284Z",
+  "passed": true,
+  "evidence": [
+    {
+      "width": 390,
+      "allViewsReachable": true,
+      "primaryStripFits": true,
+      "failureRecovery": true,
+      "setupState": true,
+      "pageErrors": []
+    },
+    {
+      "width": 768,
+      "allViewsReachable": true,
+      "primaryStripFits": true,
+      "failureRecovery": true,
+      "setupState": true,
+      "pageErrors": []
+    },
+    {
+      "example": "promotion",
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 420,
+        "category": "Noise",
+        "reason": "An optional promotion or invitation.",
+        "status": "accepted",
+        "purpose": "promotion",
+        "obligations": [],
+        "meaningfulChange": false,
+        "briefEligible": false,
+        "evidence": []
+      }
+    },
+    {
+      "example": "approval",
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 294,
+        "category": "Main",
+        "reason": "An unresolved request needs your reply.",
+        "status": "uncertain",
+        "purpose": "conversation",
+        "obligations": ["reply"],
+        "meaningfulChange": false,
+        "briefEligible": true,
+        "evidence": ["Can you confirm approval of the revised university budget by Friday?"]
+      }
+    },
+    {
+      "example": "resolved",
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 251,
+        "category": "Finance/Admin",
+        "reason": "No unresolved action is established in this conversation.",
+        "status": "accepted",
+        "purpose": "conversation",
+        "obligations": [],
+        "meaningfulChange": false,
+        "briefEligible": false,
+        "evidence": []
+      }
+    },
+    {
+      "example": "cancellation",
+      "result": {
+        "model": "typesafe/jev-1.13-20260917",
+        "inferenceMs": 572,
+        "category": "Main",
+        "reason": "Something changed in an existing account, booking, or commitment.",
+        "status": "accepted",
+        "purpose": "transaction",
+        "obligations": [],
+        "meaningfulChange": true,
+        "briefEligible": true,
+        "evidence": [
+          "Your purchased train ticket TKT-482 for the 10:00 service has been cancelled. Your refund has been issued automatically; no action is needed."
+        ]
+      }
+    },
+    {
+      "width": 1440,
+      "allViewsReachable": true,
+      "primaryStripFits": true,
+      "failureRecovery": true,
+      "setupState": true,
+      "pageErrors": []
+    }
+  ]
+}
