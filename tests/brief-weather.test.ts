@@ -339,6 +339,7 @@ test('a weather adapter failure leaves the rest of the brief available', async (
   );
   try {
     expect(await gatherBriefWeather(reportFixture(), null)).toBeNull();
+    expect(place).toHaveBeenCalledTimes(1);
   } finally {
     place.mockRestore();
   }

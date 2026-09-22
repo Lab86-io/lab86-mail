@@ -19,10 +19,12 @@ test('daily generation is authenticated and unthrottled while other tools keep t
       method: 'POST',
       body: JSON.stringify({ kind: 'manual', userId: 'forged' }),
     });
-  const response = await post(request(), { params: Promise.resolve({ name: 'generate_daily_report' }) });
+  const dailyRequest = request();
+  const response = await post(dailyRequest, { params: Promise.resolve({ name: 'generate_daily_report' }) });
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ result: { owner: 'owner' } });
   expect(deps.rate).not.toHaveBeenCalled();
+  expect(deps.invoke.mock.calls[0][2].abortSignal).toBe(dailyRequest.signal);
   expect((await post(request(), { params: Promise.resolve({ name: 'send_mail' }) })).status).toBe(429);
   expect(deps.invoke).toHaveBeenCalledTimes(1);
   deps.user.mockRejectedValueOnce(new AuthRequiredError('Sign in required'));

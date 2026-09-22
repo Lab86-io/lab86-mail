@@ -27,9 +27,9 @@ function dependencies() {
   };
 }
 
-async function invoke(deps: ReturnType<typeof dependencies>, areaId = 'area_test') {
+async function invoke(deps: ReturnType<typeof dependencies>, areaId = 'area_test', signal?: AbortSignal) {
   const post = createAreaBriefPost(deps as any);
-  return post({} as NextRequest, { params: Promise.resolve({ areaId }) });
+  return post({ signal } as NextRequest, { params: Promise.resolve({ areaId }) });
 }
 
 describe('Area brief refresh endpoint', () => {
@@ -46,7 +46,8 @@ describe('Area brief refresh endpoint', () => {
       return { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' };
     });
 
-    const response = await invoke(deps);
+    const controller = new AbortController();
+    const response = await invoke(deps, 'area_test', controller.signal);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       ok: true,
@@ -55,13 +56,16 @@ describe('Area brief refresh endpoint', () => {
     expect(deps.rateLimit).not.toHaveBeenCalled();
     expect(deps.areaExists).toHaveBeenCalledWith(user.userId, 'area_test');
     expect(deps.reindex).toHaveBeenCalledWith(user.userId, 'area_test');
-    expect(deps.generate).toHaveBeenCalledWith({
-      userId: user.userId,
-      userEmail: user.email,
-      userName: user.name,
-      areaId: 'area_test',
-      force: true,
-    });
+    expect(deps.generate).toHaveBeenCalledWith(
+      {
+        userId: user.userId,
+        userEmail: user.email,
+        userName: user.name,
+        areaId: 'area_test',
+        force: true,
+      },
+      controller.signal,
+    );
   });
 
   test('requires authentication while the old generation quota cannot block a refresh', async () => {

@@ -13,7 +13,10 @@ interface AreaBriefRouteDependencies {
   currentUser: () => Promise<CurrentUser>;
   areaExists: (userId: string, areaId: string) => Promise<boolean>;
   reindex: (userId: string, areaId: string) => Promise<unknown>;
-  generate: typeof generateAreaLivingBrief;
+  generate: (
+    input: Parameters<typeof generateAreaLivingBrief>[0],
+    signal?: AbortSignal,
+  ) => ReturnType<typeof generateAreaLivingBrief>;
   warn: (message: string, error: unknown) => void;
   error: (message: string, error: unknown) => void;
 }
@@ -41,15 +44,18 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
         deps.warn('[albatross-area-brief] evidence reindex failed', error);
       }
 
-      const brief = await deps.generate({
-        userId: user.userId,
-        userEmail: user.email,
-        userName: user.name,
-        areaId,
-        // A user pressing refresh asks for a new creative edition even if the
-        // bounded source revision is unchanged.
-        force: true,
-      });
+      const brief = await deps.generate(
+        {
+          userId: user.userId,
+          userEmail: user.email,
+          userName: user.name,
+          areaId,
+          // A user pressing refresh asks for a new creative edition even if the
+          // bounded source revision is unchanged.
+          force: true,
+        },
+        _req.signal,
+      );
       return Response.json({ ok: true, brief });
     } catch (error) {
       if (error instanceof AuthRequiredError) {
@@ -75,10 +81,10 @@ export const POST = createAreaBriefPost({
       userId,
       areaId,
     }),
-  generate: async ({ userId, areaId, force }) => {
+  generate: async ({ userId, areaId, force }, signal) => {
     const job = await enqueueBriefJob({ userId, kind: 'area', areaId, force });
-    await waitForBriefJob(userId, job.jobId);
-    const home = await convexQuery<any>((api as any).albatross.areaHome, { userId, areaId });
+    await waitForBriefJob(userId, job.jobId, signal);
+    const home = await convexQuery<any>((api as any).albatross.areaHome, { userId, areaId }, signal);
     return home.livingBrief;
   },
   warn: console.warn,

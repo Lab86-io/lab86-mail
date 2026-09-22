@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { runWithAiRequestContext } from '../ai/context';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
@@ -22,13 +23,15 @@ export async function enqueueBriefJob(input: {
   });
 }
 
-export async function waitForBriefJob(userId: string, id: string) {
+export async function waitForBriefJob(userId: string, id: string, signal?: AbortSignal) {
   for (;;) {
-    const job = await convexQuery<any>(functions.get, { userId, id });
+    signal?.throwIfAborted();
+    const job = await convexQuery<any>(functions.get, { userId, id }, signal);
     if (!job) throw new Error('Brief job not found');
     if (job.state === 'cancelled') throw new Error(job.error || 'Brief job cancelled');
     if (job.state === 'completed') return job;
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    // Only the caller's wait ends on disconnect; the persisted writer continues.
+    await delay(2_000, undefined, { signal });
   }
 }
 
@@ -82,7 +85,9 @@ export async function runBriefJob(userId: string, id: string, deps = defaults) {
               saved.pulse.model !== 'local'
             )
           ) {
-            const result = await deps.area({ userId, areaId: job.areaId, force: job.force });
+            // A matching source revision must not preserve a deterministic fallback.
+            const force = job.force === true || !saved?.pulse?.model || saved.pulse.model === 'local';
+            const result = await deps.area({ userId, areaId: job.areaId, force });
             if (!result?.pulse?.model || result.pulse.model === 'local')
               throw new Error('Area writer needs another attempt');
           }

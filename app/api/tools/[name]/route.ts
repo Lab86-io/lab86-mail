@@ -6,8 +6,8 @@ import { invokeTool, ToolValidationError } from '@/lib/tools/registry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// Some direct UI tools, notably manual Daily Brief generation, intentionally
-// wait for a terminal saved result instead of spawning fragile background work.
+// Some tool responses wait for their result. Durable brief jobs continue
+// independently of this request, including when a waiting caller disconnects.
 export const maxDuration = 600;
 
 const dependencies = {
@@ -51,6 +51,7 @@ export function createToolPost(deps = dependencies) {
         operationBatchId:
           typeof body?.operationBatchId === 'string' ? body.operationBatchId.slice(0, 180) : undefined,
         userTimezone: timezone,
+        ...(tool.name === 'generate_daily_report' ? { abortSignal: req.signal } : {}),
       });
       return NextResponse.json({ ok: true, result });
     } catch (err: any) {

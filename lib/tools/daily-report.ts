@@ -48,7 +48,7 @@ export const generateDailyReportTool = defineTool({
         edition: kind,
         timezone: ctx.userTimezone,
       });
-      if (wait) await waitForBriefJob(ctx.userId, job.jobId);
+      if (wait) await waitForBriefJob(ctx.userId, job.jobId, ctx.abortSignal);
       return { report: job.reportId ? await getDailyReportStore(job.reportId) : null, started: job.started };
     }
     if (wait) {

@@ -330,6 +330,50 @@ test('area and narrative workers complete, and duplicate deliveries do no model 
   expect(deps.daily).not.toHaveBeenCalled();
 });
 
+test('area recovery rewrites missing or local pulses even when the source revision is unchanged', async () => {
+  for (const model of [undefined, 'local', 'glm']) {
+    for (const force of [false, true]) {
+      const { deps, calls } = worker('area');
+      const mutation = deps.mutation;
+      deps.mutation = async (fn: any, args: any) => {
+        const result = await mutation(fn, args);
+        return getFunctionName(fn) === 'briefJobs:claim' ? { ...result, force } : result;
+      };
+      deps.query = async () => ({ livingBrief: { status: 'ready', pulseUpdatedAt: 9, pulse: { model } } });
+      await runBriefJob('owner', 'job', deps as any);
+      expect(deps.area).toHaveBeenCalledWith({
+        userId: 'owner',
+        areaId: 'area',
+        force: force || model !== 'glm',
+      });
+      expect(calls.at(-1)?.args.error).toBeUndefined();
+    }
+  }
+});
+
+test('aborting a caller stops polling without cancelling the persisted generation', async () => {
+  const query = spyOn(hosted, 'convexQuery').mockResolvedValue({ state: 'running' });
+  const mutation = spyOn(hosted, 'convexMutation').mockResolvedValue(null);
+  try {
+    const disconnected = new AbortController();
+    disconnected.abort(new Error('Caller disconnected'));
+    await expect(waitForBriefJob('owner', 'job', disconnected.signal)).rejects.toThrow('Caller disconnected');
+    expect(query).not.toHaveBeenCalled();
+
+    const controller = new AbortController();
+    const waiting = waitForBriefJob('owner', 'job', controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await expect(waiting).rejects.toThrow('aborted');
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][2]).toBe(controller.signal);
+    expect(mutation).not.toHaveBeenCalled();
+  } finally {
+    query.mockRestore();
+    mutation.mockRestore();
+  }
+});
+
 test('delivery acknowledges before the writer runs and enforces internal authentication', async () => {
   const callbacks: Array<() => Promise<void>> = [];
   const run = mock(async () => {});
@@ -348,6 +392,7 @@ test('delivery acknowledges before the writer runs and enforces internal authent
 
 test('hosted manual generation uses the durable queue with optional waiting and preserves the tenant', async () => {
   const configured = spyOn(environment, 'isConvexConfigured').mockReturnValue(true);
+  const signal = new AbortController().signal;
   const mutations: any[] = [];
   const { edition } = editorialFixture();
   let reads = 0;
@@ -365,6 +410,7 @@ test('hosted manual generation uses the durable queue with optional waiting and 
         async () => {
           const result = await generateDailyReportTool.handler({ kind: 'manual', wait }, {
             userId: 'owner',
+            abortSignal: signal,
           } as any);
           expect(result.report?._id).toBe(edition._id);
           expect(result.started).toBe(true);
@@ -375,6 +421,11 @@ test('hosted manual generation uses the durable queue with optional waiting and 
       true,
     );
     expect(mutations.every((row) => row.args.kind === 'daily' && row.args.reportId)).toBe(true);
+    expect(
+      query.mock.calls
+        .filter((call) => getFunctionName(call[0]) === 'briefJobs:get')
+        .every((call) => call[2] === signal),
+    ).toBe(true);
     await expect(generateDailyReportTool.handler({ kind: 'manual', wait: false }, {} as any)).rejects.toThrow(
       'Sign in',
     );
