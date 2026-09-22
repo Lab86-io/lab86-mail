@@ -379,7 +379,8 @@ describe('daily report tools', () => {
     // Without a model the budget document still composes deterministically:
     // a plain lede, the selected items, and the week ahead.
     expect(generated.report?.document?.version).toBe(2);
-    expect(generated.report?.document?.regions[0]?.id).toBe('lede');
+    expect(generated.report?.document?.regions[0]?.id).toBe('editorial-lede');
+    expect(generated.report?.editorial?.mode).toBe('fallback');
     expect(generated.report?.prose?.model).toBe('local');
     expect(generated.report?.artifactErrors?.[0]?.stage).toBe('ai_availability');
 

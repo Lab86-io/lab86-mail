@@ -570,8 +570,8 @@ describe('MCP syncConnection state transitions', () => {
       }),
     );
 
-    expect(result).toEqual({ ok: true, count: 1 });
-    expect(mutations.at(-1)).toMatchObject({ status: 'ready', itemCount: 1 });
+    expect(result).toEqual({ ok: false, count: 1, error: 'details unavailable' });
+    expect(mutations.at(-1)).toMatchObject({ status: 'error', itemCount: 1, error: 'details unavailable' });
   });
 
   test('syncAllMcpConnections retries errored rows, skips disconnected rows, and totals item counts', async () => {

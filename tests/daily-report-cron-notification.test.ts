@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createDailyReportPost, localDateForTimezone } from '../app/api/cron/daily-report/route';
+import { notifyBriefReady } from '../lib/mail/brief-ready';
 
 function request(body: unknown, host = 'mail.lab86.io') {
   return new NextRequest('https://mail.lab86.io/api/cron/daily-report', {
@@ -18,106 +19,70 @@ function dependencies() {
       _id: 'report_1',
       generatedAt: Date.parse('2026-07-25T02:30:00.000Z'),
       artifactStatus: 'ready',
+      prose: { lede: 'Maya waits on the venue. Friday is open.', weekAhead: '', model: 'local' },
     })),
     queueBriefReady: mock(async () => ({ notificationId: 'notification_1', created: true })),
     dispatchNativeNotification: mock(async () => ({ sent: 1 })),
   };
 }
 
-describe('daily report cron brief-ready notification', () => {
-  test('uses the user timezone local date and dispatches only after a morning report is saved', async () => {
-    const deps = dependencies();
+describe('daily brief cron and completion notifications', () => {
+  test('cron persists a background job and returns without waiting for generation', async () => {
+    const deps = {
+      ...dependencies(),
+      enqueue: mock(async () => ({ jobId: 'job', reportId: 'report', started: true })),
+    };
     const response = await createDailyReportPost(deps as any)(
-      request({
-        userId: 'user_1',
-        kind: 'morning',
-        timezone: 'America/New_York',
-      }),
+      request({ userId: 'owner', kind: 'morning', timezone: 'America/New_York' }),
     );
-
-    expect(response.status).toBe(200);
-    expect(deps.generateReport.mock.calls[0][0]).toEqual({
-      userId: 'user_1',
-      kind: 'morning',
-      userTimezone: 'America/New_York',
+    expect(response.status).toBe(202);
+    expect(deps.enqueue.mock.calls[0][0]).toEqual({
+      userId: 'owner',
+      kind: 'daily',
+      edition: 'morning',
+      timezone: 'America/New_York',
+    });
+    expect(deps.generateReport).not.toHaveBeenCalled();
+    expect(deps.queueBriefReady).not.toHaveBeenCalled();
+    expect(await response.json()).toMatchObject({ jobId: 'job', reportId: 'report' });
+  });
+  test('completion notifications use local date, deduplicate, and contain delivery failures', async () => {
+    const deps = dependencies();
+    const report = await deps.generateReport();
+    expect(await notifyBriefReady('owner', 'morning', report, 'America/New_York', deps as any)).toEqual({
+      sent: 1,
     });
     expect(deps.queueBriefReady.mock.calls[0][0]).toEqual({
-      userId: 'user_1',
+      userId: 'owner',
       reportId: 'report_1',
       localDate: '2026-07-24',
+      body: 'Maya waits on the venue. Friday is open.',
     });
-    expect(deps.dispatchNativeNotification.mock.calls[0]).toEqual(['user_1', 'notification_1']);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      kind: 'morning',
-      reportId: 'report_1',
-      briefNotification: { sent: 1 },
-    });
-  });
-
-  test('does not queue a brief-ready push for evening or manual runs', async () => {
-    for (const kind of ['evening', 'manual'] as const) {
-      const deps = dependencies();
-      const response = await createDailyReportPost(deps as any)(request({ userId: 'user_1', kind }));
-      expect(response.status).toBe(200);
-      expect(deps.queueBriefReady).not.toHaveBeenCalled();
-      expect(deps.dispatchNativeNotification).not.toHaveBeenCalled();
-    }
-  });
-
-  test('honors dedupe skips without dispatching a second native push', async () => {
-    const deps = dependencies();
-    deps.queueBriefReady.mockImplementation(async () => ({
-      notificationId: null,
-      created: false,
+    deps.queueBriefReady.mockResolvedValue({ skipped: 'duplicate' } as any);
+    expect(await notifyBriefReady('owner', 'morning', report, 'UTC', deps as any)).toEqual({
       skipped: 'duplicate',
-    }));
-
-    const response = await createDailyReportPost(deps as any)(
-      request({ userId: 'user_1', kind: 'morning', timezone: 'UTC' }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(deps.dispatchNativeNotification).not.toHaveBeenCalled();
-    expect((await response.json()).briefNotification).toEqual({ skipped: 'duplicate' });
-  });
-
-  test('keeps a completed report successful when native notification delivery fails', async () => {
-    const deps = dependencies();
-    deps.dispatchNativeNotification.mockImplementation(async () => {
-      throw new Error('APNs timeout');
     });
-
-    const response = await createDailyReportPost(deps as any)(request({ userId: 'user_1', kind: 'morning' }));
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      ok: true,
-      reportId: 'report_1',
-      briefNotification: { failed: true },
-    });
+    deps.queueBriefReady.mockRejectedValue(new Error('Unavailable'));
+    expect(await notifyBriefReady('owner', 'morning', report, 'UTC', deps as any)).toEqual({ failed: true });
+    for (const kind of ['manual', 'evening'])
+      expect(await notifyBriefReady('owner', kind, report, 'UTC', deps as any)).toBeUndefined();
   });
-
-  test('rejects unauthorized and missing-user calls, and skips staging', async () => {
-    const unauthorizedDeps = dependencies();
-    unauthorizedDeps.isInternalCronRequest.mockImplementation(() => false);
-    expect((await createDailyReportPost(unauthorizedDeps as any)(request({ userId: 'user_1' }))).status).toBe(
-      401,
-    );
-
-    const missingDeps = dependencies();
-    expect((await createDailyReportPost(missingDeps as any)(request({ kind: 'morning' }))).status).toBe(400);
-
-    const stagingDeps = dependencies();
-    stagingDeps.isStagingRuntime.mockImplementation(() => true);
-    const staging = await createDailyReportPost(stagingDeps as any)(
-      request({ userId: 'user_1', kind: 'morning' }, 'staging.lab86.io'),
-    );
-    expect(staging.status).toBe(200);
-    expect(await staging.json()).toEqual({ ok: true, skipped: true, reason: 'staging' });
-    expect(stagingDeps.generateReport).not.toHaveBeenCalled();
+  test('cron rejects unauthorized/missing user, skips staging, and surfaces persistence failure', async () => {
+    const deps = {
+      ...dependencies(),
+      enqueue: mock(async () => {
+        throw new Error('DB unavailable');
+      }),
+    };
+    expect((await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).status).toBe(500);
+    expect((await createDailyReportPost(deps as any)(request({}))).status).toBe(400);
+    deps.isStagingRuntime.mockReturnValue(true);
+    expect(
+      await (await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).json(),
+    ).toMatchObject({ skipped: true });
+    deps.isInternalCronRequest.mockReturnValue(false);
+    expect((await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).status).toBe(401);
   });
-
   test('local date helper handles a UTC-to-local day rollover', () => {
     expect(localDateForTimezone(Date.parse('2026-07-25T02:30:00.000Z'), 'America/New_York')).toBe(
       '2026-07-24',

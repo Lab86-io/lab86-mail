@@ -99,6 +99,54 @@ describe('Area artifact data contract', () => {
     expect(context.actions.discussArea.payload.areaId).toBe('area_1');
   });
 
+  test('area writer evidence includes current tasks, routines and pending questions', () => {
+    const context = buildAreaArtifactContext(home, 1000, {
+      projects: [
+        {
+          project: { _id: 'project', title: 'Launch' },
+          todayTasks: [{ title: 'Review the support quote', dueAt: 1000 }],
+          routines: [
+            {
+              _id: 'routine',
+              title: 'Weekly review',
+              purpose: 'Check commitments',
+              kind: 'review',
+              status: 'active',
+              consent: 'approved',
+              cadence: 'weekly',
+              localTime: '09:00',
+              timezone: 'UTC',
+              nextRunAt: 2000,
+            },
+          ],
+          pendingQuestions: [
+            {
+              _id: 'question',
+              kind: 'decision',
+              responseKind: 'choice',
+              prompt: 'Who owns support?',
+              reason: 'Confirm before launch',
+              options: [{ id: 'north', label: 'North', description: 'Weekday coverage' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(context.projectPulse[0].todayTasks[0]).toEqual({
+      title: 'Review the support quote',
+      dueAtIso: new Date(1000).toISOString(),
+    });
+    expect(context.projectPulse[0].routines[0]).toMatchObject({
+      routineId: 'routine',
+      consent: 'approved',
+      nextRunAtIso: new Date(2000).toISOString(),
+    });
+    expect(context.projectPulse[0].pendingQuestions[0]).toMatchObject({
+      questionId: 'question',
+      options: [{ id: 'north', label: 'North', description: 'Weekday coverage' }],
+    });
+  });
+
   test('carries real sprint and place details without inventing missing values', () => {
     const context = buildAreaArtifactContext({
       ...home,
@@ -173,7 +221,7 @@ describe('Area artifact data contract', () => {
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never say work is done unless');
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Candidate context is uncertain');
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('prose: at most 3 sentences');
-    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never write the word "AI"');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Preserve relevant product names');
   });
 });
 
@@ -230,6 +278,7 @@ describe('Area pulse pipeline', () => {
   test('writes generating, then the ready document, HTML fallback, and pulse', async () => {
     const writes: Array<{ args: any }> = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => ({
         ...home,
         area: { ...home.area, name: `Studio & <Lab> "A" 'B'` },
@@ -290,6 +339,7 @@ describe('Area pulse pipeline', () => {
     let touched = false;
     let queryCount = 0;
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => {
         queryCount += 1;
         return queryCount === 1 ? { ...home, livingBrief } : null;
@@ -315,6 +365,7 @@ describe('Area pulse pipeline', () => {
   test('a bad model reply degrades to the deterministic pulse and still lands ready', async () => {
     const writes: any[] = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);
@@ -336,6 +387,7 @@ describe('Area pulse pipeline', () => {
     const writes: any[] = [];
     let queryCount = 0;
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => {
         queryCount += 1;
         if (queryCount === 2) throw new Error('pulse unavailable');
@@ -358,6 +410,7 @@ describe('Area pulse pipeline', () => {
   test('records an error when the ready write fails', async () => {
     const writes: any[] = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);

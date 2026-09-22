@@ -49,7 +49,7 @@ describe('Today workspace endpoints', () => {
     expect((await routes.GET(request())).status).toBe(401);
     expect(deps.load).not.toHaveBeenCalled();
     deps.rate.mockRejectedValueOnce(new RateLimitError('Slow', 1000, 1));
-    expect((await routes.POST(request({ action: 'generate', at: 100 }))).status).toBe(429);
+    expect((await routes.GET(request())).status).toBe(429);
     deps.load.mockRejectedValue(new Error('secret credentials'));
     const error = await routes.GET(request());
     expect(error.status).toBe(503);

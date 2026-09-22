@@ -1,21 +1,22 @@
 import type { NextRequest } from 'next/server';
-import { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
+import type { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
 import { AuthRequiredError, type CurrentUser, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { enqueueBriefJob, waitForBriefJob } from '@/lib/mail/brief-jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
 
 class AreaBriefNotFoundError extends Error {}
 
 interface AreaBriefRouteDependencies {
   currentUser: () => Promise<CurrentUser>;
-  rateLimit: typeof enforceUserRateLimit;
   areaExists: (userId: string, areaId: string) => Promise<boolean>;
   reindex: (userId: string, areaId: string) => Promise<unknown>;
-  generate: typeof generateAreaLivingBrief;
+  generate: (
+    input: Parameters<typeof generateAreaLivingBrief>[0],
+    signal?: AbortSignal,
+  ) => ReturnType<typeof generateAreaLivingBrief>;
   warn: (message: string, error: unknown) => void;
   error: (message: string, error: unknown) => void;
 }
@@ -26,12 +27,6 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
   return async function areaBriefPost(_req: NextRequest, context: { params: Promise<{ areaId: string }> }) {
     try {
       const user = await deps.currentUser();
-      await deps.rateLimit({
-        userId: user.userId,
-        key: 'albatross-area-brief',
-        limit: 12,
-        windowMs: 60_000,
-      });
       const { areaId } = await context.params;
       if (!areaId) return Response.json({ ok: false, error: 'area required' }, { status: 400 });
 
@@ -49,18 +44,20 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
         deps.warn('[albatross-area-brief] evidence reindex failed', error);
       }
 
-      const brief = await deps.generate({
-        userId: user.userId,
-        userEmail: user.email,
-        userName: user.name,
-        areaId,
-        // A user pressing refresh asks for a new creative edition even if the
-        // bounded source revision is unchanged.
-        force: true,
-      });
+      const brief = await deps.generate(
+        {
+          userId: user.userId,
+          userEmail: user.email,
+          userName: user.name,
+          areaId,
+          // A user pressing refresh asks for a new creative edition even if the
+          // bounded source revision is unchanged.
+          force: true,
+        },
+        _req.signal,
+      );
       return Response.json({ ok: true, brief });
     } catch (error) {
-      if (error instanceof RateLimitError) return rateLimitResponse(error);
       if (error instanceof AuthRequiredError) {
         return Response.json({ ok: false, error: 'auth required' }, { status: 401 });
       }
@@ -75,7 +72,6 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
 
 export const POST = createAreaBriefPost({
   currentUser: requireCurrentUser,
-  rateLimit: enforceUserRateLimit,
   areaExists: async (userId, areaId) => {
     const area = await convexQuery((api as any).albatross.areaBriefTarget, { userId, areaId });
     return area !== null;
@@ -85,7 +81,12 @@ export const POST = createAreaBriefPost({
       userId,
       areaId,
     }),
-  generate: generateAreaLivingBrief,
+  generate: async ({ userId, areaId, force }, signal) => {
+    const job = await enqueueBriefJob({ userId, kind: 'area', areaId, force });
+    await waitForBriefJob(userId, job.jobId, signal);
+    const home = await convexQuery<any>((api as any).albatross.areaHome, { userId, areaId }, signal);
+    return home.livingBrief;
+  },
   warn: console.warn,
   error: console.error,
 });

@@ -2,33 +2,74 @@ import MobileAPI
 import SwiftUI
 
 // The budget brief (2026-09-03) reads as a short letter. The server emits a
-// fixed region layout: `lede`, then the lanes `answer`, `today`, `know`, then
-// `week-ahead`, then `areas`. The area brief emits `lede`, `pulse`, `ask`,
-// `open-work`. This file holds the pure layout decision and the letter views.
-// Any region the layout does not recognise falls back to the node renderer,
-// so older editions keep their look.
+// fixed region layout: `lede`, `yesterday`, then the lanes `answer`, `today`,
+// `know`, `waiting`, `tasks`, `connected`, then `week-ahead`, then `areas`.
+// The area brief emits `lede`, `pulse`, `ask`, `week`, `mail`, `open-work`.
+// This file holds the pure layout decision and the letter views. Any region
+// the layout does not recognise falls back to the node renderer, so older
+// editions keep their look.
 
 // MARK: - Pure layout
 
+// One row section of a letter. The raw value is the region id.
 enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
     case answer
     case today
     case know
+    case waiting
+    case tasks
+    case connected
+    // The area letter's verified mail (brief round 2026-09-22).
+    case mail
 
     var title: String {
         switch self {
         case .answer: "Answer"
         case .today: "Today"
         case .know: "Know"
+        case .waiting: "Waiting on"
+        case .tasks: "Tasks this week"
+        case .connected: "Connected tools"
+        case .mail: "Mail"
         }
     }
 
-    var note: String {
+    var note: String? {
         switch self {
         case .answer: "Replies you owe"
         case .today: "Deadlines and the calendar"
         case .know: "Worth a look"
+        case .waiting: "Replies you wait for"
+        case .tasks: "Due inside seven days"
+        case .connected: "From your tools"
+        case .mail: "Linked to this area"
         }
+    }
+
+    // Mail lanes lead with the sender avatar. Task and tool rows have no
+    // sender, so they start at the text column.
+    var showsAvatar: Bool {
+        switch self {
+        case .answer, .today, .know, .waiting, .mail: true
+        case .tasks, .connected: false
+        }
+    }
+}
+
+// How one row spends its actions (brief round 2026-09-22). The first known
+// action is the row tap. Every other known action becomes a trailing quiet
+// button. Unknown actions never render. Rows without a known action only
+// receive a fallback tap when their source has a supported destination.
+enum BriefRowActions {
+    struct Arrangement: Equatable {
+        let tap: BriefDocumentAction?
+        let trailing: [BriefDocumentAction]
+    }
+
+    static func arrange(_ actions: [BriefDocumentAction]?, fallback: BriefDocumentAction?) -> Arrangement {
+        let known = (actions ?? []).filter { BriefActionPolicy.known.contains($0.action) }
+        guard let first = known.first else { return Arrangement(tap: fallback, trailing: []) }
+        return Arrangement(tap: first, trailing: Array(known.dropFirst()))
     }
 }
 
@@ -53,11 +94,29 @@ struct BriefPulseLine: Equatable, Sendable {
 
 enum BriefLetterSection: Equatable {
     case lede(text: String)
+    // The check-in reflection and what moved since the last edition.
+    case yesterday(text: String)
     case lane(BriefLetterLane, items: [BriefEntityItem])
     case weekAhead(text: String)
+    // The area's next seven days.
+    case week(text: String)
     case areas(items: [BriefEntityItem])
     case pulse(lines: [BriefPulseLine])
     case node(BriefRegion)
+
+    // The region id the section came from, for telemetry.
+    var regionID: String {
+        switch self {
+        case .lede: "lede"
+        case .yesterday: "yesterday"
+        case .lane(let lane, _): lane.rawValue
+        case .weekAhead: "week-ahead"
+        case .week: "week"
+        case .areas: "areas"
+        case .pulse: "pulse"
+        case .node(let region): region.id
+        }
+    }
 
     var isLede: Bool {
         if case .lede = self { return true }
@@ -79,13 +138,17 @@ enum BriefLetterLayout {
                 ?? tree.children?.first { $0.kind == "text" }?.text
                 ?? region.summary
             return .lede(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
-        case ("answer", "entity_list"), ("today", "entity_list"), ("know", "entity_list"):
-            guard let lane = BriefLetterLane(rawValue: region.id) else { return .node(region) }
-            return .lane(lane, items: tree.items ?? [])
+        case ("yesterday", "text"):
+            return .yesterday(text: (tree.text ?? region.summary).trimmingCharacters(in: .whitespacesAndNewlines))
         case ("week-ahead", "text"):
             return .weekAhead(text: (tree.text ?? region.summary).trimmingCharacters(in: .whitespacesAndNewlines))
+        case ("week", "text"):
+            return .week(text: (tree.text ?? region.summary).trimmingCharacters(in: .whitespacesAndNewlines))
         case ("areas", "entity_list"):
             return .areas(items: Array((tree.items ?? []).prefix(areaLimit)))
+        case (let id, "entity_list"):
+            guard let lane = BriefLetterLane(rawValue: id) else { return .node(region) }
+            return .lane(lane, items: tree.items ?? [])
         case ("pulse", "stack"):
             let lines = (tree.children ?? [])
                 .filter { $0.kind == "text" }
@@ -113,7 +176,7 @@ enum BriefLetterLayout {
                 return items.isEmpty ? nil : section
             case .areas(let items):
                 return items.isEmpty ? nil : section
-            case .weekAhead(let text):
+            case .weekAhead(let text), .yesterday(let text), .week(let text):
                 return text.isEmpty ? nil : section
             case .pulse, .node:
                 return section
@@ -121,15 +184,16 @@ enum BriefLetterLayout {
         }
     }
 
-    // A letter edition carries a lede region and at least one lane, a week
-    // ahead, or a pulse. Older editions render node by node.
+    // A letter edition carries a lede region and at least one lane, a
+    // paragraph (yesterday, week ahead, week), or a pulse. Older editions
+    // render node by node.
     static func isLetter(_ document: BriefDocumentV2) -> Bool {
         var hasLede = false
         var hasBody = false
         for region in document.regions {
             switch classify(region) {
             case .lede: hasLede = true
-            case .lane, .weekAhead, .pulse: hasBody = true
+            case .lane, .weekAhead, .yesterday, .week, .pulse: hasBody = true
             default: break
             }
         }
@@ -140,8 +204,10 @@ enum BriefLetterLayout {
     static func key(for section: BriefLetterSection, at index: Int) -> String {
         switch section {
         case .lede: "lede"
+        case .yesterday: "yesterday"
         case .lane(let lane, _): "lane:\(lane.rawValue)"
         case .weekAhead: "week-ahead"
+        case .week: "week"
         case .areas: "areas"
         case .pulse: "pulse"
         case .node(let region): "node:\(region.id):\(index)"
@@ -252,27 +318,58 @@ enum DailyBriefFooterCopy {
 
 // MARK: - Row copy
 
-// The pure parts of one mail row, so the accessibility sentence and the
-// fallbacks are testable without a view.
+// The pure parts of one letter row (a thread, a task, or a connected-tool
+// item), so the accessibility sentence and the fallbacks are testable
+// without a view.
 struct BriefMailRowCopy: Equatable {
     let sender: String?
     let subject: String
     let line: String?
+    // The carry-over label, for example "Day 3".
+    let age: String?
+    // The tap action's label.
     let action: String?
+    // The trailing quiet buttons, in order.
+    let trailingActions: [String]
+    let completed: Bool
 
-    init(item: BriefEntityItem, entity: BriefHydratedEntity?) {
+    init(item: BriefEntityItem, entity: BriefHydratedEntity?, completed: Bool? = nil) {
         sender = item.framing?.sender?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-        subject = entity?.title.nilIfBlank ?? item.ref.label?.nilIfBlank ?? "(no subject)"
+        let fallbackSubject = item.ref.kind == "thread" ? "(no subject)" : "Untitled"
+        subject = entity?.title.nilIfBlank ?? item.ref.label?.nilIfBlank ?? fallbackSubject
         line = item.framing?.reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-        action = item.actions?.first?.label.nilIfBlank
+        age = item.framing?.age?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        let arranged = BriefRowActions.arrange(item.actions, fallback: Self.fallbackOpen(for: item.ref))
+        let known = (item.actions ?? []).contains { BriefActionPolicy.known.contains($0.action) }
+        action = known ? arranged.tap?.label.nilIfBlank : nil
+        trailingActions = arranged.trailing.map(\.label)
+        self.completed = completed ?? entity?.completed ?? false
+    }
+
+    // The tap when the item carries no known action.
+    static func fallbackOpen(for ref: BriefSourceRef) -> BriefDocumentAction? {
+        let name: String
+        var payload: [String: BriefJSONValue] = [:]
+        switch ref.kind {
+        case "event": name = "open_event"
+        case "task", "card":
+            name = "open_view"
+            payload["view"] = .string("tasks")
+        case "thread": name = "open_thread"
+        default: return nil
+        }
+        return BriefDocumentAction(action: name, label: "Open", payload: payload, style: "quiet")
     }
 
     var accessibilityLabel: String {
         var parts: [String] = []
         if let sender { parts.append("From \(sender)") }
+        if let age { parts.append(age) }
         parts.append(subject)
+        if completed { parts.append("completed") }
         if let line { parts.append(line) }
         if let action { parts.append("action \(action)") }
+        for trailing in trailingActions { parts.append("action \(trailing)") }
         return parts.joined(separator: ", ")
     }
 
@@ -325,6 +422,7 @@ struct BriefLaneSection: View {
     let items: [BriefEntityItem]
     let entities: [String: BriefHydratedEntity]
     let hiddenRefs: Set<String>
+    var completedRefs: [String: Bool] = [:]
     let editionKey: String
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
 
@@ -340,10 +438,16 @@ struct BriefLaneSection: View {
                     if item.ref.kind == "event" {
                         BriefEventRow(item: item, entity: entities[item.ref.key], onAction: onAction)
                     } else {
-                        BriefMailRow(item: item, entity: entities[item.ref.key], onAction: onAction)
+                        BriefMailRow(
+                            item: item,
+                            entity: entities[item.ref.key],
+                            completed: completedRefs[item.ref.key],
+                            showsAvatar: lane.showsAvatar,
+                            onAction: onAction
+                        )
                     }
                     if index < visible.count - 1 {
-                        Divider().padding(.leading, 44)
+                        Divider().padding(.leading, lane.showsAvatar ? 44 : 0)
                     }
                 }
                 .modifier(BriefRise(shown: risenEdition == editionKey, index: index, reduceMotion: reduceMotion))
@@ -377,46 +481,65 @@ private struct BriefRise: ViewModifier {
     }
 }
 
-// A real email row: avatar, sender in the display face, subject, the model's
-// line, and a plain-text action word. The row opens the thread; the word runs
-// the action. At `.xxxLarge` the word moves under the text. At accessibility
-// sizes the avatar hides.
+// A letter row: avatar (mail lanes), sender in the display face with the
+// carry-over label after it, subject, the model's line, and the trailing
+// action words. The row tap runs the first known action; each word runs one
+// of the rest. Task rows strike through when completed. Tool rows show the
+// label and the reason. At `.xxxLarge` the words move under the text. At
+// accessibility sizes the avatar hides.
 struct BriefMailRow: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let item: BriefEntityItem
     let entity: BriefHydratedEntity?
+    var completed: Bool? = nil
+    var showsAvatar: Bool = true
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
 
-    private var copy: BriefMailRowCopy { BriefMailRowCopy(item: item, entity: entity) }
-    private var primaryAction: BriefDocumentAction? { item.actions?.first }
-    private var openAction: BriefDocumentAction {
-        BriefDocumentAction(action: "open_thread", label: "Open", payload: [:], style: "quiet")
+    private var copy: BriefMailRowCopy { BriefMailRowCopy(item: item, entity: entity, completed: completed) }
+    private var arrangement: BriefRowActions.Arrangement {
+        BriefRowActions.arrange(item.actions, fallback: BriefMailRowCopy.fallbackOpen(for: item.ref))
     }
     private var stacksAction: Bool { dynamicTypeSize >= .xxxLarge }
-    private var showsAvatar: Bool { !dynamicTypeSize.isAccessibilitySize }
+    private var drawsAvatar: Bool { showsAvatar && !dynamicTypeSize.isAccessibilitySize }
+    private var dimmed: Bool { entity?.gone == true || copy.completed }
 
     var body: some View {
+        if let tap = arrangement.tap {
+            row
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { Task { await onAction(tap, item.ref) } }
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         let copy = copy
-        HStack(alignment: .top, spacing: 12) {
-            if showsAvatar {
+        let arrangement = arrangement
+        return HStack(alignment: .top, spacing: 12) {
+            if drawsAvatar {
                 InitialsAvatar(name: copy.avatarName, seed: copy.avatarName, size: 32)
                     .padding(.top, 2)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    Task { await onAction(openAction, item.ref) }
-                } label: {
+                if let tap = arrangement.tap {
+                    Button {
+                        Task { await onAction(tap, item.ref) }
+                    } label: {
+                        textBlock(copy)
+                    }
+                    .buttonStyle(.plain)
+                } else {
                     textBlock(copy)
                 }
-                .buttonStyle(.plain)
-                if stacksAction, let action = primaryAction {
-                    actionWord(action)
+                if stacksAction, !arrangement.trailing.isEmpty {
+                    actionWords(arrangement.trailing)
                 }
             }
-            if !stacksAction, let action = primaryAction {
+            if !stacksAction, !arrangement.trailing.isEmpty {
                 Spacer(minLength: 12)
-                actionWord(action)
+                actionWords(arrangement.trailing)
                     .padding(.top, 2)
             }
         }
@@ -424,39 +547,64 @@ struct BriefMailRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(copy.accessibilityLabel)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { Task { await onAction(openAction, item.ref) } }
-        .accessibilityAction(named: primaryAction?.label ?? "Open") {
-            if let action = primaryAction { Task { await onAction(action, item.ref) } }
+        .accessibilityActions {
+            ForEach(Array(arrangement.trailing.enumerated()), id: \.offset) { _, action in
+                Button(action.label) { Task { await onAction(action, item.ref) } }
+            }
         }
     }
 
     @ViewBuilder private func textBlock(_ copy: BriefMailRowCopy) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             if let sender = copy.sender {
-                Text(sender)
-                    .font(environment.theme.displayType.displayFont(size: 15))
-                    .foregroundStyle(entity?.gone == true ? .secondary : .primary)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(sender)
+                        .font(environment.theme.displayType.displayFont(size: 15))
+                        .foregroundStyle(dimmed ? .secondary : .primary)
+                        .lineLimit(1)
+                    if let age = copy.age { ageLabel(age) }
+                }
             }
-            Text(copy.subject)
-                .font(.subheadline)
-                .foregroundStyle(entity?.gone == true ? .secondary : .primary)
-                .strikethrough(entity?.gone == true)
-                .lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(copy.subject)
+                    .font(.subheadline)
+                    .foregroundStyle(dimmed ? .secondary : .primary)
+                    .strikethrough(dimmed)
+                    .lineLimit(2)
+                if copy.sender == nil, let age = copy.age { ageLabel(age) }
+            }
             if let line = copy.line {
                 Text(line)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if entity?.gone == true {
-                Text("This conversation is no longer available.")
+                Text(item.ref.kind == "thread"
+                     ? "This conversation is no longer available."
+                     : "This item is no longer available.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    // "Day 3": a small secondary label after the sender.
+    private func ageLabel(_ age: String) -> some View {
+        Text(age)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private func actionWords(_ actions: [BriefDocumentAction]) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                actionWord(action)
+            }
+        }
     }
 
     private func actionWord(_ action: BriefDocumentAction) -> some View {
@@ -476,9 +624,16 @@ struct BriefEventRow: View {
     let entity: BriefHydratedEntity?
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
 
-    private var primaryAction: BriefDocumentAction? { item.actions?.first }
-    private var openAction: BriefDocumentAction {
+    private var fallbackAction: BriefDocumentAction {
         BriefDocumentAction(action: "open_event", label: "Open", payload: [:], style: "quiet")
+    }
+    private var tap: BriefDocumentAction { arrangement.tap ?? fallbackAction }
+
+    private var arrangement: BriefRowActions.Arrangement {
+        BriefRowActions.arrange(
+            item.actions,
+            fallback: fallbackAction
+        )
     }
     private var title: String { entity?.title ?? item.ref.label ?? "Event" }
     private var detail: String? { item.framing?.reason ?? entity?.subtitle }
@@ -503,9 +658,10 @@ struct BriefEventRow: View {
                 .frame(width: 32)
                 .padding(.top, 3)
             }
+            let arrangement = arrangement
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    Task { await onAction(openAction, item.ref) }
+                    Task { await onAction(tap, item.ref) }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
@@ -523,13 +679,13 @@ struct BriefEventRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if stacksAction, let action = primaryAction {
-                    actionWord(action)
+                if stacksAction, !arrangement.trailing.isEmpty {
+                    actionWords(arrangement.trailing)
                 }
             }
-            if !stacksAction, let action = primaryAction {
+            if !stacksAction, !arrangement.trailing.isEmpty {
                 Spacer(minLength: 12)
-                actionWord(action)
+                actionWords(arrangement.trailing)
                     .padding(.top, 2)
             }
         }
@@ -538,14 +694,26 @@ struct BriefEventRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { Task { await onAction(openAction, item.ref) } }
-        .accessibilityAction(named: primaryAction?.label ?? "Open") {
-            if let action = primaryAction { Task { await onAction(action, item.ref) } }
+        .accessibilityAction { Task { await onAction(tap, item.ref) } }
+        .accessibilityActions {
+            ForEach(Array(arrangement.trailing.enumerated()), id: \.offset) { _, action in
+                Button(action.label) { Task { await onAction(action, item.ref) } }
+            }
         }
     }
 
     private var accessibilityLabel: String {
-        [title, detail, primaryAction.map { "action \($0.label)" }].compactMap { $0 }.joined(separator: ", ")
+        let words = arrangement.trailing.map { "action \($0.label)" }
+        return ([title, detail, "action \(tap.label)"].compactMap { $0 } + words)
+            .joined(separator: ", ")
+    }
+
+    private func actionWords(_ actions: [BriefDocumentAction]) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                actionWord(action)
+            }
+        }
     }
 
     private func actionWord(_ action: BriefDocumentAction) -> some View {
@@ -556,6 +724,10 @@ struct BriefEventRow: View {
             .fixedSize()
     }
 }
+
+// The yesterday and area week paragraphs read in the week-ahead style: body
+// face, weekday names and dates in semibold.
+typealias BriefLetterParagraph = WeekAheadText
 
 // The week-ahead paragraph with weekday names and dates in semibold.
 struct WeekAheadText: View {

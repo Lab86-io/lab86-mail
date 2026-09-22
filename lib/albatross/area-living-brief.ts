@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
 import { describeProvider } from '../ai/client';
+import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
-import { narrativePrompt } from '../narrative/service';
+import { briefSourceCoverage } from '../mail/brief-source-refresh';
+import { resolveBriefTimezone } from '../mail/brief-timezone';
+import { narrativePrompt, prepareBriefContext } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
-import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
 // The area pulse (2026-09-03). One small model call writes four fields; the
 // document and the HTML fallback are rendered from them deterministically.
-const AREA_PULSE_DEADLINE_MS = 60_000;
 export const AREA_PULSE_MAX_SENTENCES = 3;
 export const AREA_PULSE_FIELD_MAX_WORDS = 28;
 
@@ -20,7 +21,7 @@ interface AreaLivingBriefDependencies {
   convexQuery: typeof convexQuery;
   generateTextForCurrentUser: typeof generateTextForCurrentUser;
   narrativePrompt: typeof narrativePrompt;
-  withDeadline: typeof withDeadline;
+  prepareBriefContext: typeof prepareBriefContext;
 }
 
 const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
@@ -28,7 +29,7 @@ const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
   convexQuery,
   generateTextForCurrentUser,
   narrativePrompt,
-  withDeadline,
+  prepareBriefContext,
 };
 
 let areaLivingBriefDependencies = defaultAreaLivingBriefDependencies;
@@ -78,6 +79,7 @@ export function buildAreaArtifactContext(
   generatedAt = Date.now(),
   pulse?: Record<string, any> | null,
   evidenceIndex?: Record<string, any> | null,
+  timezone?: string | null,
 ) {
   const areaId = String(home.area?._id || '');
   const nextDayIntent = clean(home.dailyAlignment?.tomorrowIntent, 10_000);
@@ -89,11 +91,75 @@ export function buildAreaArtifactContext(
     ...(home.tasks || []).map((row) => clean(row.title, 500)),
   ].filter((value): value is string => Boolean(value));
   const intentBudget = dailyIntentBudget(nextDayIntent);
+  // The living delta (brief round 2026-09-22): what arrived or moved after the
+  // last ready brief. Counts plus a few titles; the model writes one sentence.
+  const lastBriefAt = Number(home.livingBrief?.pulseUpdatedAt ?? home.livingBrief?.updatedAt ?? 0) || 0;
+  const changedSince = (rows: any[], at: (row: any) => number, text: (row: any) => string | null) =>
+    lastBriefAt
+      ? rows
+          .filter((row) => Number(at(row) || 0) > lastBriefAt)
+          .map((row) => clean(text(row), 200))
+          .filter((value): value is string => Boolean(value))
+      : [];
+  const newMail = changedSince(
+    home.mail || [],
+    (row) => row.lastDate,
+    (row) => row.subject,
+  );
+  const movedTasks = changedSince(
+    home.tasks || [],
+    (row) => row.updatedAt,
+    (row) => row.title,
+  );
+  const movedWork = changedSince(
+    home.plans || [],
+    (row) => row.updatedAt,
+    (row) => row.title,
+  );
+  const weekEnd = generatedAt + 7 * 86_400_000;
   return {
     edition: {
       generatedAt,
       generatedAtIso: new Date(generatedAt).toISOString(),
       scope: 'one_area',
+      // The reader's zone, for weekday names in the week ahead.
+      timezone: timezone || null,
+    },
+    sinceLastBrief: lastBriefAt
+      ? {
+          lastBriefAtIso: new Date(lastBriefAt).toISOString(),
+          newMailCount: newMail.length,
+          newMail: newMail.slice(0, 5),
+          movedTaskCount: movedTasks.length,
+          movedTasks: movedTasks.slice(0, 5),
+          movedWorkCount: movedWork.length,
+          movedWork: movedWork.slice(0, 5),
+        }
+      : null,
+    // The next seven days in this area: events and due tasks, soonest first.
+    weekAhead: {
+      untilIso: new Date(weekEnd).toISOString(),
+      events: (home.events || [])
+        .filter(
+          (row) => Number(row.startAt || 0) >= generatedAt - 3_600_000 && Number(row.startAt || 0) <= weekEnd,
+        )
+        .sort((a, b) => Number(a.startAt || 0) - Number(b.startAt || 0))
+        .slice(0, 8)
+        .map((row) => ({
+          title: clean(row.title, 200),
+          startAtIso: iso(row.startAt),
+          allDay: Boolean(row.allDay),
+        })),
+      dueTasks: (home.tasks || [])
+        .filter(
+          (row) =>
+            !row.completedAt &&
+            Number(row.dueAt || 0) >= generatedAt - 86_400_000 &&
+            Number(row.dueAt || 0) <= weekEnd,
+        )
+        .sort((a, b) => Number(a.dueAt || 0) - Number(b.dueAt || 0))
+        .slice(0, 8)
+        .map((row) => ({ title: clean(row.title, 200), dueAtIso: iso(row.dueAt) })),
     },
     area: {
       areaId,
@@ -290,6 +356,11 @@ export function areaArtifactRevision(context: unknown) {
   const revisionInput = {
     ...record,
     edition: record.edition ? { scope: record.edition.scope } : undefined,
+    // The delta is computed against the last brief time, not against the
+    // sources, so it must not force a rewrite by itself. The week window is
+    // derived from the same source rows already in the digest.
+    sinceLastBrief: undefined,
+    weekAhead: undefined,
   };
   return createHash('sha256').update(JSON.stringify(revisionInput)).digest('hex').slice(0, 24);
 }
@@ -329,19 +400,25 @@ export interface AreaPulse {
   openQuestion: string;
   // At most 3 sentences.
   prose: string;
+  // The next seven days in this area, at most 3 sentences (2026-09-22).
+  weekAhead?: string;
+  // One sentence on what arrived or moved since the last brief (2026-09-22).
+  sinceLastBrief?: string;
   model?: string;
 }
 
 export const AREA_PULSE_SYSTEM_PROMPT = `You keep a short pulse for one area of a person's life or work. Return only JSON:
-{"lastChange":"...","nextMove":"...","openQuestion":"...","prose":"..."}
+{"lastChange":"...","nextMove":"...","openQuestion":"...","prose":"...","weekAhead":"...","sinceLastBrief":"..."}
 
 Rules:
 - lastChange: one sentence on the most recent real change in this area (a message, a task, a commit, an event). Use supplied dates. Empty string when nothing changed.
 - nextMove: one sentence naming the single next useful action. Empty string when there is none.
 - openQuestion: one question the person must answer to move this area forward. Use a supplied pending question when one exists. Empty string when there is none.
 - prose: at most 3 sentences on where this area stands. Declared Work and the person's stated intent outrank the volume of mail or tasks.
+- weekAhead: at most 3 sentences on the next seven days in this area, from the supplied weekAhead events and due tasks. Name the day for each. Empty string when the week is open.
+- sinceLastBrief: one sentence on what arrived or moved since the last brief, from the supplied sinceLastBrief counts and titles. Empty string when nothing did.
 - Use only supplied facts. Never say work is done unless a completed state says so. Candidate context is uncertain: phrase it as a question or leave it out.
-- Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Never write the word "AI".`;
+- Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Preserve relevant product names and technical terms from the sources.`;
 
 function firstString(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -379,7 +456,64 @@ export function fallbackAreaPulse(context: Record<string, any>): AreaPulse {
       : '';
   const openQuestion = questions[0]?.prompt ? firstString(questions[0].prompt, 300) : '';
   const prose = `${name} has ${openWork} active Work ${openWork === 1 ? 'item' : 'items'} and ${tasks.filter((row: any) => !row.completed).length} open ${tasks.length === 1 ? 'task' : 'tasks'}.`;
-  return { lastChange, nextMove, openQuestion, prose, model: 'local' };
+  return {
+    lastChange,
+    nextMove,
+    openQuestion,
+    prose,
+    weekAhead: fallbackAreaWeekAhead(context),
+    sinceLastBrief: fallbackAreaSinceLastBrief(context),
+    model: 'local',
+  };
+}
+
+function weekdayName(isoValue: unknown, timeZone?: string | null): string {
+  const at = typeof isoValue === 'string' ? Date.parse(isoValue) : Number.NaN;
+  if (!Number.isFinite(at)) return '';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      ...(timeZone ? { timeZone } : {}),
+    }).format(new Date(at));
+  } catch {
+    return new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(at));
+  }
+}
+
+// "Tuesday: dentist. Friday: rent is due." from the bounded week window.
+export function fallbackAreaWeekAhead(context: Record<string, any>): string {
+  const week = context.weekAhead && typeof context.weekAhead === 'object' ? context.weekAhead : null;
+  if (!week) return '';
+  const timeZone = typeof context.edition?.timezone === 'string' ? context.edition.timezone : null;
+  const parts: string[] = [];
+  for (const event of (Array.isArray(week.events) ? week.events : []).slice(0, 3)) {
+    const day = weekdayName(event?.startAtIso, timeZone);
+    const title = firstString(event?.title, 120);
+    if (day && title) parts.push(`${day}: ${title}.`);
+  }
+  for (const task of (Array.isArray(week.dueTasks) ? week.dueTasks : []).slice(0, 2)) {
+    const day = weekdayName(task?.dueAtIso, timeZone);
+    const title = firstString(task?.title, 120);
+    if (day && title) parts.push(`${day}: ${title} is due.`);
+  }
+  return parts.slice(0, AREA_PULSE_MAX_SENTENCES).join(' ');
+}
+
+export function fallbackAreaSinceLastBrief(context: Record<string, any>): string {
+  const since =
+    context.sinceLastBrief && typeof context.sinceLastBrief === 'object' ? context.sinceLastBrief : null;
+  if (!since) return '';
+  const parts: string[] = [];
+  const mail = Number(since.newMailCount || 0);
+  const tasks = Number(since.movedTaskCount || 0);
+  const work = Number(since.movedWorkCount || 0);
+  if (mail) parts.push(`${mail} new ${mail === 1 ? 'message' : 'messages'}`);
+  if (tasks) parts.push(`${tasks} ${tasks === 1 ? 'task' : 'tasks'} moved`);
+  if (work) parts.push(`${work} Work ${work === 1 ? 'item' : 'items'} changed`);
+  if (!parts.length) return '';
+  const list =
+    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `Since the last brief: ${list}.`;
 }
 
 export function parseAreaPulse(text: string, fallback: AreaPulse): AreaPulse | null {
@@ -401,6 +535,11 @@ export function parseAreaPulse(text: string, fallback: AreaPulse): AreaPulse | n
     prose:
       sanitizeProse(typeof parsed.prose === 'string' ? parsed.prose : '', AREA_PULSE_MAX_SENTENCES) ||
       fallback.prose,
+    weekAhead:
+      sanitizeProse(typeof parsed.weekAhead === 'string' ? parsed.weekAhead : '', AREA_PULSE_MAX_SENTENCES) ||
+      fallback.weekAhead ||
+      '',
+    sinceLastBrief: field(parsed.sinceLastBrief) || fallback.sinceLastBrief || '',
   };
 }
 
@@ -409,35 +548,19 @@ export async function writeAreaPulse(
   input: { userId: string; userEmail?: string | null; userName?: string | null },
 ): Promise<AreaPulse> {
   const fallback = fallbackAreaPulse(context);
-  const startedAt = Date.now();
   try {
     const memory = await areaLivingBriefDependencies
-      .withDeadline(
-        areaLivingBriefDependencies.narrativePrompt(
-          input.userId,
-          '',
-          `area:${context.area?.id || context.area?.areaId || ''}`,
-        ),
-        Math.min(8000, AREA_PULSE_DEADLINE_MS),
-        'Area pulse context',
-      )
+      .narrativePrompt(input.userId, '', `area:${context.area?.id || context.area?.areaId || ''}`)
       .catch(() => '');
-    const remainingMs = AREA_PULSE_DEADLINE_MS - (Date.now() - startedAt);
-    if (remainingMs <= 0) return fallback;
-    const { text } = await areaLivingBriefDependencies.withDeadline(
-      areaLivingBriefDependencies.generateTextForCurrentUser({
-        feature: 'albatross_area_pulse',
-        speed: 'fast',
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        system: AREA_PULSE_SYSTEM_PROMPT,
-        prompt: `${JSON.stringify(context, null, 2)}\n${memory}`,
-        abortSignal: AbortSignal.timeout(remainingMs),
-      }),
-      remainingMs,
-      'Area pulse composition',
-    );
+    const { text } = await areaLivingBriefDependencies.generateTextForCurrentUser({
+      feature: 'albatross_area_pulse',
+      speed: 'fast',
+      userId: input.userId,
+      userEmail: input.userEmail,
+      userName: input.userName,
+      system: AREA_PULSE_SYSTEM_PROMPT,
+      prompt: `${JSON.stringify(context, null, 2)}\n${memory}`,
+    });
     const parsed = parseAreaPulse(text, fallback);
     if (!parsed) return fallback;
     return { ...parsed, model: describeProvider().fast || describeProvider().primary || 'fast' };
@@ -449,7 +572,30 @@ export async function writeAreaPulse(
 
 // ---- Deterministic renderers -------------------------------------------------
 
-// The area document: hero (prose) -> pulse lines -> one prompt -> live open work.
+export const AREA_MAIL_LIMIT = 4;
+
+// The mail rows of the area letter: verified links first, unread first, then
+// newest. Candidate links are hypotheses and never earn a row.
+export function areaMailForBrief(context: Record<string, any>) {
+  const rows = Array.isArray(context.mail) ? context.mail : [];
+  return rows
+    .filter((row: any) => row?.threadId && row?.accountId && row.assignment !== 'candidate')
+    .sort(
+      (a: any, b: any) =>
+        Number(Boolean(b.unread)) - Number(Boolean(a.unread)) ||
+        Number(b.receivedAt || 0) - Number(a.receivedAt || 0),
+    )
+    .slice(0, AREA_MAIL_LIMIT)
+    .map((row: any) => ({
+      accountId: String(row.accountId),
+      threadId: String(row.threadId),
+      subject: firstString(row.subject, 200) || '(no subject)',
+      sender: firstString(row.from, 120),
+      reason: row.unread ? 'Unread' : firstString(row.snippet, 140),
+    }));
+}
+
+// The area document: hero (prose) -> pulse lines -> one prompt -> week -> mail -> live open work.
 export function composeAreaPulseDocument(
   context: Record<string, any>,
   pulse: AreaPulse,
@@ -498,6 +644,33 @@ export function composeAreaPulseDocument(
       },
     });
   }
+  if (pulse.sinceLastBrief) {
+    const stack = regions.find((region) => region.id === 'pulse');
+    if (stack && stack.tree.kind === 'stack') {
+      stack.tree.children.push({
+        kind: 'text',
+        emphasis: 'muted',
+        tone: 'neutral',
+        role: 'body',
+        text: pulse.sinceLastBrief,
+      });
+      stack.summary = `${stack.summary} ${pulse.sinceLastBrief}`.trim();
+    } else {
+      regions.push({
+        id: 'pulse',
+        summary: pulse.sinceLastBrief,
+        tree: {
+          kind: 'stack',
+          emphasis: 'standard',
+          tone: 'neutral',
+          density: 'standard',
+          children: [
+            { kind: 'text', emphasis: 'muted', tone: 'neutral', role: 'body', text: pulse.sinceLastBrief },
+          ],
+        },
+      });
+    }
+  }
   regions.push({
     id: 'ask',
     summary: pulse.openQuestion || 'Add a thought to this area.',
@@ -518,6 +691,43 @@ export function composeAreaPulseDocument(
           placeholder: 'Get this out of my head',
         },
   });
+  const weekAhead = String(pulse.weekAhead || '').trim();
+  if (weekAhead) {
+    regions.push({
+      id: 'week',
+      summary: weekAhead,
+      tree: { kind: 'text', emphasis: 'standard', tone: 'neutral', role: 'body', text: weekAhead },
+    });
+  }
+  const mail = areaMailForBrief(context);
+  if (mail.length) {
+    regions.push({
+      id: 'mail',
+      summary: `${mail.length} ${mail.length === 1 ? 'message' : 'messages'} in this area.`,
+      tree: {
+        kind: 'entity_list',
+        emphasis: 'standard',
+        tone: 'neutral',
+        title: 'Mail',
+        variant: 'rows',
+        items: mail.map((row) => {
+          const payload = { account: row.accountId, threadId: row.threadId, subject: row.subject };
+          return {
+            ref: { kind: 'thread' as const, id: row.threadId, account: row.accountId, label: row.subject },
+            framing: {
+              lane: 'mail',
+              ...(row.reason ? { reason: row.reason } : {}),
+              ...(row.sender ? { sender: row.sender } : {}),
+            },
+            actions: [
+              { action: 'open_thread', label: 'Open', payload, style: 'quiet' as const },
+              { action: 'draft_reply', label: 'Reply', payload, style: 'secondary' as const },
+            ],
+          };
+        }),
+      },
+    });
+  }
   if (areaId) {
     regions.push({
       id: 'open-work',
@@ -553,7 +763,7 @@ body{margin:0;padding:48px;font:16px/1.6 system-ui;background:#f7f5ef;color:#202
 main{max-width:760px;margin:auto}h1{font:700 42px/1.05 Georgia,serif}p{max-width:62ch}strong{font-weight:650}
 </style></head><body><main><p>Area brief</p><h1>${escapeAreaHtml(areaName)}</h1>
 <p>${escapeAreaHtml(pulse.prose)}</p>
-${line('Last change.', pulse.lastChange)}${line('Next move.', pulse.nextMove)}${line('Open question.', pulse.openQuestion)}
+${line('Last change.', pulse.lastChange)}${line('Next move.', pulse.nextMove)}${line('Open question.', pulse.openQuestion)}${line('This week.', pulse.weekAhead || '')}${line('Since the last brief.', pulse.sinceLastBrief || '')}
 </main></body></html>`);
 }
 
@@ -576,6 +786,9 @@ export async function generateAreaLivingBrief(input: {
   areaId: string;
   force?: boolean;
 }) {
+  const sourceChecks = await areaLivingBriefDependencies
+    .prepareBriefContext(input.userId)
+    .catch(() => [{ source: 'source discovery', status: 'unavailable' as const }]);
   const [home, pulseContext, evidenceIndex] = await Promise.all([
     areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
       userId: input.userId,
@@ -594,7 +807,10 @@ export async function generateAreaLivingBrief(input: {
       },
     ),
   ]);
-  const context = buildAreaArtifactContext(home, Date.now(), pulseContext, evidenceIndex);
+  const timezone = await resolveBriefTimezone(input.userId, getAiRequestContext().userTimezone).catch(
+    () => getAiRequestContext().userTimezone,
+  );
+  const context = buildAreaArtifactContext(home, Date.now(), pulseContext, evidenceIndex, timezone);
   const revision = areaArtifactRevision(context);
   if (
     !input.force &&
@@ -608,6 +824,7 @@ export async function generateAreaLivingBrief(input: {
   const areaName = String(home.area?.name || 'Area');
   const previous = fallbackAreaPulse(context);
   await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+    briefJob: getAiRequestContext().briefJob,
     userId: input.userId,
     areaId: input.areaId,
     status: 'generating',
@@ -618,11 +835,15 @@ export async function generateAreaLivingBrief(input: {
   });
 
   try {
-    const pulse = await writeAreaPulse(context, input);
+    const pulse = await writeAreaPulse(
+      { ...context, sourceCoverage: briefSourceCoverage(sourceChecks) },
+      input,
+    );
     const document = composeAreaPulseDocument(context, pulse);
     const artifactHtml = renderAreaPulseHtml(areaName, pulse);
     const lede = pulse.lastChange || pulse.nextMove || pulse.prose;
     await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+      briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
       status: 'ready',
@@ -635,6 +856,7 @@ export async function generateAreaLivingBrief(input: {
       basedOnRevision: revision,
     });
     await areaLivingBriefDependencies.convexMutation((api as any).albatrossAreaPulse.saveAreaPulse, {
+      briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
       pulse,
@@ -652,6 +874,7 @@ export async function generateAreaLivingBrief(input: {
   } catch (error) {
     await areaLivingBriefDependencies
       .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+        briefJob: getAiRequestContext().briefJob,
         userId: input.userId,
         areaId: input.areaId,
         status: 'error',

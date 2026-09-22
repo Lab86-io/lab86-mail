@@ -39,3 +39,72 @@ describe('brief action runtime', () => {
     expect(copy.confirm).toBe('Add event');
   });
 });
+
+describe('brief telemetry request', () => {
+  test('builds the events body from the region, the ref, and the outcome', async () => {
+    const { briefEventRequest } = await import('../components/report/brief-canvas/brief-action-runtime');
+    expect(
+      briefEventRequest({
+        reportId: 'report-1',
+        surface: 'daily',
+        regionId: 'answer',
+        action: 'draft_reply',
+        ref: { kind: 'thread', id: 'thread-1', account: 'me@example.com', label: 'Subject' },
+        outcome: 'done',
+      }),
+    ).toEqual({
+      reportId: 'report-1',
+      surface: 'daily',
+      regionId: 'answer',
+      action: 'draft_reply',
+      ref: { kind: 'thread', id: 'thread-1', account: 'me@example.com' },
+      outcome: 'done',
+    });
+  });
+
+  test('falls back to the payload identity, defaults to daily, and skips half-formed rows', async () => {
+    const { briefEventRequest } = await import('../components/report/brief-canvas/brief-action-runtime');
+    expect(
+      briefEventRequest({
+        regionId: 'tasks',
+        action: 'toggle_task',
+        payload: { cardId: 'card-1', completed: true },
+        outcome: 'undone',
+      }),
+    ).toEqual({
+      surface: 'daily',
+      regionId: 'tasks',
+      action: 'toggle_task',
+      ref: { kind: 'task', id: 'card-1' },
+      outcome: 'undone',
+    });
+    expect(
+      briefEventRequest({
+        regionId: 'project',
+        action: 'toggle_task',
+        payload: { cardId: 'card-1' },
+        outcome: 'done',
+      })?.ref,
+    ).toEqual({ kind: 'card', id: 'card-1' });
+    expect(
+      briefEventRequest({
+        regionId: '',
+        action: 'open_thread',
+        ref: { kind: 'thread', id: 't' },
+        outcome: 'opened',
+      }),
+    ).toBeNull();
+    expect(
+      briefEventRequest({ regionId: 'answer', action: 'open_view', payload: {}, outcome: 'opened' }),
+    ).toBeNull();
+  });
+
+  test('a connected-tool ref adds nothing to the authored payload', () => {
+    expect(
+      payloadForBriefAction(
+        { action: 'open_url', label: 'Open', payload: { url: 'https://example.com/x' }, style: 'quiet' },
+        { kind: 'mcp', id: 'external-1' },
+      ),
+    ).toEqual({ url: 'https://example.com/x' });
+  });
+});

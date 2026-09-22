@@ -8,6 +8,7 @@ export interface AiRequestContext {
   // Groups every operation recorded during one agent turn into a single
   // reviewable change-set (see lib/ai/operations.ts).
   operationBatchId?: string;
+  briefJob?: { id: string; token: string };
   chatId?: string;
   runId?: string;
   toolExecutionKey?: string;

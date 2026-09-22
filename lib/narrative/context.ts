@@ -173,7 +173,7 @@ export async function retrieveNarrativeContext(
       ...new Set([...terms.slice(0, 2), ...terms.filter((term) => term.includes('@')).slice(0, 2)]),
     ];
     // Expansion failure leaves ordinary retrieval intact. The service owns its
-    // short deadline and billing; no history or generated assertions are used.
+    // model routing and billing; no history or generated assertions are used.
     if (query && state.model && deps.expand) {
       try {
         alternatives = [

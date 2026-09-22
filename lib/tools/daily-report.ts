@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { isConvexConfigured } from '../hosted/env';
 import { generateAgentReport } from '../mail/agent-report';
+import { enqueueBriefJob, waitForBriefJob } from '../mail/brief-jobs';
 import { getDailyArt } from '../mail/daily-art';
 import { injectReportAreaBrief } from '../mail/report-area-brief';
 import type { DailyReport } from '../shared/types';
@@ -23,7 +25,6 @@ import {
 import { defineTool } from './registry';
 
 const ReportKindSchema = z.enum(['morning', 'evening', 'manual']);
-const ACTIVE_GENERATION_MS = 20 * 60_000;
 
 export const generateDailyReportTool = defineTool({
   name: 'generate_daily_report',
@@ -39,6 +40,17 @@ export const generateDailyReportTool = defineTool({
   }),
   output: z.object({ report: z.any().nullable(), started: z.boolean().optional() }),
   async handler({ kind, wait }, ctx) {
+    if (isConvexConfigured()) {
+      if (!ctx.userId) throw new Error('Sign in required');
+      const job = await enqueueBriefJob({
+        userId: ctx.userId,
+        kind: 'daily',
+        edition: kind,
+        timezone: ctx.userTimezone,
+      });
+      if (wait) await waitForBriefJob(ctx.userId, job.jobId, ctx.abortSignal);
+      return { report: job.reportId ? await getDailyReportStore(job.reportId) : null, started: job.started };
+    }
     if (wait) {
       return { report: await generateAgentReport({ kind, userId: ctx.userId }) };
     }
@@ -90,8 +102,6 @@ export const generateDailyReportTool = defineTool({
 async function getActiveGeneration(kind: z.infer<typeof ReportKindSchema>) {
   const latest = await getLatestDailyReport(kind);
   if (!latest) return null;
-  const age = Date.now() - Number(latest.generatedAt || 0);
-  if (age > ACTIVE_GENERATION_MS) return null;
   if (latest.status === 'partial') return latest;
   if (latest.artifactStatus === 'composing' || latest.artifactStatus === 'enriching') return latest;
   return null;
@@ -105,7 +115,7 @@ export const getLatestDailyReportTool = defineTool({
   input: z.object({ kind: ReportKindSchema.optional() }).optional(),
   output: z.object({ report: z.any().nullable() }),
   async handler(input) {
-    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind));
+    const report = withDisplayAreaBrief(await getLatestDailyReport(input?.kind, true));
     return { report: report ? attachDailyReportArt(report) : null };
   },
 });

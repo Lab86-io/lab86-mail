@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
+import { NextRequest } from 'next/server';
+import { createWorkspaceRoutes } from '../app/api/narrative/workspace/route';
+import { generateTextForCurrentUser } from '../lib/ai/gateway';
 import * as hosted from '../lib/hosted/convex';
 import type { NarrativeEntry } from '../lib/narrative/core';
 import * as narrative from '../lib/narrative/service';
@@ -66,6 +69,67 @@ function harness() {
 }
 beforeEach(clearWorkspaceCache);
 describe('Today workspace composition and trust boundary', () => {
+  test('explicit generation bypasses the old workspace request quota', async () => {
+    const deps = {
+      user: async () => ({ userId: 'owner' }) as any,
+      rate: async () => {
+        throw new Error('The old rate limiter must not run');
+      },
+      load: async () => ({ enabled: true, stamp: 's', mode: 'generated', threads: [] }) as any,
+      feedback: async () => ({ ok: true }) as any,
+    };
+    const response = await createWorkspaceRoutes(deps).POST(
+      new NextRequest('https://example.test/api/narrative/workspace', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'generate', at: now }),
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  test('a failed renewal returns source evidence instead of substituting an old composition', async () => {
+    const deps = harness();
+    const first = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+    const clock = Date.now;
+    try {
+      const later = clock() + 31 * 60_000;
+      Date.now = () => later;
+      deps.generate.mockRejectedValueOnce(new Error('Provider unavailable'));
+      const renewed = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+      expect(renewed.mode).toBe('evidence');
+      expect(renewed).not.toEqual(first);
+    } finally {
+      Date.now = clock;
+    }
+  });
+  test('the workspace and gateway leave reasoning output uncapped instead of returning length-truncated source cards', async () => {
+    const deps = harness();
+    const requests: any[] = [];
+    deps.generate = (options: any) =>
+      generateTextForCurrentUser(options, {
+        resolveAiRuntime: async () => ({
+          userId: 'owner',
+          source: 'lab86',
+          provider: 'openrouter',
+          modelName: 'z-ai/glm-5.3-flash',
+          model: {} as any,
+        }),
+        fallbackRuntimes: () => [],
+        recordUsage: async () => {},
+        generateText: (async (request: any) => {
+          requests.push(request);
+          // Replay the observed provider symptom: reasoning consumes the app's
+          // completion allowance and no JSON is emitted.
+          return request.maxOutputTokens === undefined
+            ? { text: JSON.stringify(composition), output: composition, finishReason: 'stop', usage: {} }
+            : { text: '', finishReason: 'length', usage: {} };
+        }) as any,
+      });
+    const result = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+    expect(result.mode).toBe('generated');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].maxOutputTokens).toBeUndefined();
+  });
   test('live work hydration preserves its shape and safely defaults unknown shapes', async () => {
     const enabled = spyOn(narrative, 'narrativeEnabled').mockReturnValue(true);
     const read = spyOn(narrative, 'readNarrative').mockResolvedValue({
@@ -318,7 +382,7 @@ describe('Today workspace composition and trust boundary', () => {
     expect((await first).name).toBe('AbortError');
     release();
     expect((await second).mode).toBe('generated');
-    expect(providerSignal?.aborted).toBe(false);
+    expect(providerSignal).toBeUndefined();
     expect(deps.generate).toHaveBeenCalledTimes(1);
   });
 });

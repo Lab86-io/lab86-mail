@@ -435,6 +435,8 @@ struct AreaDetailView: View {
                     isComposing: detail.livingBrief?.status == "generating",
                     scopeAreaID: detail.identity.id,
                     rendersLede: true,
+                    surface: .area,
+                    hideInactive: true,
                     onReview: { artifactReview = $0 }
                 )
                 #if os(macOS)

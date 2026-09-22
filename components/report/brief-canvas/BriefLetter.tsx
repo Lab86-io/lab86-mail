@@ -1,6 +1,6 @@
 'use client';
 
-import type { CSSProperties } from 'react';
+import { type CSSProperties, useState } from 'react';
 import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
 import { Avatar } from '@/components/ui/avatar';
 import { briefRefKey } from '@/lib/brief/hydration';
@@ -12,7 +12,7 @@ import {
   markWeekdays,
   noiseFooterCopy,
 } from '@/lib/brief/letter';
-import { isKnownBriefAction } from '@/lib/shared/brief-actions';
+import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import type {
   BriefActionV2,
   BriefContentLeaf,
@@ -21,8 +21,8 @@ import type {
 } from '@/lib/shared/brief-document';
 import { shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
-import type { BriefNodeContext } from './BriefNodeView';
-import { BriefNodeView } from './BriefNodeView';
+import { BriefReviewPopover } from './BriefActions';
+import { type BriefNodeContext, BriefNodeView, withBriefRegion } from './BriefNodeView';
 import { payloadForBriefAction } from './brief-action-runtime';
 
 /* The letter keeps its narrative in one column, with weather in the masthead:
@@ -33,6 +33,26 @@ import { payloadForBriefAction } from './brief-action-runtime';
 
 type EntityListNode = Extract<BriefContentLeaf, { kind: 'entity_list' }>;
 type EntityItem = EntityListNode['items'][number];
+
+// Kicker copy for the row lanes when the document carries no title of its own
+// (brief round 2026-09-22: waiting, tasks, connected, and the area mail lane).
+const LANE_TITLES: Record<string, string> = {
+  answer: 'Answer',
+  today: 'Today',
+  know: 'Know',
+  waiting: 'Waiting on',
+  tasks: 'Tasks this week',
+  connected: 'Connected tools',
+  mail: 'Mail',
+};
+
+// Paragraph regions and their kickers: the daily `yesterday` and `week-ahead`,
+// and the area `week`.
+const PARAGRAPH_KICKERS: Record<string, string> = {
+  yesterday: 'Yesterday',
+  'week-ahead': 'Week ahead',
+  week: 'Week ahead',
+};
 
 // The entrance stagger from the design note: 120, 170, 205 ms, then +60 ms.
 const ROW_DELAYS_MS = [120, 170, 205];
@@ -66,7 +86,7 @@ export function BriefLetter({
           if (region.id === 'lede') {
             return (
               <section key={region.id} data-brief-region={region.id} className="blur-in">
-                {kind === 'daily' ? (
+                {kind === 'daily' && context.liveSections ? (
                   <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
                 ) : (
                   <LetterLede node={region.tree} />
@@ -90,23 +110,25 @@ export function BriefLetter({
                 key={region.id}
                 regionId={region.id}
                 node={region.tree}
-                context={context}
+                context={withBriefRegion(context, region.id)}
                 firstRowIndex={start}
               />
             );
           }
-          if (region.id === 'week-ahead' && region.tree.kind === 'text') {
+          if (region.tree.kind === 'text' && PARAGRAPH_KICKERS[region.id]) {
             return (
               <section key={region.id} data-brief-region={region.id} className="blur-in mb-8">
                 <span className="mb-2 block text-[11px] font-semibold text-[var(--color-accent-2)]">
-                  Week ahead
+                  {PARAGRAPH_KICKERS[region.id]}
                 </span>
                 <WeekAheadText text={region.tree.text} />
               </section>
             );
           }
           if (region.id === 'areas' && region.tree.kind === 'entity_list') {
-            return <LetterAreas key={region.id} node={region.tree} context={context} />;
+            return (
+              <LetterAreas key={region.id} node={region.tree} context={withBriefRegion(context, region.id)} />
+            );
           }
           if (region.id === 'pulse' && region.tree.kind === 'stack') {
             return (
@@ -122,7 +144,7 @@ export function BriefLetter({
                     <BriefNodeView
                       key={child.id ?? index}
                       node={child}
-                      context={context}
+                      context={withBriefRegion(context, region.id)}
                       regionSummary={region.summary}
                     />
                   ),
@@ -134,7 +156,12 @@ export function BriefLetter({
           // renderers; the letter only sets the measure and the rhythm.
           return (
             <section key={region.id} data-brief-region={region.id} className="blur-in mb-8">
-              <BriefNodeView node={region.tree} context={context} regionSummary={region.summary} topLevel />
+              <BriefNodeView
+                node={region.tree}
+                context={withBriefRegion(context, region.id)}
+                regionSummary={region.summary}
+                topLevel
+              />
             </section>
           );
         })}
@@ -190,6 +217,7 @@ function LetterLane({
 }) {
   const visible = node.items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
   if (!visible.length) return null;
+  const title = node.title || LANE_TITLES[regionId] || null;
   return (
     <section
       data-brief-region={regionId}
@@ -202,12 +230,12 @@ function LetterLane({
             : 'surface-accent-2',
       )}
     >
-      {node.title ? (
+      {title ? (
         <span
           data-brief-letter-kicker
           className="block border-b border-[var(--surface-border)] px-3 py-2 text-[11px] font-semibold text-[var(--surface-accent)]"
         >
-          {node.title}
+          {title}
         </span>
       ) : null}
       <div className="brief-letter-items">
@@ -224,8 +252,11 @@ function LetterLane({
   );
 }
 
-/* One mail row: avatar, sender, subject, the one line, one text action. The
- * sender comes from the document first and from hydration second. */
+/* One row: a leading mark, a name line, the subject, the one line, and the
+ * known actions as text. The first known action is the row tap; the rest sit
+ * after it at the row end. Threads show the sender, events the hour, tasks
+ * the due day, connected tools their source. The sender comes from the
+ * document first and from hydration second. */
 function LetterRow({
   item,
   context,
@@ -235,26 +266,41 @@ function LetterRow({
   context: BriefNodeContext;
   delayMs: number;
 }) {
-  const entity = context.entities.get(briefRefKey(item.ref));
+  const key = briefRefKey(item.ref);
+  const entity = context.entities.get(key);
   const gone = entity?.gone === true;
-  const isEvent = item.ref.kind === 'event';
+  const kind = item.ref.kind;
+  const isEvent = kind === 'event';
+  const isTask = kind === 'task' || kind === 'card';
+  const isTool = kind === 'mcp';
   const subject = entity?.title || item.ref.label || '(no subject)';
   const sender = isEvent
     ? 'Calendar'
-    : item.framing.sender || (entity?.subtitle ? shortFrom(entity.subtitle) : '') || 'Unknown sender';
+    : isTask
+      ? 'Task'
+      : item.framing.sender ||
+        (entity?.subtitle ? shortFrom(entity.subtitle) : '') ||
+        (isTool ? 'Connected tool' : 'Unknown sender');
+  const age = item.framing.age?.trim() || '';
+  const completed = isTask ? (context.completedRefs.get(key) ?? entity?.completed ?? false) : false;
+  const unread = kind === 'thread' && entity?.unread === true;
   const line = item.framing.reason || (gone ? 'This item is no longer available.' : '');
-  const action = item.actions.find((candidate) => isKnownBriefAction(candidate.action));
+  const known = item.actions.filter((candidate) => isKnownBriefAction(candidate.action));
+  const action = known[0];
   const run = (candidate: BriefActionV2) =>
     context.onAction(candidate, payloadForBriefAction(candidate, item.ref), item.ref);
 
   return (
     <article
       data-brief-letter-row
+      data-brief-letter-completed={completed || undefined}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter' && action && !gone) {
           event.preventDefault();
-          void run(action);
+          // A review action confirms in its popover; Enter on the row does
+          // not skip that step.
+          if (!letterActionConfirms(action.action)) void run(action);
           return;
         }
         if (event.key === 'j' || event.key === 'k') {
@@ -268,12 +314,19 @@ function LetterRow({
       )}
       style={{ animationDelay: `${delayMs}ms` }}
     >
-      {isEvent ? (
+      {isEvent || isTask ? (
         <span
           aria-hidden
-          className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-[var(--color-accent-3-soft)] font-display text-[11px] font-semibold text-[var(--color-accent-3)]"
+          className={cn(
+            'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full font-display text-[11px] font-semibold',
+            isEvent
+              ? 'bg-[var(--color-accent-3-soft)] text-[var(--color-accent-3)]'
+              : completed
+                ? 'bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'
+                : 'border border-[var(--color-border-strong)] text-[var(--color-text-muted)]',
+          )}
         >
-          {eventHour(entity?.startAt)}
+          {isEvent ? eventHour(entity?.startAt) : completed ? '\u2713' : dueDay(entity?.dueAt)}
         </span>
       ) : (
         <Avatar name={sender} size={28} className="mt-0.5" />
@@ -286,23 +339,50 @@ function LetterRow({
               className="truncate font-display text-[15px] font-medium leading-snug text-[var(--color-text)]"
             >
               {sender}
+              {age ? (
+                <span
+                  data-brief-letter-age
+                  className="ml-2 font-sans text-[11px] font-normal text-[var(--color-text-muted)]"
+                >
+                  {age}
+                </span>
+              ) : null}
             </p>
             <p
               data-brief-letter-subject
-              className="truncate text-[14px] leading-snug text-[var(--color-text)]"
+              className={cn(
+                'truncate text-[14px] leading-snug text-[var(--color-text)]',
+                completed && 'line-through text-[var(--color-text-muted)]',
+              )}
             >
+              {unread ? (
+                <>
+                  <span
+                    data-brief-letter-unread
+                    aria-hidden
+                    className="mr-1.5 inline-block size-1.5 -translate-y-px rounded-full bg-[var(--color-accent)] align-middle"
+                  />
+                  <span className="sr-only">Unread. </span>
+                </>
+              ) : null}
               {subject}
             </p>
           </div>
-          {action && !gone ? (
-            <button
-              type="button"
-              data-brief-letter-action
-              onClick={() => void run(action)}
-              className="shrink-0 self-start text-[13px] text-[var(--color-accent)] hover:underline focus-visible:underline focus-visible:outline-none @[480px]:self-baseline"
+          {known.length && !gone ? (
+            <span
+              data-brief-letter-actions
+              className="flex shrink-0 flex-wrap items-baseline gap-x-3 self-start @[480px]:self-baseline"
             >
-              {action.label}
-            </button>
+              {known.map((candidate, index) => (
+                <LetterAction
+                  key={`${candidate.action}:${candidate.label}`}
+                  action={candidate}
+                  payload={payloadForBriefAction(candidate, item.ref)}
+                  primary={index === 0}
+                  onRun={() => run(candidate)}
+                />
+              ))}
+            </span>
           ) : null}
         </div>
         {line ? (
@@ -315,6 +395,66 @@ function LetterRow({
         ) : null}
       </div>
     </article>
+  );
+}
+
+// Review actions that confirm before they run. `draft_reply` stays direct: it
+// opens the composer and sends nothing, so a popover would add nothing.
+function letterActionConfirms(action: string): boolean {
+  return briefActionTier(action) === 'review' && action !== 'draft_reply';
+}
+
+/* One text action of a row. Immediate and navigation actions run on click;
+ * review actions open the shared confirm popover first. */
+function LetterAction({
+  action,
+  payload,
+  primary,
+  onRun,
+}: {
+  action: BriefActionV2;
+  payload: Record<string, unknown>;
+  primary: boolean;
+  onRun: () => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const confirms = letterActionConfirms(action.action);
+  const button = (
+    <button
+      type="button"
+      data-brief-letter-action
+      data-brief-letter-action-name={action.action}
+      data-brief-letter-action-review={confirms || undefined}
+      onClick={confirms ? undefined : () => void onRun()}
+      className={cn(
+        'text-[13px] hover:underline focus-visible:underline focus-visible:outline-none',
+        primary ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)]',
+      )}
+    >
+      {action.label}
+    </button>
+  );
+  if (!confirms) return button;
+  return (
+    <BriefReviewPopover
+      action={action}
+      payload={payload}
+      open={open}
+      onOpenChange={setOpen}
+      pending={pending}
+      onConfirm={async () => {
+        setPending(true);
+        try {
+          await onRun();
+          setOpen(false);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      {button}
+    </BriefReviewPopover>
   );
 }
 
@@ -333,6 +473,12 @@ function eventHour(startAt: number | undefined): string {
   const hour = new Date(startAt).getHours();
   const twelve = hour % 12 || 12;
   return String(twelve);
+}
+
+/* The due weekday of a task, short, in the data voice. */
+function dueDay(dueAt: number | undefined): string {
+  if (typeof dueAt !== 'number' || !Number.isFinite(dueAt)) return '·';
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short' }).format(new Date(dueAt)).slice(0, 2);
 }
 
 /* Weekday names carry the data voice (accent-3, weight 500). The text is

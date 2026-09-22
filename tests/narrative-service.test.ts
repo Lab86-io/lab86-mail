@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { estimateAiUsageCost } from '../lib/ai/budget';
 import {
@@ -8,6 +8,7 @@ import {
   narrativePrompt,
   narrativeResearchTools,
   parseNarrativeGeneration,
+  prepareBriefContext,
   refreshNarrative,
 } from '../lib/narrative/service';
 
@@ -46,15 +47,14 @@ const chapter = {
 };
 function setup(
   overrides: {
-    price?: string;
     generate?: (request: any) => Promise<any>;
     revoked?: boolean;
     sources?: number;
     pending?: number;
     skipResearchTools?: boolean;
     alreadyWritten?: boolean;
-    limits?: { researchMs: number; writeMs: number };
     model?: string;
+    heartbeat?: boolean;
   } = {},
 ) {
   const writes: Array<{ name: string; args: any }> = [],
@@ -87,7 +87,9 @@ function setup(
           model: overrides.model ? 'current' : 'z-ai/glm-5.3-flash',
           timezone: 'UTC',
           groups: ['work'],
+          sources: ['work', 'mcp:granola'],
         };
+      if (name === 'narrative:heartbeat') return overrides.heartbeat ?? true;
       if (name === 'narrative:ingest') return { done: true, changed: 1 };
       if (name === 'narrative:prepareBrief') return 'chapter1';
       return { published: !overrides.revoked };
@@ -96,15 +98,10 @@ function setup(
       modelName: overrides.model || 'z-ai/glm-5.3-flash',
       provider: 'openrouter',
     })) as any,
-    fetch: (async () =>
-      Response.json({
-        data: [
-          {
-            id: overrides.model || 'z-ai/glm-5.3-flash',
-            pricing: { prompt: overrides.price || '0.000000075', completion: '0.00000025' },
-          },
-        ],
-      })) as any,
+    refreshSources: async (_userId, sources) => {
+      writes.push({ name: 'refreshSources', args: { sources } });
+      return [];
+    },
     generate: (async (request) => {
       requests.push(request);
       if (request.toolChoice !== 'none' && !overrides.skipResearchTools)
@@ -120,11 +117,115 @@ function setup(
             totalUsage: { inputTokens: 30, outputTokens: 20 },
           };
     }) as any,
-    ...(overrides.limits ? { limits: overrides.limits } : {}),
   });
   return { writes, requests };
 }
 describe('narrative agent run', () => {
+  test('daily and area preparation share collection and compile fresh opted-in evidence before composition', async () => {
+    const calls: string[] = [];
+    __setNarrativeDepsForTest({
+      refreshSources: async (_userId, sources) => {
+        calls.push(sources ? 'opted-in' : 'brief');
+        return [{ source: 'mcp:granola', status: sources ? 'checked' : 'unavailable' }];
+      },
+      query: (async () => ({
+        settings: { enabled: true, sources: ['mcp:granola'] },
+        groups: ['mcp'],
+      })) as any,
+      mutation: (async (fn: any, args: any) => {
+        calls.push(`${getFunctionName(fn)}${args.recent ? ':recent' : ''}`);
+        return { done: true, changed: 1 };
+      }) as any,
+    });
+    const [daily, area] = await Promise.all([prepareBriefContext('pilot'), prepareBriefContext('pilot')]);
+    expect(daily).toEqual([{ source: 'mcp:granola', status: 'checked' }]);
+    expect(area).toEqual(daily);
+    expect(calls).toEqual([
+      'brief',
+      'opted-in',
+      'narrative:ingest:recent',
+      'narrative:ingest',
+      'narrative:compile',
+      'narrative:prepareBrief',
+    ]);
+    calls.length = 0;
+    await prepareBriefContext('not-enabled');
+    expect(calls).toEqual(['brief']);
+  });
+
+  test('later area batches reuse only narrative preparation and recheck source consent and freshness', async () => {
+    let now = 0;
+    let sources = ['mcp:granola'];
+    let enabled = true;
+    let syncedAt = 1;
+    const calls: string[] = [];
+    __setNarrativeDepsForTest({
+      now: () => now,
+      refreshSources: async (_userId, selected) => {
+        calls.push(selected ? 'opted-in' : 'brief');
+        return [];
+      },
+      query: (async () => ({
+        settings: { enabled, sources, revision: 1 },
+        groups: ['mcp'],
+        sources: [{ id: sources[0], lastSyncedAt: syncedAt }],
+      })) as any,
+      mutation: (async (fn: any) => {
+        calls.push(getFunctionName(fn));
+        return { done: true, changed: 0 };
+      }) as any,
+    });
+    await prepareBriefContext('pilot');
+    calls.length = 0;
+    await prepareBriefContext('pilot');
+    expect(calls).toEqual(['brief', 'opted-in']);
+    sources = ['mcp:github'];
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(1);
+    now = 61_000;
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(2);
+    syncedAt = 2;
+    await prepareBriefContext('pilot');
+    expect(calls.filter((call) => call === 'narrative:compile')).toHaveLength(3);
+    enabled = false;
+    calls.length = 0;
+    await prepareBriefContext('pilot');
+    expect(calls).toEqual(['brief']);
+  });
+
+  test('consent revoked during provider refresh stops preparation and clears its prior memo', async () => {
+    let enabled = true;
+    let revokeDuringRefresh = false;
+    const writes: string[] = [];
+    __setNarrativeDepsForTest({
+      refreshSources: async (_userId, selected) => {
+        if (selected && revokeDuringRefresh) {
+          enabled = false;
+          revokeDuringRefresh = false;
+        }
+        return [];
+      },
+      query: (async () => ({
+        settings: { enabled, sources: ['mcp:granola'], revision: 1 },
+        groups: ['mcp'],
+      })) as any,
+      mutation: (async (fn: any) => {
+        writes.push(getFunctionName(fn));
+        return { done: true, changed: 0 };
+      }) as any,
+    });
+    await prepareBriefContext('pilot');
+    const completedWrites = writes.length;
+    expect(completedWrites).toBeGreaterThan(0);
+    revokeDuringRefresh = true;
+    await prepareBriefContext('pilot');
+    expect(writes).toHaveLength(completedWrites);
+    enabled = true;
+    await prepareBriefContext('pilot');
+    expect(writes).toHaveLength(completedWrites * 2);
+  });
+
   test('GLM uses schema-free JSON mode but other writers retain schema-enforced output', async () => {
     const glm = setup();
     expect((await refreshNarrative('pilot')).status).toBe('ready');
@@ -138,7 +239,7 @@ describe('narrative agent run', () => {
 
   test('JSON-mode prose still obeys the host chapter limit before publication', async () => {
     const state = setup({
-      generate: async () => ({ output: { text: 'x'.repeat(4000), sourceIds: ['E1'] } }),
+      generate: async () => ({ output: { text: 'x'.repeat(4001), sourceIds: ['E1'] } }),
     });
     expect((await refreshNarrative('pilot')).status).toBe('partial');
     expect(state.writes.some((write) => write.name === 'narrative:publish')).toBe(false);
@@ -150,7 +251,7 @@ describe('narrative agent run', () => {
       sourceIds: ['E1'],
     };
     for (const invalid of [
-      { ...valid, text: 'x'.repeat(4000) },
+      { ...valid, text: 'x'.repeat(4001) },
       { ...valid, sourceIds: ['E999'] },
     ]) {
       let attempts = 0;
@@ -186,11 +287,10 @@ describe('narrative agent run', () => {
       userId: 'pilot',
       speed: 'classify',
       feature: 'narrative_retrieval',
-      maxOutputTokens: 800,
       maxRetries: 0,
     });
     expect(JSON.parse(requests[0].prompt)).toEqual({ query: 'shipping date slipped' });
-    expect(requests[0].abortSignal).toBeInstanceOf(AbortSignal);
+    expect(requests[0].abortSignal).toBeUndefined();
     expect(requests[0].tools).toBeUndefined();
     const controller = new AbortController();
     controller.abort();
@@ -227,10 +327,10 @@ describe('narrative agent run', () => {
     expect(requests[1].toolChoice).toBe('none');
     expect(requests[1].feature).toBe('narrative_write');
     expect(requests[1].system).not.toContain('80–4000');
-    expect(requests[1].system).toContain('2200 characters');
+    expect(requests[1].system).toContain('4000 characters');
     expect(requests[1].messages[0].content).toContain('"id":"E1"');
     expect(JSON.stringify(requests[1].messages)).not.toContain('evidence1');
-    expect(requests[0].stopWhen({ steps: [{}, {}] })).toBe(true);
+    expect(requests[0].stopWhen({ steps: Array(100).fill({}) })).toBe(false);
     expect(Object.keys(requests[0].tools).sort()).toEqual([
       'narrative_changes_since',
       'narrative_read',
@@ -240,20 +340,19 @@ describe('narrative agent run', () => {
     ]);
     expect(requests[0].narrativeModel).toBe('z-ai/glm-5.3-flash');
     expect(requests[0].abortSignal).toBeInstanceOf(AbortSignal);
-    expect(requests[0].maxOutputTokens).toBe(2000);
+    expect(requests[0].maxOutputTokens).toBeUndefined();
     expect(requests[0].maxRetries).toBe(0);
-    expect(requests[0].prepareStep({ messages: [], stepNumber: 4 })).toEqual({ toolChoice: 'none' });
-    expect(requests[0].prepareStep({ messages: [], stepNumber: 0 })).toEqual({});
+    expect(requests[0].prepareStep).toBeUndefined();
     expect(writes.find((w) => w.name === 'narrative:publish')?.args.sourceIds).toEqual(['evidence1']);
     expect(writes.at(-1)?.name).toBe('narrative:finish');
     expect(writes.at(-1)?.args.inputTokens).toBe(60);
   });
-  test('unknown or over-budget pricing prevents a model request but preserves indexed fallback', async () => {
-    const { writes, requests } = setup({ price: '0.01' });
-    expect((await refreshNarrative('pilot')).status).toBe('partial');
-    expect(requests).toEqual([]);
-    expect(writes.some((w) => w.name === 'narrative:compile')).toBe(true);
-    expect(writes.at(-1)?.args.error).toContain('budget');
+  test('fresh source checks precede ingestion and use only narrative opt-ins', async () => {
+    const { writes } = setup();
+    expect((await refreshNarrative('pilot')).status).toBe('ready');
+    const refresh = writes.findIndex((write) => write.name === 'refreshSources');
+    expect(writes[refresh].args.sources).toEqual(['work', 'mcp:granola']);
+    expect(refresh).toBeLessThan(writes.findIndex((write) => write.name === 'narrative:ingest'));
   });
   test('research progress is never published; the tool-disabled writing call must finish the account', async () => {
     const { writes, requests } = setup({
@@ -290,27 +389,21 @@ describe('narrative agent run', () => {
     expect(requests[0].messages[0].content).toContain('finish review tomorrow');
     expect(writes.filter((row) => row.name === 'narrative:publish')).toHaveLength(1);
   });
-  test('an optional research timeout still writes from host-read evidence and aborts the lookup', async () => {
-    let researchSignal: AbortSignal | undefined;
-    const { requests } = setup({
+  test('a failed research provider still lets the writer use verified host-read evidence', async () => {
+    const { writes } = setup({
       sources: 4,
-      limits: { researchMs: 5, writeMs: 1000 },
       generate: async (request) => {
-        if (request.feature === 'narrative_research') {
-          researchSignal = request.abortSignal;
-          return new Promise(() => {});
-        }
+        if (request.feature === 'narrative_research') throw new Error('Provider unavailable');
         return {
           output: {
-            text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
+            text: 'You planned to finish the review. Completion is not established. Confirm QA before deciding the next move.',
             sourceIds: ['E1'],
           },
         };
       },
     });
     expect((await refreshNarrative('pilot')).status).toBe('ready');
-    expect(researchSignal?.aborted).toBe(true);
-    expect(requests).toHaveLength(2);
+    expect(writes.some((write) => write.name === 'narrative:publish')).toBe(true);
   });
   test('a rich research response that skips tools still writes from the host packet, never its claims', async () => {
     const { requests } = setup({
@@ -345,8 +438,8 @@ describe('narrative agent run', () => {
             },
     });
     expect((await refreshNarrative('pilot')).status).toBe('ready');
-    expect(requests.map((request) => request.maxOutputTokens)).toEqual([4000, 4000]);
-    expect(requests[1].messages.at(-1).content).toContain('120–180');
+    expect(requests.map((request) => request.maxOutputTokens)).toEqual([undefined, undefined]);
+    expect(requests[1].messages.at(-1).content).toContain('finished account');
   });
   test('dense accounts get short source codes and a smaller retry without losing exact provenance', async () => {
     let writes = 0;
@@ -415,27 +508,50 @@ describe('narrative agent run', () => {
     expect(state.writes.some((write) => write.name === 'narrative:publish')).toBe(false);
     expect(state.writes.at(-1)?.args.error).toContain('cited evidence it did not read');
   });
-  test('a stuck writing attempt is cancelled and retried once within its own budget', async () => {
-    let attempts = 0;
-    let firstSignal: AbortSignal | undefined;
-    setup({
-      limits: { researchMs: 5, writeMs: 10 },
-      generate: async (request) => {
-        if (++attempts === 1) {
-          firstSignal = request.abortSignal;
-          return new Promise(() => {});
-        }
-        return {
-          output: {
-            text: 'You planned to finish the review. Completion is not established. Confirm the QA result before making the deployment decision.',
-            sourceIds: ['E1'],
-          },
-        };
+  test('writing uses ownership cancellation without a deadline and waits for the model', async () => {
+    let release!: (value: any) => void;
+    let signal!: AbortSignal;
+    const { requests } = setup({
+      generate: (request) => {
+        signal = request.abortSignal;
+        return new Promise((resolve) => {
+          release = resolve;
+        });
       },
     });
-    expect((await refreshNarrative('pilot')).status).toBe('ready');
-    expect(firstSignal?.aborted).toBe(true);
-    expect(attempts).toBe(2);
+    const result = refreshNarrative('pilot');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(signal.aborted).toBe(false);
+    expect(requests).toHaveLength(1);
+    release({
+      output: {
+        text: 'You planned to finish the review. Completion is not established. Confirm QA before deciding the next move.',
+        sourceIds: ['E1'],
+      },
+    });
+    expect((await result).status).toBe('ready');
+  });
+  test('a superseded narrative worker cancels its writer and releases its heartbeat', async () => {
+    let beat!: () => void;
+    const timer = spyOn(globalThis, 'setInterval').mockImplementation(((callback: () => void) => {
+      beat = callback;
+      return 0;
+    }) as any);
+    try {
+      const { writes } = setup({
+        heartbeat: false,
+        generate: async (request) => {
+          beat();
+          await Promise.resolve();
+          request.abortSignal.throwIfAborted();
+          throw new Error('Superseded');
+        },
+      });
+      expect((await refreshNarrative('pilot')).status).toBe('partial');
+      expect(writes.at(-1)?.args.error).toContain('superseded');
+    } finally {
+      timer.mockRestore();
+    }
   });
   test('failed evidence reads are recoverable and do not leak server error bodies', async () => {
     __setNarrativeDepsForTest({
@@ -475,12 +591,23 @@ describe('narrative agent run', () => {
     await refreshNarrative('pilot');
     expect(writes.at(-1)?.args.error).not.toContain('PRIVATE');
   });
-  test('tool and context budgets cannot be bypassed by a model loop', async () => {
+  test('large source expansions disclose the smaller packet instead of pretending full coverage', async () => {
+    __setNarrativeDepsForTest({
+      query: (async () => ({ entries: [{ ...observation, text: 'Meeting notes '.repeat(2000) }] })) as any,
+    });
+    const result: any = await (narrativeResearchTools('pilot').narrative_search.execute as any)({
+      query: 'review',
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.excerpt.length).toBe(16000);
+    expect(result.note).toContain('individual observation');
+  });
+  test('research can continue past the old call budget and still respects cancellation', async () => {
     setup();
     const tools = narrativeResearchTools('pilot');
     let result: any;
     for (let i = 0; i < 13; i++) result = await (tools.narrative_search.execute as any)({ query: 'review' });
-    expect(result.error).toContain('budget');
+    expect(result.error).toBeUndefined();
     const aborted = new AbortController();
     aborted.abort();
     await expect(

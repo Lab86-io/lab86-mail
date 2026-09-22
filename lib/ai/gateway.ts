@@ -8,6 +8,7 @@ import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
 import {
   B2C_BYOK_MONTHLY_PRICE_USD,
+  BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
   resolveAiBudgetPolicy,
   shouldDepleteLab86Budget,
@@ -37,22 +38,14 @@ const AGENT_REASONING_EFFORT = (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT ||
   | 'medium'
   | 'high';
 
-// Progressive output ceilings, sized to the job. An UNSET cap makes the
-// provider assume the model's max (65536) and OpenRouter reserves credits for
-// that worst case — 402-ing valid requests. These keep each feature bounded
-// (cheaper, faster) while leaving room for reasoning. Callers may still pass an
-// explicit maxOutputTokens to override.
+// Brief quality is controlled by evidence selection, not by sharing a small
+// output allowance between mandatory reasoning and the finished page. Omitting
+// the SDK limit lets each provider apply its model's supported output limit.
+
+// Other product features retain their existing request ceilings.
 const FEATURE_MAX_TOKENS: Record<string, number> = {
   summarize_thread: 1500,
   triage_thread: 1500,
-  daily_report_insight: 1500,
-  daily_report_narrative: 4000,
-  daily_report_artifact: 32000,
-  // The budget brief writes a lede, one line per item, and a week-ahead
-  // paragraph in one JSON reply. The area pulse is four short fields.
-  daily_brief_prose: 2500,
-  albatross_area_pulse: 900,
-  albatross_area_artifact: 32000,
   albatross_plan: 8000,
   albatross_plan_artifact: 24000,
   albatross_place: 2000,
@@ -88,9 +81,10 @@ const DEFAULT_AGENT_FALLBACKS = [
 // Features that get retry + cross-provider failover. The interactive agent AND
 // the Daily Brief artifact both need it — a single provider blip on the brief
 // was silently degrading it to the plain native renderer.
-const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact', 'albatross_area_artifact']);
+const FAILOVER_FEATURES = new Set(['agent', ...BRIEF_GENERATION_FEATURES]);
 
-function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
+function capForFeature(feature: string, explicit: number | undefined, fallback: number): number | undefined {
+  if (BRIEF_GENERATION_FEATURES.has(feature)) return undefined;
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
 }
 type PlatformPreference = {
@@ -356,7 +350,10 @@ export async function generateTextForCurrentUser(
     userId?: string | null;
     userEmail?: string | null;
     userName?: string | null;
+    /** Recreate mutable tool state for each provider attempt, including retries. */
+    toolsForAttempt?: () => Record<string, any>;
   },
+  dependencies = { resolveAiRuntime, generateText, recordUsage, fallbackRuntimes: agentFallbackRuntimes },
 ) {
   const {
     feature = 'generate_text',
@@ -367,29 +364,46 @@ export async function generateTextForCurrentUser(
     model: _ignored,
     maxOutputTokens,
     narrativeModel,
+    toolsForAttempt,
     ...rest
   } = options as any;
-  const runtime = await resolveAiRuntime({ userId, speed, feature, narrativeModel });
+  const runtime = await dependencies.resolveAiRuntime({ userId, speed, feature, narrativeModel });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
     let lastErr: any;
-    const runtimes = [runtime, ...agentFallbackRuntimes(runtime, feature)];
+    const runtimes = [runtime, ...dependencies.fallbackRuntimes(runtime, feature)];
     try {
       for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
         const activeRuntime = runtimes[runtimeIndex];
         const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
-            const result = await generateText({
+            const result = await dependencies.generateText({
               ...rest,
-              // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
+              ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
+              // Brief writers omit application ceilings; other features keep their budgets.
               maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
               model: activeRuntime.model,
             });
-            await recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
+            if (BRIEF_GENERATION_FEATURES.has(feature) && result.finishReason === 'length') {
+              await dependencies.recordUsage(
+                activeRuntime,
+                feature,
+                result.totalUsage ?? result.usage,
+                false,
+                'Incomplete brief response',
+              );
+              const incomplete = new Error('Brief provider exhausted its own output allowance');
+              incomplete.name = 'BriefIncompleteResponse';
+              throw incomplete;
+            }
+            await dependencies.recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
             return result;
           } catch (err: any) {
             lastErr = err;
-            const canRetrySameModel = attempt < maxAttempts && isTransientGenerateParseError(err);
+            const canRetrySameModel =
+              attempt < maxAttempts &&
+              (isTransientGenerateParseError(err) ||
+                (BRIEF_GENERATION_FEATURES.has(feature) && Number(err?.statusCode) === 429));
             const canTryFallback =
               runtimeIndex < runtimes.length - 1 && isAgentFallbackEligible(err, feature, activeRuntime);
             if (canRetrySameModel) {
@@ -417,7 +431,7 @@ export async function generateTextForCurrentUser(
       }
       throw lastErr;
     } catch (err: any) {
-      await recordUsage(runtime, feature, undefined, false, err?.message);
+      await dependencies.recordUsage(runtime, feature, undefined, false, err?.message);
       throw err;
     }
   });
@@ -593,8 +607,9 @@ function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): Res
 
 function isTransientGenerateParseError(err: any) {
   return (
-    err?.message === 'Invalid JSON response' &&
-    (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500)
+    err?.name === 'BriefIncompleteResponse' ||
+    (err?.message === 'Invalid JSON response' &&
+      (err?.statusCode == null || err.statusCode === 200 || err.statusCode >= 500))
   );
 }
 

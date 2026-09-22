@@ -198,12 +198,11 @@ describe('live Jev demonstration', () => {
 
 describe('simpler Mail navigation', () => {
   test('keeps three primary views and all detailed views reachable', () => {
-    expect(PRIMARY_MAIL_VIEWS.map((item) => item.id)).toEqual(['main', 'needs_reply', 'noise']);
+    expect(PRIMARY_MAIL_VIEWS.map((item) => item.id)).toEqual(['main', 'needs_reply', 'noise', 'codes']);
     expect(MORE_MAIL_VIEWS.map((item) => item.id)).toEqual([
       'needs_action',
       'waiting_for',
       'important_changes',
-      'codes',
       'orders',
       'finance_admin',
       'review',

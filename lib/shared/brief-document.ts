@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { briefComponentNameSchema, parseBriefComponent } from '../brief/component-catalog';
 import { isKnownBriefAction } from './brief-actions';
 import { normalizeBriefTimezone } from './brief-edition';
 
@@ -98,6 +99,9 @@ const framingSchema = z.object({
   // Display name of the newest sender (budget brief, 2026-09-03). Renderers
   // show it before hydration completes; hydration keeps the live address.
   sender: z.string().max(200).optional(),
+  // A short carry-over label such as "Day 3" when the same item appeared in
+  // an earlier edition (brief round 2026-09-22). Clients show it after the sender.
+  age: z.string().max(40).optional(),
 });
 
 const handoffEvidenceSchema = z.object({
@@ -266,6 +270,35 @@ const checklistItemSchema = z.object({
 });
 
 const editorialLeafSchemas = [
+  z
+    .object({
+      ...commonNodeShape,
+      kind: z.literal('tool_ui'),
+      id: z.string().regex(/^[a-z][a-z0-9-]{0,70}$/),
+      component: briefComponentNameSchema,
+      props: z.record(z.string(), z.unknown()),
+      summary: z.string().trim().min(1).max(1000),
+      sources: z
+        .array(z.object({ ref: BriefSourceRefV2Schema, actions: z.array(BriefActionV2Schema).max(8) }))
+        .max(24),
+    })
+    .superRefine((node, ctx) => {
+      try {
+        parseBriefComponent(node.component, node.props);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['props'],
+          message: error instanceof Error ? error.message : 'Invalid component',
+        });
+      }
+    }),
+  z.object({
+    ...commonNodeShape,
+    kind: z.literal('live_section'),
+    section: z.enum(['narrative', 'prepared_work']),
+    at: z.number().finite().nonnegative(),
+  }),
   z.object({
     ...commonNodeShape,
     kind: z.literal('text'),
@@ -573,6 +606,7 @@ export const BriefRegionSchema = z.object({
 
 export const BriefDocumentV2Schema = z.object({
   version: z.literal(BRIEF_DOCUMENT_VERSION),
+  layout: z.literal('editorial').optional(),
   title: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.title),
   summary: z.string().trim().min(1).max(BRIEF_DOCUMENT_LIMITS.summary),
   generatedAt: z.number().finite().nonnegative(),
@@ -597,6 +631,8 @@ export interface BriefDocumentParseResult {
 
 const layoutKinds = new Set(['stack', 'grid', 'split', 'hero', 'group']);
 const leafKinds = new Set([
+  'tool_ui',
+  'live_section',
   'entity_list',
   'query_list',
   'stat',
@@ -680,6 +716,7 @@ export function repairBriefDocument(value: unknown): unknown {
 
   return {
     version: BRIEF_DOCUMENT_VERSION,
+    ...(raw?.layout === 'editorial' ? { layout: 'editorial' } : {}),
     title,
     summary,
     generatedAt,
@@ -866,6 +903,14 @@ function repairLeaf(
   const ref = (value: unknown) => repairRef(value);
 
   switch (kind) {
+    case 'tool_ui': {
+      const result = editorialLeafSchemas[0].safeParse({ ...node, ...common });
+      return result.success ? result.data : fallbackNode(summary);
+    }
+    case 'live_section':
+      return node.section === 'narrative' || node.section === 'prepared_work'
+        ? { kind, ...common, section: node.section, at: Math.max(0, finiteNumber(node.at) ?? 0) }
+        : fallbackNode(summary);
     case 'text':
       return {
         kind,
@@ -942,6 +987,7 @@ function repairLeaf(
                   ...(clippedString(framing.sender, 200)
                     ? { sender: clippedString(framing.sender, 200) }
                     : {}),
+                  ...(clippedString(framing.age, 40) ? { age: clippedString(framing.age, 40) } : {}),
                 },
                 ...(handoff ? { handoff } : {}),
                 actions: cleanActions(item.actions),
@@ -1723,6 +1769,7 @@ function commonNodeFields(node: Record<string, unknown>) {
 }
 
 function actionsInNode(node: BriefNode) {
+  if (node.kind === 'tool_ui') return node.sources.flatMap((source) => source.actions);
   if (node.kind === 'actions') return node.actions;
   if (node.kind === 'entity_list') return node.items.flatMap((item) => item.actions);
   if (node.kind === 'collection') return node.items.flatMap((item) => item.actions);

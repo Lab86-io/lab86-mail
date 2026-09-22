@@ -36,7 +36,7 @@ export type NotificationAction =
   | { kind: 'checkin'; checkinId: string }
   | { kind: 'url'; url: string }
   | { kind: 'view'; view: PrimaryView }
-  | { kind: 'today' }
+  | { kind: 'today'; reportId?: string }
   | { kind: 'albatrosses' };
 
 export interface NotificationItem {
@@ -78,6 +78,12 @@ export function notificationAction(row: NotificationRow): NotificationAction | n
     ![...row.deepLink].some((character) => character === '\\' || character.charCodeAt(0) < 32)
   ) {
     const link = new URL(row.deepLink, 'https://albatross.invalid');
+    // `/brief?id=<reportId>` names one edition of the Daily Brief. The
+    // client opens that edition, not the latest one.
+    if (link.pathname === '/brief') {
+      const reportId = link.searchParams.get('id')?.trim();
+      return reportId ? { kind: 'today', reportId } : { kind: 'today' };
+    }
     if (link.pathname === '/') {
       const workId = link.searchParams.get('work');
       if (workId) return { kind: 'work', workId };

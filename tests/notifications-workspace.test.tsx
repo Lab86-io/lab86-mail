@@ -172,6 +172,12 @@ describe('notification attention projection', () => {
 
   test('known shell destinations use state actions and routine briefs retain their Area context', () => {
     expect(notificationAction(notice({ deepLink: '/?view=today' }))).toEqual({ kind: 'today' });
+    // A brief_ready deep link names one edition; the client opens that one.
+    expect(notificationAction(notice({ deepLink: '/brief?id=report-42' }))).toEqual({
+      kind: 'today',
+      reportId: 'report-42',
+    });
+    expect(notificationAction(notice({ deepLink: '/brief' }))).toEqual({ kind: 'today' });
     expect(notificationAction(notice({ type: 'agent_error', deepLink: '/?view=files' }))).toEqual({
       kind: 'view',
       view: 'files',

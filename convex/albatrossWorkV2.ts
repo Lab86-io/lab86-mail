@@ -36,6 +36,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { completeCardForWork } from './boards';
+import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import { scheduleNarrativeSource } from './narrative';
 import {
@@ -2508,6 +2509,7 @@ export const workDetail = query({
 export const saveAreaBrief = mutation({
   args: {
     ...callerArgs,
+    briefJob: v.optional(briefJobFence),
     areaId: v.id('areas'),
     status: v.union(v.literal('generating'), v.literal('ready'), v.literal('error')),
     lede: v.string(),
@@ -2521,6 +2523,7 @@ export const saveAreaBrief = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    await assertBriefJobOwner(ctx, userId, args.briefJob, { areaId: args.areaId });
     await requireArea(ctx, args.areaId, userId);
     const existing = await ctx.db
       .query('albatrossAreaBriefs')

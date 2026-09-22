@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { generateKeyPairSync } from 'node:crypto';
+import * as weatherAdapter from '../lib/weather/open-meteo';
 import './tools/harness';
 import {
   gatherBriefWeather,
@@ -330,4 +331,16 @@ describe('brief weather gathering', () => {
     expect(requestedURLs[0]).toContain('api.open-meteo.com/v1/forecast');
     expect(weather).toMatchObject({ location: 'Rochester, New York', current: { temp: 72 } });
   });
+});
+
+test('a weather adapter failure leaves the rest of the brief available', async () => {
+  const place = spyOn(weatherAdapter, 'resolveWeatherPlace').mockRejectedValue(
+    new Error('Provider unavailable'),
+  );
+  try {
+    expect(await gatherBriefWeather(reportFixture(), null)).toBeNull();
+    expect(place).toHaveBeenCalledTimes(1);
+  } finally {
+    place.mockRestore();
+  }
 });

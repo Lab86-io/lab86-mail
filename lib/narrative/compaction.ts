@@ -52,7 +52,7 @@ export function selectCompactionEvidence(entries: NarrativeEntry[], limit = 60) 
 }
 
 export function narrativeWritingLimit(level: string, key: string) {
-  return key.startsWith('brief:') ? 2200 : level === 'month' ? 1400 : level === 'week' ? 1800 : 2200;
+  return key.startsWith('brief:') ? 4000 : level === 'month' ? 1400 : level === 'week' ? 1800 : 2200;
 }
 
 /** Size each record before enforcing the packet budget: one long record must
@@ -60,15 +60,8 @@ export function narrativeWritingLimit(level: string, key: string) {
 export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000, brief = false) {
   // Briefs reserve the actual recent intentions/reflections before historical
   // sampling. Sorting after sampling alone could already have lost yesterday.
-  const chosen = brief ? selectBriefEvidence(entries).slice(0, 24) : selectCompactionEvidence(entries, 24);
-  if (brief)
-    chosen.sort(
-      (a, b) =>
-        Number(b.source === 'checkins') - Number(a.source === 'checkins') ||
-        Number(Boolean(b.corrected)) - Number(Boolean(a.corrected)) ||
-        Number(b.current && b.pinned) - Number(a.current && a.pinned) ||
-        b.occurredAt - a.occurredAt,
-    );
+  const chosen = brief ? selectBriefEvidence(entries, Date.now(), 10) : selectCompactionEvidence(entries, 24);
+  if (brief) chosen.sort((a, b) => Number(b.source === 'checkins') - Number(a.source === 'checkins'));
   const rows = chosen.map((row) => ({
     ...row,
     title: row.title.slice(0, 160),
@@ -82,6 +75,18 @@ export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000,
   const selected: NarrativeEntry[] = [];
   let size = 0;
   for (const row of rows) {
+    // Reserve each selected source's share before filling prose. Otherwise a
+    // few long Work entries can consume the packet before a new meeting fits.
+    if (brief) {
+      const share = Math.floor(maxChars / rows.length);
+      const metadataSize = JSON.stringify({ ...row, text: '' }).length;
+      const excerpt = row.text.slice(0, Math.max(0, share - metadataSize));
+      if (excerpt.length < row.text.length) {
+        row.coverage = 'Source excerpt truncated; consult the original for complete wording.';
+        const overhead = JSON.stringify({ ...row, text: '' }).length;
+        row.text = excerpt.slice(0, Math.max(0, share - overhead));
+      }
+    }
     const bytes = JSON.stringify(row).length;
     if (size + bytes > maxChars) continue;
     selected.push(row);

@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
+import { NarrativeBrief } from '@/components/narrative/NarrativeBrief';
+import { PreparedWork } from '@/components/report/PreparedWork';
 import { Chart } from '@/components/tool-ui/chart';
 import { CitationList } from '@/components/tool-ui/citation';
 import { CodeDiff } from '@/components/tool-ui/code-diff';
@@ -39,6 +41,7 @@ import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefCanvasLeaf } from './BriefCanvasLeaf';
+import { BriefComponentBoundary, BriefToolUi } from './BriefToolUi';
 import type { BriefActionPayload } from './brief-action-runtime';
 
 const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((module) => module.GeoMap), {
@@ -50,7 +53,16 @@ const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((m
   ),
 });
 
+/** Where an action came from. The region id feeds brief telemetry. */
+export interface BriefActionMeta {
+  regionId?: string;
+}
+
 export interface BriefNodeContext {
+  reportId?: string | null;
+  /** Live personal modules belong only to the current daily edition. */
+  liveSections?: boolean;
+  timezone?: string;
   entities: Map<string, BriefHydratedEntity>;
   hiddenRefs: Set<string>;
   completedRefs: Map<string, boolean>;
@@ -58,8 +70,21 @@ export interface BriefNodeContext {
     action: BriefActionV2,
     payload: BriefActionPayload,
     sourceRef?: BriefSourceRefV2,
+    meta?: BriefActionMeta,
   ) => Promise<void> | void;
   onCanvasAction: (action: string, payload: BriefActionPayload) => void;
+}
+
+/**
+ * Binds a region id to every action of a subtree. Region renderers call it
+ * once, so the recursive node views never carry the id themselves.
+ */
+export function withBriefRegion(context: BriefNodeContext, regionId: string): BriefNodeContext {
+  return {
+    ...context,
+    onAction: (action, payload, sourceRef, meta) =>
+      context.onAction(action, payload, sourceRef, { regionId, ...meta }),
+  };
 }
 
 export function BriefNodeView({
@@ -86,6 +111,22 @@ export function BriefNodeView({
   }
   const common = topLevel ? '' : nodeClass(node);
   switch (node.kind) {
+    case 'tool_ui':
+      return <BriefToolUi node={node} context={context} />;
+    case 'live_section':
+      if (!context.liveSections) return null;
+      return (
+        <BriefComponentBoundary
+          key={`${context.reportId}:${node.section}:${node.at}`}
+          summary={
+            node.section === 'narrative'
+              ? 'Personal context could not load.'
+              : 'Prepared work could not load.'
+          }
+        >
+          {node.section === 'narrative' ? <NarrativeBrief at={node.at} fallback={null} /> : <PreparedWork />}
+        </BriefComponentBoundary>
+      );
     case 'stack':
       return (
         <div
@@ -287,6 +328,7 @@ function BriefLeaf({
           }))}
           emptyText={node.emptyText}
           variant={node.variant}
+          className={nodeClass(node)}
           context={context}
         />
       );
@@ -443,7 +485,7 @@ function BriefLeaf({
                       <span>{item.label}</span>
                       {item.at ? (
                         <time className="text-xs font-normal text-[var(--color-text-muted)]">
-                          {formatBriefTime(item.at)}
+                          {formatBriefTime(item.at, context.timezone)}
                         </time>
                       ) : null}
                     </div>
@@ -728,7 +770,7 @@ function BriefEmailPreview({
         </div>
         {node.sentAt ? (
           <time className="shrink-0 text-[11px] text-[var(--color-text-muted)]">
-            {formatBriefTime(node.sentAt)}
+            {formatBriefTime(node.sentAt, context.timezone)}
           </time>
         ) : null}
       </header>
@@ -813,17 +855,19 @@ function BriefEntityList({
   emptyText,
   variant,
   context,
+  className,
 }: {
   title?: string;
   items: EntityRow[];
   emptyText?: string;
   variant: 'rows' | 'cards' | 'compact';
   context: BriefNodeContext;
+  className?: string;
 }) {
   const visible = items.filter((item) => !context.hiddenRefs.has(briefRefKey(item.ref)));
   if (!visible.length) return emptyText ? <BriefEmpty text={emptyText} /> : null;
   return (
-    <section className="space-y-2.5">
+    <section className={cn('space-y-2.5', className)}>
       {title ? <h3 className="font-display text-lg font-semibold">{title}</h3> : null}
       <div
         className={cn(
@@ -876,7 +920,10 @@ function BriefEntityRow({
             </span>
           ) : null}
           <div className="flex min-w-0 items-center gap-2">
-            <p className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}>
+            <p
+              data-brief-entity-title
+              className={cn('truncate text-sm font-medium', (gone || completed) && 'line-through')}
+            >
               {title}
             </p>
             {item.handoff?.itemCount && item.handoff.itemCount > 1 ? (
@@ -930,7 +977,7 @@ function BriefEntityRow({
           )}
           {entity?.startAt ? (
             <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-              {formatBriefTime(entity.startAt)}
+              {formatBriefTime(entity.startAt, context.timezone)}
             </p>
           ) : null}
         </div>
@@ -1269,10 +1316,11 @@ export function briefNodePresentationClass(node: { emphasis: string; tone: strin
   );
 }
 
-function formatBriefTime(value: number) {
-  return new Intl.DateTimeFormat(undefined, {
+function formatBriefTime(value: number, timezone?: string) {
+  return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
+    timeZone: timezone || undefined,
   }).format(new Date(value));
 }

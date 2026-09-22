@@ -143,7 +143,8 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    .index('by_status_user', ['status', 'userId']),
 
   providerGrants: defineTable({
     userId: v.string(),
@@ -912,6 +913,8 @@ export default defineSchema({
         nextMove: v.string(),
         openQuestion: v.string(),
         prose: v.string(),
+        weekAhead: v.optional(v.string()),
+        sinceLastBrief: v.optional(v.string()),
         model: v.optional(v.string()),
       }),
     ),
@@ -1596,6 +1599,29 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_expires', ['expiresAt']),
+
+  briefJobs: defineTable({
+    userId: v.string(),
+    scope: v.string(),
+    kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    areaId: v.optional(v.id('areas')),
+    timezone: v.optional(v.string()),
+    force: v.optional(v.boolean()),
+    reportId: v.optional(v.string()),
+    state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed'), v.literal('cancelled')),
+    active: v.boolean(),
+    availableAt: v.number(),
+    createdAt: v.number(),
+    attempts: v.number(),
+    token: v.optional(v.string()),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_active', ['userId', 'active'])
+    .index('by_user_scope_active', ['userId', 'scope', 'active'])
+    .index('by_active_available', ['active', 'availableAt']),
 
   dailyReports: defineTable({
     userId: v.string(),
@@ -2752,4 +2778,23 @@ export default defineSchema({
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId'])
     .index('by_card', ['cardId']),
+
+  // One row per user action on a brief item (brief round 2026-09-22). The
+  // generator reads nothing from here yet; the rows measure which regions and
+  // actions earn use, so scoring changes can be checked against real use.
+  briefItemEvents: defineTable({
+    userId: v.string(),
+    reportId: v.optional(v.string()),
+    surface: v.union(v.literal('daily'), v.literal('area')),
+    regionId: v.string(),
+    action: v.string(),
+    refKind: v.string(),
+    refId: v.string(),
+    refAccount: v.optional(v.string()),
+    outcome: v.union(v.literal('done'), v.literal('failed'), v.literal('undone'), v.literal('opened')),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_created', ['userId', 'createdAt'])
+    .index('by_user_report', ['userId', 'reportId']),
 });

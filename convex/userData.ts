@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
+import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { now, requireInternalSecret } from './lib';
 
 // Backing store for all per-user app state (see schema.ts userDocs). Every
@@ -33,6 +34,42 @@ export const getDoc = query({
       )
       .unique();
     return row ? { key: row.key, ref: row.ref, doc: row.doc, updatedAt: row.updatedAt } : null;
+  },
+});
+
+export const compareAndSwapDoc = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    kind: v.string(),
+    key: v.string(),
+    expectedRevision: v.union(v.string(), v.null()),
+    doc: v.any(),
+    ref: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    // This operation is intentionally restricted to brief input state.
+    if (args.kind !== 'briefComponentState' || typeof args.doc?.revision !== 'string')
+      throw new Error('Unsupported revisioned document');
+    const row = await ctx.db
+      .query('userDocs')
+      .withIndex('by_user_kind_key', (q) =>
+        q.eq('userId', args.userId).eq('kind', args.kind).eq('key', args.key),
+      )
+      .unique();
+    if ((row?.doc?.revision ?? null) !== args.expectedRevision) return false;
+    const values = {
+      userId: args.userId,
+      kind: args.kind,
+      key: args.key,
+      doc: args.doc,
+      ref: args.ref,
+      updatedAt: now(),
+    };
+    if (row) await ctx.db.patch(row._id, values);
+    else await ctx.db.insert('userDocs', { ...values, createdAt: now() });
+    return true;
   },
 });
 
@@ -105,6 +142,8 @@ export const dailyReportPage = query({
               kind: row.doc.kind || 'manual',
               generatedAt: row.doc.generatedAt || 0,
               title: row.doc.title || 'Daily Report',
+              artifactStatus: row.doc.artifactStatus,
+              editorial: row.doc.editorial ? { mode: row.doc.editorial.mode } : undefined,
             }
           : row.doc,
       ),
@@ -120,9 +159,14 @@ export const upsertDoc = mutation({
     key: v.string(),
     ref: v.optional(v.string()),
     doc: v.any(),
+    briefJob: v.optional(briefJobFence),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    if (args.briefJob) {
+      if (args.kind !== 'dailyReport') throw new Error('Invalid brief job target');
+      await assertBriefJobOwner(ctx, args.userId, args.briefJob, { reportId: args.key });
+    }
     const ts = now();
     const existing = await ctx.db
       .query('userDocs')

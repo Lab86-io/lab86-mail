@@ -4,18 +4,18 @@ import { stripEmoji } from '../shared/format';
 import type { DailyReportCalendarItem, DailyReportProse } from '../shared/types';
 import type { BriefLane } from './brief-score';
 
-// The one model call of the budget brief. The model writes three things: the
-// lede, one line per selected item, and the week-ahead paragraph. Everything
-// else in the edition is deterministic. Decided by Jakob on 2026-09-03.
+// Source summaries and compatibility prose. The daily editorial agent builds
+// the final page from these summaries plus the original source evidence.
 
 export const LEDE_MAX_SENTENCES = 4;
 export const WEEK_AHEAD_MAX_SENTENCES = 4;
-export const ITEM_LINE_MAX_WORDS = 20;
+export const YESTERDAY_MAX_SENTENCES = 3;
+export const ITEM_LINE_MAX_WORDS = 60;
 export const AREA_LINE_MAX_WORDS = 24;
 
 export interface BriefProseItemInput {
   key: string;
-  lane: BriefLane;
+  lane: BriefLane | 'waiting';
   sender: string;
   subject: string;
   receivedAt: number | null;
@@ -24,6 +24,16 @@ export interface BriefProseItemInput {
   whyItMatters?: string;
   // Real message bodies, newest last, bounded by the caller.
   messages: Array<{ from: string; date: number | null; body: string }>;
+  // Days this thread has been in the brief before today (0 = new today).
+  carriedDays?: number;
+}
+
+// The look back (brief round 2026-09-22): the evening check-in, the completed
+// work, and the agent's own operations since the previous edition.
+export interface BriefProseSinceInput {
+  previousGeneratedAt: number | null;
+  completed: string[];
+  agentActions: string[];
 }
 
 export interface BriefProseInput {
@@ -42,6 +52,7 @@ export interface BriefProseInput {
   reflection?: string | null;
   // One short weather sentence, or null.
   weather?: string | null;
+  since?: BriefProseSinceInput | null;
 }
 
 export interface BriefProseResult extends DailyReportProse {
@@ -49,15 +60,16 @@ export interface BriefProseResult extends DailyReportProse {
 }
 
 export const BRIEF_PROSE_SYSTEM_PROMPT = `You write a short morning letter for one person. You are their assistant, not a narrator.
-Return only JSON: {"lede":"...","items":[{"key":"...","line":"..."}],"weekAhead":"..."}.
+Return only JSON: {"lede":"...","yesterday":"...","items":[{"key":"...","line":"..."}],"weekAhead":"..."}.
 
 Rules:
 - lede: at most 4 sentences. Say what matters today and why, in plain words. Name people. No greeting line, no sign-off.
-- items: one line per supplied item key, at most 20 words each. Say why the email matters or what to do. Use the real message bodies. If there is nothing useful to add beyond sender and subject, return an empty line for that key.
+- yesterday: at most 3 sentences about what happened since the previous letter. Use the reflection, the stated intent, the completed work, and the actions taken on the person's behalf. Return an empty string when the since data is empty.
+- items: one compact paragraph per supplied item key, at most 60 words each. Explain the request, relevant context, and what to do next. Use the real message bodies. If there is nothing useful to add beyond sender and subject, return an empty line for that key. When carriedDays is 1 or more, the item has waited that many days; say so only when it changes what to do.
 - weekAhead: at most 4 sentences about the next seven days. Use the supplied weekday names and dates exactly. Name the day for each event or deadline. Say which days are open. Example of the level: "This Thursday you can send the passport form. Friday is open."
 - Use only supplied facts. Never invent people, dates, events, or outcomes.
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words.
-- Never write the word "AI". Never mention models, assistants, or this brief itself.
+- Do not add self-referential narration about writing the brief. Preserve relevant product names and technical terms from the sources.
 - Never summarize a summary: each item line comes from the email, not from the reason field.
 - When a reflection is supplied, distinguish the user's reported progress from independently observed evidence. Do not manufacture completion or assume calendar attendance. The user's current intention outranks artifact volume.`;
 
@@ -185,7 +197,7 @@ export function weekAheadFallback(input: {
 export function ledeFallback(input: {
   firstName: string | null;
   kind: 'morning' | 'evening' | 'manual';
-  items: Array<{ lane: BriefLane; sender: string; subject: string }>;
+  items: Array<{ lane: BriefLane | 'waiting'; sender: string; subject: string }>;
   todayEventCount: number;
 }): string {
   const answers = input.items.filter((item) => item.lane === 'answer');
@@ -230,10 +242,38 @@ export function ledeFallback(input: {
   return clampSentences(sentences.join(' '), LEDE_MAX_SENTENCES);
 }
 
+export function yesterdayFallback(input: {
+  reflection?: string | null;
+  tomorrowIntent?: string | null;
+  since?: BriefProseSinceInput | null;
+}): string {
+  const sentences: string[] = [];
+  const intent = String(input.tomorrowIntent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (intent)
+    sentences.push(`You said you wanted to ${intent.replace(/[.!?]+$/, '').replace(/^i want to /i, '')}.`);
+  const completed = (input.since?.completed || []).filter(Boolean);
+  if (completed.length === 1) sentences.push(`${completed[0]} is done.`);
+  else if (completed.length > 1) {
+    sentences.push(
+      `${joinList(completed.slice(0, 3))} are done${completed.length > 3 ? `, and ${completed.length - 3} more` : ''}.`,
+    );
+  }
+  const actions = (input.since?.agentActions || []).filter(Boolean);
+  if (actions.length) {
+    sentences.push(
+      actions.length === 1
+        ? `One action was taken for you: ${actions[0].replace(/[.!?]+$/, '')}.`
+        : `${actions.length} actions were taken for you, including ${actions[0].replace(/[.!?]+$/, '')}.`,
+    );
+  }
+  return clampSentences(sentences.join(' '), YESTERDAY_MAX_SENTENCES);
+}
+
 // ---- Clamps ----------------------------------------------------------------
 
 const SENTENCE_SPLIT = /(?<=[.!?])\s+(?=[A-Z0-9"'(])/;
-const AI_WORD = /\bAI\b/;
 
 export function splitSentences(text: string): string[] {
   return text
@@ -257,14 +297,13 @@ export function clampWords(text: string, max: number): string {
     .replace(/[,;:]$/, '')}.`;
 }
 
-// Removes emoji, exclamation marks, and any sentence that names "AI". Returns
-// an empty string when nothing survives.
+// House-style cleanup must not erase facts or product names from a source.
 export function sanitizeProse(text: string, maxSentences: number): string {
   const clean = stripEmoji(String(text || ''))
     .replace(/!+/g, '.')
     .replace(/\s+/g, ' ')
     .trim();
-  const kept = splitSentences(clean).filter((sentence) => !AI_WORD.test(sentence));
+  const kept = splitSentences(clean);
   return kept.slice(0, maxSentences).join(' ');
 }
 
@@ -273,7 +312,7 @@ export function sanitizeLine(text: string, maxWords = ITEM_LINE_MAX_WORDS): stri
     .replace(/!+/g, '.')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!clean || AI_WORD.test(clean)) return '';
+  if (!clean) return '';
   return clampWords(clean, maxWords);
 }
 
@@ -282,7 +321,7 @@ export function sanitizeLine(text: string, maxWords = ITEM_LINE_MAX_WORDS): stri
 export function parseBriefProse(
   text: string,
   keys: string[],
-): { lede: string; lines: Record<string, string>; weekAhead: string } | null {
+): { lede: string; lines: Record<string, string>; weekAhead: string; yesterday: string } | null {
   const match = String(text || '').match(/\{[\s\S]*\}/);
   if (!match) return null;
   let parsed: any;
@@ -307,6 +346,10 @@ export function parseBriefProse(
     weekAhead: sanitizeProse(
       typeof parsed.weekAhead === 'string' ? parsed.weekAhead : '',
       WEEK_AHEAD_MAX_SENTENCES,
+    ),
+    yesterday: sanitizeProse(
+      typeof parsed.yesterday === 'string' ? parsed.yesterday : '',
+      YESTERDAY_MAX_SENTENCES,
     ),
   };
 }
@@ -350,8 +393,22 @@ export function buildBriefProsePrompt(input: BriefProseInput): string {
           ? formatIn(item.dueAt, input.timezone, { weekday: 'long', month: 'short', day: 'numeric' })
           : null,
       reason: item.whyItMatters || null,
+      carriedDays: item.carriedDays || 0,
       messages: item.messages,
     })),
+    since: input.since
+      ? {
+          previousLetter: input.since.previousGeneratedAt
+            ? formatIn(input.since.previousGeneratedAt, input.timezone, {
+                weekday: 'long',
+                month: 'short',
+                day: 'numeric',
+              })
+            : null,
+          completed: input.since.completed.slice(0, 8),
+          actionsTakenForYou: input.since.agentActions.slice(0, 6),
+        }
+      : null,
     week,
     areas: input.areas,
   };
@@ -387,6 +444,11 @@ export async function writeBriefProse(
       now: input.now,
       timezone: input.timezone,
     }),
+    yesterday: yesterdayFallback({
+      reflection: input.reflection,
+      tomorrowIntent: input.tomorrowIntent,
+      since: input.since,
+    }),
     model: 'local',
   };
   const generate = deps.generate === undefined ? generateTextForCurrentUser : deps.generate;
@@ -408,6 +470,7 @@ export async function writeBriefProse(
       lede: parsed.lede || fallback.lede,
       lines: parsed.lines,
       weekAhead: parsed.weekAhead || fallback.weekAhead,
+      yesterday: parsed.yesterday || fallback.yesterday,
       model: describeProvider().primary || 'primary',
     };
   } catch (error) {

@@ -147,8 +147,10 @@ struct BriefLetterTests {
         let kinds = sections.map { section -> String in
             switch section {
             case .lede: "lede"
+            case .yesterday: "yesterday"
             case .lane(let lane, _): "lane:\(lane.rawValue)"
             case .weekAhead: "week-ahead"
+            case .week: "week"
             case .areas: "areas"
             case .pulse: "pulse"
             case .node: "node"
@@ -324,6 +326,293 @@ struct BriefLetterTests {
         let data = try JSONEncoder().encode(framing)
         let decoded = try JSONDecoder().decode(BriefFraming.self, from: data)
         #expect(decoded == framing)
+    }
+
+    // MARK: - Brief round 2026-09-22 regions
+
+    private func paragraphRegion(_ id: String, text: String) -> String {
+        """
+        { "id": "\(id)", "summary": "\(text)", "tree": { "kind": "text", "emphasis": "standard", "tone": "neutral", "role": "body", "text": "\(text)" } }
+        """
+    }
+
+    private func taskItem(id: String, title: String) -> String {
+        """
+        {
+          "ref": { "kind": "task", "id": "\(id)", "label": "\(title)" },
+          "framing": { "lane": "tasks", "reason": "Due Thursday." },
+          "actions": [
+            { "action": "toggle_task", "label": "Done", "payload": { "cardId": "\(id)", "completed": true, "title": "\(title)" }, "style": "quiet" },
+            { "action": "dismiss_task", "label": "Skip", "payload": { "cardId": "\(id)" }, "style": "quiet" }
+          ]
+        }
+        """
+    }
+
+    private func toolItem(id: String, label: String) -> String {
+        """
+        {
+          "ref": { "kind": "mcp", "id": "\(id)", "label": "\(label)" },
+          "framing": { "lane": "connected", "reason": "Two comments since yesterday." },
+          "actions": [
+            { "action": "open_url", "label": "Open", "payload": { "url": "https://example.com/\(id)" }, "style": "quiet" }
+          ]
+        }
+        """
+    }
+
+    private func roundDocument() throws -> BriefDocumentV2 {
+        try decode(document(regions: [
+            ledeRegion,
+            paragraphRegion("yesterday", text: "You said you would close the venue thread. It closed Monday."),
+            laneRegion("answer", title: "Answer", items: [
+                threadItem(id: "t1", lane: "answer", subject: "Venue count", sender: "Sarah Chen"),
+            ]),
+            laneRegion("waiting", title: "Waiting on", items: [
+                threadItem(id: "t5", lane: "waiting", subject: "Deposit receipt", sender: "Bank"),
+            ]),
+            laneRegion("tasks", title: "Tasks this week", items: [
+                taskItem(id: "card-1", title: "Book the tent"),
+            ]),
+            laneRegion("connected", title: "Connected tools", items: [
+                toolItem(id: "issue-9", label: "Issue 9: seating chart"),
+            ]),
+            weekAheadRegion,
+        ]))
+    }
+
+    @Test
+    func theNewDailyRegionsClassifyInOrder() throws {
+        let doc = try roundDocument()
+        let sections = BriefLetterLayout.sections(for: doc, includeLede: true)
+        #expect(sections.map(\.regionID) == ["lede", "yesterday", "answer", "waiting", "tasks", "connected", "week-ahead"])
+        if case .yesterday(let text) = sections[1] {
+            #expect(text.hasPrefix("You said"))
+        } else {
+            Issue.record("Expected the yesterday paragraph second.")
+        }
+        if case .lane(let lane, let items) = sections[4] {
+            #expect(lane == .tasks)
+            #expect(items.first?.ref.kind == "task")
+        } else {
+            Issue.record("Expected the tasks lane.")
+        }
+        if case .lane(let lane, let items) = sections[5] {
+            #expect(lane == .connected)
+            #expect(items.first?.ref.kind == "mcp")
+        } else {
+            Issue.record("Expected the connected lane.")
+        }
+        #expect(BriefLetterLayout.isLetter(doc))
+        #expect(BriefLetterLane.waiting.title == "Waiting on")
+        #expect(BriefLetterLane.tasks.title == "Tasks this week")
+        #expect(BriefLetterLane.connected.title == "Connected tools")
+        #expect(!BriefLetterLane.tasks.showsAvatar)
+        #expect(BriefLetterLane.waiting.showsAvatar)
+    }
+
+    @Test
+    func aYesterdayParagraphAloneMakesALetter() throws {
+        let doc = try decode(document(regions: [
+            ledeRegion,
+            paragraphRegion("yesterday", text: "Nothing moved."),
+        ]))
+        #expect(BriefLetterLayout.isLetter(doc))
+        let empty = try decode(document(regions: [ledeRegion, paragraphRegion("yesterday", text: "")]))
+        #expect(BriefLetterLayout.sections(for: empty, includeLede: true).count == 1)
+    }
+
+    @Test
+    func theAreaWeekAndMailRegionsClassify() throws {
+        let doc = try decode(document(regions: [
+            ledeRegion,
+            paragraphRegion("week", text: "Thursday the florist visits. Two tasks are due Friday."),
+            laneRegion("mail", title: "Mail", items: [
+                """
+                {
+                  "ref": { "kind": "thread", "id": "t8", "account": "acct-1", "label": "Florist quote" },
+                  "framing": { "lane": "mail", "sender": "Bloom & Co" },
+                  "actions": [
+                    { "action": "open_thread", "label": "Open", "payload": { "account": "acct-1", "threadId": "t8" }, "style": "quiet" },
+                    { "action": "draft_reply", "label": "Reply", "payload": { "account": "acct-1", "threadId": "t8", "subject": "Florist quote" }, "style": "quiet" }
+                  ]
+                }
+                """,
+            ]),
+        ], title: "Wedding"))
+        let sections = BriefLetterLayout.sections(for: doc, includeLede: true)
+        #expect(sections.map(\.regionID) == ["lede", "week", "mail"])
+        if case .week(let text) = sections[1] { #expect(text.hasPrefix("Thursday")) } else { Issue.record("Expected week.") }
+        if case .lane(let lane, _) = sections[2] { #expect(lane == .mail) } else { Issue.record("Expected mail.") }
+        #expect(BriefLetterLayout.isLetter(doc))
+    }
+
+    @Test
+    func anUnknownRegionStillFallsToTheNodeRenderer() throws {
+        let doc = try decode(document(regions: [
+            ledeRegion,
+            laneRegion("someday", title: "Someday", items: [threadItem(id: "t1", lane: "someday", subject: "Later")]),
+        ]))
+        let sections = BriefLetterLayout.sections(for: doc, includeLede: true)
+        if case .node(let region) = sections[1] { #expect(region.id == "someday") } else { Issue.record("Expected a node.") }
+    }
+
+    // MARK: - framing.age
+
+    @Test
+    func framingAgeDecodesAndShowsAfterTheSender() throws {
+        let json = """
+        {
+          "ref": { "kind": "thread", "id": "t1", "account": "acct-1", "label": "Venue count" },
+          "framing": { "lane": "waiting", "sender": "Sarah Chen", "age": "Day 3", "reason": "No reply since Monday." },
+          "actions": [
+            { "action": "open_thread", "label": "Open", "payload": {}, "style": "quiet" },
+            { "action": "resolve_thread", "label": "Resolve", "payload": {}, "style": "quiet" }
+          ]
+        }
+        """
+        let item = try JSONDecoder().decode(BriefEntityItem.self, from: Data(json.utf8))
+        #expect(item.framing?.age == "Day 3")
+        let copy = BriefMailRowCopy(item: item, entity: nil)
+        #expect(copy.age == "Day 3")
+        #expect(
+            copy.accessibilityLabel
+                == "From Sarah Chen, Day 3, Venue count, No reply since Monday., action Open, action Resolve"
+        )
+
+        let framing = BriefFraming(reason: "Line", lane: "waiting", sender: "Sarah Chen", age: "Day 3")
+        let data = try JSONEncoder().encode(framing)
+        #expect(try JSONDecoder().decode(BriefFraming.self, from: data) == framing)
+        let older = try JSONDecoder().decode(BriefFraming.self, from: Data("{\"lane\":\"know\"}".utf8))
+        #expect(older.age == nil)
+    }
+
+    // MARK: - Row actions
+
+    @Test
+    func theFirstKnownActionIsTheTapAndTheRestTrail() throws {
+        let open = BriefDocumentAction(action: "open_thread", label: "Open", payload: [:], style: "quiet")
+        let draft = BriefDocumentAction(action: "draft_reply", label: "Reply", payload: [:], style: "quiet")
+        let dismiss = BriefDocumentAction(action: "dismiss_thread", label: "Dismiss", payload: [:], style: "quiet")
+        let unknown = BriefDocumentAction(action: "teleport", label: "Teleport", payload: [:], style: "quiet")
+        let fallback = BriefDocumentAction(action: "open_thread", label: "Open", payload: [:], style: "quiet")
+
+        let full = BriefRowActions.arrange([open, unknown, draft, dismiss], fallback: fallback)
+        #expect(full.tap == open)
+        #expect(full.trailing == [draft, dismiss])
+
+        let only = BriefRowActions.arrange([open], fallback: fallback)
+        #expect(only.tap == open)
+        #expect(only.trailing.isEmpty)
+
+        let none = BriefRowActions.arrange([unknown], fallback: fallback)
+        #expect(none.tap == fallback)
+        #expect(none.trailing.isEmpty)
+        #expect(BriefRowActions.arrange(nil, fallback: fallback).tap == fallback)
+    }
+
+    @Test
+    func taskRowsStrikeThroughWhenCompletedAndToolRowsShowTheReason() throws {
+        let task = try JSONDecoder().decode(BriefEntityItem.self, from: Data(taskItem(id: "card-1", title: "Book the tent").utf8))
+        let open = BriefMailRowCopy(item: task, entity: nil)
+        #expect(!open.completed)
+        #expect(open.action == "Done")
+        #expect(open.trailingActions == ["Skip"])
+        let done = BriefMailRowCopy(item: task, entity: nil, completed: true)
+        #expect(done.completed)
+        #expect(done.accessibilityLabel == "Book the tent, completed, Due Thursday., action Done, action Skip")
+        let taskFallback = try #require(BriefMailRowCopy.fallbackOpen(for: task.ref))
+        #expect(taskFallback.action == "open_view")
+        #expect(taskFallback.payload["view"] == .string("tasks"))
+
+        let tool = try JSONDecoder().decode(BriefEntityItem.self, from: Data(toolItem(id: "issue-9", label: "Issue 9: seating chart").utf8))
+        let copy = BriefMailRowCopy(item: tool, entity: nil)
+        #expect(copy.subject == "Issue 9: seating chart")
+        #expect(copy.line == "Two comments since yesterday.")
+        #expect(copy.action == "Open")
+        #expect(copy.trailingActions.isEmpty)
+        #expect(BriefMailRowCopy.fallbackOpen(for: tool.ref) == nil)
+        #expect(BriefRowActions.arrange(nil, fallback: BriefMailRowCopy.fallbackOpen(for: tool.ref)).tap == nil)
+    }
+
+    // MARK: - Inactive refs
+
+    @Test
+    func inactiveIdsMapBackToRowKeysForActionableKindsOnly() {
+        let refs = [
+            BriefSourceRef(kind: "task", id: "card-1", account: nil, label: "Tent"),
+            BriefSourceRef(kind: "work", id: "w1", account: nil, label: "Launch"),
+            BriefSourceRef(kind: "thread", id: "card-1", account: "acct-1", label: "Not a task"),
+        ]
+        let hidden = BriefInactiveRefs.hiddenKeys(refs: refs, inactiveIDs: ["card-1", "w9"])
+        #expect(hidden == ["task::card-1"])
+        #expect(BriefInactiveRefs.kinds == ["work", "task", "card"])
+        #expect(BriefInactivePolling.key(hideInactive: true, generatedAt: 7) == "on:7.0")
+        #expect(BriefInactivePolling.key(hideInactive: false, generatedAt: 7) == "off")
+    }
+
+    @Test
+    func theShownEditionCountsAsLatestUntilANewerOneIsKnown() {
+        #expect(DailyReportSelection.isLatest(shownID: "r2", latestID: "r2"))
+        #expect(DailyReportSelection.isLatest(shownID: "r2", latestID: nil))
+        #expect(DailyReportSelection.isLatest(shownID: nil, latestID: "r2"))
+        #expect(!DailyReportSelection.isLatest(shownID: "r1", latestID: "r2"))
+    }
+
+    // MARK: - Deep link
+
+    @Test @MainActor
+    func aBriefReadyDeepLinkOpensTodayOnThatEdition() {
+        let navigation = NavigationModel()
+        navigation.open(route: "/brief?id=report-7")
+        #expect(navigation.selectedTab == .today)
+        #expect(navigation.pendingBriefEditionID == "report-7")
+        #expect(navigation.consumeBriefEdition() == "report-7")
+        #expect(navigation.consumeBriefEdition() == nil)
+
+        let plain = NavigationModel()
+        plain.open(route: "lab86://open/brief")
+        #expect(plain.selectedTab == .today)
+        #expect(plain.pendingBriefEditionID == nil)
+
+        #expect(NavigationModel.briefEditionID(route: "open/brief", query: ["id": "r1"]) == "r1")
+        #expect(NavigationModel.briefEditionID(route: "mail/thread", query: ["id": "r1"]) == nil)
+        #expect(NavigationModel.briefEditionID(route: "open/brief", query: [:]) == nil)
+    }
+
+    // MARK: - Overflow backlog
+
+    @Test
+    func overflowDecodesFromTheSectionsAndDedupes() throws {
+        let report = try #require(DailyReportModel(json: .object([
+            "_id": .string("report-1"),
+            "generatedAt": .number(1_788_400_000_000),
+            "title": .string("The Thursday Brief"),
+            "sections": .object([
+                "answer": .array([]),
+                "overflow": .array([
+                    .object(["account": .string("acct-1"), "threadId": .string("t1"), "subject": .string("Venue"), "whyItMatters": .string("Asked twice.")]),
+                    .object(["account": .string("acct-1"), "threadId": .string("t1"), "subject": .string("Venue"), "whyItMatters": .string("Duplicate.")]),
+                    .object(["account": .string("acct-1"), "threadId": .string("t2"), "subject": .string(""), "whyItMatters": .string("New sender.")]),
+                    .object(["threadId": .string("t3")]),
+                ]),
+            ]),
+        ])))
+        #expect(report.overflow.map(\.threadID) == ["t1", "t2"])
+        #expect(report.overflow[1].subject == "(no subject)")
+        #expect(report.overflow[0].whyItMatters == "Asked twice.")
+        #expect(BriefOverflowItem.summary(count: 1) == "1 more conversation worth your attention")
+        #expect(BriefOverflowItem.summary(count: 4) == "4 more conversations worth your attention")
+
+        let older = try #require(DailyReportModel(json: .object([
+            "_id": .string("report-0"),
+            "generatedAt": .number(1_753_300_000_000),
+            "title": .string("Old Edition"),
+        ])))
+        #expect(older.overflow.isEmpty)
+        // The cache round trip keeps the backlog.
+        let data = try JSONEncoder().encode(report)
+        #expect(try JSONDecoder().decode(DailyReportModel.self, from: data).overflow.count == 2)
     }
 
     // MARK: - Week ahead emphasis

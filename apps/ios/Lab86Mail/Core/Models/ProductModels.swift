@@ -1030,6 +1030,44 @@ struct ImportantMailItem: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// One conversation that met the brief criteria and fell past the edition's
+/// highlight limit (`sections.overflow`, brief round 2026-09-22).
+struct BriefOverflowItem: Identifiable, Hashable, Codable, Sendable {
+    let accountID: String
+    let threadID: String
+    let subject: String
+    let whyItMatters: String
+
+    var id: String { "\(accountID):\(threadID)" }
+
+    init?(json: JSONValue) {
+        guard let accountID = json["account"]?.stringValue?.nilIfBlank,
+              let threadID = json["threadId"]?.stringValue?.nilIfBlank else { return nil }
+        self.accountID = accountID
+        self.threadID = threadID
+        subject = json["subject"]?.stringValue?.nilIfBlank ?? "(no subject)"
+        whyItMatters = json["whyItMatters"]?.stringValue?.nilIfBlank ?? ""
+    }
+
+    static func fromSections(_ sections: JSONValue?) -> [BriefOverflowItem] {
+        var seen = Set<String>()
+        var items: [BriefOverflowItem] = []
+        for row in sections?["overflow"]?.arrayValue ?? [] {
+            guard let item = BriefOverflowItem(json: row), !seen.contains(item.id) else { continue }
+            seen.insert(item.id)
+            items.append(item)
+        }
+        return items
+    }
+
+    // The disclosure line of the backlog. Mirrors the web copy.
+    static func summary(count: Int) -> String {
+        "\(count) more \(count == 1 ? "conversation" : "conversations") worth your attention"
+    }
+
+    static let note = "These met your Brief criteria and are beyond this edition’s highlight limit."
+}
+
 struct DailyReportModel: Hashable, Codable, Sendable {
     enum Status: String, Codable, Sendable { case partial, ready }
 
@@ -1097,8 +1135,11 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     // Mail that matters today, from the brief's own attention index. Optional
     // in the cache so editions saved before 2026-09-03 keep decoding.
     private let importantMailItems: [ImportantMailItem]?
+    // The overflow backlog. Optional in the cache so older snapshots decode.
+    private let overflowItems: [BriefOverflowItem]?
 
     var importantMail: [ImportantMailItem] { importantMailItems ?? [] }
+    var overflow: [BriefOverflowItem] { overflowItems ?? [] }
 
     // Raw service ids the edition drew from (mail providers, mcp servers…).
     // The footer derives its final list from these plus section content.
@@ -1146,6 +1187,7 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         let sections = json["sections"]
         hasAreaBrief = sections?["albatross"]?.objectValue != nil
         importantMailItems = ImportantMailItem.fromSections(sections)
+        overflowItems = BriefOverflowItem.fromSections(sections)
         let stats = json["stats"]
         self.stats = Stats(
             scannedThreads: Int(stats?["scannedThreads"]?.doubleValue ?? 0),

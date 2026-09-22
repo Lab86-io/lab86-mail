@@ -143,8 +143,9 @@ describe('tool groups', () => {
       a: { type: 'string' },
       b: [{}],
     });
+    const tools = liftToolsForAgent('b', 'UTC');
     for (const name of allNames) {
-      const lifted = liftToolsForAgent('b', 'UTC')[name];
+      const lifted = tools[name];
       const text = JSON.stringify(lifted.inputSchema.jsonSchema ?? {});
       expect(text.includes('(?=') || text.includes('(?!') || text.includes('(?<')).toBe(false);
     }

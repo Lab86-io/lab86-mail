@@ -1,13 +1,18 @@
-import { after, type NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { narrativeEnabled, readNarrative, refreshNarrative, searchNarrative } from '@/lib/narrative/service';
+import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
+import {
+  narrativeEnabled,
+  readNarrative,
+  type refreshNarrative,
+  searchNarrative,
+} from '@/lib/narrative/service';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
 const functions = (api as any).narrative;
 const level = z.enum(['observation', 'day', 'week', 'month', 'thread']);
 const command = z.discriminatedUnion('action', [
@@ -51,7 +56,6 @@ export function createNarrativeRoutes(
     read: typeof readNarrative;
     search: typeof searchNarrative;
     refresh: typeof refreshNarrative;
-    after: typeof after;
     rateLimit: typeof enforceUserRateLimit;
   }> = {},
 ) {
@@ -62,8 +66,10 @@ export function createNarrativeRoutes(
     mutation: convexMutation,
     read: readNarrative,
     search: searchNarrative,
-    refresh: refreshNarrative,
-    after,
+    refresh: async (userId: string, _kind: string) => {
+      await enqueueBriefJob({ userId, kind: 'narrative', edition: 'manual' });
+      return { status: 'queued' };
+    },
     rateLimit: enforceUserRateLimit,
     ...overrides,
   };
@@ -111,8 +117,9 @@ export function createNarrativeRoutes(
       const user = await deps.requireCurrentUser();
       if (!deps.enabled(user.userId))
         return NextResponse.json({ error: 'Narrative is not enabled for this account.' }, { status: 403 });
-      await deps.rateLimit({ userId: user.userId, key: 'narrative-write', limit: 30, windowMs: 60_000 });
       const input = command.parse(await req.json());
+      if (input.action !== 'refresh')
+        await deps.rateLimit({ userId: user.userId, key: 'narrative-write', limit: 30, windowMs: 60_000 });
       if (input.action === 'configure') {
         const { action: _, ...preferences } = input;
         const state = await deps.query<any>(functions.status, { userId: user.userId });
@@ -125,26 +132,11 @@ export function createNarrativeRoutes(
           return NextResponse.json({ error: 'Choose a valid timezone.' }, { status: 400 });
         }
         await deps.mutation(functions.configure, { userId: user.userId, ...preferences });
-        if (input.enabled)
-          deps.after(() =>
-            deps
-              .refresh(user.userId, 'manual')
-              .then(() => undefined)
-              .catch((error) => {
-                console.error('[narrative] background refresh failed', error);
-              }),
-          );
+        if (input.enabled) await deps.refresh(user.userId, 'manual');
         return NextResponse.json({ ok: true });
       }
       if (input.action === 'refresh') {
-        deps.after(() =>
-          deps
-            .refresh(user.userId, 'manual')
-            .then(() => undefined)
-            .catch((error) => {
-              console.error('[narrative] background refresh failed', error);
-            }),
-        );
+        await deps.refresh(user.userId, 'manual');
         return NextResponse.json({ ok: true, status: 'queued' }, { status: 202 });
       }
       if (input.action === 'erase')

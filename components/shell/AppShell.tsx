@@ -22,6 +22,7 @@ import { RecordMailboxesConnected } from '@/components/hosted/HostedOnboarding';
 import { Inbox } from '@/components/inbox/Inbox';
 import { NotificationsSurface } from '@/components/notifications/NotificationsSurface';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { briefEditionIdFromSearch, requestBriefEdition } from '@/components/report/brief-edition-request';
 import { Today } from '@/components/report/Today';
 import { TasksSurface } from '@/components/tasks/TasksSurface';
 import { ThreadView } from '@/components/thread/ThreadView';
@@ -101,6 +102,10 @@ export function AppShell({
   const [deepLinkedAreaId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : areaIdFromSearch(window.location.search),
   );
+  // `?brief=<id>` opens one edition of the Daily Brief on Today.
+  const [deepLinkedBriefId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : briefEditionIdFromSearch(window.location.search),
+  );
   // Capture lands on the new Albatross itself — the plan is the payoff for
   // dumping the thought, so the user should see it, not a list.
   const handleWorkCaptured = useCallback(
@@ -149,12 +154,20 @@ export function AppShell({
       setPrimaryView('areas');
       return;
     }
+    if (deepLinkedBriefId) {
+      initialViewAppliedRef.current = true;
+      setBootView(null);
+      requestBriefEdition(deepLinkedBriefId);
+      setPrimaryView('today');
+      return;
+    }
     if (!deepLinkedView) return;
     initialViewAppliedRef.current = true;
     setBootView(null);
     setPrimaryView(deepLinkedView);
   }, [
     deepLinkedAreaId,
+    deepLinkedBriefId,
     deepLinkedView,
     deepLinkedWorkId,
     setPrimaryView,

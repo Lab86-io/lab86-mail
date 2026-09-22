@@ -1,20 +1,17 @@
 import { type NextRequest, NextResponse } from 'next/server';
-import { runWithAiRequestContext } from '@/lib/ai/context';
-import { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isStagingRuntime } from '@/lib/hosted/controls';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// One fast-model call per active area; a user with many areas still finishes
-// well inside this ceiling because briefs regenerate sequentially.
-export const maxDuration = 300;
-
 // Called by the Convex hourly cron (convex/dailyReports.ts) at each user's
 // local morning hour, alongside the Daily Brief: every active area's living
 // brief is rewritten from the latest Work, mail, calendar, and task context.
 // force skips the unchanged-revision short-circuit — mornings always rewrite.
+// The 3-hourly refresh cron posts force:false, so an area whose bounded
+// context has not changed costs one query and no model call.
 export async function POST(req: NextRequest) {
   if (!isInternalCronRequest(req)) {
     return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -30,6 +27,7 @@ export async function POST(req: NextRequest) {
     // empty/invalid body handled below
   }
   const userId = String(body?.userId || '').trim();
+  const force = body?.force !== false;
   if (!userId) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
@@ -38,27 +36,17 @@ export async function POST(req: NextRequest) {
       userId,
       status: 'active',
     });
-    let refreshed = 0;
-    const errors: Array<{ areaId: string; error: string }> = [];
-    // A small worker pool: one slow brief must not serialize the whole morning
-    // behind it, but unbounded parallelism would stampede the model gateway.
-    const queue = areas.map((area) => String(area._id));
-    await runWithAiRequestContext({ userId, agent: 'ai' }, async () => {
-      const worker = async () => {
-        for (let areaId = queue.shift(); areaId; areaId = queue.shift()) {
-          try {
-            await generateAreaLivingBrief({ userId, areaId, force: true });
-            refreshed += 1;
-          } catch (err: any) {
-            // One area failing (model hiccup, empty context) must not stop the
-            // rest of the morning's briefs.
-            errors.push({ areaId, error: err?.message || 'brief generation failed' });
-          }
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(3, areas.length) }, worker));
-    });
-    return NextResponse.json({ ok: true, userId, areas: areas.length, refreshed, errors }, { status: 200 });
+    const jobs = [];
+    for (const area of areas)
+      jobs.push(
+        await enqueueBriefJob({
+          userId,
+          kind: 'area',
+          areaId: String(area._id),
+          force,
+        }),
+      );
+    return NextResponse.json({ ok: true, userId, force, areas: areas.length, jobs }, { status: 202 });
   } catch (err: any) {
     console.error('[cron/area-briefs] regeneration failed', userId, err);
     return NextResponse.json(

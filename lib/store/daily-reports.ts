@@ -1,3 +1,4 @@
+import { editorialPlanSchema } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
@@ -21,16 +22,6 @@ import {
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
-
-let persistSettledDailyReport: typeof kvUpsert = kvUpsert;
-
-export function setDailyReportPersistenceForTest(persist: typeof kvUpsert) {
-  const previous = persistSettledDailyReport;
-  persistSettledDailyReport = persist;
-  return () => {
-    persistSettledDailyReport = previous;
-  };
-}
 
 const saveDefaults = {
   persist: kvUpsert,
@@ -60,7 +51,12 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
-const readDefaults = { query: convexQuery, configured: isConvexConfigured, loadPolicy: loadJevPolicy };
+const readDefaults = {
+  query: convexQuery,
+  configured: isConvexConfigured,
+  loadPolicy: loadJevPolicy,
+  load: getDailyReport,
+};
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
   readDependencies = { ...readDefaults, ...overrides };
@@ -85,6 +81,8 @@ async function readReportRows<T>(
               kind: report.kind,
               generatedAt: report.generatedAt,
               title: report.title,
+              artifactStatus: report.artifactStatus,
+              editorial: report.editorial ? { mode: report.editorial.mode } : undefined,
             }
           : report,
       ) as T[];
@@ -104,16 +102,21 @@ async function readReportRows<T>(
   return rows;
 }
 
-export async function getLatestDailyReport(kind?: DailyReport['kind']) {
-  const [latest] = await readReportRows<DailyReport>(1, false, kind);
+export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFirst = false) {
+  const rows = await readReportRows<DailyReport>(1, summaryFirst, kind);
+  const latest = rows[0];
   if (!latest) return null;
-  const report = await migrateDailyReportForRead(latest);
+  const report = summaryFirst
+    ? await readDependencies.load(latest._id)
+    : await migrateDailyReportForRead(latest);
+  if (!report) return null;
   if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
   const items = [
     ...(report.sections.answer || []),
     ...(report.sections.today || []),
     ...(report.sections.know || []),
     ...(report.sections.overflow || []),
+    ...(report.sections.waiting || []),
   ];
   try {
     const userId = requireStoreUserId();
@@ -156,34 +159,8 @@ export async function listDailyReportSummaries(limit = 20) {
   return readReportRows<DailyReportSummary>(limit, true);
 }
 
-// Generation runs in the web process; a deploy/restart mid-run (SIGTERM skips
-// the catch paths) leaves an edition wedged at artifactStatus 'composing' or
-// 'enriching' forever, so the report page keeps treating it as in-flight. Past
-// this cutoff the run is certainly dead — content exists (both statuses are
-// only persisted alongside an html artifact), so reads settle it to 'rendered'.
-// Mirrors STUCK_GENERATION_MS in components/report/DailyReport.tsx and
-// ACTIVE_GENERATION_MS in lib/tools/daily-report.ts.
-const STUCK_ARTIFACT_MS = 20 * 60_000;
-
 async function migrateDailyReportForRead(raw: DailyReport): Promise<DailyReport> {
-  const migrated = migrateDailyReport(raw);
-  if (settledStaleArtifactStatus(raw, migrated)) {
-    try {
-      await persistSettledDailyReport('dailyReport', migrated._id, migrated);
-    } catch (err) {
-      console.warn('[daily-reports] failed to persist settled artifact status:', err);
-    }
-  }
-  return migrated;
-}
-
-function settledStaleArtifactStatus(raw: DailyReport, migrated: DailyReport): boolean {
-  return (
-    (raw.artifactStatus === 'composing' || raw.artifactStatus === 'enriching') &&
-    raw.artifactStatus !== migrated.artifactStatus &&
-    migrated.artifactStatus === 'rendered' &&
-    Boolean(migrated.html)
-  );
+  return migrateDailyReport(raw);
 }
 
 // Daily reports are stored as opaque payloads, so editions written before a
@@ -191,10 +168,9 @@ function settledStaleArtifactStatus(raw: DailyReport, migrated: DailyReport): bo
 // calendar, progressive `status`, and the `needsReply`→`replyOwed` rename) come
 // back missing keys the rich report page now reads. This upgrades any stored
 // report to the current shape so old and new editions render — and list in
-// history — identically. Pure: callers that should self-heal the stored
-// nonterminal artifact status use migrateDailyReportForRead above.
+// history — identically. Reading never changes the generation lifecycle.
 // Exported for unit tests only; production callers go through the getters.
-export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): DailyReport {
+export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()): DailyReport {
   const sections = (raw.sections ?? {}) as Partial<DailyReport['sections']>;
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
@@ -211,6 +187,7 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
 
   const stats = (raw.stats ?? {}) as Partial<DailyReport['stats']>;
   const artifactErrors = sanitizeArtifactErrors((raw as any).artifactErrors);
+  const editorialPlan = editorialPlanSchema.safeParse(raw.editorial?.plan);
   // Prefer stored counts; fall back to deriving them from the sections so a
   // legacy doc that predates a given stat still shows a truthful number.
   const replyOwedCount = stats.replyOwed ?? stats.needsReply ?? replyOwed.length;
@@ -233,12 +210,21 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
         ? {
             lede: String(raw.prose.lede ?? ''),
             weekAhead: String(raw.prose.weekAhead ?? ''),
+            ...(typeof raw.prose.yesterday === 'string' ? { yesterday: raw.prose.yesterday } : {}),
             model: String(raw.prose.model ?? 'local'),
           }
         : undefined,
     handoffs: parseTriageHandoffs(raw.handoffs),
     composition: raw.composition,
     document: migrateBriefDocument(raw.document),
+    ...(editorialPlan.success
+      ? {
+          editorial: {
+            plan: editorialPlan.data,
+            mode: raw.editorial?.mode === 'generated' ? ('generated' as const) : ('fallback' as const),
+          },
+        }
+      : {}),
     html: typeof raw.html === 'string' ? raw.html : undefined,
     artifactStatus: raw.artifactStatus,
     artifactSource: raw.artifactSource,
@@ -257,6 +243,8 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
       ...(Array.isArray(sections.today) ? { today: items(sections.today) } : {}),
       ...(Array.isArray(sections.know) ? { know: items(sections.know) } : {}),
       ...(Array.isArray(sections.overflow) ? { overflow: items(sections.overflow) } : {}),
+      ...(Array.isArray(sections.waiting) ? { waiting: items(sections.waiting) } : {}),
+      ...(sections.since ? { since: sections.since } : {}),
       tasks,
       calendar,
       mcp,
@@ -303,28 +291,12 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     migrated.artifactSource = migrated.artifactSource ?? 'deterministic';
   }
 
-  // Settle-on-read: a non-terminal artifact status from a generation that died
-  // mid-flight (deploy/SIGTERM) settles to 'rendered' once it is clearly stale,
-  // so consumers stop polling a run that will never finish. The html shown is
-  // whatever the last completed phase persisted.
-  if (
-    (migrated.artifactStatus === 'composing' || migrated.artifactStatus === 'enriching') &&
-    migrated.html &&
-    now - (migrated.generatedAt || 0) > STUCK_ARTIFACT_MS
-  ) {
-    migrated.artifactStatus = 'rendered';
-  }
-
   return migrated;
 }
 
 function migrateBriefDocument(value: unknown) {
   if (!value || typeof value !== 'object') return undefined;
-  try {
-    return parseBriefDocument(value);
-  } catch {
-    return undefined;
-  }
+  return parseBriefDocument(value);
 }
 
 function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {

@@ -163,7 +163,7 @@ describe('Brief Document v2 generators', () => {
           calls += 1;
           prompt = options.prompt;
           expect(options.feature).toBe('daily_brief_prose');
-          expect(options.system).toContain('Never write the word "AI"');
+          expect(options.system).toContain('Preserve relevant product names');
           return {
             text: JSON.stringify({
               lede: 'Maya needs the delivery date before she can book the venue. The dentist is at 10. Ben can wait until Friday. Nothing else needs you.',
@@ -215,14 +215,18 @@ describe('Brief Document v2 generators', () => {
       reason: 'She asked for the July 31 date; one line back closes it.',
       sender: 'Maya',
     });
-    expect(answer.items[0].actions).toEqual([
-      {
-        action: 'open_thread',
-        label: 'Open',
-        payload: { account: 'jakob@example.com', threadId: 'thread-maya' },
-        style: 'quiet',
-      },
+    // Open first (the row tap), then the review and immediate actions both
+    // clients already run (brief round 2026-09-22).
+    expect(answer.items[0].actions.map((action: any) => [action.action, action.label])).toEqual([
+      ['open_thread', 'Open'],
+      ['draft_reply', 'Reply'],
+      ['dismiss_thread', 'Not needed'],
     ]);
+    expect(answer.items[0].actions[0].payload).toMatchObject({
+      account: 'jakob@example.com',
+      threadId: 'thread-maya',
+      subject: 'Launch date',
+    });
 
     const today = document.regions[2].tree as any;
     expect(today.items[0].ref.kind).toBe('event');
@@ -237,9 +241,9 @@ describe('Brief Document v2 generators', () => {
     const week = document.regions[4].tree as any;
     expect(week.kind).toBe('text');
     expect(week.role).toBe('body');
-    // Sentence with "AI" removed, exclamation mark softened, four-sentence cap.
+    // Preserve source terminology; soften exclamation marks and cap four sentences.
     expect(week.text).toBe(
-      'This Sunday is the launch review. Friday and Saturday are open. Nothing else is booked.',
+      'This Sunday is the launch review. Friday and Saturday are open. AI can help. Nothing else is booked.',
     );
 
     const areas = document.regions[5].tree as any;
@@ -314,6 +318,8 @@ describe('Brief Document v2 generators', () => {
       nextMove: 'Next: Write the artifact.',
       openQuestion: 'Which venue?',
       prose: 'Studio has 1 active Work item and 1 open task.',
+      weekAhead: '',
+      sinceLastBrief: '',
       model: 'local',
     });
 
@@ -321,7 +327,7 @@ describe('Brief Document v2 generators', () => {
       JSON.stringify({
         lastChange: 'Maya sent the venue list on Tuesday!',
         nextMove: '',
-        openQuestion: 'AI should decide?',
+        openQuestion: 'Should we include the AI service costs?',
         prose: 'One. Two. Three. Four.',
       }),
       fallback,
@@ -329,8 +335,10 @@ describe('Brief Document v2 generators', () => {
     expect(parsed).toEqual({
       lastChange: 'Maya sent the venue list on Tuesday.',
       nextMove: 'Next: Write the artifact.',
-      openQuestion: 'Which venue?',
+      openQuestion: 'Should we include the AI service costs?',
       prose: 'One. Two. Three.',
+      weekAhead: '',
+      sinceLastBrief: '',
     });
     expect(parseAreaPulse('no json here', fallback)).toBeNull();
   });
@@ -401,27 +409,19 @@ describe('Brief Document v2 generators', () => {
     }
   });
 
-  test('area pulse context has its own bound inside the total deadline', async () => {
-    const bounds: Array<{ ms: number; label: string }> = [];
+  test('area pulse waits for context and sends no model deadline', async () => {
     let prompt = '';
     const restore = setAreaLivingBriefDependenciesForTest({
-      narrativePrompt: async () => new Promise(() => {}),
-      withDeadline: async (promise, ms, label) => {
-        bounds.push({ ms, label });
-        if (label === 'Area pulse context') throw new Error('synthetic context timeout');
-        return promise;
-      },
+      narrativePrompt: async () => 'Latest Granola decision',
       generateTextForCurrentUser: (async (options: any) => {
+        expect(options.abortSignal).toBeUndefined();
         prompt = options.prompt;
         return { text: '{}' };
       }) as any,
     });
     try {
       await writeAreaPulse({ area: { areaId: 'a', name: 'Studio' } }, { userId: 'user-1' });
-      expect(bounds[0]).toEqual({ ms: 8000, label: 'Area pulse context' });
-      expect(bounds[1].ms).toBeLessThanOrEqual(60000);
-      expect(bounds[1].label).toBe('Area pulse composition');
-      expect(prompt).toContain('Studio');
+      expect(prompt).toContain('Latest Granola decision');
     } finally {
       restore();
     }

@@ -43,6 +43,62 @@ async function capture(
   return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
 }
 describe('shared narrative runtime', () => {
+  test('cloud file changes are opt-in, source-linked, and revoked on deletion or disconnection', async () => {
+    const t = harness();
+    const now = Date.now();
+    const seeded = await t.run(async (ctx) => {
+      const connection = await ctx.db.insert('cloudFileConnections', {
+        userId,
+        connectionId: 'drive',
+        provider: 'google_drive',
+        accountKey: 'owner',
+        status: 'connected',
+        scopes: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      const file = await ctx.db.insert('contentItems', {
+        userId,
+        key: 'file:one',
+        connectionId: 'drive',
+        source: 'google_drive',
+        externalId: 'one',
+        title: 'Launch decision',
+        text: 'The release has moved to Friday after QA.',
+        version: 'v1',
+        modifiedAt: now,
+        indexedAt: now,
+        partial: true,
+        deleted: false,
+        status: 'ready',
+        attempts: 0,
+        nextAttemptAt: 0,
+      });
+      return { connection, file };
+    });
+    await enable(t, ['chat']);
+    expect((await t.mutation(f.ingest, { ...args, group: 'files' })).changed).toBe(0);
+    const state = await t.query(f.status, args);
+    expect(state.sources.some((source: any) => source.id === 'files:drive')).toBe(true);
+    await enable(t, ['files:drive']);
+    // A fresh head read sees the change without consuming the history cursor.
+    expect((await t.mutation(f.ingest, { ...args, group: 'files', recent: true })).changed).toBe(1);
+    expect(await t.run((ctx) => ctx.db.query('narrativeCursors').collect())).toEqual([]);
+    expect((await t.mutation(f.ingest, { ...args, group: 'files' })).changed).toBe(0);
+    const found = await t.query(f.search, { ...args, query: 'Launch' });
+    expect(found.entries).toHaveLength(1);
+    expect(found.entries[0].text).toContain('Partial extracted content');
+    expect(found.entries[0].sourceId).toBe(seeded.file);
+    const id = found.entries[0]._id;
+    await t.run((ctx) => ctx.db.patch(seeded.file, { deleted: true }));
+    expect(await t.query(f.read, { ...args, id })).toBeNull();
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seeded.file, { deleted: false });
+      await ctx.db.patch(seeded.connection, { status: 'disconnected' });
+    });
+    expect(await t.query(f.read, { ...args, id })).toBeNull();
+  });
+
   test('shared account consent fits all candidate originals in the read budget and is rechecked next transaction', async () => {
     for (const kind of ['mail', 'calendar', 'mcp']) {
       const t = harness();
@@ -970,11 +1026,22 @@ describe('shared narrative runtime', () => {
     const t = harness();
     await enable(t);
     expect(await t.mutation(f.claim, { ...args, runId: 'first', kind: 'test' })).not.toBeNull();
+    expect(await t.mutation(f.heartbeat, { ...args, runId: 'first' })).toBe(true);
+    expect(await t.mutation(f.heartbeat, { ...args, runId: 'stale' })).toBe(false);
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).toBeNull();
     await t.mutation(f.finish, { ...args, runId: 'not-owner' });
     expect(await t.mutation(f.claim, { ...args, runId: 'third', kind: 'test' })).toBeNull();
     await t.mutation(f.finish, { ...args, runId: 'first' });
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).not.toBeNull();
+  });
+  test('requested brief refreshes have no daily generation quota', async () => {
+    const t = harness();
+    await enable(t);
+    for (let run = 0; run < 26; run++) {
+      const runId = `manual-${run}`;
+      expect(await t.mutation(f.claim, { ...args, runId, kind: 'manual' })).not.toBeNull();
+      await t.mutation(f.finish, { ...args, runId });
+    }
   });
   test('erase revokes access immediately and cleans stored copies', async () => {
     const t = harness();

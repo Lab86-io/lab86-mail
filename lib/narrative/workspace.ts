@@ -114,7 +114,7 @@ export function workspaceSource(entry: NarrativeEntry): WorkspaceSource {
             ? 'development'
             : entry.source.startsWith('mail:')
               ? 'mail'
-              : entry.source === 'documents'
+              : entry.source === 'documents' || entry.source.startsWith('files:')
                 ? 'file'
                 : 'context';
   return {
@@ -150,7 +150,7 @@ export function workspaceCandidates(sources: NarrativeEntry[], brief: string, no
     }
   }
   for (const entry of sorted) {
-    if (selected.size >= 18) break;
+    if (selected.size >= 10) break;
     selected.set(entry._id, entry);
   }
   return [...selected.values()];

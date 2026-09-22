@@ -10,6 +10,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
+import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
@@ -18,6 +19,7 @@ import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
+import { hasLiveBriefSection } from '@/lib/brief/editorial';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import {
@@ -753,8 +755,6 @@ function ReportArtifact({
   );
 }
 
-const STUCK_GENERATION_MS = 20 * 60_000;
-
 // Context the brief actually reads; the vortex swallows these while composing.
 const BRIEF_VORTEX_SOURCES: VortexSource[] = [
   { id: 'mail', label: 'Mail', kind: 'mail' },
@@ -813,6 +813,28 @@ export function DailyReport({
   });
   const history = historyQuery.data?.reports || [];
 
+  // A notification or the /brief?id= deep link names one edition. The latest
+  // edition still renders as "latest", so the live overlay stays on.
+  const requestedReportId = useBriefEditionRequest((s) => s.reportId);
+  const clearRequestedReportId = useBriefEditionRequest((s) => s.clear);
+  const refetchHistory = historyQuery.refetch;
+  useEffect(() => {
+    if (!requestedReportId) return;
+    let current = true;
+    // Notifications can name an edition newer than the cached history. Decide
+    // whether it is "latest" only after this request's history read finishes.
+    void refetchHistory().then(({ data, isError }) => {
+      if (!current || isError || !data) return;
+      const latest = requestedReportId === data.reports[0]?._id;
+      setSelectedId(latest ? null : requestedReportId);
+      if (latest) void queryClient.invalidateQueries({ queryKey: ['daily-report', 'latest'] });
+      clearRequestedReportId();
+    });
+    return () => {
+      current = false;
+    };
+  }, [clearRequestedReportId, queryClient, refetchHistory, requestedReportId]);
+
   const reportQuery = useQuery({
     queryKey: ['daily-report', selectedId ?? 'latest'],
     queryFn: async () =>
@@ -825,11 +847,8 @@ export function DailyReport({
     // edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      // A status that has sat past this cutoff is from a generation that died
-      // mid-flight; stop polling it so we don't hammer a forever-stuck edition.
-      const stuck = !r || Date.now() - (r.generatedAt || 0) > STUCK_GENERATION_MS;
-      if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
-      if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
+      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
+      if (r?.artifactStatus === 'enriching') return 3_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
       return selectedId ? false : 30_000;
     },
@@ -848,10 +867,6 @@ export function DailyReport({
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
-  // A generation that errored partway leaves the stored edition stuck at
-  // 'partial'/'composing' forever. Past this cutoff we treat such a status as
-  // dead, so the in-progress UI clears and Generate is clickable again.
-  const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
   // Embedded in Today, the brief sits under a live layer. It has to say when it
@@ -861,7 +876,6 @@ export function DailyReport({
   // The deterministic HTML is the interim save while the letter composes. If
   // it is still the final artifact, the letter did not write.
   const composingLetter =
-    !reportIsStale &&
     artifactSource === 'deterministic' &&
     (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
   const letterFailed =
@@ -873,9 +887,9 @@ export function DailyReport({
   const generating =
     waitingForNew ||
     composingLetter ||
-    (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
-  const showGeneratingState =
-    generating && ((!displayArtifact && !displayDocument) || waitingForNew || composingLetter);
+    report?.status === 'partial' ||
+    report?.artifactStatus === 'composing';
+  const showGeneratingState = generating;
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
   const fallbackLetter = useMemo(() => {
@@ -941,7 +955,7 @@ export function DailyReport({
     mutationFn: async () =>
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
-        wait: true,
+        wait: false,
       }),
     // Mark the moment so polling waits for the NEW edition, and jump to latest.
     onMutate: () => {
@@ -949,7 +963,14 @@ export function DailyReport({
       setGeneratingSince(Date.now());
     },
     onSuccess: (result) => {
-      if (result.started === false && result.report?.generatedAt) {
+      // A completed response can release the refresh control immediately.
+      if (
+        result.report &&
+        result.report.status !== 'partial' &&
+        !['composing', 'enriching'].includes(result.report.artifactStatus || '')
+      ) {
+        setGeneratingSince(null);
+      } else if (result.started === false && result.report?.generatedAt) {
         setGeneratingSince(result.report.generatedAt);
       }
       invalidate();
@@ -1162,7 +1183,7 @@ export function DailyReport({
         ) : showGeneratingState || showsLetter || (displayArtifact && report?.html) ? (
           // Vortex while composing; when the brief lands, the vortex collapses
           // and the finished letter springs out of it.
-          <AnimatePresence mode="wait" initial={false}>
+          <AnimatePresence key={showGeneratingState ? 'generating' : 'edition'} mode="wait" initial={false}>
             {showGeneratingState ? (
               <motion.div
                 key="vortex"
@@ -1183,7 +1204,9 @@ export function DailyReport({
                 <BriefCanvas
                   key={report._id}
                   hideInactive={!selectedId}
+                  reportId={report._id}
                   value={report.document}
+                  liveSections={!selectedId}
                   composing={report.artifactStatus === 'composing'}
                   onChanged={invalidate}
                   // Today already carries the dateline masthead. A second one
@@ -1193,7 +1216,9 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   footer={
                     <>
-                      {!selectedId ? <PreparedWork /> : null}
+                      {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
+                        <PreparedWork />
+                      ) : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
                         onOpen={openBacklogThread}
@@ -1214,7 +1239,9 @@ export function DailyReport({
                 <BriefCanvas
                   key={report._id}
                   hideInactive={!selectedId}
+                  reportId={report._id}
                   value={fallbackLetter}
+                  liveSections={!selectedId}
                   onChanged={invalidate}
                   masthead={!embedded}
                   embedded={embedded}

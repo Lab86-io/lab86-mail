@@ -260,6 +260,18 @@ export function observationsForRow(table: string, row: any): Observation[] {
         ].filter(Boolean),
       }),
     ];
+  if (table === 'contentItems') {
+    if (row.deleted || !['google_drive', 'onedrive'].includes(row.source)) return [];
+    return [
+      make({
+        source: `files:${row.connectionId}`,
+        title: row.title,
+        text: `File updated: ${row.title}. ${row.partial ? 'Partial extracted content; verify the original. ' : ''}${row.text || ''}`,
+        occurredAt: row.modifiedAt,
+        topics: [`file:${row.connectionId}:${row.externalId}`],
+      }),
+    ];
+  }
   if (table === 'documents')
     return row.archivedAt
       ? []

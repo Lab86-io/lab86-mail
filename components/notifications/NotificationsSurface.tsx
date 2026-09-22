@@ -16,6 +16,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { Component, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { DailyCheckin } from '@/components/albatross/DailyCheckin';
+import { requestBriefEdition } from '@/components/report/brief-edition-request';
 import { Button } from '@/components/ui/button';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
@@ -631,6 +632,9 @@ function ConnectedNotifications({ onOpenActivity }: { onOpenActivity?: () => voi
       router.push(action.url);
     } else if (action.kind === 'view') {
       setPrimaryView(action.view);
+    } else if (action.kind === 'today') {
+      requestBriefEdition(action.reportId ?? null);
+      setPrimaryView('today');
     } else {
       setPrimaryView(action.kind);
     }

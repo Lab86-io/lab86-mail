@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { now, requireInternalSecret } from './lib';
 
 // The structured area pulse (2026-09-03). It lives on the existing
@@ -16,6 +17,8 @@ export const areaPulseValidator = v.object({
   nextMove: v.string(),
   openQuestion: v.string(),
   prose: v.string(),
+  weekAhead: v.optional(v.string()),
+  sinceLastBrief: v.optional(v.string()),
   model: v.optional(v.string()),
 });
 
@@ -40,11 +43,13 @@ function bounded(value: string, max: number) {
 export const saveAreaPulse = mutation({
   args: {
     ...callerArgs,
+    briefJob: v.optional(briefJobFence),
     areaId: v.id('areas'),
     pulse: areaPulseValidator,
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    await assertBriefJobOwner(ctx, userId, args.briefJob, { areaId: args.areaId });
     const area = await ctx.db.get(args.areaId);
     if (!area || area.userId !== userId) throw new Error('Area not found.');
     const existing = await ctx.db
@@ -57,6 +62,8 @@ export const saveAreaPulse = mutation({
       nextMove: bounded(args.pulse.nextMove, 400),
       openQuestion: bounded(args.pulse.openQuestion, 400),
       prose: bounded(args.pulse.prose, 900),
+      ...(args.pulse.weekAhead ? { weekAhead: bounded(args.pulse.weekAhead, 600) } : {}),
+      ...(args.pulse.sinceLastBrief ? { sinceLastBrief: bounded(args.pulse.sinceLastBrief, 400) } : {}),
       ...(args.pulse.model ? { model: bounded(args.pulse.model, 120) } : {}),
     };
     if (existing) {

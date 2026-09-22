@@ -60,7 +60,15 @@ describe('bounded brief reads', () => {
           key: `report-${i}`,
           createdAt: i,
           updatedAt: 100 - i,
-          doc: { _id: `report-${i}`, kind: 'morning', generatedAt: i, title: `Edition ${i}`, html },
+          doc: {
+            _id: `report-${i}`,
+            kind: 'morning',
+            generatedAt: i,
+            title: `Edition ${i}`,
+            html,
+            artifactStatus: 'ready',
+            editorial: { mode: 'generated', plan: { large: 'p'.repeat(5_000) } },
+          },
         }),
       );
     let cursor: string | null = null;
@@ -76,6 +84,8 @@ describe('bounded brief reads', () => {
       expect(result.page.length).toBeLessThanOrEqual(8);
       expect(JSON.stringify(result.page).length).toBeLessThan(2000);
       expect(result.page.every((r) => !('html' in r))).toBe(true);
+      expect(result.page[0].editorial).toEqual({ mode: 'generated' });
+      expect(result.page[0].artifactStatus).toBe('ready');
       ids.push(...result.page.map((r) => r._id));
       cursor = result.continueCursor;
       done = result.isDone;

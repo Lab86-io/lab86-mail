@@ -33,8 +33,22 @@ import './brief-layout.css';
 import { BriefActions } from './BriefActions';
 import { BriefLetter } from './BriefLetter';
 import { BriefMasthead } from './BriefMasthead';
-import { type BriefNodeContext, BriefNodeView, briefNodePresentationClass } from './BriefNodeView';
-import type { BriefActionPayload } from './brief-action-runtime';
+import {
+  type BriefActionMeta,
+  type BriefNodeContext,
+  BriefNodeView,
+  briefNodePresentationClass,
+  withBriefRegion,
+} from './BriefNodeView';
+import {
+  type BriefActionPayload,
+  type BriefEventOutcome,
+  type BriefEventSurface,
+  briefEventRequest,
+  postBriefEvent,
+} from './brief-action-runtime';
+
+export const BRIEF_UNKNOWN_ACTION_COPY = 'The brief cannot run this action yet.';
 
 const BRIEF_GRID_ROW_PX = 8;
 
@@ -54,9 +68,17 @@ export function BriefCanvas({
   embedded = false,
   noiseCount,
   hideInactive = false,
+  surface = 'daily',
+  reportId,
+  liveSections = false,
 }: {
   value: unknown;
   hideInactive?: boolean;
+  /** Which brief this is. Telemetry records it with each action. */
+  surface?: BriefEventSurface;
+  /** The edition id, when the document belongs to a stored edition. */
+  reportId?: string | null;
+  liveSections?: boolean;
   composing?: boolean;
   onChanged?: () => void;
   masthead?: boolean;
@@ -86,7 +108,7 @@ export function BriefCanvas({
   const letterKind = useMemo(() => briefLetterKind(document), [document]);
   const refs = useMemo(() => collectBriefRefs(document), [document]);
   const actionableRefs = useMemo(
-    () => refs.filter((ref) => ['work', 'project', 'task', 'card'].includes(ref.kind)),
+    () => refs.filter((ref) => ['work', 'task', 'card'].includes(ref.kind)),
     [refs],
   );
   const inactive = useQuery({
@@ -151,21 +173,65 @@ export function BriefCanvas({
     onChanged?.();
   }, [onChanged, queryClient]);
 
+  // One telemetry row per settled action. Never awaited on the action path.
+  const record = useCallback(
+    (
+      action: BriefActionV2,
+      payload: BriefActionPayload,
+      sourceRef: BriefSourceRefV2 | undefined,
+      meta: BriefActionMeta | undefined,
+      outcome: BriefEventOutcome,
+    ) => {
+      try {
+        postBriefEvent(
+          briefEventRequest({
+            reportId,
+            surface,
+            regionId: meta?.regionId,
+            action: action.action,
+            ref: sourceRef,
+            payload,
+            outcome,
+          }),
+        );
+      } catch {
+        // Telemetry is best effort.
+      }
+    },
+    [reportId, surface],
+  );
+
   const runAction = useCallback(
-    async (action: BriefActionV2, payload: BriefActionPayload, sourceRef?: BriefSourceRefV2) => {
-      if (!isKnownBriefAction(action.action)) return;
+    async (
+      action: BriefActionV2,
+      payload: BriefActionPayload,
+      sourceRef?: BriefSourceRefV2,
+      meta?: BriefActionMeta,
+    ) => {
+      if (!isKnownBriefAction(action.action)) {
+        toast.error(BRIEF_UNKNOWN_ACTION_COPY);
+        record(action, payload, sourceRef, meta, 'failed');
+        return;
+      }
       if (briefActionTier(action.action) === 'navigation') {
-        navigateBriefAction(action.action, payload, {
-          setSelectedThread,
-          setThreadAccount,
-          setPrimaryView,
-          setSelectedAreaId,
-          setSelectedWorkId,
-          setPendingReplyBody,
-          setChatScope,
-          setAiBarOpen,
-          openExternal: (url, target, features) => window.open(url, target, features),
-        });
+        try {
+          navigateBriefAction(action.action, payload, {
+            setSelectedThread,
+            setThreadAccount,
+            setPrimaryView,
+            setSelectedAreaId,
+            setSelectedWorkId,
+            setPendingReplyBody,
+            setChatScope,
+            setAiBarOpen,
+            openExternal: (url, target, features) => window.open(url, target, features),
+          });
+        } catch (error) {
+          record(action, payload, sourceRef, meta, 'failed');
+          toast.error(error instanceof Error ? error.message : 'The brief action failed.');
+          throw error;
+        }
+        record(action, payload, sourceRef, meta, 'opened');
         return;
       }
 
@@ -224,6 +290,7 @@ export function BriefCanvas({
           });
         }
         refresh();
+        record(action, payload, sourceRef, meta, 'done');
         if (replyAttachFailed) {
           // The warning above is the complete result for this partial failure.
         } else if (briefActionTier(action.action) === 'immediate') {
@@ -233,6 +300,7 @@ export function BriefCanvas({
               label: 'Undo',
               onClick: () => {
                 void undoBriefAction(action.action, payload).then(() => {
+                  record(action, payload, sourceRef, meta, 'undone');
                   if (hides && key) {
                     setHiddenRefs((current) => {
                       const next = new Set(current);
@@ -272,12 +340,14 @@ export function BriefCanvas({
             return next;
           });
         }
+        record(action, payload, sourceRef, meta, 'failed');
         toast.error(error instanceof Error ? error.message : 'The brief action failed.');
         throw error;
       }
     },
     [
       completedRefs,
+      record,
       refresh,
       setAiBarOpen,
       setChatScope,
@@ -293,6 +363,9 @@ export function BriefCanvas({
   );
 
   const context: BriefNodeContext = {
+    reportId,
+    liveSections,
+    timezone: document.timezone,
     entities,
     hiddenRefs: new Set([
       ...hiddenRefs,
@@ -303,7 +376,10 @@ export function BriefCanvas({
     completedRefs,
     onAction: runAction,
     onCanvasAction: (actionName, payload) => {
-      if (!isKnownBriefAction(actionName)) return;
+      if (!isKnownBriefAction(actionName)) {
+        toast.error(BRIEF_UNKNOWN_ACTION_COPY);
+        return;
+      }
       const action: BriefActionV2 = {
         action: actionName,
         label: humanizeAction(actionName),
@@ -322,14 +398,16 @@ export function BriefCanvas({
   // summary. Under Today, which already names the day, or under the masthead,
   // the letter has no header at all unless there is a notice to show.
   const notice = composing || hydration.isError;
-  const showTitle = !masthead && !(letterKind && embedded);
-  const showSummary = !letterKind;
+  const authored = document.layout === 'editorial';
+  const showTitle = !masthead && !((letterKind || authored) && embedded);
+  const showSummary = !letterKind && !authored;
   const headerVisible = notice || showTitle || showSummary;
 
   return (
     <article
       className={cn(
         '@container/brief-canvas brief-canvas',
+        authored && 'brief-canvas--authored',
         embedded ? 'brief-canvas--embedded' : 'scrollable h-full overflow-y-auto bg-[var(--color-content)]',
       )}
       data-brief-document-version={document.version}
@@ -401,7 +479,7 @@ export function BriefCanvas({
         <BriefEditorialGrid>
           {document.regions.map((region) => (
             <section key={region.id} data-brief-region={region.id} className="contents">
-              {columnBlocks(region.tree).map((block, index) => (
+              {columnBlocks(region.tree, authored).map((block, index) => (
                 <BriefEditorialGridItem
                   key={block.node.id ?? `${block.node.kind}-${index}`}
                   className={cn('@container', block.wrapperClass)}
@@ -410,13 +488,15 @@ export function BriefCanvas({
                   <div
                     data-brief-story-card
                     className={cn(
-                      'min-w-0 rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
+                      authored
+                        ? 'brief-authored-story min-w-0'
+                        : 'min-w-0 rounded-ui border border-[var(--color-border)] bg-[var(--color-surface-float)] p-5 shadow-[var(--shadow-soft)] ring-1 ring-white/35 @[620px]:p-6 dark:ring-white/5',
                       block.cardClass,
                     )}
                   >
                     <BriefNodeView
                       node={block.node}
-                      context={context}
+                      context={withBriefRegion(context, region.id)}
                       regionSummary={region.summary}
                       topLevel
                     />
@@ -522,7 +602,8 @@ function kindNameForReply(kind: 'doc' | 'sheet' | 'deck') {
   return 'document';
 }
 
-async function executeBriefAction(
+/** Runs one immediate or review action against the live tools. Exported for tests. */
+export async function executeBriefAction(
   action: string,
   payload: BriefActionPayload,
   setPendingOpenWorkId: (value: string | null) => void,
@@ -652,6 +733,8 @@ async function executeBriefAction(
     }
     case 'draft_reply':
       return;
+    default:
+      throw new Error(BRIEF_UNKNOWN_ACTION_COPY);
   }
 }
 
@@ -831,13 +914,16 @@ function BriefEditorialGridItem({
 
 /* Region roots that are plain stacks flatten so the packed grid can balance
  * at story granularity instead of treating a whole region as one slab. */
-function columnBlocks(tree: BriefNode): Array<{
+function columnBlocks(
+  tree: BriefNode,
+  preserveStructure = false,
+): Array<{
   node: BriefNode;
   wrapperClass: string;
   cardClass: string;
   spacing: 'airy' | 'standard' | 'dense';
 }> {
-  if (tree.kind === 'stack' && tree.children.length) {
+  if (!preserveStructure && tree.kind === 'stack' && tree.children.length) {
     return tree.children.map((node) => ({
       node,
       wrapperClass: footprintClass(node),

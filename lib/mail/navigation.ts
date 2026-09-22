@@ -4,13 +4,13 @@ export const PRIMARY_MAIL_VIEWS = [
   { id: 'main', label: 'Main' },
   { id: 'needs_reply', label: 'Needs reply' },
   { id: 'noise', label: 'Noise' },
+  { id: 'codes', label: 'Codes' },
 ] as const;
 
 export const MORE_MAIL_VIEWS = [
   { id: 'needs_action', label: 'Needs action' },
   { id: 'waiting_for', label: 'Waiting for' },
   { id: 'important_changes', label: 'Changes' },
-  { id: 'codes', label: 'Codes' },
   { id: 'orders', label: 'Orders' },
   { id: 'finance_admin', label: 'Finance / admin' },
   { id: 'review', label: 'Review' },
