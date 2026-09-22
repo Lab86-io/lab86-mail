@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createBriefEventsPost } from '../app/api/brief/events/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
+import { RateLimitError } from '../lib/rate-limit';
 
 test('brief events are owner scoped, validated, and never leak backend errors', async () => {
   const calls: any[] = [];
@@ -71,6 +72,21 @@ test('brief events are owner scoped, validated, and never leak backend errors', 
   );
   expect(response.status).toBe(500);
   expect(await response.text()).not.toContain('private details');
+
+  deps.enforceUserRateLimit = async () => {
+    throw new RateLimitError('Too many brief events', 2_000, 240);
+  };
+  response = await post(
+    request({ regionId: 'answer', action: 'x', ref: { kind: 'thread', id: 't' }, outcome: 'done' }),
+  );
+  expect(response.status).toBe(429);
+  expect(response.headers.get('Retry-After')).toBe('2');
+  expect(await response.json()).toEqual({
+    ok: false,
+    error: 'Too many brief events',
+    retryAfterSeconds: 2,
+    limit: 240,
+  });
 
   deps.requireCurrentUser = async () => {
     throw new AuthRequiredError('Sign in');
