@@ -1214,8 +1214,11 @@ export async function composeReport(input: {
   // Waiting (brief round 2026-09-22): threads the user waits on that earned
   // no lane. A Jev waiting obligation, a follow-up owed, or a tracked thread
   // in the waiting state. Longest wait first, so the oldest nudge is on top.
+  // Overflow threads already render in the backlog, so they never repeat here.
   const selectedKeys = new Set(
-    [...answer, ...today, ...know].map((item) => `${item.account}:${item.threadId}`),
+    [...answer, ...today, ...know, ...selection.overflow.map((entry) => entry.item)].map(
+      (item) => `${item.account}:${item.threadId}`,
+    ),
   );
   const waitingByKey = new Map<string, DailyReportItem>();
   for (const insight of input.insights) {

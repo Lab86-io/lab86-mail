@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describeProvider } from '../ai/client';
+import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
+import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { narrativePrompt } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
@@ -78,6 +80,7 @@ export function buildAreaArtifactContext(
   generatedAt = Date.now(),
   pulse?: Record<string, any> | null,
   evidenceIndex?: Record<string, any> | null,
+  timezone?: string | null,
 ) {
   const areaId = String(home.area?._id || '');
   const nextDayIntent = clean(home.dailyAlignment?.tomorrowIntent, 10_000);
@@ -120,6 +123,8 @@ export function buildAreaArtifactContext(
       generatedAt,
       generatedAtIso: new Date(generatedAt).toISOString(),
       scope: 'one_area',
+      // The reader's zone, for weekday names in the week ahead.
+      timezone: timezone || null,
     },
     sinceLastBrief: lastBriefAt
       ? {
@@ -463,13 +468,16 @@ export function fallbackAreaPulse(context: Record<string, any>): AreaPulse {
   };
 }
 
-function weekdayName(isoValue: unknown): string {
+function weekdayName(isoValue: unknown, timeZone?: string | null): string {
   const at = typeof isoValue === 'string' ? Date.parse(isoValue) : Number.NaN;
   if (!Number.isFinite(at)) return '';
   try {
-    return new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(at));
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      ...(timeZone ? { timeZone } : {}),
+    }).format(new Date(at));
   } catch {
-    return '';
+    return new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(at));
   }
 }
 
@@ -477,14 +485,15 @@ function weekdayName(isoValue: unknown): string {
 export function fallbackAreaWeekAhead(context: Record<string, any>): string {
   const week = context.weekAhead && typeof context.weekAhead === 'object' ? context.weekAhead : null;
   if (!week) return '';
+  const timeZone = typeof context.edition?.timezone === 'string' ? context.edition.timezone : null;
   const parts: string[] = [];
   for (const event of (Array.isArray(week.events) ? week.events : []).slice(0, 3)) {
-    const day = weekdayName(event?.startAtIso);
+    const day = weekdayName(event?.startAtIso, timeZone);
     const title = firstString(event?.title, 120);
     if (day && title) parts.push(`${day}: ${title}.`);
   }
   for (const task of (Array.isArray(week.dueTasks) ? week.dueTasks : []).slice(0, 2)) {
-    const day = weekdayName(task?.dueAtIso);
+    const day = weekdayName(task?.dueAtIso, timeZone);
     const title = firstString(task?.title, 120);
     if (day && title) parts.push(`${day}: ${title} is due.`);
   }
@@ -812,7 +821,10 @@ export async function generateAreaLivingBrief(input: {
       },
     ),
   ]);
-  const context = buildAreaArtifactContext(home, Date.now(), pulseContext, evidenceIndex);
+  const timezone = await resolveBriefTimezone(input.userId, getAiRequestContext().userTimezone).catch(
+    () => getAiRequestContext().userTimezone,
+  );
+  const context = buildAreaArtifactContext(home, Date.now(), pulseContext, evidenceIndex, timezone);
   const revision = areaArtifactRevision(context);
   if (
     !input.force &&

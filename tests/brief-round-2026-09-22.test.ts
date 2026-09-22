@@ -372,6 +372,12 @@ describe('budget document regions', () => {
   test('tasksForBrief and threadActions are pure and bounded', () => {
     expect(tasksForBrief(undefined, NOW)).toEqual([]);
     expect(tasksForBrief([task('c1', NOW + 8 * DAY)], NOW)).toEqual([]);
+    // The bound is the last local calendar day of the table, not 7 x 24 hours:
+    // 23:30 local on the seventh day is in, 00:30 local on the eighth is out.
+    const lateSeventh = Date.parse('2026-09-29T03:30:00Z'); // 23:30 New York on Sep 28
+    const earlyEighth = Date.parse('2026-09-29T04:30:00Z'); // 00:30 New York on Sep 29
+    expect(tasksForBrief([task('c1', lateSeventh)], NOW, 5, TZ).map((row) => row.cardId)).toEqual(['c1']);
+    expect(tasksForBrief([task('c2', earlyEighth)], NOW, 5, TZ)).toEqual([]);
     expect(threadActions(item('t1'), 'know').map((action) => action.action)).toEqual([
       'open_thread',
       'dismiss_thread',
@@ -465,8 +471,32 @@ describe('area letter additions', () => {
     expect(noBrief.sinceLastBrief).toBeNull();
   });
 
-  test('fallbacks name the days and count the delta', () => {
+  test('fallbacks name the days in the reader zone and count the delta', () => {
     const context = buildAreaArtifactContext(home as any, NOW);
+    // 03:30Z on a Tuesday is still Monday evening in New York.
+    const homeLate = {
+      ...home,
+      events: [
+        {
+          accountId: 'acc',
+          providerEventId: 'e9',
+          title: 'Late call',
+          startAt: Date.parse('2026-09-23T03:30:00Z'),
+          endAt: Date.parse('2026-09-23T04:00:00Z'),
+        },
+      ],
+      tasks: [],
+    };
+    const zoned = buildAreaArtifactContext(homeLate as any, NOW, null, null, 'America/New_York');
+    expect(zoned.edition.timezone).toBe('America/New_York');
+    expect(fallbackAreaWeekAhead(zoned)).toBe('Tuesday: Late call.');
+    expect(fallbackAreaWeekAhead(buildAreaArtifactContext(homeLate as any, NOW, null, null, 'UTC'))).toBe(
+      'Wednesday: Late call.',
+    );
+    // The zone is edition state, not source state, so it never forces a rewrite.
+    expect(areaArtifactRevision(zoned)).toBe(
+      areaArtifactRevision(buildAreaArtifactContext(homeLate as any, NOW, null, null, 'Europe/London')),
+    );
     expect(fallbackAreaWeekAhead(context)).toMatch(
       /^[A-Z][a-z]+day: Dentist\. [A-Z][a-z]+day: Pay rent is due\.$/,
     );

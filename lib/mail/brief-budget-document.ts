@@ -163,15 +163,24 @@ function dueLabel(dueAt: number, generatedAt: number, timezone: string): string 
   return `Due ${day.weekday}`;
 }
 
-// Open cards due inside the window, soonest first, overdue included.
+// Open cards due on or before the last day of the local seven-day table,
+// soonest first, overdue included. The bound is a local calendar day, the
+// same one dueLabel reads, so no task falls between the filter and the label.
 export function tasksForBrief(
   tasks: DailyReportTaskItem[] | undefined,
   generatedAt: number,
   limit = BUDGET_TASK_LIMIT,
+  timezone = 'UTC',
 ): DailyReportTaskItem[] {
-  const end = generatedAt + BUDGET_TASK_WINDOW_DAYS * 86_400_000;
+  const days = briefWeekDays(generatedAt, timezone, BUDGET_TASK_WINDOW_DAYS);
+  const lastDayKey = days[days.length - 1].dayKey;
   return (tasks ?? [])
-    .filter((task) => !task.completedAt && typeof task.dueAt === 'number' && task.dueAt <= end)
+    .filter(
+      (task) =>
+        !task.completedAt &&
+        typeof task.dueAt === 'number' &&
+        localDayKey(task.dueAt, timezone) <= lastDayKey,
+    )
     .sort((a, b) => (a.dueAt ?? 0) - (b.dueAt ?? 0) || a.title.localeCompare(b.title))
     .slice(0, limit);
 }
@@ -340,7 +349,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const tasks = tasksForBrief(sections.tasks, generatedAt);
+  const tasks = tasksForBrief(sections.tasks, generatedAt, BUDGET_TASK_LIMIT, timezone);
   if (tasks.length) {
     regions.push({
       id: 'tasks',

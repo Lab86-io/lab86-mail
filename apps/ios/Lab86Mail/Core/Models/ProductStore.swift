@@ -2759,6 +2759,7 @@ final class ProductStore {
         checkin = nil
         dailyBrief = nil
         dailyReport = nil
+        latestDailyReportID = nil
         areaDetails = [:]
         workDetails = [:]
         allWork = []

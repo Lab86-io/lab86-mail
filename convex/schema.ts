@@ -912,6 +912,8 @@ export default defineSchema({
         nextMove: v.string(),
         openQuestion: v.string(),
         prose: v.string(),
+        weekAhead: v.optional(v.string()),
+        sinceLastBrief: v.optional(v.string()),
         model: v.optional(v.string()),
       }),
     ),
@@ -2768,6 +2770,7 @@ export default defineSchema({
     outcome: v.union(v.literal('done'), v.literal('failed'), v.literal('undone'), v.literal('opened')),
     createdAt: v.number(),
   })
+    .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt'])
     .index('by_user_report', ['userId', 'reportId']),
 });

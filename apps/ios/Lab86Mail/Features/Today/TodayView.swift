@@ -96,8 +96,12 @@ struct TodayView: View {
         // A `brief_ready` notification names its edition. Open that one, not
         // the latest. The request is read once.
         .task(id: environment.navigation.pendingBriefEditionID) {
-            guard let editionID = environment.navigation.consumeBriefEdition() else { return }
+            // Read the id without clearing it: clearing changes this task's
+            // key and cancels the request. The request is cleared after it
+            // settles, which re-runs the task once with a nil id (a no-op).
+            guard let editionID = environment.navigation.pendingBriefEditionID else { return }
             await store.selectDailyReport(id: editionID)
+            _ = environment.navigation.consumeBriefEdition()
         }
     }
 

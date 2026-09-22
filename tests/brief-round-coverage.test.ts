@@ -330,6 +330,10 @@ describe('waiting section in composeReport', () => {
       insight('followup', { waitingOnSomeone: true, followUpOwed: true, lane: 'follow_up_owed' }),
       insight('ineligible', { jev: jevWaiting('m-x'), briefEligible: false }),
       insight('plain'),
+      insight('over-1'),
+      insight('over-2'),
+      insight('over-3'),
+      insight('overflowed', { jev: jevWaiting('m-over') }),
     ];
     const lastDateByKey = new Map<string, number>([
       [`${ACCOUNT}:answer`, NOW - DAY],
@@ -353,11 +357,19 @@ describe('waiting section in composeReport', () => {
         reportId: 'r-compose',
         tier: 'pro',
         // The follow-up thread scores under the floor, so it earns no lane
-        // and lands in waiting instead.
-        scores: new Map([[`${ACCOUNT}:followup`, 0]]),
+        // and lands in waiting instead. The overflow thread scores high but
+        // finds no room in the know lane, and stays out of waiting.
+        scores: new Map([
+          [`${ACCOUNT}:followup`, 0],
+          [`${ACCOUNT}:over-1`, 9],
+          [`${ACCOUNT}:over-2`, 9],
+          [`${ACCOUNT}:over-3`, 9],
+          [`${ACCOUNT}:overflowed`, 8],
+        ]),
       }),
     );
     expect(report.sections.answer?.map((item) => item.threadId)).toEqual(['answer']);
+    expect(report.sections.overflow?.map((item) => item.threadId)).toContain('overflowed');
     const waiting = report.sections.waiting ?? [];
     // Longest wait first; the ineligible thread and the open tracked thread stay out.
     expect(waiting.map((item) => item.threadId)).toEqual(['jev', 'tracked-wait', 'followup']);
