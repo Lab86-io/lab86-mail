@@ -220,6 +220,9 @@ struct TodayView: View {
                         hideInactive: store.showsLatestDailyReport,
                         onReview: { artifactReview = $0 }
                     )
+                    if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                        PreparedWorkSection()
+                    }
                     BriefMailBacklog(items: report.overflow) { item in
                         environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
                     }
@@ -433,6 +436,9 @@ struct TodayView: View {
                     hideInactive: store.showsLatestDailyReport,
                     onReview: { artifactReview = $0 }
                 )
+                if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                    PreparedWorkSection()
+                }
                 BriefMailBacklog(items: report.overflow) { item in
                     environment.navigation.openThread(accountID: item.accountID, threadID: item.threadID)
                 }
