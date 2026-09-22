@@ -101,6 +101,9 @@ struct TodayView: View {
             // settles, which re-runs the task once with a nil id (a no-op).
             guard let editionID = environment.navigation.pendingBriefEditionID else { return }
             await store.selectDailyReport(id: editionID)
+            // A newer request may have replaced this one while the edition
+            // loaded. Only the request this task served is cleared.
+            guard !Task.isCancelled, environment.navigation.pendingBriefEditionID == editionID else { return }
             _ = environment.navigation.consumeBriefEdition()
         }
     }
