@@ -202,7 +202,9 @@ export const listSmartCategory = defineTool({
       isConvexConfigured() &&
       (!pageToken || pageToken.startsWith(LOCAL_CURSOR_PREFIX) || pageToken.startsWith('jev:'))
     ) {
-      const before = pageToken ? Number(pageToken.slice(LOCAL_CURSOR_PREFIX.length)) : undefined;
+      const before = pageToken?.startsWith(LOCAL_CURSOR_PREFIX)
+        ? Number(pageToken.slice(LOCAL_CURSOR_PREFIX.length))
+        : undefined;
       const result = await convexQuery<{ items: any[]; nextBefore?: number; nextCursor?: string }>(
         (api as any).mailCorpus.listSmartCategoryThreads,
         {

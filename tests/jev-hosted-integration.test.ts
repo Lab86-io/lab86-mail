@@ -72,6 +72,13 @@ test('attention-view tool carries scoped Jev cursors and never falls back to pro
       category: 'needs_action',
       cursor: 'continuation',
     });
+    await listSmartCategory.handler(
+      { account: 'a', category: 'needs_action', max: 20, pageToken: 'jev:123456789' },
+      ctx,
+    );
+    const numeric = calls.filter((c) => c.path === 'mailCorpus:listSmartCategoryThreads').at(-1);
+    expect(numeric.args.cursor).toBe('123456789');
+    expect(numeric.args.before).toBeUndefined();
   });
 });
 

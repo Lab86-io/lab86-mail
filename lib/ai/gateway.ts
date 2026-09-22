@@ -208,7 +208,8 @@ export async function resolveJevRuntime(
   apiKey: string;
 }> {
   const state = await dependencies.query<RuntimeState>(api.ai.getRuntimeState, { userId });
-  const wantsOwnKey = dependencies.requiresOwnKey() || state.settings?.mode === 'byok';
+  const wantsOwnKey =
+    dependencies.requiresOwnKey() || (state.settings?.enabled !== false && state.settings?.mode === 'byok');
   if (wantsOwnKey) {
     if (state.key?.provider !== 'openrouter')
       throw new Error('Jev requires an OpenRouter key in Intelligence settings.');

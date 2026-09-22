@@ -432,3 +432,7 @@ export function searchFilePath(target: Extract<SearchTarget, { kind: 'document' 
   }
   return `/?${params}`;
 }
+/** Retry every contributing source even if one query rejects immediately. */
+export async function retrySearchQueries(queries: Array<{ refetch: () => unknown }>) {
+  return Promise.allSettled(queries.map((query) => Promise.resolve().then(() => query.refetch())));
+}

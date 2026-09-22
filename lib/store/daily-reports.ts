@@ -32,10 +32,23 @@ export function setDailyReportPersistenceForTest(persist: typeof kvUpsert) {
   };
 }
 
-export async function saveDailyReport(report: DailyReport) {
-  await kvUpsert('dailyReport', report._id, report);
-  if (isConvexConfigured() && (report.artifactStatus === 'rendered' || report.artifactStatus === 'ready')) {
-    await markJevBriefItems(report, requireStoreUserId()).catch(() => undefined);
+const saveDefaults = {
+  persist: kvUpsert,
+  configured: isConvexConfigured,
+  owner: requireStoreUserId,
+  mark: markJevBriefItems,
+};
+export async function saveDailyReport(report: DailyReport, dependencies = saveDefaults) {
+  await dependencies.persist('dailyReport', report._id, report);
+  if (
+    dependencies.configured() &&
+    (report.artifactStatus === 'rendered' || report.artifactStatus === 'ready')
+  ) {
+    try {
+      await dependencies.mark(report, dependencies.owner());
+    } catch {
+      // Attention bookkeeping must not turn an already-persisted edition into a failed save.
+    }
   }
   return report;
 }

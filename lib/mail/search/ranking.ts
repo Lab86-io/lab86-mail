@@ -1,4 +1,12 @@
 /** The same order must survive database, thread grouping, account merge and UI. */
+export function mailListUsesRelevance(
+  items: readonly { searchRank?: number; searchOrder?: 'recent' | 'relevance' }[],
+  smartCategory?: string | null,
+) {
+  return (
+    !smartCategory && items.some((item) => item.searchRank !== undefined && item.searchOrder !== 'recent')
+  );
+}
 export function compareMailRelevance(
   a: {
     searchRelevance?: number;

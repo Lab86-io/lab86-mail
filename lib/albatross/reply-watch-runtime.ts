@@ -7,6 +7,7 @@ interface Dependencies {
   convexMutation: typeof convexMutation;
   evidenceSatisfies: typeof evidenceSatisfies;
 }
+const MAX_REPLY_SCAN_PAGES = 10;
 
 /** Shared by scheduled watches and every brief, before the brief reads Work state. */
 export async function checkWaitingReplies(
@@ -16,12 +17,16 @@ export async function checkWaitingReplies(
   const state = await deps.convexQuery<{
     selfEmails: string[];
     watches: Array<{ workId: string; title: string; watch: ReplyWatch }>;
+    watchKey?: string;
+    scanCursor?: string | null;
   }>((api as any).albatrossReplies.waiting, input);
   const pending = new Map(state.watches.map((row) => [row.workId, row]));
   const result = { watched: pending.size, resumed: 0, unavailable: false };
   if (!pending.size) return result;
   const after = Math.min(...state.watches.map((row) => row.watch.after));
-  let cursor: string | null = null;
+  const startCursor = state.scanCursor || null;
+  let cursor = startCursor;
+  let pages = 0;
   do {
     const page: { page: Array<ReplyMessage & { _id: string }>; isDone: boolean; continueCursor: string } =
       await deps.convexQuery((api as any).albatrossReplies.messages, {
@@ -59,8 +64,24 @@ export async function checkWaitingReplies(
         pending.delete(row.workId);
       }
     }
-    if (page.isDone || !pending.size) break;
+    // Retry this page if a model was unavailable, preserving unexamined obligations.
+    if (result.unavailable) break;
+    if (page.isDone || !pending.size) {
+      cursor = null;
+      break;
+    }
     cursor = page.continueCursor;
+    if (++pages >= MAX_REPLY_SCAN_PAGES) {
+      result.unavailable = true;
+      break;
+    }
   } while (cursor);
+  if (state.watchKey)
+    await deps.convexMutation((api as any).albatrossReplies.checkpoint, {
+      ...input,
+      watchKey: state.watchKey,
+      previousCursor: startCursor,
+      cursor,
+    });
   return result;
 }

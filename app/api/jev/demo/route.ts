@@ -77,6 +77,10 @@ export function createJevDemoRoute(deps = defaults) {
       });
     } catch (error) {
       if (error instanceof RateLimitError) return rateLimitJson(error);
+      console.warn(
+        '[jev] demonstration classification failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
       return NextResponse.json(
         { error: 'Jev could not classify this example. Check your connection and try again.' },
         { status: 503 },

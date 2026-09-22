@@ -20,6 +20,23 @@ import type { SmartRule } from '../lib/shared/types';
 
 const isValidCategory = (c: unknown) => (SMART_CATEGORY_IDS as readonly string[]).includes(c as string);
 
+test('personal mail does not owe a reply merely because its quoted history asks for one', () => {
+  const base = {
+    from: 'Alex <alex@example.test>',
+    subject: 'Budget',
+    labels: ['INBOX', 'CATEGORY_PERSONAL'],
+  };
+  const quoted = classifyThreadDeterministic({
+    ...base,
+    bodyText: 'Thanks, all done.\n\nOn Monday, Alex wrote:\n> Please confirm the budget.',
+  } as any);
+  expect(quoted.primary).toBe('main');
+  expect(quoted.secondary).not.toContain('needs_reply');
+  expect(quoted.suggestedAction).toBe('read');
+  const fresh = classifyThreadDeterministic({ ...base, bodyText: 'Please confirm the budget.' } as any);
+  expect(fresh.secondary).toContain('needs_reply');
+});
+
 describe('smart-category predicates', () => {
   test('isNoReplyLike flags automated senders only', () => {
     expect(isNoReplyLike('no-reply@example.test')).toBe(true);

@@ -1,4 +1,4 @@
-import { type NextRequest, NextResponse } from 'next/server';
+import { after, type NextRequest, NextResponse } from 'next/server';
 import { kickContentCycle } from '@/lib/content/sync';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 
@@ -10,6 +10,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (typeof body?.userId !== 'string' || !body.userId.trim() || body.userId.length > 240)
     return NextResponse.json({ error: 'User is required.' }, { status: 400 });
-  kickContentCycle(body.userId);
+  after(async () => {
+    await kickContentCycle(body.userId);
+  });
   return NextResponse.json({ started: true }, { status: 202 });
 }

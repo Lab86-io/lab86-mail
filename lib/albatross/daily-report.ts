@@ -412,6 +412,7 @@ export function buildAlbatrossDailyReportContextFromLive(
       status: 'active',
     });
   }
+  activeIntents.splice(6);
 
   const areaIds = new Set<string>();
   for (const row of [...activeProjects, ...activeIntents]) {

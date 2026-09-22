@@ -166,21 +166,45 @@ export const recordProgress = mutation({
   },
 });
 
+async function waitingRows(ctx: QueryCtx | MutationCtx, userId: string, workId?: string) {
+  const rows = workId
+    ? [await ownedWork(ctx, userId, workId)]
+    : await ctx.db
+        .query('albatrossIntents')
+        .withIndex('by_user_work_state', (q) => q.eq('userId', userId).eq('workState', 'waiting'))
+        .collect();
+  return rows.filter((row) => row.workState === 'waiting' && row.replyWatch);
+}
+function scanWatchKey(rows: Awaited<ReturnType<typeof waitingRows>>) {
+  return JSON.stringify(
+    rows.map((row) => [String(row._id), row.replyWatch!.id]).sort((a, b) => a[0].localeCompare(b[0])),
+  );
+}
+async function scanRow(ctx: QueryCtx | MutationCtx, userId: string, workId?: string) {
+  return ctx.db
+    .query('userDocs')
+    .withIndex('by_user_kind_key', (q) =>
+      q
+        .eq('userId', userId)
+        .eq('kind', 'replyScan')
+        .eq('key', workId || 'all'),
+    )
+    .unique();
+}
 export const waiting = query({
   args: { ...callerArgs, workId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const userId = await caller(ctx, args);
-    const rows = args.workId
-      ? [await ownedWork(ctx, userId, args.workId)]
-      : await ctx.db
-          .query('albatrossIntents')
-          .withIndex('by_user_work_state', (q) => q.eq('userId', userId).eq('workState', 'waiting'))
-          .collect();
+    const rows = await waitingRows(ctx, userId, args.workId);
+    const watchKey = scanWatchKey(rows);
+    const scan = await scanRow(ctx, userId, args.workId);
     const accounts = await ctx.db
       .query('connectedAccounts')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect();
     return {
+      watchKey,
+      scanCursor: scan?.doc?.watchKey === watchKey ? scan.doc.cursor : null,
       selfEmails: accounts.flatMap((row) => mailAddresses(row.email)),
       watches: rows
         .filter((row) => row.workState === 'waiting' && row.replyWatch)
@@ -190,6 +214,36 @@ export const waiting = query({
           watch: row.replyWatch!,
         })),
     };
+  },
+});
+
+/** Keep bounded scans resumable; an older concurrent scan cannot rewind newer progress. */
+export const checkpoint = mutation({
+  args: {
+    ...callerArgs,
+    workId: v.optional(v.string()),
+    watchKey: v.string(),
+    previousCursor: v.union(v.string(), v.null()),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await caller(ctx, args);
+    if (scanWatchKey(await waitingRows(ctx, userId, args.workId)) !== args.watchKey) return false;
+    const row = await scanRow(ctx, userId, args.workId);
+    const current = row?.doc?.watchKey === args.watchKey ? row.doc.cursor : null;
+    if (current !== args.previousCursor) return false;
+    const doc = { watchKey: args.watchKey, cursor: args.cursor };
+    if (row) await ctx.db.patch(row._id, { doc, updatedAt: now() });
+    else
+      await ctx.db.insert('userDocs', {
+        userId,
+        kind: 'replyScan',
+        key: args.workId || 'all',
+        doc,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+    return true;
   },
 });
 

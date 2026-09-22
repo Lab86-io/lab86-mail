@@ -126,7 +126,7 @@ test('attachment sync deduplicates metadata, downloads in the owner account, and
     attachmentId: 'attachment',
     filename: 'approval.txt',
     mimeType: 'text/plain',
-    size: 20,
+    size: undefined,
     modifiedAt: 1,
   };
   const deps: any = {
@@ -338,4 +338,44 @@ test('native search translates indexed sources into openable results and preserv
   await expect(
     searchIndexedContent('approval', false, undefined, (async () => Response.json({})) as any),
   ).rejects.toThrow('incomplete');
+});
+
+test('permanent attachment failures become partial records and stop starving later files', async () => {
+  const versions: Record<string, string> = {};
+  const writes: any[] = [];
+  const files = Array.from({ length: 9 }, (_, i) => ({
+    connectionId: 'mail',
+    messageId: 'message',
+    attachmentId: String(i),
+    filename: `${i}.pdf`,
+    mimeType: 'application/pdf',
+    size: 20,
+    modifiedAt: 1,
+  }));
+  const deps: any = {
+    convexQuery: async () => versions,
+    convexMutation: async (_ref: any, args: any) => {
+      for (const item of args.items) {
+        writes.push(item);
+        versions[`attachment:mail:${item.externalId}`] = item.version;
+      }
+    },
+    downloadNylasAttachment: async ({ attachmentId }: any) => {
+      if (attachmentId === '0') return null;
+      if (attachmentId === '1') throw Object.assign(new Error('gone'), { statusCode: 404 });
+      return new Response(attachmentId).body;
+    },
+    extractContent: async (bytes: Uint8Array) => {
+      if (new TextDecoder().decode(bytes) !== '8')
+        throw Object.assign(new Error('Malformed PDF'), { name: 'InvalidPDFException' });
+      return { text: 'Useful final file', partial: false };
+    },
+  };
+  await syncMailAttachments('owner', files, deps);
+  expect(writes).toHaveLength(8);
+  expect(writes.every((w) => w.partial)).toBe(true);
+  await syncMailAttachments('owner', files, deps);
+  expect(writes).toHaveLength(9);
+  expect(writes[8].text).toContain('Useful final file');
+  expect(writes[8].partial).toBe(false);
 });

@@ -4,6 +4,7 @@ import { POST as cronPost } from '../app/api/cron/jev/route';
 import { createJevSettingsRoutes } from '../app/api/jev/settings/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
+import { RateLimitError } from '../lib/rate-limit';
 import { policy } from './fixtures/jev';
 
 const req = (body: unknown) =>
@@ -88,7 +89,7 @@ describe('Jev settings HTTP contract', () => {
     });
     expect((await routes.POST(req({ action: 'reprocess' }))).status).toBe(200);
     expect(dependencies.kickLlmClassification).toHaveBeenCalledWith('owner', 2000);
-    expect(dependencies.enforceUserRateLimit.mock.calls[1][0]).toMatchObject({ userId: 'owner', limit: 1 });
+    expect(dependencies.enforceUserRateLimit.mock.calls[3][0]).toMatchObject({ userId: 'owner', limit: 1 });
   });
   test('conflicting edits and unavailable storage return actionable, sanitized errors', async () => {
     const conflict = createJevSettingsRoutes(
@@ -140,4 +141,22 @@ describe('Jev settings HTTP contract', () => {
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
     }
   });
+});
+
+test('settings rate limits before reading and rejects streamed bodies over 64 KiB', async () => {
+  const blocked = req(save);
+  const routes = createJevSettingsRoutes(
+    deps({
+      enforceUserRateLimit: async () => {
+        throw new RateLimitError('Too many requests', 60, 30);
+      },
+    }),
+  );
+  expect((await routes.POST(blocked)).status).toBe(429);
+  expect(blocked.bodyUsed).toBe(false);
+  const dependencies = deps();
+  const allowed = createJevSettingsRoutes(dependencies);
+  expect((await allowed.POST(req({ ...save, padding: 'x'.repeat(65 * 1024) }))).status).toBe(400);
+  expect(dependencies.convexMutation).not.toHaveBeenCalled();
+  expect(dependencies.enforceUserRateLimit).toHaveBeenCalledTimes(1);
 });

@@ -419,6 +419,8 @@ export function classifyThreadWithContext(
   // downstream keyword-noise branch can bury it — a person who writes "offer"
   // or "opportunity" must never be dumped into Noise.
   if ((isPersonalCat || isImportantCat) && human && !blockingRule) {
+    const replyText = String(thread.bodyText || thread.snippet || '');
+    const needsReply = explicitReplyRequested(replyText);
     return applyCustomLabels(
       verdict(
         thread,
@@ -427,10 +429,10 @@ export function classifyThreadWithContext(
           ? 'Personal-category mail from a person.'
           : 'Gmail flagged this as important and it is from a person.',
         {
-          secondary: explicitReplyRequested(h) ? ['needs_reply'] : [],
+          secondary: needsReply ? ['needs_reply'] : [],
           confidence: 0.82,
           needsAttention: true,
-          suggestedAction: explicitReplyRequested(h) ? 'reply' : 'read',
+          suggestedAction: needsReply ? 'reply' : 'read',
           signals: [isPersonalCat ? 'category_personal' : 'gmail_important', 'human'],
         },
       ),

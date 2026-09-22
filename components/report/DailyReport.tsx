@@ -25,7 +25,7 @@ import {
   confirmDailyReportAction,
   DEFAULT_ARTIFACT_FRAME_HEIGHT,
 } from '@/lib/daily-report-action-review';
-import { handleDailyReportNavigationAction } from '@/lib/daily-report-navigation';
+import { handleDailyReportNavigationAction, openBriefMailThread } from '@/lib/daily-report-navigation';
 import { pushDocumentDeepLink } from '@/lib/documents/deep-link';
 import { type BriefService, briefServicesFromIds } from '@/lib/mail/brief-services';
 import { injectReportAreaBrief } from '@/lib/mail/report-area-brief';
@@ -783,6 +783,10 @@ function ReportGenerating({ report }: { report: DailyReportPayload | null }) {
   );
 }
 
+function openBacklogThread(account: string, threadId: string) {
+  openBriefMailThread(account, threadId, useClientStore.getState());
+}
+
 export function DailyReport({
   embedded = false,
   onOpenLegacy,
@@ -1192,11 +1196,7 @@ export function DailyReport({
                       {!selectedId ? <PreparedWork /> : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
-                        onOpen={(account, threadId) => {
-                          const state = useClientStore.getState();
-                          state.setThreadAccount(account);
-                          state.setSelectedThread(threadId);
-                        }}
+                        onOpen={openBacklogThread}
                       />
                       {embedded ? null : <BriefFooter report={report} />}
                     </>
@@ -1245,11 +1245,7 @@ export function DailyReport({
                       {!selectedId ? <PreparedWork /> : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
-                        onOpen={(account, threadId) => {
-                          const state = useClientStore.getState();
-                          state.setThreadAccount(account);
-                          state.setSelectedThread(threadId);
-                        }}
+                        onOpen={openBacklogThread}
                       />
                       {embedded ? null : <BriefFooter report={report} />}
                     </>

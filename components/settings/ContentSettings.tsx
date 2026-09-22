@@ -10,8 +10,8 @@ export async function contentRequest(view = 'settings', body?: unknown) {
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : { cache: 'no-store' },
   );
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Content could not load.');
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) throw new Error(data?.error || 'Content could not load.');
   return data;
 }
 const sourceNames: Record<string, string> = {

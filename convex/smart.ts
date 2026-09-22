@@ -185,10 +185,10 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
     const page = await source.paginate({ cursor: args.cursor ?? null, numItems: limit });
     return {
       items: page.page
+        .filter((row: any) => assessmentIsCurrent(row.jev, row.latestMessageId))
         .map(normalizeCorpusThread)
         .filter(
           (thread: any) =>
-            assessmentIsCurrent(thread.jev, thread.jev?.sourceMessageId) &&
             attentionMatches(thread.jev, category) &&
             !thread.labels.some((label: string) => ['SPAM', 'TRASH'].includes(label.toUpperCase())) &&
             !(thread.smartCategory?.model === 'user_rule' && thread.smartCategory?.primary === 'noise'),

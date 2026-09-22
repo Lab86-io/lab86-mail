@@ -121,9 +121,10 @@ export async function runContentCycle(userId: string, deps = defaults) {
 }
 const running = new Map<string, Promise<unknown>>();
 export function kickContentCycle(userId: string) {
-  if (running.has(userId)) return;
+  if (running.has(userId)) return running.get(userId)!;
   const work = runWithAiRequestContext({ userId, agent: 'ai' }, () => runContentCycle(userId))
     .catch(() => console.warn('[content] background cycle will retry'))
     .finally(() => running.delete(userId));
   running.set(userId, work);
+  return work;
 }

@@ -10,7 +10,8 @@ import {
 } from '../lib/jev/contract';
 import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
 import { internal } from './_generated/api';
-import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { internalAction, internalMutation, mutation, query } from './_generated/server';
+import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 import { classifyCorpusThread, loadSmartContext, normalizeCorpusThread } from './smart';
 
@@ -108,7 +109,7 @@ export const saveSettings = mutation({
   },
 });
 
-async function threadInput(ctx: any, row: any): Promise<JevMailInput | null> {
+async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<JevMailInput | null> {
   const [recent, accounts] = await Promise.all([
     ctx.db
       .query('mailCorpusMessages')
@@ -120,19 +121,24 @@ async function threadInput(ctx: any, row: any): Promise<JevMailInput | null> {
       )
       .order('desc')
       .take(17),
-    ctx.db
-      .query('connectedAccounts')
-      .withIndex('by_user', (q: any) => q.eq('userId', row.userId))
-      .collect(),
+    knownAccounts
+      ? Promise.resolve(knownAccounts)
+      : ctx.db
+          .query('connectedAccounts')
+          .withIndex('by_user', (q: any) => q.eq('userId', row.userId))
+          .collect(),
   ]);
   if (!recent.length) return null;
   const byId = new Map<string, any>(
     recent.slice(0, 16).map((message: any) => [message.providerMessageId, message]),
   );
   // Retain evidence of older open obligations when the recent window moves.
-  for (const id of row.jevEvidenceMessageIds ||
-    row.jev?.obligations?.map((obligation: any) => obligation.evidence.messageId) ||
-    []) {
+  for (const id of [
+    row.latestMessageId,
+    ...(row.jevEvidenceMessageIds ||
+      row.jev?.obligations?.map((obligation: any) => obligation.evidence.messageId) ||
+      []),
+  ]) {
     if (!id || byId.has(id)) continue;
     const message = await ctx.db
       .query('mailCorpusMessages')
@@ -143,6 +149,7 @@ async function threadInput(ctx: any, row: any): Promise<JevMailInput | null> {
     if (message?.userId === row.userId && message.providerThreadId === row.providerThreadId)
       byId.set(id, message);
   }
+  if (row.latestMessageId && !byId.has(row.latestMessageId)) return null;
   const messages: JevMailMessage[] = [...byId.values()]
     .sort((a, b) => a.receivedAt - b.receivedAt || a.providerMessageId.localeCompare(b.providerMessageId))
     .map((message) => ({
@@ -169,7 +176,7 @@ async function threadInput(ctx: any, row: any): Promise<JevMailInput | null> {
   return {
     accountId: row.accountId,
     threadId: row.providerThreadId,
-    messageId: recent[0].providerMessageId,
+    messageId: row.latestMessageId || recent[0].providerMessageId,
     sourceRevision: mailSourceRevision(messages),
     selfAddresses: accounts.map((account: any) => account.email.toLowerCase()),
     messages,
@@ -192,12 +199,16 @@ export const claimPending = mutation({
       .withIndex('by_user_llm_pending', (q) => q.eq('userId', args.userId).eq('llmPending', true))
       .order('desc')
       .take(120);
+    const accounts = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
     const items = [];
     const now = Date.now();
     for (const row of rows) {
       if ((row.jevLeaseUntil || 0) > now || (row.jevRetryAt || 0) > now || (row.jevAttempts || 0) >= 3)
         continue;
-      const input = await threadInput(ctx, row);
+      const input = await threadInput(ctx, row, accounts);
       if (!input) {
         await ctx.db.patch(row._id, {
           llmPending: undefined,
@@ -211,7 +222,6 @@ export const claimPending = mutation({
         jevLeaseId: leaseId,
         jevLeaseUntil: now + 90_000,
         jevStatus: 'pending',
-        latestMessageId: input.messageId,
       });
       items.push({ ...input, leaseId });
       if (items.length === limit) break;
@@ -239,6 +249,10 @@ export const storeAssessments = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const context = await loadSmartContext(ctx, args.userId);
+    const accounts = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
     let stored = 0;
     for (const item of args.items.slice(0, 20)) {
       const row = await ctx.db
@@ -248,7 +262,7 @@ export const storeAssessments = mutation({
         )
         .unique();
       if (!row || row.latestMessageId !== item.messageId || row.jevLeaseId !== item.leaseId) continue;
-      const input = await threadInput(ctx, row);
+      const input = await threadInput(ctx, row, accounts);
       if (!input || input.sourceRevision !== item.sourceRevision) {
         await ctx.db.patch(row._id, { jevLeaseId: undefined, jevLeaseUntil: undefined, llmPending: true });
         continue;
@@ -473,15 +487,10 @@ export const queueUnassessed = internalMutation({
     if (rows.length === 100) await ctx.scheduler.runAfter(1_000, (internal as any).jev.queueUnassessed, {});
   },
 });
-export const usersWithMail = internalQuery({
+export const usersWithMail = internalMutation({
   args: {},
-  handler: async (ctx) => [
-    ...new Set(
-      (await ctx.db.query('connectedAccounts').take(1000))
-        .filter((row) => row.status === 'connected')
-        .map((row) => row.userId),
-    ),
-  ],
+  // 24 users / 3 workers * 55 seconds remains inside the action execution budget.
+  handler: (ctx) => nextConnectedUsers(ctx, 'connectedAccounts', 'jev:connectedAccounts', 24),
 });
 export const tick = internalAction({
   args: {},
@@ -489,7 +498,7 @@ export const tick = internalAction({
     const base = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!base || !secret) return;
-    const users: string[] = await ctx.runQuery((internal as any).jev.usersWithMail, {});
+    const users: string[] = await ctx.runMutation((internal as any).jev.usersWithMail, {});
     await fanOutInternalPost(
       `${base.replace(/\/$/, '')}/api/cron/jev`,
       secret,

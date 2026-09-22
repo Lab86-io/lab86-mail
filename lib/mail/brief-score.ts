@@ -25,6 +25,9 @@ export const BRIEF_SCORE_WEIGHTS = {
   deadlineWithin48h: 3,
   needsReply: 2,
   bulkSender: -4,
+  needsAction: 5,
+  meaningfulChange: 5,
+  waitingOnOther: 2,
 } as const;
 
 export const DEADLINE_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -55,9 +58,9 @@ export function scoreBriefCandidate(signals: BriefScoreSignals): number {
   if (signals.deadlineWithin48h) score += BRIEF_SCORE_WEIGHTS.deadlineWithin48h;
   if (signals.needsReply) score += BRIEF_SCORE_WEIGHTS.needsReply;
   if (signals.bulkSender) score += BRIEF_SCORE_WEIGHTS.bulkSender;
-  if (signals.needsAction) score += 5;
-  if (signals.meaningfulChange) score += 5;
-  if (signals.waitingOnOther) score += 2;
+  if (signals.needsAction) score += BRIEF_SCORE_WEIGHTS.needsAction;
+  if (signals.meaningfulChange) score += BRIEF_SCORE_WEIGHTS.meaningfulChange;
+  if (signals.waitingOnOther) score += BRIEF_SCORE_WEIGHTS.waitingOnOther;
   return score;
 }
 

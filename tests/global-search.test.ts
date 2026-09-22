@@ -10,6 +10,7 @@ import {
   cloudFileResult,
   localFileResults,
   matchesSearch,
+  retrySearchQueries,
   type SearchTool,
   safeSearchUrl,
   searchCalendar,
@@ -43,6 +44,22 @@ const file = {
 };
 const mockTool = (fn: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => unknown) =>
   (async (name, args, signal) => fn(name, args, signal)) as SearchTool;
+
+test('file-search retries reach cloud, library, indexed and semantic sources despite another failure', async () => {
+  const attempted: string[] = [];
+  const result = await retrySearchQueries(
+    ['cloud', 'library', 'indexed', 'semantic'].map((source) => ({
+      refetch: () => {
+        attempted.push(source);
+        if (source === 'cloud') throw new Error('offline');
+        if (source === 'indexed') return Promise.reject(new Error('unavailable'));
+        return Promise.resolve();
+      },
+    })),
+  );
+  expect(attempted).toEqual(['cloud', 'library', 'indexed', 'semantic']);
+  expect(result.map((r) => r.status)).toEqual(['rejected', 'fulfilled', 'rejected', 'fulfilled']);
+});
 
 describe('global search sources', () => {
   test('malformed collections produce actionable errors, not raw TypeErrors or false empty results', async () => {

@@ -27,7 +27,7 @@ export async function syncMailAttachments(userId: string, files: any[], deps = d
     .slice(0, 8)) {
     let text = '';
     let partial = true;
-    if (file.size <= MAX_DOWNLOAD_BYTES && supportedContent(file.mimeType, file.filename)) {
+    if (Number(file.size || 0) <= MAX_DOWNLOAD_BYTES && supportedContent(file.mimeType, file.filename)) {
       try {
         const stream = await deps.downloadNylasAttachment({
           userId,
@@ -35,16 +35,29 @@ export async function syncMailAttachments(userId: string, files: any[], deps = d
           messageId: file.messageId,
           attachmentId: file.attachmentId,
         });
-        if (!stream) continue;
-        const parsed = await deps.extractContent(
-          await boundedBytes(new Response(stream)),
-          file.mimeType,
-          file.filename,
-        );
-        text = parsed.text;
-        partial = parsed.partial;
-      } catch {
-        continue;
+        if (stream) {
+          const parsed = await deps.extractContent(
+            await boundedBytes(new Response(stream)),
+            file.mimeType,
+            file.filename,
+          );
+          text = parsed.text;
+          partial = parsed.partial;
+        }
+      } catch (error) {
+        const value = error as {
+          name?: string;
+          message?: string;
+          statusCode?: number;
+          status?: number;
+          response?: { status?: number };
+        };
+        const status = Number(value?.statusCode ?? value?.status ?? value?.response?.status);
+        const permanent =
+          [403, 404, 410].includes(status) ||
+          ['InvalidPDFException', 'PasswordException'].includes(value?.name || '') ||
+          /size limit|corrupted zip|can't find end of central directory/i.test(value?.message || '');
+        if (!permanent) continue;
       }
     }
     await deps.convexMutation((api as any).content.upsert, {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { handleDailyReportNavigationAction } from '../lib/daily-report-navigation';
+import { handleDailyReportNavigationAction, openBriefMailThread } from '../lib/daily-report-navigation';
 import { safeExternalUrl } from '../lib/shared/url';
 
 function harness() {
@@ -23,6 +23,15 @@ function harness() {
 }
 
 describe('Daily Report navigation actions', () => {
+  test('opening backlog mail selects its account and conversation before leaving the Brief', () => {
+    const steps: string[] = [];
+    openBriefMailThread('account-a', 'thread-a', {
+      setThreadAccount: (id) => steps.push(`account:${id}`),
+      setSelectedThread: (id) => steps.push(`thread:${id}`),
+      setPrimaryView: (view) => steps.push(`view:${view}`),
+    });
+    expect(steps).toEqual(['account:account-a', 'thread:thread-a', 'view:mail']);
+  });
   test('open_work validates its id and opens the selected area and work surface', () => {
     const target = harness();
 

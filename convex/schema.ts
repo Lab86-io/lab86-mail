@@ -142,7 +142,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_grant', ['grantId']),
+    .index('by_grant', ['grantId'])
+    .index('by_status', ['status']),
 
   providerGrants: defineTable({
     userId: v.string(),
@@ -1853,7 +1854,8 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_user_provider_account', ['userId', 'provider', 'accountKey']),
+    .index('by_user_provider_account', ['userId', 'provider', 'accountKey'])
+    .index('by_status', ['status']),
 
   cloudFileCredentials: defineTable({
     userId: v.string(),

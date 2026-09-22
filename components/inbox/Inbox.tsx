@@ -76,7 +76,8 @@ import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
 import { focusMailResult, registerMailSearchFocus } from '@/lib/mail/search/focus-contract';
-import { compareMailRelevance } from '@/lib/mail/search/ranking';
+import { compareMailRelevance, mailListUsesRelevance } from '@/lib/mail/search/ranking';
+import { useEmptyPageContinuation } from '@/lib/mail/search/use-empty-page-continuation';
 import { peekSenderLogo, resolveSenderLogo, senderLogoDomain } from '@/lib/mail/sender-logo';
 import { groupSenderEmailsByAccount } from '@/lib/mail/sender-photo-groups';
 import { labelsForSmartCategory, SMART_CATEGORY_LABELS } from '@/lib/mail/smart-categories';
@@ -385,8 +386,9 @@ export function Inbox() {
           ),
         );
         const merged = results.flatMap((result) => result.items);
+        const relevanceOrdered = mailListUsesRelevance(merged, smartCategory);
         merged.sort((a, b) =>
-          !smartCategory && (a.searchRank !== undefined || b.searchRank !== undefined)
+          relevanceOrdered
             ? compareMailRelevance(a, b)
             : (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
         );
@@ -470,7 +472,7 @@ export function Inbox() {
   // Each item knows its own account (set by the fan-out above), so row ids remain
   // stable in ALL_ACCOUNTS view and bulk operations can dispatch per mailbox.
   const rowKey = useCallback((item: ThreadRow) => `${item.account || account}:${item._id}`, [account]);
-  const items = useMemo(() => {
+  const { items, relevanceOrdered } = useMemo(() => {
     const byKey = new Map<string, ThreadRow>();
     for (const item of liveItems || []) {
       byKey.set(`${item.account || account}:${item._id}`, item);
@@ -485,12 +487,15 @@ export function Inbox() {
       const email = (emailFromHeader(item.from || item.fromAddress) || '').toLowerCase();
       return !email || !active.some((s) => s.senderEmail === email);
     });
-    return rows.sort((a, b) =>
-      !smartCategory && (a.searchRank !== undefined || b.searchRank !== undefined)
+    const relevanceOrdered = mailListUsesRelevance(rows, smartCategory);
+    rows.sort((a, b) =>
+      relevanceOrdered
         ? compareMailRelevance(a, b)
         : (Number(b.lastDate ?? b.date) || 0) - (Number(a.lastDate ?? a.date) || 0),
     );
+    return { items: rows, relevanceOrdered };
   }, [account, data?.pages, liveItems, suppressions, smartCategory]);
+  useEmptyPageContinuation(items.length, Boolean(hasNextPage), isFetching, isError, fetchNextPage);
   const visibleRowKeys = useMemo(() => items.map((item) => rowKey(item)), [items, rowKey]);
   const smartCategoryBadge = smartCategory && smartCategory !== 'main' ? activeSmartLabel : '';
   const selectVisible = useCallback(() => {
@@ -1064,12 +1069,13 @@ export function Inbox() {
                   // that same proxy but never accepts a placeholder).
                   const rawPhoto = senderEmail ? (photos[senderEmail] ?? null) : null;
                   const providerPhotoUrl = rawPhoto && !rawPhoto.startsWith('/api/logos/') ? rawPhoto : null;
-                  // Editorial datelines: a serif group header whenever the day
-                  // bucket changes (the list is already date-sorted).
+                  // Date buckets only describe chronological lists.
                   const groupLabel = inboxDateGroupLabel(it.lastDate ?? it.date ?? 0);
                   const previous = index > 0 ? items[index - 1] : null;
                   const showHeader =
-                    !previous || inboxDateGroupLabel(previous.lastDate ?? previous.date ?? 0) !== groupLabel;
+                    !relevanceOrdered &&
+                    (!previous ||
+                      inboxDateGroupLabel(previous.lastDate ?? previous.date ?? 0) !== groupLabel);
                   return (
                     <Fragment key={key}>
                       {showHeader ? <InboxDateGroup label={groupLabel} /> : null}

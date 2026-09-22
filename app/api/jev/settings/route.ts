@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { resolveJevRuntime } from '@/lib/ai/gateway';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { readOfficeRequest } from '@/lib/documents/office-security';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import {
   JEV_MODEL,
@@ -77,9 +78,18 @@ export function createJevSettingsRoutes(dependencies = defaults) {
   async function POST(request: NextRequest) {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: 'Sign in required.' }, { status: 401 });
-    const parsed = inputSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return NextResponse.json({ error: 'Invalid Jev settings.' }, { status: 400 });
     try {
+      await enforceUserRateLimit({
+        userId: user.userId,
+        key: 'jev:settings:input',
+        limit: 30,
+        windowMs: 60_000,
+      });
+      const body = await readOfficeRequest(request, 64 * 1024)
+        .then((bytes) => JSON.parse(bytes.toString('utf8')))
+        .catch(() => null);
+      const parsed = inputSchema.safeParse(body);
+      if (!parsed.success) return NextResponse.json({ error: 'Invalid Jev settings.' }, { status: 400 });
       await enforceUserRateLimit({
         userId: user.userId,
         key: `jev:${parsed.data.action}`,

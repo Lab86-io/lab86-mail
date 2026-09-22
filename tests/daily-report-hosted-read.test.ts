@@ -4,6 +4,7 @@ import {
   getLatestDailyReport,
   listDailyReportSummaries,
   listDailyReports,
+  saveDailyReport,
   setDailyReportReaderForTest,
 } from '../lib/store/daily-reports';
 
@@ -17,6 +18,33 @@ const report = (i: number) => ({
   title: `Edition ${i}`,
   status: 'ready',
   artifactStatus: 'ready',
+});
+
+test('a saved Brief succeeds despite synchronous owner or asynchronous attention-marking failures', async () => {
+  for (const syncFailure of [true, false]) {
+    const saved: unknown[] = [];
+    const value = report(1);
+    expect(
+      await saveDailyReport(
+        value as any,
+        {
+          persist: async (_kind: string, _key: string, doc: unknown) => {
+            saved.push(doc);
+            return doc;
+          },
+          configured: () => true,
+          owner: () => {
+            if (syncFailure) throw new Error('No owner');
+            return 'reader';
+          },
+          mark: async () => {
+            throw new Error('Unavailable');
+          },
+        } as any,
+      ),
+    ).toBe(value);
+    expect(saved).toEqual([value]);
+  }
 });
 
 test('hosted latest asks for exactly one edition in the current user context', async () => {

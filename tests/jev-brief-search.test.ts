@@ -5,7 +5,7 @@ import { rerankMail, sortSearchCandidates } from '../lib/jev/search';
 import { markJevBriefItems, runJevSweep } from '../lib/jev/service';
 import { assignBriefLane } from '../lib/mail/brief-score';
 import { corpusMessagesToThreads } from '../lib/mail/search/local';
-import { compareMailRelevance, matchingMailExcerpt } from '../lib/mail/search/ranking';
+import { compareMailRelevance, mailListUsesRelevance, matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { migrateDailyReport } from '../lib/store/daily-reports';
 import { assessment, mailInput, NOW, policy, report, reportItem, responseFor, thread } from './fixtures/jev';
 
@@ -19,6 +19,12 @@ const attention = (extra: Partial<Parameters<typeof briefAttention>[0]> = {}) =>
     tracked: false,
     ...extra,
   });
+test('Mail relevance results suppress date grouping while chronological searches and categories retain it', () => {
+  expect(mailListUsesRelevance([{ searchRank: 0 }, {}])).toBe(true);
+  expect(mailListUsesRelevance([{ searchRank: 0 }], 'main')).toBe(false);
+  expect(mailListUsesRelevance([{ searchRank: 0, searchOrder: 'recent' }])).toBe(false);
+  expect(mailListUsesRelevance([{}, {}])).toBe(false);
+});
 describe('Brief eligibility', () => {
   test('Syracuse-style campaigns and newsletters are excluded even with a personal request score', () => {
     for (const purpose of ['promotion', 'newsletter'] as const) {
