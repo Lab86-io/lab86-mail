@@ -5,7 +5,6 @@ import { api, convexQuery } from '../hosted/convex';
 import { mapConcurrent } from '../jev/client';
 import { listUserConnections } from '../mcp/connections';
 import { syncConnection } from '../mcp/sync';
-import { withDeadline } from '../shared/deadline';
 import { reconcileMailCorpusAccount } from './corpus-sync';
 
 export interface BriefSourceCheck {
@@ -24,7 +23,6 @@ const defaults = {
   mcp: syncConnection,
   cloud: (userId: string, connectionId: string) => syncCloudContent(userId, undefined, [connectionId]),
   now: Date.now,
-  timeoutMs: 60_000,
 };
 
 /** Check broadly before selecting a small writer packet. Provider feeds are
@@ -37,9 +35,7 @@ export function createBriefSourceRefresher(deps = defaults) {
   const recent = new Map<string, number>();
   return async (userId: string, sources?: readonly string[]): Promise<BriefSourceCheck[]> => {
     const allowed = (source: string) => !sources || sources.includes(source);
-    const deadline = deps.now() + 90_000;
-    const discover = <T>(read: () => Promise<T>) =>
-      withDeadline(Promise.resolve().then(read), Math.min(deps.timeoutMs, 15_000), 'Brief source discovery');
+    const discover = <T>(read: () => Promise<T>) => Promise.resolve().then(read);
     const discovery = await Promise.allSettled([
       !sources || sources.some((s) => /^(mail|calendar):/.test(s))
         ? discover(() => deps.accounts(userId))
@@ -100,8 +96,6 @@ export function createBriefSourceRefresher(deps = defaults) {
     const results = await mapConcurrent(jobs, 3, async ({ source, run }) => {
       const key = JSON.stringify([userId, source]);
       if (recent.has(key)) return { source, status: 'checked' as const };
-      const remaining = deadline - deps.now();
-      if (remaining <= 0) return { source, status: 'unavailable' as const };
       let pending = flights.get(key);
       if (!pending) {
         pending = Promise.resolve()
@@ -114,11 +108,7 @@ export function createBriefSourceRefresher(deps = defaults) {
           .finally(() => flights.delete(key));
         flights.set(key, pending);
       }
-      // Keep the actual flight registered after a timeout. Another edition
-      // must not start duplicate provider work while that request is settling.
-      return withDeadline(pending, Math.min(deps.timeoutMs, remaining), 'Brief source refresh').catch(
-        (): BriefSourceCheck => ({ source, status: 'unavailable' }),
-      );
+      return pending;
     });
     return [...checks, ...results];
   };

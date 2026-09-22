@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
+import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { now, requireInternalSecret } from './lib';
 
 // Backing store for all per-user app state (see schema.ts userDocs). Every
@@ -158,9 +159,14 @@ export const upsertDoc = mutation({
     key: v.string(),
     ref: v.optional(v.string()),
     doc: v.any(),
+    briefJob: v.optional(briefJobFence),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    if (args.briefJob) {
+      if (args.kind !== 'dailyReport') throw new Error('Invalid brief job target');
+      await assertBriefJobOwner(ctx, args.userId, args.briefJob, { reportId: args.key });
+    }
     const ts = now();
     const existing = await ctx.db
       .query('userDocs')

@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { now, requireInternalSecret } from './lib';
 
 // The structured area pulse (2026-09-03). It lives on the existing
@@ -42,11 +43,13 @@ function bounded(value: string, max: number) {
 export const saveAreaPulse = mutation({
   args: {
     ...callerArgs,
+    briefJob: v.optional(briefJobFence),
     areaId: v.id('areas'),
     pulse: areaPulseValidator,
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    await assertBriefJobOwner(ctx, userId, args.briefJob, { areaId: args.areaId });
     const area = await ctx.db.get(args.areaId);
     if (!area || area.userId !== userId) throw new Error('Area not found.');
     const existing = await ctx.db

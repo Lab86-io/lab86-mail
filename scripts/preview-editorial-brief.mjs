@@ -65,7 +65,10 @@ const authoredPlan = {
     ...defaultEditorialPlan(remainder).regions,
   ],
 };
-const authored = composeEditorialDocument(letter, modules, authoredPlan);
+const generated = process.env.PREVIEW_BRIEF_RESULT
+  ? JSON.parse(await readFile(process.env.PREVIEW_BRIEF_RESULT, 'utf8'))
+  : null;
+const authored = generated?.document ?? composeEditorialDocument(letter, modules, authoredPlan);
 const names = Object.keys(briefComponentFixtures);
 const cataloguePlan = {
   version: 1,
@@ -90,7 +93,12 @@ const catalogue = composeEditorialDocument(letter, modules, cataloguePlan);
 const reports = new Map([
   [
     'preview',
-    { ...edition, _id: 'preview', document: authored, editorial: { plan: authoredPlan, mode: 'generated' } },
+    {
+      ...edition,
+      _id: 'preview',
+      document: authored,
+      editorial: generated?.editorial ?? { plan: authoredPlan, mode: 'generated' },
+    },
   ],
   [
     'catalogue',

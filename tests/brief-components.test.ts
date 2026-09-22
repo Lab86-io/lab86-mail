@@ -45,7 +45,7 @@ test('gateway retries and provider failover each start a fresh editorial session
           expect(request.toolsForAttempt).toBeUndefined();
           expect(sessions).not.toContain(request.tools);
           sessions.push(request.tools);
-          expect(request.stopWhen[1]()).toBe(false);
+          expect(request.stopWhen()).toBe(false);
           expect(
             (await request.tools.finalize_brief.execute({ title: 'Empty', summary: 'Empty' }, toolOptions))
               .ok,

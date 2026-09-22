@@ -2,6 +2,7 @@ import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
 
 const crons = cronJobs();
+crons.interval('recover brief jobs', { minutes: 1 }, (internal as any).briefJobs.recover, {});
 // Durable cursors/leases make interrupted narrative runs resumable. No opted-in users = no work.
 crons.interval('shared narrative memory', { hours: 1 }, (internal as any).narrative.tick, {});
 

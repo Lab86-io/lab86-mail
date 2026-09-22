@@ -755,8 +755,6 @@ function ReportArtifact({
   );
 }
 
-const STUCK_GENERATION_MS = 20 * 60_000;
-
 // Context the brief actually reads; the vortex swallows these while composing.
 const BRIEF_VORTEX_SOURCES: VortexSource[] = [
   { id: 'mail', label: 'Mail', kind: 'mail' },
@@ -840,11 +838,8 @@ export function DailyReport({
     // edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      // A status that has sat past this cutoff is from a generation that died
-      // mid-flight; stop polling it so we don't hammer a forever-stuck edition.
-      const stuck = !r || Date.now() - (r.generatedAt || 0) > STUCK_GENERATION_MS;
-      if (!stuck && (r?.status === 'partial' || r?.artifactStatus === 'composing')) return 2_000;
-      if (!stuck && r?.artifactStatus === 'enriching') return 3_000;
+      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
+      if (r?.artifactStatus === 'enriching') return 3_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
       return selectedId ? false : 30_000;
     },
@@ -863,10 +858,6 @@ export function DailyReport({
     staleTime: 30_000,
   });
   const report = reportQuery.data?.report || null;
-  // A generation that errored partway leaves the stored edition stuck at
-  // 'partial'/'composing' forever. Past this cutoff we treat such a status as
-  // dead, so the in-progress UI clears and Generate is clickable again.
-  const reportIsStale = !report || Date.now() - (report.generatedAt || 0) > STUCK_GENERATION_MS;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
   // Embedded in Today, the brief sits under a live layer. It has to say when it
@@ -876,7 +867,6 @@ export function DailyReport({
   // The deterministic HTML is the interim save while the letter composes. If
   // it is still the final artifact, the letter did not write.
   const composingLetter =
-    !reportIsStale &&
     artifactSource === 'deterministic' &&
     (report?.artifactStatus === 'composing' || report?.artifactStatus === 'enriching');
   const letterFailed =
@@ -888,8 +878,9 @@ export function DailyReport({
   const generating =
     waitingForNew ||
     composingLetter ||
-    (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
-  const showGeneratingState = generating && ((!displayArtifact && !displayDocument) || composingLetter);
+    report?.status === 'partial' ||
+    report?.artifactStatus === 'composing';
+  const showGeneratingState = generating;
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
   const fallbackLetter = useMemo(() => {
@@ -955,7 +946,7 @@ export function DailyReport({
     mutationFn: async () =>
       callTool<{ report: DailyReportPayload | null; started?: boolean }>('generate_daily_report', {
         kind: 'manual',
-        wait: true,
+        wait: false,
       }),
     // Mark the moment so polling waits for the NEW edition, and jump to latest.
     onMutate: () => {
@@ -963,8 +954,7 @@ export function DailyReport({
       setGeneratingSince(Date.now());
     },
     onSuccess: (result) => {
-      // A terminal failed replacement may leave the reader on its last good
-      // edition. Release the refresh control even though that edition is older.
+      // A completed response can release the refresh control immediately.
       if (
         result.report &&
         result.report.status !== 'partial' &&
@@ -1184,7 +1174,7 @@ export function DailyReport({
         ) : showGeneratingState || showsLetter || (displayArtifact && report?.html) ? (
           // Vortex while composing; when the brief lands, the vortex collapses
           // and the finished letter springs out of it.
-          <AnimatePresence mode="wait" initial={false}>
+          <AnimatePresence key={showGeneratingState ? 'generating' : 'edition'} mode="wait" initial={false}>
             {showGeneratingState ? (
               <motion.div
                 key="vortex"

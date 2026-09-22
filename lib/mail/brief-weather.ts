@@ -1,6 +1,5 @@
 import { getAiRequestContext } from '../ai/context';
 import { api, convexQuery } from '../hosted/convex';
-import { withDeadline } from '../shared/deadline';
 import type { DailyReport, DailyReportCalendarItem } from '../shared/types';
 import {
   type BriefWeather,
@@ -19,8 +18,6 @@ import {
 // Real local weather for the brief. Since 2026-09-03 the weather is context
 // for the prose only: one sentence the model may weave into the lede or the
 // week ahead. It is never a node in the document.
-
-const WEATHER_DEADLINE_MS = 12_000;
 
 // The compact, prompt-ready weather shape.
 export interface BriefWeatherPack {
@@ -168,26 +165,21 @@ export async function gatherBriefWeather(
       timezone,
       candidates: weatherLocationCandidates(report.sections?.calendar),
     };
-    const resolved = await withDeadline(
-      resolveWeatherPlace(weatherInput, opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {}),
-      WEATHER_DEADLINE_MS,
-      'Brief weather location',
+    const resolved = await resolveWeatherPlace(
+      weatherInput,
+      opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {},
     );
     if (!resolved) return null;
     const unit = defaultUnitForTimezone(timezone || resolved.timezone);
     let weather: BriefWeather | null = null;
     if (weatherKitConfiguration(opts.weatherEnvironment)) {
       try {
-        weather = await withDeadline(
-          fetchWeatherKitBrief(
-            { place: resolved, timezone, unit },
-            {
-              fetchImpl: opts.weatherKitFetch,
-              environment: opts.weatherEnvironment,
-            },
-          ),
-          WEATHER_DEADLINE_MS,
-          'WeatherKit forecast',
+        weather = await fetchWeatherKitBrief(
+          { place: resolved, timezone, unit },
+          {
+            fetchImpl: opts.weatherKitFetch,
+            environment: opts.weatherEnvironment,
+          },
         );
       } catch (error) {
         console.warn(
@@ -196,19 +188,15 @@ export async function gatherBriefWeather(
         );
       }
     }
-    weather ??= await withDeadline(
-      briefWeather(
-        {
-          latitude: resolved.latitude,
-          longitude: resolved.longitude,
-          place: resolved.admin1 ? `${resolved.name}, ${resolved.admin1}` : resolved.name,
-          timezone,
-          unit,
-        },
-        opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {},
-      ),
-      WEATHER_DEADLINE_MS,
-      'Brief weather fallback',
+    weather ??= await briefWeather(
+      {
+        latitude: resolved.latitude,
+        longitude: resolved.longitude,
+        place: resolved.admin1 ? `${resolved.name}, ${resolved.admin1}` : resolved.name,
+        timezone,
+        unit,
+      },
+      opts.weatherFetch ? { fetchImpl: opts.weatherFetch } : {},
     );
     return weather ? toBriefWeather(weather) : null;
   } catch (err) {

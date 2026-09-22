@@ -20,7 +20,7 @@ const report = (i: number) => ({
   artifactStatus: 'ready',
 });
 
-test('reader keeps a recent editorial edition during recovery without hiding the active generation from workers', async () => {
+test('reader shows the newest edition even while it is generating or has a fallback layout', async () => {
   const reads: any[] = [];
   const loaded: string[] = [];
   let newest: any = { ...report(100), editorial: { mode: 'fallback' } };
@@ -41,9 +41,9 @@ test('reader keeps a recent editorial edition during recovery without hiding the
     }) as any,
   });
   await context(async () => {
-    expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-90');
+    expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-100');
     expect(reads[0].summaryOnly).toBe(true);
-    expect(loaded).toEqual(['edition-90']);
+    expect(loaded).toEqual(['edition-100']);
     expect((await getLatestDailyReport())?._id).toBe('edition-100');
     newest = { ...report(100), editorial: { mode: 'generated' } };
     expect((await getLatestDailyReport(undefined, true))?._id).toBe('edition-100');

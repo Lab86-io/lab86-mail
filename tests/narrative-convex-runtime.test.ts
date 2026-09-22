@@ -1026,6 +1026,8 @@ describe('shared narrative runtime', () => {
     const t = harness();
     await enable(t);
     expect(await t.mutation(f.claim, { ...args, runId: 'first', kind: 'test' })).not.toBeNull();
+    expect(await t.mutation(f.heartbeat, { ...args, runId: 'first' })).toBe(true);
+    expect(await t.mutation(f.heartbeat, { ...args, runId: 'stale' })).toBe(false);
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).toBeNull();
     await t.mutation(f.finish, { ...args, runId: 'not-owner' });
     expect(await t.mutation(f.claim, { ...args, runId: 'third', kind: 'test' })).toBeNull();

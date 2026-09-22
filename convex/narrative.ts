@@ -604,7 +604,7 @@ export const refreshUser = internalAction({
     if (!url || !secret || !(await ctx.runQuery((internal as any).narrative.refreshTarget, args))) return;
     await fanOutInternalPost(`${url.replace(/\/$/, '')}/api/cron/narrative`, secret, [args], {
       concurrency: 1,
-      timeoutMs: 450_000,
+      timeoutMs: 10_000,
       label: 'narrative-change',
     });
   },
@@ -1154,6 +1154,7 @@ export const publish = mutation({
     internalSecret: v.string(),
     userId: v.string(),
     revision: v.number(),
+    runId: v.optional(v.string()),
     id: v.id('narrativeEntries'),
     text: v.string(),
     model: v.string(),
@@ -1165,6 +1166,7 @@ export const publish = mutation({
       row = await ctx.db.get(args.id);
     if (
       prefs?.revision !== args.revision ||
+      (args.runId !== undefined && (prefs?.lease !== args.runId || (prefs?.leaseUntil || 0) <= Date.now())) ||
       !row ||
       row.level === 'observation' ||
       !(await visible(ctx, row, prefs))
@@ -1323,6 +1325,17 @@ export const claim = mutation({
     return { ...prefs, groups: Object.keys(groups) };
   },
 });
+export const heartbeat = mutation({
+  args: { internalSecret: v.string(), userId: v.string(), runId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const prefs = await settings(ctx, args.userId);
+    if (!prefs?.enabled || prefs.cleaning || prefs.lease !== args.runId) return false;
+    await ctx.db.patch(prefs._id, { leaseUntil: Date.now() + 480_000 });
+    return true;
+  },
+});
+
 export const finish = mutation({
   args: {
     internalSecret: v.string(),
@@ -1459,7 +1472,7 @@ export const tick = internalAction({
       `${url.replace(/\/$/, '')}/api/cron/narrative`,
       secret,
       users.map((userId) => ({ userId })),
-      { concurrency: 2, timeoutMs: 450_000, label: 'narrative' },
+      { concurrency: 2, timeoutMs: 10_000, label: 'narrative' },
     );
   },
 });

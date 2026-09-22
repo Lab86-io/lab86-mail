@@ -99,6 +99,54 @@ describe('Area artifact data contract', () => {
     expect(context.actions.discussArea.payload.areaId).toBe('area_1');
   });
 
+  test('area writer evidence includes current tasks, routines and pending questions', () => {
+    const context = buildAreaArtifactContext(home, 1000, {
+      projects: [
+        {
+          project: { _id: 'project', title: 'Launch' },
+          todayTasks: [{ title: 'Review the support quote', dueAt: 1000 }],
+          routines: [
+            {
+              _id: 'routine',
+              title: 'Weekly review',
+              purpose: 'Check commitments',
+              kind: 'review',
+              status: 'active',
+              consent: 'approved',
+              cadence: 'weekly',
+              localTime: '09:00',
+              timezone: 'UTC',
+              nextRunAt: 2000,
+            },
+          ],
+          pendingQuestions: [
+            {
+              _id: 'question',
+              kind: 'decision',
+              responseKind: 'choice',
+              prompt: 'Who owns support?',
+              reason: 'Confirm before launch',
+              options: [{ id: 'north', label: 'North', description: 'Weekday coverage' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(context.projectPulse[0].todayTasks[0]).toEqual({
+      title: 'Review the support quote',
+      dueAtIso: new Date(1000).toISOString(),
+    });
+    expect(context.projectPulse[0].routines[0]).toMatchObject({
+      routineId: 'routine',
+      consent: 'approved',
+      nextRunAtIso: new Date(2000).toISOString(),
+    });
+    expect(context.projectPulse[0].pendingQuestions[0]).toMatchObject({
+      questionId: 'question',
+      options: [{ id: 'north', label: 'North', description: 'Weekday coverage' }],
+    });
+  });
+
   test('carries real sprint and place details without inventing missing values', () => {
     const context = buildAreaArtifactContext({
       ...home,

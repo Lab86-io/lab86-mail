@@ -1,4 +1,4 @@
-import { stepCountIs, tool } from 'ai';
+import { tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import {
@@ -15,7 +15,6 @@ import {
   editorialPlanSchema,
 } from '../brief/editorial';
 import type { BriefDocumentV2 } from '../shared/brief-document';
-import { withDeadline } from '../shared/deadline';
 import type { DailyReport } from '../shared/types';
 
 export const DAILY_EDITORIAL_SYSTEM = `You are the editor and page designer of one person's daily review.
@@ -67,10 +66,7 @@ export function createDailyEditorialSession(
   let regions: EditorialPlan['regions'] = [];
   let finalized: BriefDocumentV2 | undefined;
   let metadata = { title: letter.title, summary: letter.summary };
-  let calls = 0;
   const attempt = (fn: () => unknown) => {
-    if (++calls > 48)
-      return { ok: false, error: 'Authoring tool budget exhausted. Finalize a validated composition.' };
     try {
       return fn();
     } catch (error) {
@@ -176,39 +172,34 @@ export async function writeDailyEditorial(
   const generate = options.generate === undefined ? generateTextForCurrentUser : options.generate;
   if (generate) {
     try {
-      const response = await withDeadline(
-        generate({
-          feature: 'daily_brief_layout',
-          speed: 'primary',
-          userId: options.userId,
-          system: DAILY_EDITORIAL_SYSTEM,
-          prompt: JSON.stringify({
-            date: new Date(report.generatedAt).toISOString(),
-            timezone: letter.timezone,
-            intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent,
-            coverage: report.errors,
-            catalogue: Object.entries(briefComponentCatalog).map(([name, entry]) => ({
-              name,
-              purpose: entry.description,
-            })),
-            modules: session.modules.map((module) => ({
-              id: module.id,
-              section: module.section,
-              title: module.title,
-              summary: module.summary,
-              content: module.presentations.story,
-              presentations: Object.keys(module.presentations),
-            })),
-          }),
-          tools: session.tools,
-          toolsForAttempt,
-          stopWhen: [stepCountIs(18), () => !!session.result()],
-          maxRetries: 0,
-          abortSignal: AbortSignal.timeout(150_000),
+      const response = await generate({
+        feature: 'daily_brief_layout',
+        speed: 'primary',
+        userId: options.userId,
+        system: DAILY_EDITORIAL_SYSTEM,
+        prompt: JSON.stringify({
+          date: new Date(report.generatedAt).toISOString(),
+          timezone: letter.timezone,
+          intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent,
+          coverage: report.errors,
+          catalogue: Object.entries(briefComponentCatalog).map(([name, entry]) => ({
+            name,
+            purpose: entry.description,
+          })),
+          modules: session.modules.map((module) => ({
+            id: module.id,
+            section: module.section,
+            title: module.title,
+            summary: module.summary,
+            content: module.presentations.story,
+            presentations: Object.keys(module.presentations),
+          })),
         }),
-        150_000,
-        'Brief editorial composition',
-      );
+        tools: session.tools,
+        toolsForAttempt,
+        stopWhen: () => !!session.result(),
+        maxRetries: 0,
+      });
       let result: { document: BriefDocumentV2; plan: EditorialPlan } | null = session.result();
       // Providers that return a complete plan instead of tools use the same
       // strict compiler. Incomplete or invalid plans never become a saved page.

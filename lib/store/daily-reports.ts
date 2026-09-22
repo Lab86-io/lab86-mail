@@ -23,16 +23,6 @@ import {
 } from '../shared/types';
 import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
-let persistSettledDailyReport: typeof kvUpsert = kvUpsert;
-
-export function setDailyReportPersistenceForTest(persist: typeof kvUpsert) {
-  const previous = persistSettledDailyReport;
-  persistSettledDailyReport = persist;
-  return () => {
-    persistSettledDailyReport = previous;
-  };
-}
-
 const saveDefaults = {
   persist: kvUpsert,
   configured: isConvexConfigured,
@@ -112,23 +102,11 @@ async function readReportRows<T>(
   return rows;
 }
 
-export async function getLatestDailyReport(kind?: DailyReport['kind'], preferEditorial = false) {
-  const rows = await readReportRows<DailyReport>(preferEditorial ? 8 : 1, preferEditorial, kind);
-  let latest = rows[0];
+export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFirst = false) {
+  const rows = await readReportRows<DailyReport>(1, summaryFirst, kind);
+  const latest = rows[0];
   if (!latest) return null;
-  // Reader views keep a recent completed edition while another is composing
-  // or recovering. Its original date/id remain intact. Generation deduplication
-  // still reads the actual newest record through the default path above.
-  if (preferEditorial && latest.editorial?.mode !== 'generated') {
-    latest =
-      rows.find(
-        (row) =>
-          row.editorial?.mode === 'generated' &&
-          row.artifactStatus === 'ready' &&
-          latest.generatedAt - row.generatedAt <= 24 * 3600_000,
-      ) ?? latest;
-  }
-  const report = preferEditorial
+  const report = summaryFirst
     ? await readDependencies.load(latest._id)
     : await migrateDailyReportForRead(latest);
   if (!report) return null;
@@ -181,34 +159,8 @@ export async function listDailyReportSummaries(limit = 20) {
   return readReportRows<DailyReportSummary>(limit, true);
 }
 
-// Generation runs in the web process; a deploy/restart mid-run (SIGTERM skips
-// the catch paths) leaves an edition wedged at artifactStatus 'composing' or
-// 'enriching' forever, so the report page keeps treating it as in-flight. Past
-// this cutoff the run is certainly dead — content exists (both statuses are
-// only persisted alongside an html artifact), so reads settle it to 'rendered'.
-// Mirrors STUCK_GENERATION_MS in components/report/DailyReport.tsx and
-// ACTIVE_GENERATION_MS in lib/tools/daily-report.ts.
-const STUCK_ARTIFACT_MS = 20 * 60_000;
-
 async function migrateDailyReportForRead(raw: DailyReport): Promise<DailyReport> {
-  const migrated = migrateDailyReport(raw);
-  if (settledStaleArtifactStatus(raw, migrated)) {
-    try {
-      await persistSettledDailyReport('dailyReport', migrated._id, migrated);
-    } catch (err) {
-      console.warn('[daily-reports] failed to persist settled artifact status:', err);
-    }
-  }
-  return migrated;
-}
-
-function settledStaleArtifactStatus(raw: DailyReport, migrated: DailyReport): boolean {
-  return (
-    (raw.artifactStatus === 'composing' || raw.artifactStatus === 'enriching') &&
-    raw.artifactStatus !== migrated.artifactStatus &&
-    migrated.artifactStatus === 'rendered' &&
-    Boolean(migrated.html)
-  );
+  return migrateDailyReport(raw);
 }
 
 // Daily reports are stored as opaque payloads, so editions written before a
@@ -216,10 +168,9 @@ function settledStaleArtifactStatus(raw: DailyReport, migrated: DailyReport): bo
 // calendar, progressive `status`, and the `needsReply`→`replyOwed` rename) come
 // back missing keys the rich report page now reads. This upgrades any stored
 // report to the current shape so old and new editions render — and list in
-// history — identically. Pure: callers that should self-heal the stored
-// nonterminal artifact status use migrateDailyReportForRead above.
+// history — identically. Reading never changes the generation lifecycle.
 // Exported for unit tests only; production callers go through the getters.
-export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): DailyReport {
+export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()): DailyReport {
   const sections = (raw.sections ?? {}) as Partial<DailyReport['sections']>;
   const items = (value: unknown): DailyReportItem[] => (Array.isArray(value) ? value : []);
   const tasks = (Array.isArray(sections.tasks) ? sections.tasks : []) as DailyReportTaskItem[];
@@ -340,28 +291,12 @@ export function migrateDailyReport(raw: DailyReport, now: number = Date.now()): 
     migrated.artifactSource = migrated.artifactSource ?? 'deterministic';
   }
 
-  // Settle-on-read: a non-terminal artifact status from a generation that died
-  // mid-flight (deploy/SIGTERM) settles to 'rendered' once it is clearly stale,
-  // so consumers stop polling a run that will never finish. The html shown is
-  // whatever the last completed phase persisted.
-  if (
-    (migrated.artifactStatus === 'composing' || migrated.artifactStatus === 'enriching') &&
-    migrated.html &&
-    now - (migrated.generatedAt || 0) > STUCK_ARTIFACT_MS
-  ) {
-    migrated.artifactStatus = 'rendered';
-  }
-
   return migrated;
 }
 
 function migrateBriefDocument(value: unknown) {
   if (!value || typeof value !== 'object') return undefined;
-  try {
-    return parseBriefDocument(value);
-  } catch {
-    return undefined;
-  }
+  return parseBriefDocument(value);
 }
 
 function sanitizeArtifactErrors(value: unknown): DailyReportArtifactError[] {

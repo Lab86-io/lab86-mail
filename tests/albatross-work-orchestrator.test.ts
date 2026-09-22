@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { advanceWork, setWorkOrchestratorDependenciesForTest } from '../lib/albatross/work-orchestrator';
+import * as briefJobs from '../lib/mail/brief-jobs';
 
 const input = {
   userId: 'user_1',
@@ -9,7 +10,7 @@ const input = {
   timezone: 'America/New_York',
 };
 
-function harness(workbench: any, options: { applications?: any[]; applyResult?: any } = {}) {
+function harness(workbench: any, options: { applications?: any[]; applyResult?: any; queue?: boolean } = {}) {
   const mutations: any[] = [];
   let queryIndex = 0;
   let areaBriefs = 0;
@@ -32,10 +33,14 @@ function harness(workbench: any, options: { applications?: any[]; applyResult?: 
         taskIdsByStepKey: { step_1: 'card_1' },
       }) as any,
     newOperationBatchId: () => 'batch_1',
-    generateAreaLivingBrief: (async () => {
-      areaBriefs += 1;
-      return {} as any;
-    }) as any,
+    ...(options.queue
+      ? {}
+      : {
+          generateAreaLivingBrief: (async () => {
+            areaBriefs += 1;
+            return {} as any;
+          }) as any,
+        }),
   });
   return { mutations, restore, areaBriefs: () => areaBriefs };
 }
@@ -281,4 +286,33 @@ describe('the conductor quiet rule inside advanceWork', () => {
       state.restore();
     }
   });
+});
+
+test('applying Work durably queues its area brief before returning', async () => {
+  const enqueue = spyOn(briefJobs, 'enqueueBriefJob').mockResolvedValue({ jobId: 'area-job', started: true });
+  const state = harness(
+    {
+      intent: { _id: 'work_1', title: 'Ship', questions: [], primaryAreaId: 'area_1' },
+      plan: {
+        _id: 'plan_1',
+        status: 'ready',
+        outcome: 'Released',
+        digitalActions: [{ actionKey: 'step_1', kind: 'task', title: 'Deploy' }],
+        sourceRefs: [],
+      },
+    },
+    { queue: true },
+  );
+  try {
+    expect((await advanceWork(input)).status).toBe('applied');
+    expect(enqueue.mock.calls[0][0]).toEqual({
+      userId: input.userId,
+      kind: 'area',
+      areaId: 'area_1',
+      force: false,
+    });
+  } finally {
+    state.restore();
+    enqueue.mockRestore();
+  }
 });

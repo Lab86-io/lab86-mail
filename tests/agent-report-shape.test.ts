@@ -1,21 +1,16 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
+import * as gateway from '../lib/ai/gateway';
+import { withToolContext } from './tools/harness';
 import './tools/harness';
-import { withArtifactError } from '../lib/mail/agent-report';
+import { generateAgentReport, withArtifactError } from '../lib/mail/agent-report';
 import { BRIEF_PROSE_SYSTEM_PROMPT } from '../lib/mail/brief-prose';
 import { MAX_ARTIFACT_ERRORS } from '../lib/shared/types';
 
 describe('brief pipeline hang/wedge guards', () => {
   const src = readFileSync(path.join(import.meta.dir, '..', 'lib', 'mail', 'agent-report.ts'), 'utf8');
-
-  test('every unbounded await in the composition path carries a deadline', () => {
-    // Context gathering (messages, area pulses, weather) and the one prose
-    // call. A hang must become a caught error that settles the edition.
-    expect((src.match(/withDeadline\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect(src).toContain("from '../shared/deadline'");
-    expect(src).not.toMatch(/const \{ text \} = await generateTextForCurrentUser\(/);
-  });
 
   test('the pipeline re-resolves the user timezone from calendars', () => {
     expect(src).toContain('resolveBriefTimezone');
@@ -50,4 +45,22 @@ describe('withArtifactError', () => {
     expect(report.artifactErrors).toHaveLength(MAX_ARTIFACT_ERRORS);
     expect(report.artifactErrors[MAX_ARTIFACT_ERRORS - 1].message).toBe(`e${MAX_ARTIFACT_ERRORS + 2}`);
   });
+});
+
+test('a structured provider error is recorded without leaving the edition composing', async () => {
+  const runtime = spyOn(gateway, 'resolveAiRuntime').mockRejectedValue(
+    new z.ZodError([{ code: 'custom', path: ['layout'], message: 'Invalid layout' }]),
+  );
+  try {
+    const result = await withToolContext(
+      () => generateAgentReport({ kind: 'manual', reportId: 'schema-error-brief' }),
+      { userId: 'schema-error-owner' },
+    );
+    expect(result.artifactStatus).toBe('ready');
+    expect(result.artifactErrors?.some((error) => error.message.includes('schema validation failed'))).toBe(
+      true,
+    );
+  } finally {
+    runtime.mockRestore();
+  }
 });

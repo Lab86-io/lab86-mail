@@ -10,7 +10,6 @@ import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 180;
 const atSchema = z.coerce.number().int().min(0).max(8_640_000_000_000_000);
 const feedback = z
   .object({

@@ -87,7 +87,7 @@ describe('Today workspace composition and trust boundary', () => {
     expect(response.status).toBe(200);
   });
 
-  test('a failed renewal retains the last successful composition for the same source revision', async () => {
+  test('a failed renewal returns source evidence instead of substituting an old composition', async () => {
     const deps = harness();
     const first = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
     const clock = Date.now;
@@ -95,7 +95,9 @@ describe('Today workspace composition and trust boundary', () => {
       const later = clock() + 31 * 60_000;
       Date.now = () => later;
       deps.generate.mockRejectedValueOnce(new Error('Provider unavailable'));
-      expect(await loadNarrativeWorkspace('owner', now, true, undefined, deps)).toEqual(first);
+      const renewed = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
+      expect(renewed.mode).toBe('evidence');
+      expect(renewed).not.toEqual(first);
     } finally {
       Date.now = clock;
     }
@@ -380,7 +382,7 @@ describe('Today workspace composition and trust boundary', () => {
     expect((await first).name).toBe('AbortError');
     release();
     expect((await second).mode).toBe('generated');
-    expect(providerSignal?.aborted).toBe(false);
+    expect(providerSignal).toBeUndefined();
     expect(deps.generate).toHaveBeenCalledTimes(1);
   });
 });

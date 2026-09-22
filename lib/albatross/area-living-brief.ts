@@ -8,13 +8,11 @@ import { briefSourceCoverage } from '../mail/brief-source-refresh';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { narrativePrompt, prepareBriefContext } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
-import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
 // The area pulse (2026-09-03). One small model call writes four fields; the
 // document and the HTML fallback are rendered from them deterministically.
-const AREA_PULSE_DEADLINE_MS = 120_000;
 export const AREA_PULSE_MAX_SENTENCES = 3;
 export const AREA_PULSE_FIELD_MAX_WORDS = 28;
 
@@ -24,7 +22,6 @@ interface AreaLivingBriefDependencies {
   generateTextForCurrentUser: typeof generateTextForCurrentUser;
   narrativePrompt: typeof narrativePrompt;
   prepareBriefContext: typeof prepareBriefContext;
-  withDeadline: typeof withDeadline;
 }
 
 const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
@@ -33,7 +30,6 @@ const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
   generateTextForCurrentUser,
   narrativePrompt,
   prepareBriefContext,
-  withDeadline,
 };
 
 let areaLivingBriefDependencies = defaultAreaLivingBriefDependencies;
@@ -552,35 +548,19 @@ export async function writeAreaPulse(
   input: { userId: string; userEmail?: string | null; userName?: string | null },
 ): Promise<AreaPulse> {
   const fallback = fallbackAreaPulse(context);
-  const startedAt = Date.now();
   try {
     const memory = await areaLivingBriefDependencies
-      .withDeadline(
-        areaLivingBriefDependencies.narrativePrompt(
-          input.userId,
-          '',
-          `area:${context.area?.id || context.area?.areaId || ''}`,
-        ),
-        Math.min(8000, AREA_PULSE_DEADLINE_MS),
-        'Area pulse context',
-      )
+      .narrativePrompt(input.userId, '', `area:${context.area?.id || context.area?.areaId || ''}`)
       .catch(() => '');
-    const remainingMs = AREA_PULSE_DEADLINE_MS - (Date.now() - startedAt);
-    if (remainingMs <= 0) return fallback;
-    const { text } = await areaLivingBriefDependencies.withDeadline(
-      areaLivingBriefDependencies.generateTextForCurrentUser({
-        feature: 'albatross_area_pulse',
-        speed: 'fast',
-        userId: input.userId,
-        userEmail: input.userEmail,
-        userName: input.userName,
-        system: AREA_PULSE_SYSTEM_PROMPT,
-        prompt: `${JSON.stringify(context, null, 2)}\n${memory}`,
-        abortSignal: AbortSignal.timeout(remainingMs),
-      }),
-      remainingMs,
-      'Area pulse composition',
-    );
+    const { text } = await areaLivingBriefDependencies.generateTextForCurrentUser({
+      feature: 'albatross_area_pulse',
+      speed: 'fast',
+      userId: input.userId,
+      userEmail: input.userEmail,
+      userName: input.userName,
+      system: AREA_PULSE_SYSTEM_PROMPT,
+      prompt: `${JSON.stringify(context, null, 2)}\n${memory}`,
+    });
     const parsed = parseAreaPulse(text, fallback);
     if (!parsed) return fallback;
     return { ...parsed, model: describeProvider().fast || describeProvider().primary || 'fast' };
@@ -844,6 +824,7 @@ export async function generateAreaLivingBrief(input: {
   const areaName = String(home.area?.name || 'Area');
   const previous = fallbackAreaPulse(context);
   await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+    briefJob: getAiRequestContext().briefJob,
     userId: input.userId,
     areaId: input.areaId,
     status: 'generating',
@@ -862,6 +843,7 @@ export async function generateAreaLivingBrief(input: {
     const artifactHtml = renderAreaPulseHtml(areaName, pulse);
     const lede = pulse.lastChange || pulse.nextMove || pulse.prose;
     await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+      briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
       status: 'ready',
@@ -874,6 +856,7 @@ export async function generateAreaLivingBrief(input: {
       basedOnRevision: revision,
     });
     await areaLivingBriefDependencies.convexMutation((api as any).albatrossAreaPulse.saveAreaPulse, {
+      briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
       pulse,
@@ -891,6 +874,7 @@ export async function generateAreaLivingBrief(input: {
   } catch (error) {
     await areaLivingBriefDependencies
       .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+        briefJob: getAiRequestContext().briefJob,
         userId: input.userId,
         areaId: input.areaId,
         status: 'error',

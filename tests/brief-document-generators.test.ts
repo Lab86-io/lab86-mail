@@ -409,27 +409,19 @@ describe('Brief Document v2 generators', () => {
     }
   });
 
-  test('area pulse context has its own bound inside the total deadline', async () => {
-    const bounds: Array<{ ms: number; label: string }> = [];
+  test('area pulse waits for context and sends no model deadline', async () => {
     let prompt = '';
     const restore = setAreaLivingBriefDependenciesForTest({
-      narrativePrompt: async () => new Promise(() => {}),
-      withDeadline: async (promise, ms, label) => {
-        bounds.push({ ms, label });
-        if (label === 'Area pulse context') throw new Error('synthetic context timeout');
-        return promise;
-      },
+      narrativePrompt: async () => 'Latest Granola decision',
       generateTextForCurrentUser: (async (options: any) => {
+        expect(options.abortSignal).toBeUndefined();
         prompt = options.prompt;
         return { text: '{}' };
       }) as any,
     });
     try {
       await writeAreaPulse({ area: { areaId: 'a', name: 'Studio' } }, { userId: 'user-1' });
-      expect(bounds[0]).toEqual({ ms: 8000, label: 'Area pulse context' });
-      expect(bounds[1].ms).toBeLessThanOrEqual(120000);
-      expect(bounds[1].label).toBe('Area pulse composition');
-      expect(prompt).toContain('Studio');
+      expect(prompt).toContain('Latest Granola decision');
     } finally {
       restore();
     }

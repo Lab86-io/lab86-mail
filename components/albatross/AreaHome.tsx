@@ -674,6 +674,8 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // the sandbox, theme/action bridge, and small floating host controls. The
   // structured renderer below is retained solely as an explicit recovery view.
   if (
+    !artifactRefreshing &&
+    home.livingBrief?.status !== 'generating' &&
     home.livingBrief?.document &&
     home.livingBrief.artifactSource === 'document-v2' &&
     !showStructuredFallback
@@ -683,12 +685,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
         home={home}
         brief={
           <div className="relative h-full min-h-0 overflow-hidden bg-[var(--color-bg)] pt-14">
-            <BriefCanvas
-              value={home.livingBrief.document}
-              surface="area"
-              hideInactive
-              composing={home.livingBrief.status === 'generating' || artifactRefreshing}
-            />
+            <BriefCanvas value={home.livingBrief.document} surface="area" hideInactive />
             <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 p-3">
               <div className="pointer-events-auto flex min-w-0 items-center gap-1 rounded-ui border border-[var(--color-border)]/80 bg-[var(--color-surface-float)]/95 p-1 pr-2 shadow-[var(--shadow-soft)] backdrop-blur-md">
                 <button
@@ -718,7 +715,6 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 <button
                   type="button"
                   onClick={() => void refreshArtifact()}
-                  disabled={artifactRefreshing || home.livingBrief.status === 'generating'}
                   className="inline-flex items-center gap-1 rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                 >
                   <RefreshCw
@@ -741,7 +737,12 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     );
   }
 
-  if (home.livingBrief?.artifactHtml && !showStructuredFallback) {
+  if (
+    !artifactRefreshing &&
+    home.livingBrief?.status !== 'generating' &&
+    home.livingBrief?.artifactHtml &&
+    !showStructuredFallback
+  ) {
     return (
       <AreaWorkbench
         home={home}

@@ -264,6 +264,7 @@ const ACCOUNT_BULK_TABLES = [
 ] as const;
 
 const USER_BULK_TABLES = [
+  'briefJobs',
   ...ACCOUNT_BULK_TABLES,
   'areaFacts',
   'areaReindexRuns',
@@ -425,6 +426,15 @@ export const deleteUserCascade = mutation({
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
+    // Revoke active writer ownership before deleting any of its output. Historical
+    // jobs drain in the bulk purge; a live worker cannot recreate deleted data.
+    const jobs = await ctx.db
+      .query('briefJobs')
+      .withIndex('by_user_active', (q) => q.eq('userId', args.userId).eq('active', true))
+      .collect();
+    for (const job of jobs)
+      await ctx.db.patch(job._id, { active: false, state: 'completed', token: undefined });
+
     const counts: Record<string, number> = {};
     // Small tables sweep inline. Bulk tables ('threads', 'messages',
     // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',

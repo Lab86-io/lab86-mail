@@ -165,8 +165,7 @@ export function localHour(timezone: string, at: Date): number | null {
 // Hourly tick: file a morning Daily Brief for each user whose local clock has
 // reached the target hour. Generation itself runs in the Next.js app
 // (AI + Nylas live there), reached over an internal-secret-protected route. The
-// route waits until the edition is written so a scheduled morning brief cannot
-// stop at the interim structured layout.
+// route acknowledges a persisted job; background workers finish independently.
 export const tick = internalAction({
   args: { afterUserId: v.optional(v.string()), at: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -213,13 +212,12 @@ export const tick = internalAction({
       fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
         label: 'daily-report cron',
         concurrency: 2,
-        timeoutMs: 570_000,
       }),
       fanOutInternalPost(
         `${appUrl}/api/cron/area-briefs`,
         secret,
         due.map((target) => ({ userId: target.userId })),
-        { label: 'area-briefs cron', concurrency: 2, timeoutMs: 570_000 },
+        { label: 'area-briefs cron', concurrency: 2 },
       ),
     ]);
     if (nextUserId)
@@ -256,7 +254,7 @@ export const areaRefreshTick = internalAction({
       `${appUrl}/api/cron/area-briefs`,
       secret,
       targets.map((target) => ({ userId: target.userId, force: false })),
-      { label: 'area-refresh cron', concurrency: 2, timeoutMs: 570_000 },
+      { label: 'area-refresh cron', concurrency: 2 },
     );
     if (nextUserId)
       await ctx.scheduler.runAfter(0, internal.dailyReports.areaRefreshTick, { afterUserId: nextUserId });

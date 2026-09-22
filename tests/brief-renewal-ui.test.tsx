@@ -6,9 +6,9 @@ import { DailyReport } from '../components/report/DailyReport';
 import * as client from '../lib/api-client';
 import { editorialFixture } from './fixtures/editorial';
 
-test('a saved editorial page stays visible during renewal and a failed replacement releases the refresh control', async () => {
+test('renewal immediately shows generation and displays the replacement when it settles', async () => {
   const { edition } = editorialFixture();
-  const report = {
+  let report = {
     ...edition,
     generatedAt: Date.now() - 60_000,
     artifactSource: 'document-v2',
@@ -55,10 +55,11 @@ test('a saved editorial page stays visible during renewal and a failed replaceme
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(refresh().props.disabled).toBe(true);
-    expect(JSON.stringify(view!.toJSON())).not.toContain('Composing your brief');
-    expect(JSON.stringify(view!.toJSON())).toContain('Saved editorial remains readable.');
+    expect(JSON.stringify(view!.toJSON())).toContain('Composing your brief');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('Saved editorial remains readable.');
     await act(async () => {
-      finish({ report: { ...report, generatedAt: Date.now(), editorial: { mode: 'fallback' } } });
+      report = { ...report, generatedAt: Date.now() };
+      finish({ report });
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
     expect(refresh().props.disabled).toBe(false);

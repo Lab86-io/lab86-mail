@@ -1600,6 +1600,29 @@ export default defineSchema({
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_expires', ['expiresAt']),
 
+  briefJobs: defineTable({
+    userId: v.string(),
+    scope: v.string(),
+    kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    areaId: v.optional(v.id('areas')),
+    timezone: v.optional(v.string()),
+    force: v.optional(v.boolean()),
+    reportId: v.optional(v.string()),
+    state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed')),
+    active: v.boolean(),
+    availableAt: v.number(),
+    createdAt: v.number(),
+    attempts: v.number(),
+    token: v.optional(v.string()),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_active', ['userId', 'active'])
+    .index('by_user_scope_active', ['userId', 'scope', 'active'])
+    .index('by_active_available', ['active', 'availableAt']),
+
   dailyReports: defineTable({
     userId: v.string(),
     accountIds: v.array(v.string()),

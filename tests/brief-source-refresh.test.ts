@@ -28,7 +28,6 @@ function harness(overrides: Record<string, any> = {}) {
     cloud: async (_user: string, id: string) =>
       [await run(`files:${id}`)].map((row) => ({ ...row, pending: false })),
     now: () => 1000,
-    timeoutMs: 20,
     ...overrides,
   };
   return { refresh: createBriefSourceRefresher(deps as any), calls, deps };
@@ -75,7 +74,7 @@ describe('brief source preflight', () => {
     expect(briefSourceCoverage([])).toContain('missing records do not establish');
   });
 
-  test('overlapping editions share actual provider work after a waiter times out, then retry failed work', async () => {
+  test('overlapping editions await the same source work without a deadline, then retry failed work', async () => {
     let complete!: (value: { ok: boolean }) => void;
     let attempts = 0;
     const { refresh } = harness({
@@ -85,17 +84,14 @@ describe('brief source preflight', () => {
           complete = resolve;
         });
       },
-      timeoutMs: 5,
     });
-    const [first, second] = await Promise.all([
-      refresh('owner', ['mcp:granola']),
-      refresh('owner', ['mcp:granola']),
-    ]);
-    expect(first[0].status).toBe('unavailable');
-    expect(second).toEqual(first);
-    await refresh('owner', ['mcp:granola']);
+    const first = refresh('owner', ['mcp:granola']);
+    const second = refresh('owner', ['mcp:granola']);
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(attempts).toBe(1);
     complete({ ok: false });
+    expect((await first)[0].status).toBe('unavailable');
+    expect(await second).toEqual(await first);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const retry = refresh('owner', ['mcp:granola']);
     await new Promise((resolve) => setTimeout(resolve, 0));

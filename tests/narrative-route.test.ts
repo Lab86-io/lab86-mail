@@ -25,7 +25,10 @@ function setup(overrides: Record<string, unknown> = {}) {
       writes.push(args);
       return { ok: true };
     }) as any,
-    after: ((callback: unknown) => queued.push(callback)) as any,
+    refresh: (async (...args: unknown[]) => {
+      queued.push(args);
+      return { status: 'queued' };
+    }) as any,
     ...overrides,
   });
   return { ...routes, writes, reads, queued };
@@ -61,7 +64,6 @@ describe('narrative API boundary', () => {
       },
     });
     expect((await state.POST(req(configure))).status).toBe(200);
-    await state.queued[0]();
     expect(calls).toEqual([['owner', 'manual']]);
   });
   test('enabled reads have a separate quota and background failures are contained', async () => {
@@ -88,8 +90,7 @@ describe('narrative API boundary', () => {
           throw new Error('synthetic finish failure');
         },
       });
-      await failing.POST(req(body));
-      await expect(failing.queued[0]()).resolves.toBeUndefined();
+      expect((await failing.POST(req(body))).status).toBe(500);
     }
   });
   test('requires authentication and rejects nonpilot writes without touching data', async () => {
@@ -128,8 +129,6 @@ describe('narrative API boundary', () => {
       },
     });
     expect((await state.POST(req({ action: 'refresh' }))).status).toBe(202);
-    expect(state.queued).toHaveLength(1);
-    await state.queued[0]();
     expect(calls).toEqual([['owner', 'manual']]);
     expect(
       (

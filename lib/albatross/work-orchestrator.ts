@@ -2,7 +2,7 @@ import { newOperationBatchId } from '../ai/operations';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { albatrossApplyIntentPlan } from '../tools/albatross';
 import { invokeTool } from '../tools/registry';
-import { generateAreaLivingBrief } from './area-living-brief';
+import type { generateAreaLivingBrief } from './area-living-brief';
 import { type AdvanceTrigger, conductorVerdict } from './conductor-quiet';
 import { generateIntentPlan } from './intent-plan';
 import { appliedStepsFromApplyResult } from './work-model';
@@ -14,7 +14,7 @@ interface WorkOrchestratorDependencies {
   generateIntentPlan: typeof generateIntentPlan;
   invokeTool: typeof invokeTool;
   newOperationBatchId: typeof newOperationBatchId;
-  generateAreaLivingBrief: typeof generateAreaLivingBrief;
+  generateAreaLivingBrief: (input: Parameters<typeof generateAreaLivingBrief>[0]) => Promise<unknown>;
 }
 
 const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
@@ -23,7 +23,10 @@ const defaultWorkOrchestratorDependencies: WorkOrchestratorDependencies = {
   generateIntentPlan,
   invokeTool,
   newOperationBatchId,
-  generateAreaLivingBrief,
+  generateAreaLivingBrief: async ({ userId, areaId }) => {
+    const { enqueueBriefJob } = await import('../mail/brief-jobs');
+    return enqueueBriefJob({ userId, kind: 'area', areaId, force: false });
+  },
 };
 
 let workOrchestratorDependencies = defaultWorkOrchestratorDependencies;
@@ -195,7 +198,7 @@ export async function advanceWork(input: AdvanceWorkInput) {
     });
     const areaId = work.primaryAreaId ? String(work.primaryAreaId) : work.areaId;
     if (areaId) {
-      void workOrchestratorDependencies
+      await workOrchestratorDependencies
         .generateAreaLivingBrief({
           userId: input.userId,
           userEmail: input.userEmail,

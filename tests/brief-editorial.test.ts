@@ -179,6 +179,16 @@ test('the writer receives the actual module catalogue and can design a different
   const result = await writeDailyEditorial(edition, letter, {
     generate: (async (options: any) => {
       expect(options.feature).toBe('daily_brief_layout');
+      expect(options.abortSignal).toBeUndefined();
+      const stops = Array.isArray(options.stopWhen) ? options.stopWhen : [options.stopWhen];
+      for (const stop of stops) expect(await stop({ steps: Array(100).fill({}) })).toBe(false);
+      for (let i = 0; i < 60; i++) {
+        const result = await options.tools.read_sources.execute(
+          { ids: [modules[0].id] },
+          { toolCallId: String(i), messages: [] },
+        );
+        expect(result.ok).toBe(true);
+      }
       expect(options.prompt).toContain('Maya');
       expect(options.prompt).toContain('"timeline"');
       expect(options.prompt).toContain('"checklist"');

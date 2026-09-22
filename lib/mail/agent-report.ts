@@ -6,7 +6,6 @@ import { prepareBriefContext } from '../narrative/service';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
-import { withDeadline } from '../shared/deadline';
 import {
   type DailyReport,
   type DailyReportArtifactError,
@@ -35,10 +34,7 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 // source document is also the complete fallback when design is unavailable.
 // Deterministic HTML stays beside the v2 document for older clients.
 
-// Deadlines for the pipeline's unbounded awaits. A hang becomes a caught error
-// that settles the edition instead of wedging it at 'composing'.
-const CONTEXT_DEADLINE_MS = 45_000;
-const PROSE_DEADLINE_MS = 120_000;
+// Limit selected input, leaving the writers time and output to finish.
 const MAX_MSGS_PER_ITEM = 2;
 const MAX_BODY_CHARS = 3000;
 // The look back never reaches further than this when no previous edition
@@ -433,39 +429,31 @@ export async function composeBudgetBrief(
     ]);
     return { items, pulses, weather, since };
   };
-  const { items, pulses, weather, since } = await withDeadline(
-    gather(),
-    CONTEXT_DEADLINE_MS,
-    'Brief context gathering',
-  );
+  const { items, pulses, weather, since } = await gather();
 
   const areas = budgetAreaLines(report.sections.albatross, pulses);
-  const prose = await withDeadline(
-    writeBriefProse(
-      {
-        firstName: contextFirstName() || null,
-        kind: report.kind,
-        now,
-        timezone,
-        items,
-        calendar: report.sections.calendar ?? [],
-        tasks: (report.sections.tasks ?? [])
-          .filter((task) => !task.completedAt && typeof task.dueAt === 'number')
-          .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
-        areas: areas.map((area) => ({ name: area.name, line: area.line })),
-        tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
-        reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
-        weather,
-        since: {
-          previousGeneratedAt: deps.previous?.generatedAt ?? null,
-          completed: since.completions.map((row) => row.title).filter(Boolean),
-          agentActions: since.agentActions.map((row) => row.summary).filter(Boolean),
-        },
+  const prose = await writeBriefProse(
+    {
+      firstName: contextFirstName() || null,
+      kind: report.kind,
+      now,
+      timezone,
+      items,
+      calendar: report.sections.calendar ?? [],
+      tasks: (report.sections.tasks ?? [])
+        .filter((task) => !task.completedAt && typeof task.dueAt === 'number')
+        .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
+      areas: areas.map((area) => ({ name: area.name, line: area.line })),
+      tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
+      reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
+      weather,
+      since: {
+        previousGeneratedAt: deps.previous?.generatedAt ?? null,
+        completed: since.completions.map((row) => row.title).filter(Boolean),
+        agentActions: since.agentActions.map((row) => row.summary).filter(Boolean),
       },
-      { generate: deps.generate, userId },
-    ),
-    PROSE_DEADLINE_MS,
-    'Brief prose generation',
+    },
+    { generate: deps.generate, userId },
   );
 
   const document = composeBudgetBriefDocument({ report, prose, areas, timezone });

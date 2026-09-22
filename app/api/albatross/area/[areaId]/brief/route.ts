@@ -1,11 +1,11 @@
 import type { NextRequest } from 'next/server';
-import { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
+import type { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
 import { AuthRequiredError, type CurrentUser, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { enqueueBriefJob, waitForBriefJob } from '@/lib/mail/brief-jobs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 360;
 
 class AreaBriefNotFoundError extends Error {}
 
@@ -75,7 +75,12 @@ export const POST = createAreaBriefPost({
       userId,
       areaId,
     }),
-  generate: generateAreaLivingBrief,
+  generate: async ({ userId, areaId, force }) => {
+    const job = await enqueueBriefJob({ userId, kind: 'area', areaId, force });
+    await waitForBriefJob(userId, job.jobId);
+    const home = await convexQuery<any>((api as any).albatross.areaHome, { userId, areaId });
+    return home.livingBrief;
+  },
   warn: console.warn,
   error: console.error,
 });

@@ -52,7 +52,14 @@ export async function kvUpsert<T = any>(kind: string, key: string, doc: T, ref?:
     memoryUpsert(userId, kind, key, doc, ref);
     return doc;
   }
-  await convexMutation(userDataApi.upsertDoc, { userId, kind, key, ref, doc });
+  await convexMutation(userDataApi.upsertDoc, {
+    userId,
+    kind,
+    key,
+    ref,
+    doc,
+    ...(kind === 'dailyReport' ? { briefJob: getAiRequestContext().briefJob } : {}),
+  });
   return doc;
 }
 
