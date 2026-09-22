@@ -17,7 +17,24 @@ test('provider logos inherit the theme foreground while retaining explicit brand
   expect(mono).toContain('fill="currentColor"');
   const brand = renderToStaticMarkup(<ProviderGlyph provider="google" />);
   expect(brand).toContain('fill="currentColor"');
-  expect(brand).toContain('fill="url(#google-lobe-icons-gemini-0-_R_0_)"');
+  expect(brand).toMatch(/fill="url\(#[^"]+-google-0\)"/);
+});
+
+test('each provider logo resolves gradients within its own SVG instance', () => {
+  const html = renderToStaticMarkup(
+    <>
+      <ProviderGlyph provider="google" />
+      <ProviderGlyph provider="google" />
+      <ProviderGlyph provider="qwen" />
+      <ProviderGlyph provider="qwen" />
+    </>,
+  );
+  const ids = [...html.matchAll(/id="([^"]+)"/g)].map((match) => match[1]);
+  expect(ids).toHaveLength(8);
+  expect(new Set(ids).size).toBe(ids.length);
+  for (const [svg] of html.matchAll(/<svg\b[\s\S]*?<\/svg>/g)) {
+    for (const [, id] of svg.matchAll(/fill="url\(#([^)]+)\)"/g)) expect(svg).toContain(`id="${id}"`);
+  }
 });
 afterEach(async () => {
   if (view) await act(async () => view.unmount());

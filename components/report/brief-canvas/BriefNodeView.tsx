@@ -1321,6 +1321,6 @@ function formatBriefTime(value: number, timezone?: string) {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
-    timeZone: timezone || 'UTC',
+    timeZone: timezone || undefined,
   }).format(new Date(value));
 }

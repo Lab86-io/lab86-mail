@@ -236,6 +236,8 @@ export async function syncCloudContent(userId: string, deps = defaults, connecti
       if (remaining.length) next = { generation: cursor?.generation, pending: remaining, next };
       else if (cursor?.generation && !next.generation)
         next = { phase: 'reconcile', generation: cursor.generation, resume: next };
+      const pending =
+        next.phase === 'backfill' || next.phase === 'reconcile' || Boolean(next.pending || next.generation);
       await deps.convexMutation(ref.finishSync, {
         userId,
         connectionId: connection.connectionId,
@@ -243,16 +245,9 @@ export async function syncCloudContent(userId: string, deps = defaults, connecti
         cursor: next,
         indexed,
         skipped,
-        status:
-          next.phase === 'backfill' || next.phase === 'reconcile' || next.pending || next.generation
-            ? 'indexing'
-            : 'ready',
+        status: pending ? 'indexing' : 'ready',
       });
-      return {
-        ok: true,
-        pending:
-          next.phase === 'backfill' || next.phase === 'reconcile' || Boolean(next.pending || next.generation),
-      };
+      return { ok: true, pending };
     } catch (error) {
       await deps.convexMutation(ref.finishSync, {
         userId,

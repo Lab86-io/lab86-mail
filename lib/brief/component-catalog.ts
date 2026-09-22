@@ -179,7 +179,12 @@ export function describeBriefComponent(name: BriefComponentName) {
 /** Check before parsing: Zod's compatibility stripping must not conceal unsafe props. */
 function inspectJson(value: unknown, depth = 0) {
   if (depth > 16) throw new Error('Component data is too deeply nested.');
-  if (typeof value === 'string' && /^\s*(javascript|data|vbscript):/i.test(value))
+  if (
+    typeof value === 'string' &&
+    /^\s*(?:(?:javascript|vbscript):|data:\s*(?:[^,\s;]+\/[^,\s;]+)?(?:;[^,\s]*)?,)/i.test(
+      value.replace(/[\t\n\r]/g, ''),
+    )
+  )
     throw new Error('Unsafe component URL.');
   if (typeof value === 'function') throw new Error('Callbacks are supplied by the host.');
   if (Array.isArray(value)) {

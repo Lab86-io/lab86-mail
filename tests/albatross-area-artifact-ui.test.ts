@@ -41,4 +41,16 @@ describe('generated Area screen host contract', () => {
     expect(mutation).not.toContain('args.artifactHtml.slice(');
     expect(maxOutputTokensForFeature('albatross_area_artifact')).toBeUndefined();
   });
+
+  test('opening a saved document edition does not launch another generation', () => {
+    const source = read('components/albatross/AreaHome.tsx');
+    const guard = source.slice(
+      source.indexOf('// Existing Area brief records'),
+      source.indexOf('if (requestedInitialArtifact.current)'),
+    );
+    expect(guard).toContain(
+      "loadedHome.livingBrief?.document && loadedHome.livingBrief.artifactSource === 'document-v2'",
+    );
+    expect(guard).toContain("loadedHome.livingBrief?.status === 'generating'");
+  });
 });

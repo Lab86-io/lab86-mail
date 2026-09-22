@@ -16,6 +16,13 @@ extension PreparedWorkClient: PreparedWorkTransport {}
 /// mounts only under the latest edition (`!selectedId`), and it stays hidden
 /// until there is something to say.
 enum PreparedWorkPolicy {
+    /// Relative web routes and unsupported schemes are readable source labels.
+    static func openableSourceURL(_ url: URL?) -> URL? {
+        guard let url, url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
     /// The web mounts `<PreparedWork />` only while the latest edition is on
     /// screen. History editions never carry live preparations.
     static func mounts(hasArtifact: Bool, showsLatest: Bool) -> Bool {

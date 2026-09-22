@@ -24,7 +24,6 @@ struct PreparedWorkSection: View {
                         do { try await Task.sleep(for: .seconds(30)) } catch { return }
                     }
                 }
-                .onDisappear { store.clear() }
         }
     }
 
@@ -311,7 +310,7 @@ struct PreparedWorkCard: View {
         let source = item.source(for: evidence)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if let source, let url = source.url {
+                if let source, let url = PreparedWorkPolicy.openableSourceURL(source.url) {
                     Button {
                         openURL(url)
                     } label: {

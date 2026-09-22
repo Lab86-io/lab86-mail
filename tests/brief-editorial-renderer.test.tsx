@@ -144,6 +144,37 @@ test('email and hydrated event times use the edition timezone consistently', () 
   }
 });
 
+test('an edition without a timezone uses the reader local zone', () => {
+  const original = Intl.DateTimeFormat;
+  const formatter = spyOn(Intl, 'DateTimeFormat').mockImplementation(
+    ((locale: any, options: any) =>
+      new original(locale, { ...options, timeZone: options?.timeZone || 'America/New_York' })) as any,
+  );
+  try {
+    const node = BriefNodeSchema.parse({
+      kind: 'email_preview',
+      title: 'Message',
+      sender: 'Maya',
+      snippet: 'Review',
+      sentAt: Date.parse('2026-09-22T13:00:00Z'),
+      ref: { kind: 'thread', id: 'message', account: 'owner' },
+      sourceRefs: [{ kind: 'thread', id: 'message', account: 'owner' }],
+    });
+    const context: BriefNodeContext = {
+      entities: new Map(),
+      hiddenRefs: new Set(),
+      completedRefs: new Map(),
+      onAction: () => {},
+      onCanvasAction: () => {},
+    };
+    const html = renderToStaticMarkup(<BriefNodeView node={node} context={context} />);
+    expect(html).toContain('Tue 9:00 AM');
+    expect(html).not.toContain('1:00 PM');
+  } finally {
+    formatter.mockRestore();
+  }
+});
+
 function render(liveSections: boolean, enabled = true, legacy = false) {
   const { edition, letter } = editorialFixture();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

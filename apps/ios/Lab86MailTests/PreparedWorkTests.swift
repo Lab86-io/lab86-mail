@@ -183,6 +183,15 @@ struct PreparedWorkTests {
 
     // MARK: - Latest only
 
+    @Test func onlyAbsoluteHTTPSSourcesAreOpenable() throws {
+        let absolute = try #require(URL(string: "https://example.test/source"))
+        #expect(PreparedWorkPolicy.openableSourceURL(absolute) == absolute)
+        #expect(PreparedWorkPolicy.openableSourceURL(nil) == nil)
+        for value in ["/?view=mail&thread=thread_9", "http://example.test/source", "file:///tmp/source", "data:text/plain,source", "https:relative"] {
+            #expect(PreparedWorkPolicy.openableSourceURL(URL(string: value)) == nil)
+        }
+    }
+
     @Test func theSectionMountsOnlyUnderTheLatestEdition() {
         // The web renders `<PreparedWork />` only while `!selectedId`.
         #expect(PreparedWorkPolicy.mounts(hasArtifact: true, showsLatest: true))
@@ -410,6 +419,19 @@ struct PreparedWorkTests {
         #expect(store.isVisible)
         store.clear()
         #expect(!store.isVisible)
+    }
+
+    @Test @MainActor func cancelledVisibilityReloadKeepsLoadedCards() async throws {
+        let items = try decodedItems()
+        let transport = ScriptedTransport(items: items)
+        let store = PreparedWorkStore()
+        await store.load(transport)
+        transport.items = []
+        let reload = Task { await store.load(transport) }
+        reload.cancel()
+        await reload.value
+        #expect(store.items.map(\.id) == items.map(\.id))
+        #expect(store.isVisible)
     }
 }
 

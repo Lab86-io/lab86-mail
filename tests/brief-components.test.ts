@@ -23,6 +23,28 @@ import { assessment, NOW, policy, thread } from './fixtures/jev';
 
 const toolOptions = { toolCallId: 'test', messages: [] };
 
+test('editorial data labels remain valid while executable and data URLs are refused', () => {
+  expect(
+    parseBriefComponent('editorial-text', {
+      id: 'analysis',
+      title: 'Data: revenue rose 4%',
+      text: 'Data: the change is supported.',
+    }),
+  ).toMatchObject({ title: 'Data: revenue rose 4%' });
+  for (const text of [
+    'javascript:alert(1)',
+    'vbscript:run()',
+    'data:text/html,<script>',
+    'data:,payload',
+    'data:;base64,cGF5bG9hZA==',
+    'data:te\nxt/html,<script>',
+  ]) {
+    expect(() => parseBriefComponent('editorial-text', { id: 'unsafe', text })).toThrow(
+      'Unsafe component URL',
+    );
+  }
+});
+
 test('gateway retries and provider failover each start a fresh editorial session', async () => {
   const { edition, letter, plan } = editorialFixture();
   const runtime = {

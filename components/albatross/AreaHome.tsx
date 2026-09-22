@@ -602,6 +602,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
     if (
       !loadedHome ||
       loadedHome.livingBrief?.artifactHtml ||
+      (loadedHome.livingBrief?.document && loadedHome.livingBrief.artifactSource === 'document-v2') ||
       loadedHome.livingBrief?.status === 'generating'
     )
       return;

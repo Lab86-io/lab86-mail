@@ -817,14 +817,23 @@ export function DailyReport({
   // edition still renders as "latest", so the live overlay stays on.
   const requestedReportId = useBriefEditionRequest((s) => s.reportId);
   const clearRequestedReportId = useBriefEditionRequest((s) => s.clear);
-  const latestHistoryId = history[0]?._id ?? null;
-  const historyPending = historyQuery.isPending;
+  const refetchHistory = historyQuery.refetch;
   useEffect(() => {
     if (!requestedReportId) return;
-    if (historyPending) return;
-    setSelectedId(requestedReportId === latestHistoryId ? null : requestedReportId);
-    clearRequestedReportId();
-  }, [clearRequestedReportId, historyPending, latestHistoryId, requestedReportId]);
+    let current = true;
+    // Notifications can name an edition newer than the cached history. Decide
+    // whether it is "latest" only after this request's history read finishes.
+    void refetchHistory().then(({ data, isError }) => {
+      if (!current || isError || !data) return;
+      const latest = requestedReportId === data.reports[0]?._id;
+      setSelectedId(latest ? null : requestedReportId);
+      if (latest) void queryClient.invalidateQueries({ queryKey: ['daily-report', 'latest'] });
+      clearRequestedReportId();
+    });
+    return () => {
+      current = false;
+    };
+  }, [clearRequestedReportId, queryClient, refetchHistory, requestedReportId]);
 
   const reportQuery = useQuery({
     queryKey: ['daily-report', selectedId ?? 'latest'],

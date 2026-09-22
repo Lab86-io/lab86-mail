@@ -318,6 +318,21 @@ test('worker retries failed layouts and provider failures without announcing com
   }
 });
 
+test('a runtime availability failure remains recoverable instead of completing a fallback edition', async () => {
+  const { deps, calls, edition } = worker();
+  deps.daily.mockResolvedValue({
+    ...edition,
+    editorial: { mode: 'fallback' },
+    artifactErrors: [{ stage: 'ai_availability' }],
+  } as any);
+  await runBriefJob('owner', 'job', deps as any);
+  expect(deps.notify).not.toHaveBeenCalled();
+  expect(calls.at(-1)).toMatchObject({
+    name: 'briefJobs:settle',
+    args: { error: 'The writer will retry automatically.' },
+  });
+});
+
 test('area and narrative workers complete, and duplicate deliveries do no model work', async () => {
   for (const kind of ['area', 'narrative']) {
     const { deps, calls } = worker(kind);
