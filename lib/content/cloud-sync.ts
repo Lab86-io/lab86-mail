@@ -7,6 +7,11 @@ import { boundedBytes, extractContent, MAX_DOWNLOAD_BYTES, supportedContent } fr
 const ref = (api as any).content;
 class SourceAccessError extends Error {}
 class SourceCursorError extends Error {}
+class SourceFileUnavailable extends Error {
+  constructor(readonly status: number) {
+    super('File is unavailable.');
+  }
+}
 export function contentVersion(input: unknown) {
   return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
@@ -62,12 +67,13 @@ export async function syncCloudContent(userId: string, deps = defaults) {
       }
       const access = await deps.getCloudFileAccess({ userId, connectionId: connection.connectionId });
       if (!access) throw new SourceAccessError('Reconnect to resume indexing.');
-      async function request(url: string) {
+      async function request(url: string, file = false) {
         const response = await deps.fetch(url, {
           headers: { Authorization: `Bearer ${access!.accessToken}` },
           signal: AbortSignal.timeout(15_000),
           cache: 'no-store',
         });
+        if (file && [403, 404].includes(response.status)) throw new SourceFileUnavailable(response.status);
         if ([401, 403].includes(response.status))
           throw new SourceAccessError('Reconnect or check access to this source.');
         if (response.status === 410) throw new SourceCursorError('Restarting expired change cursor.');
@@ -137,10 +143,10 @@ export async function syncCloudContent(userId: string, deps = defaults) {
       });
       for (const file of files) {
         if (!file.id || file.folder || file.mimeType === 'application/vnd.google-apps.folder') continue;
-        const deleted = Boolean(file.removed || file.deleted || file.trashed);
+        let deleted = Boolean(file.removed || file.deleted || file.trashed);
         const mime = file.mimeType || file.file?.mimeType || '';
         const title = file.name || '(removed file)';
-        const version = contentVersion([
+        let version = contentVersion([
           1,
           file.version || file.eTag || file.cTag || file.modifiedTime || file.lastModifiedDateTime,
           title,
@@ -173,7 +179,7 @@ export async function syncCloudContent(userId: string, deps = defaults) {
           } else
             url = `https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.id)}/content`;
           try {
-            const bytes = await boundedBytes(await request(url));
+            const bytes = await boundedBytes(await request(url, true));
             const parsed = await deps
               .extractContent(bytes, readMime, readName)
               .catch(() => ({ text: '', partial: true }));
@@ -181,9 +187,17 @@ export async function syncCloudContent(userId: string, deps = defaults) {
             partial = parsed.partial;
           } catch (error) {
             if (error instanceof SourceAccessError) throw error;
-            // Retry the same source page after transient errors; don't advance over unread files.
-            if (!(error instanceof Error && /size limit/.test(error.message))) throw error;
-            partial = true;
+            if (error instanceof SourceFileUnavailable) {
+              deleted = error.status === 404;
+              partial = !deleted;
+              // A file-level download restriction must not block the account's
+              // change feed or keep its previously cached body searchable.
+              version += `:unavailable-${error.status}`;
+            } else {
+              // Retry the same source page after transient failures.
+              if (!(error instanceof Error && /size limit/.test(error.message))) throw error;
+              partial = true;
+            }
             skipped++;
           }
         } else if (!deleted) {

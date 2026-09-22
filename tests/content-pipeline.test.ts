@@ -125,6 +125,20 @@ describe('connected content sync', () => {
       'google_drive:drive:doc',
     ]);
   });
+  test('file-level download denial or concurrent deletion does not stall the account feed', async () => {
+    for (const status of [403, 404]) {
+      const h = harness();
+      const fetcher = h.deps.fetch;
+      h.deps.fetch = async (url: string) =>
+        url.includes('/export') ? new Response('', { status }) : fetcher(url);
+      await syncCloudContent('owner', h.deps);
+      const saved = h.writes.find((w) => w.items).items[0];
+      expect(saved.deleted).toBe(status === 404);
+      expect(saved.partial).toBe(status === 403);
+      expect(saved.text).not.toContain('Approval is required.');
+      expect(h.writes.at(-1).status).toBe('indexing');
+    }
+  });
   test('Office extraction indexes content and leaves markup behind', async () => {
     const zip = new JSZip();
     zip.file(
