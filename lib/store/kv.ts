@@ -88,6 +88,31 @@ export async function kvDelete(kind: string, key: string): Promise<void> {
   await convexMutation(userDataApi.deleteDoc, { userId, kind, key });
 }
 
+/** Atomic optimistic write for edition inputs; concurrent tabs cannot overwrite unseen answers. */
+export async function kvCompareAndSwap<T extends { revision: string }>(
+  kind: string,
+  key: string,
+  expectedRevision: string | null,
+  doc: T,
+  ref?: string,
+): Promise<boolean> {
+  const userId = requireStoreUserId();
+  if (!isConvexConfigured()) {
+    const current = memoryGet(userId, kind, key);
+    if ((current?.revision ?? null) !== expectedRevision) return false;
+    memoryUpsert(userId, kind, key, doc, ref);
+    return true;
+  }
+  return convexMutation<boolean>(userDataApi.compareAndSwapDoc, {
+    userId,
+    kind,
+    key,
+    expectedRevision,
+    doc,
+    ref,
+  });
+}
+
 export async function kvDeleteMany(kind: string, ref?: string): Promise<void> {
   const userId = requireStoreUserId();
   if (!isConvexConfigured()) {

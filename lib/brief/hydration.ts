@@ -21,6 +21,11 @@ export function collectBriefRefs(document: BriefDocumentV2): BriefSourceRefV2[] 
   };
   const visit = (node: BriefNode) => {
     switch (node.kind) {
+      case 'tool_ui':
+        node.sources.forEach((source) => {
+          add(source.ref);
+        });
+        break;
       case 'entity_list':
         node.items.forEach((item) => {
           add(item.ref);

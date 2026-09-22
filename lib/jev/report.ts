@@ -1,8 +1,10 @@
+import { composeEditorialDocument, defaultEditorialPlan, editorialModules } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { composeBudgetBriefDocument } from '../mail/brief-budget-document';
 import { assignBriefLane, budgetForTier, selectBriefItems } from '../mail/brief-score';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
+import type { BriefNode } from '../shared/brief-document';
 import { emailFromHeader } from '../shared/format';
 import type { DailyReport, DailyReportItem, Thread } from '../shared/types';
 import { briefAttention } from './brief';
@@ -103,13 +105,14 @@ export function projectBriefMail(
     today: project(report.sections.today),
     know: project(report.sections.know),
     overflow: project(report.sections.overflow),
+    waiting: project(report.sections.waiting),
     replyOwed: project(report.sections.replyOwed),
     followUpOwed: project(report.sections.followUpOwed),
     timeSensitive: project(report.sections.timeSensitive),
     tracked: project(report.sections.tracked),
   };
   const present = new Set(
-    [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow].map(
+    [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow, ...sections.waiting].map(
       (item) => `${item.account}:${item.threadId}`,
     ),
   );
@@ -161,7 +164,25 @@ export function projectBriefMail(
     });
   }
   if (!changed) return report;
-  const pool = [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow];
+  const candidates = [
+    ...sections.answer,
+    ...sections.today,
+    ...sections.know,
+    ...sections.overflow,
+    ...sections.waiting,
+  ].filter(
+    (item, index, all) =>
+      all.findIndex((other) => other.account === item.account && other.threadId === item.threadId) === index,
+  );
+  const waitingOnly = (item: DailyReportItem) =>
+    item.jev
+      ? hasObligation(item.jev, 'waiting') &&
+        !hasObligation(item.jev, 'reply') &&
+        !hasObligation(item.jev, 'action') &&
+        !item.jev.meaningfulChange
+      : sections.waiting.includes(item);
+  sections.waiting = candidates.filter(waitingOnly);
+  const pool = candidates.filter((item) => !waitingOnly(item));
   const selection = selectBriefItems(
     pool.map((item) => ({
       key: `${item.account}:${item.threadId}`,
@@ -182,7 +203,7 @@ export function projectBriefMail(
   for (const lane of ['answer', 'today', 'know', 'overflow'] as const)
     sections[lane] = selection[lane].map((entry) => ({ ...entry.item, budgetLane: entry.lane }));
   const selected = [...sections.answer, ...sections.today, ...sections.know];
-  const all = [...selected, ...sections.overflow];
+  const all = [...selected, ...sections.overflow, ...sections.waiting];
   sections.replyOwed = all.filter((item) => item.lane === 'reply_owed');
   sections.followUpOwed = all.filter((item) => item.lane === 'follow_up_owed');
   sections.timeSensitive = all.filter((item) => item.lane === 'time_sensitive');
@@ -193,7 +214,7 @@ export function projectBriefMail(
     ...report,
     sections,
     narrative: lede,
-    prose: { lede, weekAhead: report.prose?.weekAhead || '', model: 'local' },
+    prose: { ...report.prose, lede, weekAhead: report.prose?.weekAhead || '', model: 'local' },
     stats: {
       ...report.stats,
       selected: selected.length,
@@ -206,13 +227,49 @@ export function projectBriefMail(
   const lines = Object.fromEntries(
     selected.map((item) => [`${item.account}:${item.threadId}`, item.line || item.whyItMatters]),
   );
-  next.document = composeBudgetBriefDocument({
+  // Preserve the area pulse lines even when the writer placed them inside a
+  // group or chose compact rows. They are not recomputed by a mail refresh.
+  const areas: Array<{ areaId: string; name: string; line: string }> = [
+    ...(report.editorial?.plan.areas ?? []),
+  ];
+  const collectAreas = (node: BriefNode) => {
+    if (node.kind === 'entity_list') {
+      for (const item of node.items) {
+        if (item.ref.kind === 'area' && !areas.some((area) => area.areaId === item.ref.id))
+          areas.push({
+            areaId: item.ref.id,
+            name: item.ref.label || 'Area',
+            line: item.framing.reason || '',
+          });
+      }
+    }
+    if ('children' in node) node.children.forEach(collectAreas);
+  };
+  report.document?.regions.forEach((region) => {
+    collectAreas(region.tree);
+  });
+  const letter = composeBudgetBriefDocument({
     report: next,
     timezone: report.document?.timezone,
-    prose: { lede, weekAhead: next.prose!.weekAhead, lines },
+    prose: { ...next.prose!, lines },
+    areas,
   });
-  const areas = report.document?.regions.filter((region) => region.id === 'areas') || [];
-  next.document.regions.push(...areas);
+  next.document = letter;
+  if (report.editorial) {
+    const modules = editorialModules(next, letter);
+    try {
+      next.document = composeEditorialDocument(letter, modules, report.editorial.plan, false);
+    } catch {
+      const plan = defaultEditorialPlan(modules);
+      try {
+        next.document = composeEditorialDocument(letter, modules, plan);
+        next.editorial = { plan, mode: 'fallback' };
+      } catch {
+        next.document = letter;
+        delete next.editorial;
+      }
+    }
+  }
   next.composition = compositionFromReport(next);
   next.html = buildNativeDailyReportArtifact(next, next.composition);
   return next;

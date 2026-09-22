@@ -86,7 +86,7 @@ export function BriefLetter({
           if (region.id === 'lede') {
             return (
               <section key={region.id} data-brief-region={region.id} className="blur-in">
-                {kind === 'daily' ? (
+                {kind === 'daily' && context.liveSections ? (
                   <NarrativeBrief at={document.generatedAt} fallback={<LetterLede node={region.tree} />} />
                 ) : (
                   <LetterLede node={region.tree} />

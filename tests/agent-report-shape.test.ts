@@ -22,20 +22,20 @@ describe('brief pipeline hang/wedge guards', () => {
     expect(src).toMatch(/runWithAiRequestContext\(\{ \.\.\.context, userTimezone \}/);
   });
 
-  test('the budget pipeline has no month pass and no tool-loop composer', () => {
+  test('daily composition uses the editorial agent after bounded source gathering', () => {
     expect(src).not.toContain("scope: 'full'");
-    expect(src).not.toContain('place_region');
-    expect(src).not.toContain('stepCountIs');
+    expect(src).toContain('await writeDailyEditorial(');
+    expect(src).toContain('evidence: composed.editorialEvidence');
   });
 });
 
 describe('brief prose prompt', () => {
-  test('forbids the word AI, emoji, and caps; sets the sentence and word limits', () => {
-    expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('Never write the word "AI"');
+  test('preserves source terminology and gives compatibility summaries a larger budget', () => {
+    expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('Preserve relevant product names');
     expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('no emoji');
     expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('no ALL-CAPS words');
     expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('lede: at most 4 sentences');
-    expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('at most 20 words each');
+    expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('at most 60 words each');
     expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('weekAhead: at most 4 sentences');
     expect(BRIEF_PROSE_SYSTEM_PROMPT).toContain('Use the supplied weekday names and dates exactly');
   });

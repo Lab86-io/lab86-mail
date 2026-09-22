@@ -163,7 +163,7 @@ describe('Brief Document v2 generators', () => {
           calls += 1;
           prompt = options.prompt;
           expect(options.feature).toBe('daily_brief_prose');
-          expect(options.system).toContain('Never write the word "AI"');
+          expect(options.system).toContain('Preserve relevant product names');
           return {
             text: JSON.stringify({
               lede: 'Maya needs the delivery date before she can book the venue. The dentist is at 10. Ben can wait until Friday. Nothing else needs you.',
@@ -241,9 +241,9 @@ describe('Brief Document v2 generators', () => {
     const week = document.regions[4].tree as any;
     expect(week.kind).toBe('text');
     expect(week.role).toBe('body');
-    // Sentence with "AI" removed, exclamation mark softened, four-sentence cap.
+    // Preserve source terminology; soften exclamation marks and cap four sentences.
     expect(week.text).toBe(
-      'This Sunday is the launch review. Friday and Saturday are open. Nothing else is booked.',
+      'This Sunday is the launch review. Friday and Saturday are open. AI can help. Nothing else is booked.',
     );
 
     const areas = document.regions[5].tree as any;
@@ -327,7 +327,7 @@ describe('Brief Document v2 generators', () => {
       JSON.stringify({
         lastChange: 'Maya sent the venue list on Tuesday!',
         nextMove: '',
-        openQuestion: 'AI should decide?',
+        openQuestion: 'Should we include the AI service costs?',
         prose: 'One. Two. Three. Four.',
       }),
       fallback,
@@ -335,7 +335,7 @@ describe('Brief Document v2 generators', () => {
     expect(parsed).toEqual({
       lastChange: 'Maya sent the venue list on Tuesday.',
       nextMove: 'Next: Write the artifact.',
-      openQuestion: 'Which venue?',
+      openQuestion: 'Should we include the AI service costs?',
       prose: 'One. Two. Three.',
       weekAhead: '',
       sinceLastBrief: '',

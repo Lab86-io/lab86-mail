@@ -51,6 +51,7 @@ const FEATURE_MAX_TOKENS: Record<string, number> = {
   // The budget brief writes a lede, one line per item, and a week-ahead
   // paragraph in one JSON reply. The area pulse is four short fields.
   daily_brief_prose: 2500,
+  daily_brief_layout: 12000,
   albatross_area_pulse: 900,
   albatross_area_artifact: 32000,
   albatross_plan: 8000,
@@ -88,7 +89,12 @@ const DEFAULT_AGENT_FALLBACKS = [
 // Features that get retry + cross-provider failover. The interactive agent AND
 // the Daily Brief artifact both need it — a single provider blip on the brief
 // was silently degrading it to the plain native renderer.
-const FAILOVER_FEATURES = new Set(['agent', 'daily_report_artifact', 'albatross_area_artifact']);
+const FAILOVER_FEATURES = new Set([
+  'agent',
+  'daily_report_artifact',
+  'daily_brief_layout',
+  'albatross_area_artifact',
+]);
 
 function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;

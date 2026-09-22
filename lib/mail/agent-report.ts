@@ -20,6 +20,7 @@ import { getDailyReport, listDailyReports, saveDailyReport } from '../store/dail
 import { getThreadMessages } from '../store/messages';
 import { type AreaPulseRecord, budgetAreaLines } from './brief-areas';
 import { type BudgetAreaLine, composeBudgetBriefDocument } from './brief-budget-document';
+import { writeDailyEditorial } from './brief-editorial';
 import { resolveBriefPlanTier } from './brief-plan';
 import { type BriefProseItemInput, type BriefProseResult, writeBriefProse } from './brief-prose';
 import type { BriefLane } from './brief-score';
@@ -28,20 +29,16 @@ import { gatherBriefWeather, weatherSentence } from './brief-weather';
 import { generateDailyReport } from './daily-report';
 import { buildNativeDailyReportArtifact } from './report-artifact';
 
-// The budget Daily Brief (2026-09-03).
-//
-// One structured pass (generateDailyReport: candidates, deterministic floor,
-// deterministic score, bounded enrichment), then ONE prose model call that
-// writes the lede, one line per selected item, and the week ahead. The
-// document layout is deterministic (composeBudgetBriefDocument). The
-// deterministic HTML artifact stays beside the document for old clients.
+// Selection and bounded analysis -> prose -> editorial composition. The
+// source document is also the complete fallback when design is unavailable.
+// Deterministic HTML stays beside the v2 document for older clients.
 
 // Deadlines for the pipeline's unbounded awaits. A hang becomes a caught error
 // that settles the edition instead of wedging it at 'composing'.
 const CONTEXT_DEADLINE_MS = 45_000;
 const PROSE_DEADLINE_MS = 120_000;
-const MAX_MSGS_PER_ITEM = 3;
-const MAX_BODY_CHARS = 700;
+const MAX_MSGS_PER_ITEM = 4;
+const MAX_BODY_CHARS = 4000;
 // The look back never reaches further than this when no previous edition
 // exists, so a first brief does not list a month of completions.
 const SINCE_FALLBACK_MS = 24 * 3600_000;
@@ -293,7 +290,7 @@ async function runAgentReport(input: {
   }
 
   try {
-    const composed = await composeBudgetBrief(structured, input.userId, { generate, previous });
+    const composed = await composeDailyBrief(structured, input.userId, { generate, previous });
     const report = finalizeBudgetReport(structured, composed);
     const settled = availability ? withArtifactError(report, availability) : report;
     await saveDailyReport(settled);
@@ -322,6 +319,10 @@ export interface ComposedBudgetBrief {
   prose: BriefProseResult;
   areas: BudgetAreaLine[];
   since?: DailyReportSinceLastEdition;
+  editorial?: DailyReport['editorial'];
+  layoutFailed?: boolean;
+  /** Ephemeral writer context; never persisted into the edition. */
+  editorialEvidence?: Record<string, unknown>;
 }
 
 export interface ComposeBudgetBriefDeps {
@@ -459,7 +460,38 @@ export async function composeBudgetBrief(
   );
 
   const document = composeBudgetBriefDocument({ report, prose, areas, timezone });
-  return { document, prose, areas, since };
+  return {
+    document,
+    prose,
+    areas,
+    since,
+    editorialEvidence: {
+      ...Object.fromEntries(items.map((item) => [`thread:${item.key}`, item])),
+      yesterday: { since, reflection: report.sections.albatross?.dailyAlignment?.reflection },
+      'week-ahead': { calendar: report.sections.calendar, tasks: report.sections.tasks },
+      lede: { weather, intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent },
+    },
+  };
+}
+
+/** Selection supplies evidence; the editor authors the complete daily page. */
+export async function composeDailyBrief(
+  report: DailyReport,
+  userId: string | null | undefined,
+  deps: ComposeBudgetBriefDeps = {},
+): Promise<ComposedBudgetBrief> {
+  const composed = await composeBudgetBrief(report, userId, deps);
+  const layout = await writeDailyEditorial(report, composed.document, {
+    userId,
+    generate: deps.generate,
+    evidence: composed.editorialEvidence,
+  });
+  layout.editorial.plan.areas = composed.areas.map((area) => ({
+    areaId: area.areaId.slice(0, 240),
+    name: area.name.slice(0, 500),
+    line: area.line.slice(0, 4000),
+  }));
+  return { ...composed, document: layout.document, editorial: layout.editorial, layoutFailed: layout.failed };
 }
 
 // Writes the prose back into the stored edition: the lede becomes the
@@ -489,11 +521,20 @@ export function finalizeBudgetReport(report: DailyReport, composed: ComposedBudg
       ...(composed.since ? { since: composed.since } : {}),
     },
     document: composed.document,
+    ...(composed.editorial ? { editorial: composed.editorial } : {}),
     artifactStatus: 'ready',
     artifactSource: 'document-v2',
     model: composed.prose.model,
   };
   next.composition = compositionFromReport(next);
   next.html = buildNativeDailyReportArtifact(next, next.composition);
-  return next;
+  return composed.layoutFailed
+    ? withArtifactError(
+        next,
+        artifactError(
+          'document_v2',
+          'The editorial writer could not compose this edition. The source layout is available.',
+        ),
+      )
+    : next;
 }

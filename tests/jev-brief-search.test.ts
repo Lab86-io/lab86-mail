@@ -172,8 +172,8 @@ describe('latest Brief projection', () => {
     });
     const moved = projectBriefMail(original, [thread({ jev: waiting })], policy, NOW);
     expect(moved.sections.answer).toEqual([]);
-    expect(moved.sections.know?.[0].nextAction).not.toContain('Reply to Maya');
-    expect(moved.sections.know?.[0].line).toContain('waiting');
+    expect(moved.sections.waiting?.[0].nextAction).not.toContain('Reply to Maya');
+    expect(moved.sections.waiting?.[0].line).toContain('waiting');
     const uncertain = projectBriefMail(
       original,
       [thread({ jev: assessment({ sourceRevision: 'partial', obligations: [], status: 'uncertain' }) })],

@@ -141,14 +141,17 @@ describe('clamps', () => {
     expect(clampWords('one two three, four five', 3)).toBe('one two three.');
   });
 
-  test('sanitizeProse drops AI sentences, emoji, and exclamation marks', () => {
-    expect(sanitizeProse('Great news! 🎉 AI wrote this. Maya replied.', 4)).toBe('Great news. Maya replied.');
-    expect(sanitizeProse('Only AI here.', 4)).toBe('');
-    expect(sanitizeLine('Reply to Maya about the AI budget')).toBe('');
+  test('house style preserves substantive AI references while removing emoji and exclamation marks', () => {
+    expect(sanitizeProse('Great news! 🎉 AI wrote this. Maya replied.', 4)).toBe(
+      'Great news. AI wrote this. Maya replied.',
+    );
+    expect(sanitizeProse('Only AI here.', 4)).toBe('Only AI here.');
+    expect(sanitizeLine('Reply to Maya about the AI budget')).toBe('Reply to Maya about the AI budget');
     expect(sanitizeLine('Reply to Maya today!')).toBe('Reply to Maya today.');
     expect(
       sanitizeLine('w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22'),
-    ).toBe('w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20.');
+    ).toBe('w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22');
+    expect(sanitizeLine(Array.from({ length: 65 }, (_, i) => `w${i}`).join(' ')).split(' ')).toHaveLength(60);
   });
 });
 
@@ -171,7 +174,7 @@ describe('parseBriefProse', () => {
     expect(parsed).toEqual({
       lede: 'One. Two. Three. Four.',
       lines: { k1: 'Fine line.' },
-      weekAhead: 'Thursday is open. Friday too.',
+      weekAhead: 'Thursday is open. AI says hi. Friday too.',
       yesterday: 'You wanted the deck done. It is done. Nothing else moved.',
     });
   });

@@ -50,7 +50,10 @@ function isLedeHero(region: BriefRegion | undefined): boolean {
  * older free layout. A letter starts with the `lede` hero and uses only the
  * region ids of one letter layout.
  */
-export function briefLetterKind(document: Pick<BriefDocumentV2, 'regions'>): BriefLetterKind | null {
+export function briefLetterKind(
+  document: Pick<BriefDocumentV2, 'regions' | 'layout'>,
+): BriefLetterKind | null {
+  if (document.layout === 'editorial') return null;
   const regions = document.regions;
   if (!regions.length || !isLedeHero(regions[0])) return null;
   const ids = regions.map((region) => region.id);
