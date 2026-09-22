@@ -36,3 +36,9 @@ Local full regression/coverage run: **4,272 passed, one skipped, zero failures**
 Actual-component Chromium checks passed at 390, 768 and 1440 px. They cover correction reset and duplicate suppression, keyboard preference changes, persistence, reader evidence, draft editing/refresh/download/adoption/dismissal, and visible failures. The transport is synthetic; this is not a signed-in real-mailbox accuracy benchmark.
 
 These are fixes to the researched surfaces, with the existing design system and density preserved. References and prior research/tooling limitations remain in [simplified Mail and Jev demo](jev-simpler-mail-and-live-demo.md) and [connected content and prepared work](connected-content-2026-09-21.md). No native Apple platform code changes.
+
+## Follow-up GitHub review
+
+The follow-up review on `f374664fbb15230c60e8af9da3f38b1600a1e9eb` completed: [review 5273803011](https://github.com/Lab86-io/lab86-mail/pull/280#pullrequestreview-5273803011), run `a8f5c860-b23a-4c1f-83e3-9244c10bb155`. CodeRabbit approved that head in [review 5273803385](https://github.com/Lab86-io/lab86-mail/pull/280#pullrequestreview-5273803385). Its published scope was the 54 changed files, despite the full-review request; this is recorded as an incremental follow-up, not a second completed full GitHub review.
+
+One additional outside-diff finding was valid: a category-query error could fall through to provider search, including with an opaque Jev cursor. Category and sync-state errors now propagate for retry. Attention views reject provider cursors, corpus cursors never reach provider search, and provider fallback requires a successful empty category read plus empty account sync state. A provider continuation switches back to the corpus once the account has synced rows. Focused transport regressions cover failures, authentication/configuration, both cursor families, new-account fallback and the transition after sync.
