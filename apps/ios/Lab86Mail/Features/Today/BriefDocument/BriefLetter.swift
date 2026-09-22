@@ -517,7 +517,7 @@ struct BriefMailRow: View {
     private var row: some View {
         let copy = copy
         let arrangement = arrangement
-        HStack(alignment: .top, spacing: 12) {
+        return HStack(alignment: .top, spacing: 12) {
             if drawsAvatar {
                 InitialsAvatar(name: copy.avatarName, seed: copy.avatarName, size: 32)
                     .padding(.top, 2)
