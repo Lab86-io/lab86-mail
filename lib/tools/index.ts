@@ -83,6 +83,7 @@ import {
   updateDraft,
 } from './compose';
 import { contactLookup, expandAlias } from './contacts';
+import { contentSearch } from './content';
 import { corpusCount, corpusSearch, senderProfile, threadTimeline } from './corpus';
 import {
   dismissDailyReportTaskTool,
@@ -216,6 +217,7 @@ const allTools: AnyTool[] = [
   listAccounts,
   searchThreads,
   corpusSearch,
+  contentSearch,
   senderProfile,
   corpusCount,
   threadTimeline,

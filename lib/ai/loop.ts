@@ -86,6 +86,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'list_accounts',
   'search_threads',
   'corpus_search',
+  'content_search',
   'sender_profile',
   'corpus_count',
   'thread_timeline',

@@ -10,6 +10,7 @@ import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
+import { PreparedWork } from '@/components/report/PreparedWork';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1188,6 +1189,7 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   footer={
                     <>
+                      {!selectedId ? <PreparedWork /> : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
                         onOpen={(account, threadId) => {
@@ -1240,6 +1242,7 @@ export function DailyReport({
                           Some sources failed: {report.errors.join('; ')}
                         </p>
                       ) : null}
+                      {!selectedId ? <PreparedWork /> : null}
                       <BriefMailBacklog
                         items={asLane(report.sections.overflow) || []}
                         onOpen={(account, threadId) => {

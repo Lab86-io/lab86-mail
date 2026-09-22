@@ -12,7 +12,16 @@ export function loadJevPolicy(userId: string) {
   );
 }
 
-const sweepDefaults = { loadJevPolicy, resolveJevRuntime, convexMutation, evaluateJev, recordJevUsage };
+const sweepDefaults = {
+  loadJevPolicy,
+  resolveJevRuntime,
+  convexMutation,
+  evaluateJev,
+  recordJevUsage,
+  afterClassified: (userId: string) => {
+    void import('../content/sync').then((module) => module.kickContentCycle(userId)).catch(() => undefined);
+  },
+};
 export async function runJevSweep(userId: string, dependencies = sweepDefaults) {
   const { loadJevPolicy, resolveJevRuntime, convexMutation, evaluateJev, recordJevUsage } = dependencies;
   const policy = await loadJevPolicy(userId);
@@ -64,6 +73,7 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
     moreRemaining = page.moreRemaining;
     if (!moreRemaining) break;
   }
+  if (classified) dependencies.afterClassified?.(userId);
   return { classified, moreRemaining };
 }
 

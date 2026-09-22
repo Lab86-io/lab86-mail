@@ -135,6 +135,7 @@ crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossW
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.
 crons.interval('mcp sync', { minutes: 20 }, (internal as any).mcpSync.tick, {});
+crons.interval('connected content and Brief preparation', { minutes: 2 }, (internal as any).content.tick, {});
 
 // Disconnect normally schedules its own bounded cleanup chain. This sweep is
 // the recovery path if a deploy interrupts that chain between batches.

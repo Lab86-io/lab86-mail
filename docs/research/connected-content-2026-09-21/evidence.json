@@ -1,0 +1,41 @@
+{
+  "at": "2026-09-22T01:40:19.425Z",
+  "evidence": [
+    {
+      "width": 390,
+      "notesOnlyEditsAllowFileRegeneration": true,
+      "unsavedEditsSurviveRefresh": true,
+      "savedEditsSurviveRegeneration": true,
+      "download": true,
+      "adoptionLink": true,
+      "dismissalPersists": true,
+      "settingsPersist": true,
+      "errorVisible": true,
+      "noOverflow": true
+    },
+    {
+      "width": 768,
+      "notesOnlyEditsAllowFileRegeneration": true,
+      "unsavedEditsSurviveRefresh": true,
+      "savedEditsSurviveRegeneration": true,
+      "download": true,
+      "adoptionLink": true,
+      "dismissalPersists": true,
+      "settingsPersist": true,
+      "errorVisible": true,
+      "noOverflow": true
+    },
+    {
+      "width": 1440,
+      "notesOnlyEditsAllowFileRegeneration": true,
+      "unsavedEditsSurviveRefresh": true,
+      "savedEditsSurviveRegeneration": true,
+      "download": true,
+      "adoptionLink": true,
+      "dismissalPersists": true,
+      "settingsPersist": true,
+      "errorVisible": true,
+      "noOverflow": true
+    }
+  ]
+}

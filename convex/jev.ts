@@ -335,6 +335,35 @@ export const threadAssessments = query({
   },
 });
 
+export const liveBriefCandidates = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    since: v.number(),
+    accountIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const accounts = await ctx.db
+      .query('connectedAccounts')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .collect();
+    const allowed = new Set(
+      accounts
+        .filter((a) => a.status === 'connected' && args.accountIds.includes(a.accountId))
+        .map((a) => a.accountId),
+    );
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId).gt('lastDate', args.since))
+      .order('desc')
+      .take(300);
+    return rows
+      .filter((r) => allowed.has(r.accountId) && assessmentIsCurrent(r.jev, r.latestMessageId))
+      .map(normalizeCorpusThread);
+  },
+});
+
 export const attentionCandidates = query({
   args: {
     internalSecret: v.optional(v.string()),

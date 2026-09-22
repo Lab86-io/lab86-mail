@@ -1,3 +1,4 @@
+import { type ContentItem, sourceLink } from '../content/contract';
 import { readFilePage } from '../files/library-client';
 import { compareMailRelevance } from '../mail/search/ranking';
 import type { PrimaryView } from '../shared/types';
@@ -33,10 +34,64 @@ export interface SearchResult {
   searchRelevance?: number;
   searchOrder?: 'recent' | 'relevance';
   searchRank?: number;
+  contentSource?: string;
 }
 export interface SearchGroup {
   items: SearchResult[];
   warnings: string[];
+}
+
+export async function searchIndexedContent(
+  query: string,
+  semantic: boolean,
+  signal?: AbortSignal,
+  fetcher = fetch,
+): Promise<SearchGroup> {
+  const response = await fetcher(
+    `/api/content?view=search&q=${encodeURIComponent(query)}&semantic=${semantic}`,
+    { signal, cache: 'no-store' },
+  );
+  if (!response.ok) throw new Error('Indexed content could not be searched.');
+  const data = await response.json();
+  if (!Array.isArray(data.items)) throw new Error('Indexed content returned an incomplete response.');
+  const items: SearchResult[] = data.items.flatMap((item: ContentItem) => {
+    const url = sourceLink(item);
+    if (!url || item.source === 'mail') return [];
+    const target: SearchTarget =
+      item.source === 'document'
+        ? { kind: 'document', documentId: item.externalId }
+        : { kind: 'external', url };
+    return [
+      {
+        id: ['google_drive', 'onedrive'].includes(item.source)
+          ? `cloud:${item.connectionId}:${item.externalId}`
+          : item.source === 'document'
+            ? `document:${item.externalId}`
+            : `content:${item._id}`,
+        contentSource: item.source,
+        title: item.title,
+        detail: `${item.source.replaceAll('_', ' ')} · ${item.text.slice(0, 200)}${item.partial ? ' · Partial content' : ''}`,
+        timestamp: item.modifiedAt,
+        target,
+      },
+    ];
+  });
+  return {
+    items,
+    warnings: data.semanticUnavailable ? ['Search by meaning is unavailable; showing text matches.'] : [],
+  };
+}
+
+export function mergeSearchItems(...lists: SearchResult[][]): SearchResult[] {
+  const result = new Map<string, SearchResult>();
+  for (const item of lists.flat()) {
+    const key = item.target.kind === 'document' ? `document:${item.target.documentId}` : item.id;
+    if (!result.has(key)) result.set(key, item);
+  }
+  return [...result.values()];
+}
+export function isIndexedFile(item: SearchResult) {
+  return ['document', 'attachment', 'google_drive', 'onedrive'].includes(item.contentSource || '');
 }
 
 export const SEARCH_PAGES: SearchResult[] = [
@@ -141,6 +196,7 @@ export async function searchMail(
           snippet?: string;
           lastDate?: number;
           searchRank?: number;
+          contentSource?: string;
           searchRelevance?: number;
           searchOrder?: 'recent' | 'relevance';
         }>;
