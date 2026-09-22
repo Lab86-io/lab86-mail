@@ -42,6 +42,14 @@
   background: var(--geo-map-canvas-bg);
 }
 
+.root[data-slot="geo-map"] :global(.leaflet-tile-pane) {
+  filter: grayscale(1);
+}
+
+.root[data-slot="geo-map"][data-theme="dark"] :global(.leaflet-tile-pane) {
+  filter: grayscale(1) invert(1) brightness(0.85);
+}
+
 .root[data-slot="geo-map"] :global(.leaflet-control-zoom) {
   corner-shape: var(--corner-shape-ui);
   border: 1px solid var(--geo-map-zoom-border);

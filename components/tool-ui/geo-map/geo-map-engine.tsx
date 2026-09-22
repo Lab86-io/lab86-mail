@@ -15,6 +15,7 @@ import {
 } from "./_adapter";
 import { createClusterIcon, resolveMarkerIcon } from "./geo-map-icons";
 import { GeoMapOverlays } from "./geo-map-overlays";
+import { geoMapTileSource } from "./tile-source";
 import type {
   GeoMapClustering,
   GeoMapFitTarget,
@@ -23,8 +24,6 @@ import type {
   GeoMapViewport,
 } from "./schema";
 
-const TILE_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 const ROUTE_DEFAULT_COLOR = "var(--primary)";
 const ROUTE_DEFAULT_WEIGHT = 3;
 const ROUTE_DEFAULT_OPACITY = 0.85;
@@ -646,7 +645,7 @@ export const GeoMapEngine = memo(function GeoMapEngine({
       className="h-full w-full"
       scrollWheelZoom
     >
-      <TileLayer attribution={TILE_ATTRIBUTION} url={tileUrl} />
+      <TileLayer {...geoMapTileSource} url={tileUrl} />
       {showZoomControl && <ZoomControl position="topright" />}
       <MapObserver
         onMapReady={setMapInstance}

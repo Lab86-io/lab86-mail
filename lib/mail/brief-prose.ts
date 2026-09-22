@@ -2,6 +2,7 @@ import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { stripEmoji } from '../shared/format';
 import type { DailyReportCalendarItem, DailyReportProse } from '../shared/types';
+import { BRIEF_EVIDENCE_POLICY } from './brief-evidence-policy';
 import type { BriefLane } from './brief-score';
 
 // Source summaries and compatibility prose. The daily editorial agent builds
@@ -71,7 +72,9 @@ Rules:
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words.
 - Do not add self-referential narration about writing the brief. Preserve relevant product names and technical terms from the sources.
 - Never summarize a summary: each item line comes from the email, not from the reason field.
-- When a reflection is supplied, distinguish the user's reported progress from independently observed evidence. Do not manufacture completion or assume calendar attendance. The user's current intention outranks artifact volume.`;
+- When a reflection is supplied, distinguish the user's reported progress from independently observed evidence. Do not manufacture completion or assume calendar attendance. The user's current intention outranks artifact volume.
+
+${BRIEF_EVIDENCE_POLICY}`;
 
 // ---- Day table -------------------------------------------------------------
 
