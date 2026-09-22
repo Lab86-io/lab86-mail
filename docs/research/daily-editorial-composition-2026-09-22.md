@@ -18,17 +18,23 @@ Based on `origin/staging` at `fe036073` (September 22, 2026). This is a current-
 
 ## Implemented path
 
-`generateDailyReport → composeBudgetBrief (source prose/document) → writeDailyEditorial → validated plan → BriefDocumentV2 → BriefCanvas`
+`generateDailyReport → Jev selection and source analysis → source summaries → daily editorial agent → validated saved page → BriefCanvas`
 
-The writer receives a catalogue containing the real selected content. It chooses module order, grouping, lead/sidebar splits, matching grids, density, emphasis and footprints. Calendar modules offer a timeline; tasks offer a checklist; source rows offer regular or compact presentations. It can group related items under an editorial heading. This is a composition tree for each edition, not a choice among fixed page templates.
+The daily writer now authors stories and page structure, not just a permutation of fixed sections. It can inspect all **27 Tool UI families** through one catalogue using their actual serializable schemas. `editorial-text` adds substantial Markdown stories alongside that catalogue. The same catalogue drives generation validation, stored document validation, input validation and exhaustive renderer coverage tests.
 
-The host supplies source text, record references and action payloads. The writer cannot invent sources, create arbitrary executable HTML, or omit or duplicate a supplied module. Materialized documents are validated for depth and size before the compatibility parser can replace content with a summary. Invalid JSON, unavailable presentations, provider failure or an unavailable model produce a complete source composition. A failed design is recorded as a nonfatal artifact error; it does not strand the edition in `composing`.
+The real authoring loop exposes `describe_components`, `read_sources`, `place_regions`, `inspect_brief` and `finalize_brief`. It can revise rejected regions and retry validation within the run. It chooses lead stories, source combinations, layout, explanatory depth and useful controls. Source gathering now retains four message excerpts of up to 4,000 characters per selected thread, available on demand to the editor. The compatibility summaries allow 60 words instead of 20; the editor is prompted to write 600–1,000 useful words on substantive days and less on sparse days. Text components allow 12,000 characters. House-style cleanup no longer deletes sentences merely because they contain “AI.” The analyst prompt no longer requests discarded importance/lane fields or invites it to override verified selection.
 
-The saved `editorial.plan` is replayed on live mail reads. Resolved sources disappear, new selected items are appended once, and unchanged groups retain their arrangement. No layout model runs on a read. If refreshed content exceeds a saved plan's limits, the source composition is rebuilt. Area pulse lines survive these refreshes. Waiting obligations are refreshed and removed when resolved; new requests move them back into the actionable lanes.
+The compiler requires every supplied module to remain represented, either directly or through a sourced component. Source identities and real action payloads are bound by the host. A writer cannot author callbacks, CSS, executable HTML, user receipts or fabricated “sent” state. Invalid, oversized or incomplete pages fall back to a complete source composition. The new daily writer participates in the existing provider failover path. The tool loop has a step limit, tool-call budget and 150-second deadline. Layout failure is recorded as a nonfatal artifact error and the edition settles normally.
 
-Personal narrative/context actions and prepared work are live modules that can be placed in the page. Their existing permission-checked endpoints remain authoritative; immutable editions do not store copies of private narrative text or editable preparations. Historical views do not mount those live modules. Prepared work is rendered once, either in the composition or through the older footer fallback.
+Seven input families have durable behavior: options, approvals, sliders, preferences, questionnaires, carousel selections and editable message drafts. Answers belong to the authenticated user, edition and component. Writes validate against the saved component and use an atomic Convex revision check; changed components and concurrent writes return conflicts. They survive reloads independently of the edition document. Draft cancellation and restoration are also saved. Display components retain their native interactions, such as table sorting, media playback, image browsing and map navigation.
 
-An explicit `layout: editorial` marker prevents an authored daily document from accidentally entering the older region-ID letter heuristic. Authored stacks retain their grouping instead of being flattened into unrelated cards. The existing typefaces, palette, controls, responsive renderer and action review behavior are retained. Primary source titles now receive real visual emphasis. Calendar timelines respect the edition timezone and do not turn all-day events into midnight appointments.
+**Continue in assistant** reuses the existing brief-to-agent handoff. The server reloads the owned component, exact saved answer revision and source references. It rejects a stale or foreign handoff. The real assistant can then prepare artifacts and reviewed actions from that context. Saving a preference does not silently alter global settings, buy an order, send a message or claim a task ran. Existing source actions still handle navigation, reviewed mutations, task completion and Undo.
+
+The saved `editorial.plan` is replayed on live mail reads. Resolved sources disappear; a derived component whose source disappears is removed instead of retaining a stale interpretation. Remaining/new sources stay reachable in live updates, and unchanged groups keep their arrangement. No layout model runs on a read. Recap, waiting obligations, continuity evidence and area-pulse lines survive storage and refresh. Older HTML/composition readers remain supported.
+
+Personal narrative/context recommendations and prepared work remain live, permission-checked modules. The editor chooses their placement without copying private narrative text or editable preparations into an immutable edition. Historical views do not mount these current-only sections. Prepared work appears once. The misleading context-card failure message now names the context writer rather than the layout writer.
+
+An explicit `layout: editorial` marker bypasses the older fixed-letter heuristic. Authored groups retain their structure. Lead stories receive a feature footprint, source actions are not repeated under every derived visualization, and charts use the app palette. Existing typography, responsive layouts, review controls and density remain in use. Calendar timelines respect the edition timezone and all-day events.
 
 ## Compatibility and cleanup boundaries
 
@@ -37,7 +43,7 @@ An explicit `layout: editorial` marker prevents an authored daily document from 
 - The general rich-document prompt still belongs to Work plans. This change does not introduce another Work-plan writer.
 - The context-card writer still provides contextual recommendations and Respond & act. Its UI now says “context writer” and “Retry context,” distinguishing it from page composition.
 - No files in `apps/ios`, `MobileAPI`, or `lib/mobile/v1` were edited. The existing Swift v2 decoder normalizes unknown leaves to a summary; native implementation of the new web live sections remains outside this change.
-- The new daily writer uses supported source modules. Arbitrary charts, maps or bespoke HTML are not generated from invented data. New presentations should be added to the host catalogue when their source data exists, then become available to the same writer.
+- All current Tool UI families are authorable. New families must be added to the shared catalogue and renderer; an exhaustive filesystem coverage test fails if those drift. Historical HTML/iframe rendering remains a compatibility path, not a second daily generator.
 
 ## Product research
 
@@ -50,14 +56,27 @@ The surrounding Today flow, letter renderer, source actions, narrative workspace
 
 Browser research also inspected [The Guardian international page](https://www.theguardian.com/international): lead/supporting columns, type scale and section rules informed the composition options. A privacy overlay limited inspection; no claim is made about its deeper interactions.
 
-These observations support preserving the app's existing editorial frame while letting the writer arrange the content beneath it. The synthetic preview uses the actual renderer and local Fraunces/Geist fonts, with no account data or live model calls.
+These observations support preserving the app's existing editorial frame while letting the writer arrange the content beneath it. The synthetic preview uses the actual renderer and local Fraunces/Geist fonts, with no account data. A separate opt-in script exercises the live editorial model against synthetic evidence only.
+
+Browser research also inspected [Tool UI’s own component overview](https://www.tool-ui.com/docs/overview), including the interactive option example and the source-schema-to-renderer contract. This informed persistent answers, visible saved state and a continuation into the assistant instead of inert form decoration.
 
 ## Verification
 
-- `bun test tests/brief* tests/daily-report* tests/jev-* tests/narrative-workspace.test.ts`: **361 passed, 0 failed**, across 42 files (3,386 assertions).
-- `tsc --noEmit`, Biome on all changed TypeScript/CSS files, and `git diff --check`: passed.
-- Playwright: desktop (1280px), mobile (390px), dark mode and source fallback rendered without JavaScript errors or horizontal overflow. A browser set to Los Angeles still displayed the edition's New York event time. Completing and undoing the checklist used the real task update/dismiss/restore handlers against intercepted fixture endpoints.
-- Reproduced three read/projection regressions before fixing them: lost recap, lost waiting/continuity data, and retained resolved waiting items.
-- Tests cover compiler coverage and action identity; malformed, duplicate, unknown and over-deep plans; model and no-model fallback; ordered prose/design calls; saved-plan replay; new and resolved mail; area-pulse preservation; history and permissions; single prepared-work rendering; timezone and all-day events; legacy document rendering.
-- Preview: `bun scripts/preview-editorial-brief.mjs`, at `http://127.0.0.1:18863`. Use `?dark`, `?fallback` or `?history` to inspect variants. All requests after loading the synthetic document are intercepted.
-- This validates the implementation and fixture layouts. It does not establish the visual quality of a live provider's output on a real day's data; that requires staging evaluation after deployment.
+- `bun test`: **4,351 passed, 1 skipped, 0 failed**, 457 files, 36,814 assertions. Full repository lint passes with one existing warning and two existing informational suggestions.
+- `bun run build`: passes, including Next’s TypeScript check, static generation and production route generation. No production credentials were used for the build.
+- Catalogue contracts cover all 27 Tool UI families plus editorial prose, real serializable schemas, generated source bindings, stored-document round trips and renderer availability.
+- Agent tests exercise source reads, discovery, invalid-region repair, full coverage validation and successful finalization through the actual authoring tools. Other regressions cover fallback, migration, source refresh, recap, waiting obligations, timezone, historical permissions and existing action identity.
+- State/API tests cover ownership, authentication, bounded requests, schema-specific answers, changed components, concurrent writes and stale assistant handoffs. The atomic write is tested against the Convex runtime, not only an in-memory mock.
+- Live synthetic model evaluation: the configured `openai/gpt-5.5` completed in 44 seconds over six steps. It read source evidence, recovered from an invalid tool call, and independently authored a 205-word editorial lead, a sortable vendor comparison with correctly derived hourly costs, and an editable unsent reply. This was a sparse single-story fixture; it is evidence of tool usage and successful composition, not a production quality score or a guarantee about every future edition.
+- Browser preview uses the actual components and state route with isolated synthetic storage. No customer data or application writes. Desktop, phone, dark theme, full component catalogue, saved-answer reloads and existing source actions are exercised by `scripts/check-editorial-preview.mjs`.
+- Final repository checks and any limitations are recorded in the PR.
+
+[Desktop preview](assets/daily-editorial-desktop-2026-09-22.png) · [Phone preview](assets/daily-editorial-mobile-2026-09-22.png). Both use synthetic source material and the actual page renderer.
+
+Preview: `PREVIEW_PORT=18863 bun scripts/preview-editorial-brief.mjs`. Variants: `?catalogue`, `?dark`, `?fallback`, `?history`. Run browser checks with `EDITORIAL_PREVIEW_URL=http://127.0.0.1:18863 bun scripts/check-editorial-preview.mjs` (requires installed Playwright Chromium). The preview state is isolated in server memory; production uses the authenticated Convex store.
+
+Optional live synthetic evaluation: `EDITORIAL_EVAL_ENV_FILE=/path/to/local/env bun scripts/eval-daily-editorial.ts`. This explicitly opts into one paid model run using the configured OpenRouter model/key, saves synthetic output under `/tmp`, and does not read customer content or write to the application.
+
+## Release scope
+
+Feature branch and PR target staging. The staging workflow deploys Convex mutations before the web service, so the new atomic input-state mutation arrives before the UI uses it. No production merge, deploy or real brief regeneration is included. No native-owned code was edited; unknown Tool UI leaves retain the existing native summary fallback until the native renderer is extended by its owner.

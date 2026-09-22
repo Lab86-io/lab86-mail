@@ -41,6 +41,7 @@ import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefCanvasLeaf } from './BriefCanvasLeaf';
+import { BriefToolUi } from './BriefToolUi';
 import type { BriefActionPayload } from './brief-action-runtime';
 
 const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((module) => module.GeoMap), {
@@ -58,6 +59,7 @@ export interface BriefActionMeta {
 }
 
 export interface BriefNodeContext {
+  reportId?: string | null;
   /** Live personal modules belong only to the current daily edition. */
   liveSections?: boolean;
   timezone?: string;
@@ -109,6 +111,8 @@ export function BriefNodeView({
   }
   const common = topLevel ? '' : nodeClass(node);
   switch (node.kind) {
+    case 'tool_ui':
+      return <BriefToolUi node={node} context={context} />;
     case 'live_section':
       if (!context.liveSections) return null;
       return node.section === 'narrative' ? (

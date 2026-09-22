@@ -36,6 +36,42 @@ export const getDoc = query({
   },
 });
 
+export const compareAndSwapDoc = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    kind: v.string(),
+    key: v.string(),
+    expectedRevision: v.union(v.string(), v.null()),
+    doc: v.any(),
+    ref: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    // This operation is intentionally restricted to brief input state.
+    if (args.kind !== 'briefComponentState' || typeof args.doc?.revision !== 'string')
+      throw new Error('Unsupported revisioned document');
+    const row = await ctx.db
+      .query('userDocs')
+      .withIndex('by_user_kind_key', (q) =>
+        q.eq('userId', args.userId).eq('kind', args.kind).eq('key', args.key),
+      )
+      .unique();
+    if ((row?.doc?.revision ?? null) !== args.expectedRevision) return false;
+    const values = {
+      userId: args.userId,
+      kind: args.kind,
+      key: args.key,
+      doc: args.doc,
+      ref: args.ref,
+      updatedAt: now(),
+    };
+    if (row) await ctx.db.patch(row._id, values);
+    else await ctx.db.insert('userDocs', { ...values, createdAt: now() });
+    return true;
+  },
+});
+
 export const listDocs = query({
   args: {
     internalSecret: v.optional(v.string()),

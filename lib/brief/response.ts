@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Send identity, not a client-authored recommendation or executable action.
-export const briefResponseRefSchema = z
+const workspaceResponseRefSchema = z
   .object({
     at: z.number().int().min(0).max(8_640_000_000_000_000),
     stamp: z.string().length(64),
@@ -9,6 +9,16 @@ export const briefResponseRefSchema = z
     recommendation: z.string().max(200),
   })
   .strict();
+export const componentResponseRefSchema = z
+  .object({
+    kind: z.literal('component'),
+    reportId: z.string().min(1).max(240),
+    componentId: z.string().regex(/^[a-z][a-z0-9-]{0,70}$/),
+    stamp: z.string().length(64),
+    revision: z.string().uuid(),
+  })
+  .strict();
+export const briefResponseRefSchema = z.union([workspaceResponseRefSchema, componentResponseRefSchema]);
 export type BriefResponseRef = z.infer<typeof briefResponseRefSchema>;
 export interface BriefResponseRequest {
   id: string;

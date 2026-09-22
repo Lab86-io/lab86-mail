@@ -8,8 +8,10 @@ const params = new URLSearchParams(location.search);
 if (params.has('dark')) document.documentElement.classList.add('dark');
 const value = await fetch(`/__document${location.search}`).then((response) => response.json());
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-window.fetch = async (input) => {
+const originalFetch = window.fetch;
+window.fetch = async (input, init) => {
   const url = String(input);
+  if (url.includes('/api/briefs/components')) return originalFetch(input, init);
   if (url.includes('/briefs/resolve')) return Response.json({ ok: true, entities: [] });
   if (url.includes('/narrative')) return Response.json({ enabled: false });
   if (url.includes('/content')) return Response.json({ items: [] });
@@ -27,7 +29,12 @@ createRoot(document.getElementById('root')!).render(
         </p>
         <h1 className="mt-2 font-display text-4xl font-semibold">Your daily review</h1>
       </header>
-      <BriefCanvas value={value} embedded liveSections={!params.has('history')} />
+      <BriefCanvas
+        reportId={params.has('catalogue') ? 'catalogue' : 'preview'}
+        value={value}
+        embedded
+        liveSections={!params.has('history')}
+      />
     </main>
     <Toaster />
   </QueryClientProvider>,

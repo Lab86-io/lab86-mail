@@ -173,7 +173,7 @@ describe('Area artifact data contract', () => {
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never say work is done unless');
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Candidate context is uncertain');
     expect(AREA_PULSE_SYSTEM_PROMPT).toContain('prose: at most 3 sentences');
-    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Never write the word "AI"');
+    expect(AREA_PULSE_SYSTEM_PROMPT).toContain('Preserve relevant product names');
   });
 });
 

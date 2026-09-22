@@ -4,14 +4,13 @@ import { stripEmoji } from '../shared/format';
 import type { DailyReportCalendarItem, DailyReportProse } from '../shared/types';
 import type { BriefLane } from './brief-score';
 
-// The one model call of the budget brief. The model writes three things: the
-// lede, one line per selected item, and the week-ahead paragraph. Everything
-// else in the edition is deterministic. Decided by Jakob on 2026-09-03.
+// Source summaries and compatibility prose. The daily editorial agent builds
+// the final page from these summaries plus the original source evidence.
 
 export const LEDE_MAX_SENTENCES = 4;
 export const WEEK_AHEAD_MAX_SENTENCES = 4;
 export const YESTERDAY_MAX_SENTENCES = 3;
-export const ITEM_LINE_MAX_WORDS = 20;
+export const ITEM_LINE_MAX_WORDS = 60;
 export const AREA_LINE_MAX_WORDS = 24;
 
 export interface BriefProseItemInput {
@@ -66,11 +65,11 @@ Return only JSON: {"lede":"...","yesterday":"...","items":[{"key":"...","line":"
 Rules:
 - lede: at most 4 sentences. Say what matters today and why, in plain words. Name people. No greeting line, no sign-off.
 - yesterday: at most 3 sentences about what happened since the previous letter. Use the reflection, the stated intent, the completed work, and the actions taken on the person's behalf. Return an empty string when the since data is empty.
-- items: one line per supplied item key, at most 20 words each. Say why the email matters or what to do. Use the real message bodies. If there is nothing useful to add beyond sender and subject, return an empty line for that key. When carriedDays is 1 or more, the item has waited that many days; say so only when it changes what to do.
+- items: one compact paragraph per supplied item key, at most 60 words each. Explain the request, relevant context, and what to do next. Use the real message bodies. If there is nothing useful to add beyond sender and subject, return an empty line for that key. When carriedDays is 1 or more, the item has waited that many days; say so only when it changes what to do.
 - weekAhead: at most 4 sentences about the next seven days. Use the supplied weekday names and dates exactly. Name the day for each event or deadline. Say which days are open. Example of the level: "This Thursday you can send the passport form. Friday is open."
 - Use only supplied facts. Never invent people, dates, events, or outcomes.
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words.
-- Never write the word "AI". Never mention models, assistants, or this brief itself.
+- Do not add self-referential narration about writing the brief. Preserve relevant product names and technical terms from the sources.
 - Never summarize a summary: each item line comes from the email, not from the reason field.
 - When a reflection is supplied, distinguish the user's reported progress from independently observed evidence. Do not manufacture completion or assume calendar attendance. The user's current intention outranks artifact volume.`;
 
@@ -275,7 +274,6 @@ export function yesterdayFallback(input: {
 // ---- Clamps ----------------------------------------------------------------
 
 const SENTENCE_SPLIT = /(?<=[.!?])\s+(?=[A-Z0-9"'(])/;
-const AI_WORD = /\bAI\b/;
 
 export function splitSentences(text: string): string[] {
   return text
@@ -299,14 +297,13 @@ export function clampWords(text: string, max: number): string {
     .replace(/[,;:]$/, '')}.`;
 }
 
-// Removes emoji, exclamation marks, and any sentence that names "AI". Returns
-// an empty string when nothing survives.
+// House-style cleanup must not erase facts or product names from a source.
 export function sanitizeProse(text: string, maxSentences: number): string {
   const clean = stripEmoji(String(text || ''))
     .replace(/!+/g, '.')
     .replace(/\s+/g, ' ')
     .trim();
-  const kept = splitSentences(clean).filter((sentence) => !AI_WORD.test(sentence));
+  const kept = splitSentences(clean);
   return kept.slice(0, maxSentences).join(' ');
 }
 
@@ -315,7 +312,7 @@ export function sanitizeLine(text: string, maxWords = ITEM_LINE_MAX_WORDS): stri
     .replace(/!+/g, '.')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!clean || AI_WORD.test(clean)) return '';
+  if (!clean) return '';
   return clampWords(clean, maxWords);
 }
 

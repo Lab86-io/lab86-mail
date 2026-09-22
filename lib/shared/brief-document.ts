@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { briefComponentNameSchema, parseBriefComponent } from '../brief/component-catalog';
 import { isKnownBriefAction } from './brief-actions';
 import { normalizeBriefTimezone } from './brief-edition';
 
@@ -269,6 +270,29 @@ const checklistItemSchema = z.object({
 });
 
 const editorialLeafSchemas = [
+  z
+    .object({
+      ...commonNodeShape,
+      kind: z.literal('tool_ui'),
+      id: z.string().regex(/^[a-z][a-z0-9-]{0,70}$/),
+      component: briefComponentNameSchema,
+      props: z.record(z.string(), z.unknown()),
+      summary: z.string().trim().min(1).max(1000),
+      sources: z
+        .array(z.object({ ref: BriefSourceRefV2Schema, actions: z.array(BriefActionV2Schema).max(8) }))
+        .max(24),
+    })
+    .superRefine((node, ctx) => {
+      try {
+        parseBriefComponent(node.component, node.props);
+      } catch (error) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['props'],
+          message: error instanceof Error ? error.message : 'Invalid component',
+        });
+      }
+    }),
   z.object({
     ...commonNodeShape,
     kind: z.literal('live_section'),
@@ -607,6 +631,7 @@ export interface BriefDocumentParseResult {
 
 const layoutKinds = new Set(['stack', 'grid', 'split', 'hero', 'group']);
 const leafKinds = new Set([
+  'tool_ui',
   'live_section',
   'entity_list',
   'query_list',
@@ -878,6 +903,10 @@ function repairLeaf(
   const ref = (value: unknown) => repairRef(value);
 
   switch (kind) {
+    case 'tool_ui': {
+      const result = editorialLeafSchemas[0].safeParse({ ...node, ...common });
+      return result.success ? result.data : fallbackNode(summary);
+    }
     case 'live_section':
       return node.section === 'narrative' || node.section === 'prepared_work'
         ? { kind, ...common, section: node.section, at: Math.max(0, finiteNumber(node.at) ?? 0) }
@@ -1740,6 +1769,7 @@ function commonNodeFields(node: Record<string, unknown>) {
 }
 
 function actionsInNode(node: BriefNode) {
+  if (node.kind === 'tool_ui') return node.sources.flatMap((source) => source.actions);
   if (node.kind === 'actions') return node.actions;
   if (node.kind === 'entity_list') return node.items.flatMap((item) => item.actions);
   if (node.kind === 'collection') return node.items.flatMap((item) => item.actions);

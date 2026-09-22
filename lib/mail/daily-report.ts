@@ -980,10 +980,10 @@ async function buildThreadInsight(
         feature: 'daily_report_insight',
         speed: 'primary',
         system:
-          'You are a deep personal email analyst for the user. Use the full thread, calendar, and memory context. Describe the supplied verified obligations and selection reason. Do not infer a reply duty from sender, category or message direction. Do not change eligibility or priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"...","importance":1|2|3,"suggestedLane":"reply_owed|follow_up_owed|new_people|time_sensitive|tracked|fyi|bulk"}.',
+          'You are a deep personal email analyst for the user. Use the full thread, calendar, and memory context. Describe the supplied verified obligations and selection reason. Do not infer a reply duty from sender, category or message direction. Do not change eligibility or priority. Do not elevate promotions, rewards, newsletters, or one-way notifications. No emoji. Return only JSON: {"summary":"...","openLoops":["..."],"reason":"...","nextAction":"..."}.',
         prompt: [
           `Now: ${new Date(now).toString()}`,
-          `Floor lane (minimum — you may only raise it): ${floor.lane}`,
+          `Verified selection lane (do not change it): ${floor.lane}`,
           `Floor signals: replyOwed=${floor.replyOwed} followUpOwed=${floor.followUpOwed} personal=${floor.isPersonal} important=${floor.isImportant} newSender=${floor.isNewSender} priorContact=${floor.isPriorCorrespondent}`,
           `Smart category: ${smart?.primary || 'unknown'}; reason: ${smart?.reason || ''}`,
           `Calendar context:\n${context.calendarContext.join('\n') || '(none)'}`,

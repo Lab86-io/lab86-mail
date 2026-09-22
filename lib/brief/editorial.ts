@@ -6,6 +6,7 @@ import {
   lintBriefDocument,
 } from '../shared/brief-document';
 import type { DailyReport } from '../shared/types';
+import { type BriefComponentName, briefComponentNameSchema, parseBriefComponent } from './component-catalog';
 import { briefRefKey } from './hydration';
 
 // The writer arranges supplied modules. Only the host materializes records,
@@ -13,6 +14,16 @@ import { briefRefKey } from './hydration';
 // source update without another model call or a second layout implementation.
 export type EditorialPresentation = 'story' | 'compact' | 'timeline' | 'checklist';
 export type EditorialNode =
+  | {
+      kind: 'component';
+      id: string;
+      component: BriefComponentName;
+      props: Record<string, unknown>;
+      summary: string;
+      sources: string[];
+      footprint?: 'standard' | 'wide' | 'feature';
+      emphasis?: 'primary' | 'standard' | 'muted';
+    }
   | {
       kind: 'module';
       id: string;
@@ -25,8 +36,20 @@ export type EditorialNode =
   | { kind: 'split'; ratio: 'balanced' | 'lead'; children: EditorialNode[] }
   | { kind: 'group'; title: string; collapsible?: boolean; children: EditorialNode[] };
 
-const nodeSchema: z.ZodType<EditorialNode> = z.lazy(() =>
+export const editorialNodeSchema: z.ZodType<EditorialNode> = z.lazy(() =>
   z.discriminatedUnion('kind', [
+    z
+      .object({
+        kind: z.literal('component'),
+        id: z.string().regex(/^[a-z][a-z0-9-]{0,70}$/),
+        component: briefComponentNameSchema,
+        props: z.record(z.string(), z.unknown()),
+        summary: z.string().trim().min(1).max(1000),
+        sources: z.array(z.string().min(1).max(1000)).min(1).max(24),
+        footprint: z.enum(['standard', 'wide', 'feature']).optional(),
+        emphasis: z.enum(['primary', 'standard', 'muted']).optional(),
+      })
+      .strict(),
     z
       .object({
         kind: z.literal('module'),
@@ -40,21 +63,21 @@ const nodeSchema: z.ZodType<EditorialNode> = z.lazy(() =>
       .object({
         kind: z.literal('stack'),
         density: z.enum(['airy', 'standard', 'dense']).optional(),
-        children: z.array(nodeSchema).min(1).max(24),
+        children: z.array(editorialNodeSchema).min(1).max(24),
       })
       .strict(),
     z
       .object({
         kind: z.literal('grid'),
         columns: z.union([z.literal(2), z.literal(3)]),
-        children: z.array(nodeSchema).min(2).max(12),
+        children: z.array(editorialNodeSchema).min(2).max(12),
       })
       .strict(),
     z
       .object({
         kind: z.literal('split'),
         ratio: z.enum(['balanced', 'lead']),
-        children: z.array(nodeSchema).length(2),
+        children: z.array(editorialNodeSchema).length(2),
       })
       .strict(),
     z
@@ -62,7 +85,7 @@ const nodeSchema: z.ZodType<EditorialNode> = z.lazy(() =>
         kind: z.literal('group'),
         title: z.string().trim().min(1).max(160),
         collapsible: z.boolean().optional(),
-        children: z.array(nodeSchema).min(1).max(12),
+        children: z.array(editorialNodeSchema).min(1).max(12),
       })
       .strict(),
   ]),
@@ -71,13 +94,20 @@ const nodeSchema: z.ZodType<EditorialNode> = z.lazy(() =>
 export const editorialPlanSchema = z
   .object({
     version: z.literal(1),
+    title: z.string().trim().min(1).max(160).optional(),
+    summary: z.string().trim().min(1).max(1200).optional(),
+    sourceVersions: z.record(z.string(), z.string().max(2048)).optional(),
+    areas: z
+      .array(z.object({ areaId: z.string().max(240), name: z.string().max(500), line: z.string().max(4000) }))
+      .max(12)
+      .optional(),
     regions: z
       .array(
         z
           .object({
             id: z.string().regex(/^[a-z][a-z0-9-]{0,70}$/),
             summary: z.string().trim().min(1).max(1000),
-            tree: nodeSchema,
+            tree: editorialNodeSchema,
           })
           .strict(),
       )
@@ -92,6 +122,7 @@ export interface EditorialModule {
   section: string;
   title: string;
   summary: string;
+  revision?: string;
   presentations: Partial<Record<EditorialPresentation, BriefNode>> & { story: BriefNode };
 }
 
@@ -181,11 +212,23 @@ export function editorialModules(report: DailyReport, letter: BriefDocumentV2): 
     }
     for (const item of others) {
       const story: BriefNode = { ...tree, title: undefined, items: [item] };
+      const source =
+        item.ref.kind === 'thread'
+          ? [
+              ...(report.sections.answer ?? []),
+              ...(report.sections.today ?? []),
+              ...(report.sections.know ?? []),
+              ...(report.sections.waiting ?? []),
+            ].find((source) => source.account === item.ref.account && source.threadId === item.ref.id)
+          : undefined;
       modules.push({
         id: briefRefKey(item.ref),
         section: region.id,
         title: item.ref.label || tree.title || region.id,
         summary: item.framing.reason || region.summary,
+        revision: source
+          ? JSON.stringify([source.jev?.sourceRevision ?? null, source.receivedAt ?? null])
+          : undefined,
         presentations: { story, compact: { ...story, variant: 'compact' } },
       });
     }
@@ -243,20 +286,91 @@ export function defaultEditorialPlan(modules: EditorialModule[]): EditorialPlan 
   };
 }
 
+/** The host records the evidence version after authoring, never from model claims. */
+export function bindEditorialSourceVersions(plan: EditorialPlan, modules: EditorialModule[]): EditorialPlan {
+  return {
+    ...plan,
+    sourceVersions: Object.fromEntries(
+      modules.filter((m) => m.revision !== undefined).map((m) => [m.id, m.revision!]),
+    ),
+  };
+}
+
 /** Strict on generation, tolerant of removed sources on subsequent live reads. */
 export function composeEditorialDocument(
   letter: BriefDocumentV2,
   modules: EditorialModule[],
   input: unknown,
   strict = true,
+  requireAll = true,
 ): BriefDocumentV2 {
   const plan = editorialPlanSchema.parse(input);
   const known = new Map(modules.map((module) => [module.id, module]));
   const used = new Set<string>();
   const regionIds = new Set<string>();
+  const componentIds = new Set<string>();
+  const actionSources = new Set<string>();
   let nodeCount = 0;
   const visit = (node: EditorialNode, depth: number): BriefNode | null => {
     if (++nodeCount > 96 || depth > 3) throw new Error('Editorial layout is too complex');
+    if (node.kind === 'component') {
+      if (componentIds.has(node.id)) throw new Error('Editorial layout repeats a component id');
+      componentIds.add(node.id);
+      const selected = node.sources.map((id) => known.get(id));
+      if (selected.some((module) => !module)) {
+        if (strict) throw new Error('Editorial component refers to an unknown source');
+        // A changed source invalidates its authored interpretation. Retain the
+        // page structure, then append the remaining live sources below.
+        return null;
+      }
+      if (
+        !strict &&
+        selected.some(
+          (module) =>
+            module &&
+            plan.sourceVersions?.[module.id] !== undefined &&
+            plan.sourceVersions[module.id] !== module.revision,
+        )
+      )
+        return null;
+      const sources: Extract<BriefNode, { kind: 'tool_ui' }>['sources'] = [];
+      for (const module of selected) {
+        if (!module) continue;
+        if (module.presentations.story.kind === 'live_section')
+          throw new Error('Live private sections must be placed as modules');
+        used.add(module.id);
+        const collect = (part: BriefNode) => {
+          if (part.kind === 'entity_list')
+            for (const item of part.items) {
+              const key = briefRefKey(item.ref);
+              if (!sources.some((s) => briefRefKey(s.ref) === key)) {
+                sources.push({
+                  ref: item.ref,
+                  actions: actionSources.has(key)
+                    ? item.actions.filter((action) => action.action.startsWith('open_'))
+                    : item.actions,
+                });
+                actionSources.add(key);
+              }
+            }
+          if ('children' in part) part.children.forEach(collect);
+        };
+        collect(module.presentations.story);
+      }
+      return {
+        ...base,
+        kind: 'tool_ui',
+        id: node.id,
+        component: node.component,
+        props: parseBriefComponent(node.component, { ...node.props, id: node.id }),
+        summary: node.summary,
+        sources,
+        footprint:
+          node.footprint ??
+          (node.component === 'editorial-text' && node.props.role === 'lede' ? 'feature' : undefined),
+        emphasis: node.emphasis || 'standard',
+      };
+    }
     if (node.kind === 'module') {
       const module = known.get(node.id);
       if (!module) {
@@ -310,8 +424,9 @@ export function composeEditorialDocument(
     return tree ? [{ ...region, id: `editorial-${region.id}`, tree }] : [];
   });
   const missing = modules.filter((module) => !used.has(module.id));
-  if (missing.length && strict) throw new Error('Editorial layout omits supplied content');
-  if (missing.length) {
+  if (missing.length && strict && requireAll)
+    throw new Error(`Editorial layout omits supplied content: ${missing.map((m) => m.id).join(', ')}`);
+  if (missing.length && !strict) {
     // New mail arrives between editions. It remains visible without asking a
     // model to rewrite the saved page on every refresh.
     const additions = missing.map((module) => module.presentations.story);
@@ -327,7 +442,13 @@ export function composeEditorialDocument(
   }
   // Reject an over-deep or oversized composition before the compatibility
   // parser could repair it by replacing content with a summary.
-  const document = BriefDocumentV2Schema.parse({ ...letter, layout: 'editorial', regions });
+  const document = BriefDocumentV2Schema.parse({
+    ...letter,
+    ...(plan.title ? { title: plan.title } : {}),
+    ...(plan.summary ? { summary: plan.summary } : {}),
+    layout: 'editorial',
+    regions,
+  });
   if (lintBriefDocument(document).length) throw new Error('Editorial layout exceeds document limits');
   return document;
 }

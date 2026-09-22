@@ -37,8 +37,8 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 // that settles the edition instead of wedging it at 'composing'.
 const CONTEXT_DEADLINE_MS = 45_000;
 const PROSE_DEADLINE_MS = 120_000;
-const MAX_MSGS_PER_ITEM = 3;
-const MAX_BODY_CHARS = 700;
+const MAX_MSGS_PER_ITEM = 4;
+const MAX_BODY_CHARS = 4000;
 // The look back never reaches further than this when no previous edition
 // exists, so a first brief does not list a month of completions.
 const SINCE_FALLBACK_MS = 24 * 3600_000;
@@ -321,6 +321,8 @@ export interface ComposedBudgetBrief {
   since?: DailyReportSinceLastEdition;
   editorial?: DailyReport['editorial'];
   layoutFailed?: boolean;
+  /** Ephemeral writer context; never persisted into the edition. */
+  editorialEvidence?: Record<string, unknown>;
 }
 
 export interface ComposeBudgetBriefDeps {
@@ -458,17 +460,33 @@ export async function composeBudgetBrief(
   );
 
   const document = composeBudgetBriefDocument({ report, prose, areas, timezone });
-  return { document, prose, areas, since };
+  return {
+    document,
+    prose,
+    areas,
+    since,
+    editorialEvidence: {
+      ...Object.fromEntries(items.map((item) => [`thread:${item.key}`, item])),
+      yesterday: { since, reflection: report.sections.albatross?.dailyAlignment?.reflection },
+      'week-ahead': { calendar: report.sections.calendar, tasks: report.sections.tasks },
+      lede: { weather, intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent },
+    },
+  };
 }
 
-/** Selection and prose precede design; the writer can arrange only supplied modules. */
+/** Selection supplies evidence; the editor authors the complete daily page. */
 export async function composeDailyBrief(
   report: DailyReport,
   userId: string | null | undefined,
   deps: ComposeBudgetBriefDeps = {},
 ): Promise<ComposedBudgetBrief> {
   const composed = await composeBudgetBrief(report, userId, deps);
-  const layout = await writeDailyEditorial(report, composed.document, { userId, generate: deps.generate });
+  const layout = await writeDailyEditorial(report, composed.document, {
+    userId,
+    generate: deps.generate,
+    evidence: composed.editorialEvidence,
+  });
+  layout.editorial.plan.areas = composed.areas;
   return { ...composed, document: layout.document, editorial: layout.editorial, layoutFailed: layout.failed };
 }
 

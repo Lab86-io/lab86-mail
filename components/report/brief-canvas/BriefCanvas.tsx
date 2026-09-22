@@ -363,6 +363,7 @@ export function BriefCanvas({
   );
 
   const context: BriefNodeContext = {
+    reportId,
     liveSections,
     timezone: document.timezone,
     entities,

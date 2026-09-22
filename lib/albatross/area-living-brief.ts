@@ -419,7 +419,7 @@ Rules:
 - weekAhead: at most 3 sentences on the next seven days in this area, from the supplied weekAhead events and due tasks. Name the day for each. Empty string when the week is open.
 - sinceLastBrief: one sentence on what arrived or moved since the last brief, from the supplied sinceLastBrief counts and titles. Empty string when nothing did.
 - Use only supplied facts. Never say work is done unless a completed state says so. Candidate context is uncertain: phrase it as a question or leave it out.
-- Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Never write the word "AI".`;
+- Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Preserve relevant product names and technical terms from the sources.`;
 
 function firstString(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';

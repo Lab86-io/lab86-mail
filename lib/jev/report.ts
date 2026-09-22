@@ -229,7 +229,9 @@ export function projectBriefMail(
   );
   // Preserve the area pulse lines even when the writer placed them inside a
   // group or chose compact rows. They are not recomputed by a mail refresh.
-  const areas: Array<{ areaId: string; name: string; line: string }> = [];
+  const areas: Array<{ areaId: string; name: string; line: string }> = [
+    ...(report.editorial?.plan.areas ?? []),
+  ];
   const collectAreas = (node: BriefNode) => {
     if (node.kind === 'entity_list') {
       for (const item of node.items) {
