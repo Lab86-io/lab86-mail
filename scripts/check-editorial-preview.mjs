@@ -46,6 +46,10 @@ try {
   );
   await page.screenshot({ path: '/tmp/editorial-custom-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  // Responsive charts update their SVG width after ResizeObserver fires.
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth, undefined, {
+    timeout: 2000,
+  });
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
     false,
