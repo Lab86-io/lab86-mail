@@ -143,6 +143,39 @@ test('attention views reject provider tokens instead of changing search tiers', 
   });
 });
 
+test('malformed corpus cursors fail without restarting or reading provider mail', async () => {
+  await transport(async (calls) => {
+    for (const category of ['needs_action', 'main'] as const) {
+      for (const pageToken of [
+        'local:',
+        'local: ',
+        'local:invalid',
+        'local:NaN',
+        'local:Infinity',
+        'jev:',
+        'jev: ',
+      ]) {
+        await expect(
+          listSmartCategory.handler(
+            { account: 'a', category, max: 20, pageToken },
+            { userId: 'synthetic-jev-owner', agent: 'codex' },
+          ),
+        ).rejects.toThrow('Invalid corpus cursor');
+      }
+    }
+    expect(calls).toEqual([]);
+    for (const pageToken of ['local:0', 'local:123']) {
+      await listSmartCategory.handler(
+        { account: 'a', category: 'main', max: 20, pageToken },
+        { userId: 'synthetic-jev-owner', agent: 'codex' },
+      );
+    }
+    expect(
+      calls.filter((c) => c.path === 'mailCorpus:listSmartCategoryThreads').map((c) => c.args.before),
+    ).toEqual([0, 123]);
+  });
+});
+
 test('category reads require an authenticated, configured corpus', async () => {
   await transport(async (calls) => {
     const args = { account: 'a', category: 'needs_action' as const, max: 20 };

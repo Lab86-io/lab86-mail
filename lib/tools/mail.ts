@@ -190,7 +190,18 @@ export const listSmartCategory = defineTool({
   async handler({ account, category, query, max, pageToken }, ctx) {
     if (!ctx.userId) throw new Error('Sign in required for hosted mail access.');
     if (!isConvexConfigured()) throw new Error('Mail index is not available.');
-    const corpusCursor = Boolean(pageToken?.startsWith(LOCAL_CURSOR_PREFIX) || pageToken?.startsWith('jev:'));
+    const localCursorPayload = pageToken?.startsWith(LOCAL_CURSOR_PREFIX)
+      ? pageToken.slice(LOCAL_CURSOR_PREFIX.length)
+      : undefined;
+    const jevCursorPayload = pageToken?.startsWith('jev:') ? pageToken.slice(4) : undefined;
+    if (
+      (localCursorPayload !== undefined &&
+        (!localCursorPayload.trim() || !Number.isFinite(Number(localCursorPayload)))) ||
+      (jevCursorPayload !== undefined && !jevCursorPayload.trim())
+    ) {
+      throw new Error('Invalid corpus cursor. Refresh the Mail view.');
+    }
+    const corpusCursor = localCursorPayload !== undefined || jevCursorPayload !== undefined;
     if (isAttentionView(category) && pageToken && !corpusCursor) {
       throw new Error('Invalid attention-view cursor. Refresh the Mail view.');
     }
@@ -204,9 +215,7 @@ export const listSmartCategory = defineTool({
     // Primary path: indexed corpus read over persisted write-time verdicts.
     // No provider calls and no writes — this is a pure local query.
     {
-      const before = pageToken?.startsWith(LOCAL_CURSOR_PREFIX)
-        ? Number(pageToken.slice(LOCAL_CURSOR_PREFIX.length))
-        : undefined;
+      const before = localCursorPayload !== undefined ? Number(localCursorPayload) : undefined;
       const result = await convexQuery<{ items: any[]; nextBefore?: number; nextCursor?: string }>(
         (api as any).mailCorpus.listSmartCategoryThreads,
         {
@@ -214,8 +223,8 @@ export const listSmartCategory = defineTool({
           accountId: account,
           category,
           limit: max,
-          before: Number.isFinite(before) ? before : undefined,
-          cursor: pageToken?.startsWith('jev:') ? pageToken.slice(4) : undefined,
+          before,
+          cursor: jevCursorPayload,
         },
       );
       // A failed corpus read must remain retryable, not silently switch the
