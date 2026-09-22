@@ -2,17 +2,15 @@ import type { NextRequest } from 'next/server';
 import { generateAreaLivingBrief } from '@/lib/albatross/area-living-brief';
 import { AuthRequiredError, type CurrentUser, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
-import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 360;
 
 class AreaBriefNotFoundError extends Error {}
 
 interface AreaBriefRouteDependencies {
   currentUser: () => Promise<CurrentUser>;
-  rateLimit: typeof enforceUserRateLimit;
   areaExists: (userId: string, areaId: string) => Promise<boolean>;
   reindex: (userId: string, areaId: string) => Promise<unknown>;
   generate: typeof generateAreaLivingBrief;
@@ -26,12 +24,6 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
   return async function areaBriefPost(_req: NextRequest, context: { params: Promise<{ areaId: string }> }) {
     try {
       const user = await deps.currentUser();
-      await deps.rateLimit({
-        userId: user.userId,
-        key: 'albatross-area-brief',
-        limit: 12,
-        windowMs: 60_000,
-      });
       const { areaId } = await context.params;
       if (!areaId) return Response.json({ ok: false, error: 'area required' }, { status: 400 });
 
@@ -60,7 +52,6 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
       });
       return Response.json({ ok: true, brief });
     } catch (error) {
-      if (error instanceof RateLimitError) return rateLimitResponse(error);
       if (error instanceof AuthRequiredError) {
         return Response.json({ ok: false, error: 'auth required' }, { status: 401 });
       }
@@ -75,7 +66,6 @@ export function createAreaBriefPost(deps: AreaBriefRouteDependencies) {
 
 export const POST = createAreaBriefPost({
   currentUser: requireCurrentUser,
-  rateLimit: enforceUserRateLimit,
   areaExists: async (userId, areaId) => {
     const area = await convexQuery((api as any).albatross.areaBriefTarget, { userId, areaId });
     return area !== null;

@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { emptyNarrativeContext } from '../lib/narrative/context';
-import { MeetingContextError, prepareNarrativeMeeting } from '../lib/narrative/meeting-prep';
+import {
+  MeetingContextError,
+  prepareNarrativeMeeting,
+  readMeetingRecord,
+} from '../lib/narrative/meeting-prep';
 
 const selector = { accountId: 'account', calendarId: 'calendar', eventId: 'event' };
 const record = {
@@ -38,6 +42,22 @@ function harness() {
   };
 }
 describe('narrative meeting prep', () => {
+  test('the stored-event adapter rechecks account ownership before looking up exact provider ids', async () => {
+    const connected = mock(async () => ({}) as any);
+    const query = mock(async () => record) as any;
+    expect(await readMeetingRecord('owner', selector, { connected, query })).toEqual(record);
+    expect(connected).toHaveBeenCalledWith('owner', 'account');
+    expect(query.mock.calls[0][1]).toEqual({
+      userId: 'owner',
+      accountId: 'account',
+      providerCalendarId: 'calendar',
+      providerEventId: 'event',
+    });
+    connected.mockRejectedValueOnce(new Error('Disconnected or wrong owner'));
+    expect(await readMeetingRecord('other', selector, { connected, query })).toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   test('uses owned calendar records, related people, aliases and current source references', async () => {
     const deps = harness();
     const controller = new AbortController();

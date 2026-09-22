@@ -33,7 +33,7 @@ async function invoke(deps: ReturnType<typeof dependencies>, areaId = 'area_test
 }
 
 describe('Area brief refresh endpoint', () => {
-  test('authenticates, rate-limits, reindexes, then generates from refreshed evidence', async () => {
+  test('authenticates, reindexes, then generates from refreshed evidence without a quota', async () => {
     const deps = dependencies();
     let reindexFinished = false;
     deps.reindex.mockImplementation(async () => {
@@ -52,12 +52,7 @@ describe('Area brief refresh endpoint', () => {
       ok: true,
       brief: { status: 'ready', lede: 'Current work is moving.', summary: 'Ready.' },
     });
-    expect(deps.rateLimit).toHaveBeenCalledWith({
-      userId: user.userId,
-      key: 'albatross-area-brief',
-      limit: 12,
-      windowMs: 60_000,
-    });
+    expect(deps.rateLimit).not.toHaveBeenCalled();
     expect(deps.areaExists).toHaveBeenCalledWith(user.userId, 'area_test');
     expect(deps.reindex).toHaveBeenCalledWith(user.userId, 'area_test');
     expect(deps.generate).toHaveBeenCalledWith({
@@ -69,7 +64,7 @@ describe('Area brief refresh endpoint', () => {
     });
   });
 
-  test('returns controlled authentication and rate-limit responses', async () => {
+  test('requires authentication while the old generation quota cannot block a refresh', async () => {
     const unauthenticated = dependencies();
     unauthenticated.currentUser.mockImplementation(async () => {
       throw new AuthRequiredError('Sign in required.');
@@ -81,8 +76,8 @@ describe('Area brief refresh endpoint', () => {
       throw new RateLimitError('Too many requests. Try again shortly.', 2_000, 12);
     });
     const limitedResponse = await invoke(limited);
-    expect(limitedResponse.status).toBe(429);
-    expect(limitedResponse.headers.get('retry-after')).toBe('2');
+    expect(limitedResponse.status).toBe(200);
+    expect(limited.rateLimit).not.toHaveBeenCalled();
   });
 
   test('returns 404 only after an explicit owned-area lookup', async () => {

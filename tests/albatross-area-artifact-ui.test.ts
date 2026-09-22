@@ -39,8 +39,6 @@ describe('generated Area screen host contract', () => {
     expect(mutation).toContain('areaArtifactHtmlForWrite(');
     expect(mutation).toContain('assertAreaArtifactDocumentSize(');
     expect(mutation).not.toContain('args.artifactHtml.slice(');
-    const gateway = read('lib/ai/gateway.ts');
     expect(maxOutputTokensForFeature('albatross_area_artifact')).toBeUndefined();
-    expect(gateway).toContain("'albatross_area_artifact'");
   });
 });

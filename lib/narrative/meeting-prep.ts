@@ -37,21 +37,26 @@ export class MeetingContextError extends Error {
     super(message);
   }
 }
+export async function readMeetingRecord(
+  userId: string,
+  selector: MeetingSelector,
+  deps = { connected: requireConnectedAccount, query: convexQuery },
+): Promise<MeetingRecord | null> {
+  // An owned cached event is not permission to read a disconnected account.
+  try {
+    await deps.connected(userId, selector.accountId);
+  } catch {
+    return null;
+  }
+  return deps.query((api as any).calendarData.getEventByProviderId, {
+    userId,
+    accountId: selector.accountId,
+    providerCalendarId: selector.calendarId,
+    providerEventId: selector.eventId,
+  });
+}
 const defaults = {
-  event: async (userId: string, selector: MeetingSelector): Promise<MeetingRecord | null> => {
-    // An owned cached event is not permission to read a disconnected account.
-    try {
-      await requireConnectedAccount(userId, selector.accountId);
-    } catch {
-      return null;
-    }
-    return convexQuery((api as any).calendarData.getEventByProviderId, {
-      userId,
-      accountId: selector.accountId,
-      providerCalendarId: selector.calendarId,
-      providerEventId: selector.eventId,
-    });
-  },
+  event: readMeetingRecord,
   context: getNarrativeTaskContext,
   generate: generateTextForCurrentUser,
 };

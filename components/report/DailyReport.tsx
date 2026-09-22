@@ -889,8 +889,7 @@ export function DailyReport({
     waitingForNew ||
     composingLetter ||
     (!reportIsStale && (report?.status === 'partial' || report?.artifactStatus === 'composing'));
-  const showGeneratingState =
-    generating && ((!displayArtifact && !displayDocument) || waitingForNew || composingLetter);
+  const showGeneratingState = generating && ((!displayArtifact && !displayDocument) || composingLetter);
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
   const fallbackLetter = useMemo(() => {
@@ -964,7 +963,15 @@ export function DailyReport({
       setGeneratingSince(Date.now());
     },
     onSuccess: (result) => {
-      if (result.started === false && result.report?.generatedAt) {
+      // A terminal failed replacement may leave the reader on its last good
+      // edition. Release the refresh control even though that edition is older.
+      if (
+        result.report &&
+        result.report.status !== 'partial' &&
+        !['composing', 'enriching'].includes(result.report.artifactStatus || '')
+      ) {
+        setGeneratingSince(null);
+      } else if (result.started === false && result.report?.generatedAt) {
         setGeneratingSince(result.report.generatedAt);
       }
       invalidate();

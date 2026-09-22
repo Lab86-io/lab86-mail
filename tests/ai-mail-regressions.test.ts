@@ -637,7 +637,7 @@ describe('B2C AI budget accounting', () => {
       resolveAiBudgetPolicy({ feature: 'daily_report_narrative', monthlyCredits: 500, creditsUsed: 400 }),
     ).toMatchObject({
       softLimited: true,
-      forceFastModel: true,
+      forceFastModel: false,
       hardStopped: false,
     });
     expect(resolveAiBudgetPolicy({ feature: 'agent', monthlyCredits: 500, creditsUsed: 500 })).toMatchObject({

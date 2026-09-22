@@ -94,3 +94,8 @@ The source feeds are bounded and may still be indexing. These changes do not ass
 
 
 Follow-up reliability requirement: requested Narrative refreshes no longer have a 24-run daily quota or share the generic write quota; explicit workspace generation also bypasses its former request quota. Brief features retain the chosen model even when the generic usage policy would downgrade other work. All brief writers now participate in provider retry/failover, including explicit recovery from an empty `length` completion. The reader can keep the previous completed editorial edition (with its original id/date, at most 24 hours older) while a replacement composes or fails; generation workers still inspect the actual newest record. An expired workspace cache can retain its last successful composition only when the complete source revision/consent stamp remains identical.
+
+
+The direct `generate_daily_report` tool and Area refresh endpoint are also exempt from their former request quotas. A mounted UI regression verifies that renewing an edition keeps the saved page visible and that a failed replacement releases the refresh button. Live GLM-5.3-Flash validation through the application gateway (synthetic evidence, development credentials, no customer data/application writes) completed in 22 seconds with three valid narrative threads and `finishReason: stop` without an application token ceiling.
+
+Expanded-scope local validation: typecheck and lint pass (one existing warning, two existing informational notices); the full default-timeout coverage suite passes **4,380 tests, one skipped, zero failed** across 460 files. Promotion CI and the two expanded-scope CodeRabbit passes are tracked in PR #288.
