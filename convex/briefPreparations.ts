@@ -58,6 +58,14 @@ async function currentSources(ctx: any, userId: string, row: any) {
   }
   return sources;
 }
+async function relatedWorkIsActive(ctx: any, userId: string, workId?: string) {
+  if (!workId) return true;
+  const id = ctx.db.normalizeId('albatrossIntents', workId);
+  const work = id ? await ctx.db.get(id) : null;
+  return Boolean(
+    work?.userId === userId && !['done', 'archived', 'released'].includes(work.workState || work.status),
+  );
+}
 export const list = query({
   args: caller,
   handler: async (ctx, args) => {
@@ -68,6 +76,7 @@ export const list = query({
       .take(20);
     const result = [];
     for (const row of rows) {
+      if (!(await relatedWorkIsActive(ctx, args.userId, row.workId))) continue;
       const source = await ctx.db.get(row.seedId);
       if (!source || !(await contentAccess(ctx, args.userId, source, 'brief'))) continue;
       const pendingClassification = !source.labels && source.status === 'pending';
@@ -108,6 +117,16 @@ export const claim = mutation({
       .take(20);
     let activeCount = existing.length;
     for (const row of existing) {
+      if (!(await relatedWorkIsActive(ctx, args.userId, row.workId))) {
+        await ctx.db.patch(row._id, {
+          status: 'resolved',
+          updatedAt: Date.now(),
+          lease: undefined,
+          leaseUntil: undefined,
+        });
+        activeCount--;
+        continue;
+      }
       const source = await ctx.db.get(row.seedId);
       if (!source || !(await eligible(ctx, args.userId, source))) {
         // Pending reclassification does not resolve a proposal. Explicit current resolution does.
@@ -159,13 +178,9 @@ export const claim = mutation({
       }
       let workId: any;
       if (seed.labels?.workId) {
-        const id = ctx.db.normalizeId('albatrossIntents', seed.labels.workId);
-        const work = id ? await ctx.db.get(id) : null;
-        if (
-          work?.userId === args.userId &&
-          !['done', 'archived', 'released'].includes(work.workState || work.status)
-        )
-          workId = id;
+        // A closed/deleted match must not turn back into a new-work suggestion.
+        if (!(await relatedWorkIsActive(ctx, args.userId, seed.labels.workId))) continue;
+        workId = ctx.db.normalizeId('albatrossIntents', seed.labels.workId);
       }
       const key = workId ? `work:${workId}` : `source:${seed.key}`;
       const prior = await ctx.db
@@ -225,6 +240,7 @@ export const complete = mutation({
     const sources: any[] = [];
     let stale =
       row.revision !== args.revision ||
+      !(await relatedWorkIsActive(ctx, args.userId, row.workId)) ||
       !seed ||
       seed.version !== args.seedVersion ||
       !(await eligible(ctx, args.userId, seed));

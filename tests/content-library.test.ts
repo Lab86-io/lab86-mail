@@ -353,6 +353,49 @@ test('list adoption creates list items and attached research without an executio
   expect(await t.run((ctx) => ctx.db.query('albatrossEvidence').collect())).toHaveLength(2);
 });
 
+test('completed or removed related work retires its preparation without recreating it as new work', async () => {
+  for (const closed of ['done', 'archived', 'released', 'deleted']) {
+    const t = convexTest(schema, modules);
+    const row = await seed(t);
+    const proposal = await prepare(t, row);
+    const workId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('albatrossIntents', {
+        userId: scope.userId,
+        externalId: 'existing-launch',
+        rawText: 'Launch',
+        title: 'Launch',
+        source: 'import',
+        status: 'ready',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(row._id, { labels: { ...labels, workId: String(id) } });
+      await ctx.db.patch(proposal._id, { workId: id, key: `work:${id}`, needsRefresh: true });
+      return id;
+    });
+    const claim = await t.mutation(preparations.claim, scope);
+    await t.run(async (ctx) => {
+      if (closed === 'deleted') await ctx.db.delete(workId);
+      else await ctx.db.patch(workId, { workState: closed });
+    });
+    expect(await t.query(preparations.list, scope)).toEqual([]);
+    expect(
+      await t.mutation(preparations.complete, {
+        ...scope,
+        id: claim._id,
+        lease: claim.lease,
+        revision: claim.revision,
+        seedVersion: row.version,
+        draft: draft(row._id),
+        sources: [{ id: row._id, version: row.version }],
+      }),
+    ).toBe(false);
+    expect(await t.mutation(preparations.claim, scope)).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(proposal._id)))?.status).toBe('resolved');
+    expect(await t.run((ctx) => ctx.db.query('briefPreparations').collect())).toHaveLength(1);
+  }
+});
+
 test('semantic retrieval is owner-filtered and removes stale or disconnected vectors', async () => {
   const t = convexTest(schema, modules);
   const row = await seed(t);
