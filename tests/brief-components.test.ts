@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readdirSync } from 'node:fs';
 import { briefComponentRenderers } from '../components/report/brief-canvas/BriefToolUi';
+import { generateTextForCurrentUser } from '../lib/ai/gateway';
 import {
   briefComponentNames,
   describeBriefComponent,
@@ -21,6 +22,58 @@ import { editorialFixture } from './fixtures/editorial';
 import { assessment, NOW, policy, thread } from './fixtures/jev';
 
 const toolOptions = { toolCallId: 'test', messages: [] };
+
+test('gateway retries and provider failover each start a fresh editorial session', async () => {
+  const { edition, letter, plan } = editorialFixture();
+  const runtime = {
+    userId: null,
+    source: 'lab86' as const,
+    provider: 'openai' as const,
+    modelName: 'primary',
+    model: {} as any,
+  };
+  let attempts = 0;
+  const sessions: unknown[] = [];
+  const result = await writeDailyEditorial(edition, letter, {
+    generate: (options) =>
+      generateTextForCurrentUser(options, {
+        resolveAiRuntime: async () => runtime,
+        fallbackRuntimes: () => [{ ...runtime, modelName: 'fallback' }],
+        recordUsage: async () => {},
+        generateText: (async (request: any) => {
+          attempts += 1;
+          expect(request.toolsForAttempt).toBeUndefined();
+          expect(sessions).not.toContain(request.tools);
+          sessions.push(request.tools);
+          expect(request.stopWhen[1]()).toBe(false);
+          expect(
+            (await request.tools.finalize_brief.execute({ title: 'Empty', summary: 'Empty' }, toolOptions))
+              .ok,
+          ).toBe(false);
+          const regions = structuredClone(plan.regions);
+          regions[0].id = `attempt-${attempts}`;
+          expect((await request.tools.place_regions.execute({ regions }, toolOptions)).ok).toBe(true);
+          expect(
+            (
+              await request.tools.finalize_brief.execute(
+                { title: `Attempt ${attempts}`, summary: 'Complete' },
+                toolOptions,
+              )
+            ).ok,
+          ).toBe(true);
+          if (attempts === 1) throw new Error('Invalid JSON response');
+          if (attempts === 2) throw Object.assign(new Error('Provider unavailable'), { statusCode: 503 });
+          return { text: '', usage: {} };
+        }) as any,
+      }),
+  });
+  expect(attempts).toBe(3);
+  expect(result.failed).toBe(false);
+  expect(result.document.title).toBe('Attempt 3');
+  expect(result.document.regions[0].id).toBe('editorial-attempt-3');
+  expect(JSON.stringify(result.document)).not.toContain('attempt-1');
+  expect(JSON.stringify(result.document)).not.toContain('attempt-2');
+});
 
 test('authored source replacements retain account-scoped hydration refs and reject invalid stored props', () => {
   const { letter, modules, plan } = editorialFixture();

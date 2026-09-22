@@ -167,8 +167,12 @@ export async function writeDailyEditorial(
     evidence?: Record<string, unknown>;
   } = {},
 ): Promise<{ document: BriefDocumentV2; editorial: NonNullable<DailyReport['editorial']>; failed: boolean }> {
-  const session = createDailyEditorialSession(report, letter, options.evidence);
+  let session = createDailyEditorialSession(report, letter, options.evidence);
   const fallback = defaultEditorialPlan(session.modules);
+  const toolsForAttempt = () => {
+    session = createDailyEditorialSession(report, letter, options.evidence);
+    return session.tools;
+  };
   const generate = options.generate === undefined ? generateTextForCurrentUser : options.generate;
   if (generate) {
     try {
@@ -196,6 +200,7 @@ export async function writeDailyEditorial(
             })),
           }),
           tools: session.tools,
+          toolsForAttempt,
           stopWhen: [stepCountIs(18), () => !!session.result()],
           maxOutputTokens: 12000,
           maxRetries: 0,

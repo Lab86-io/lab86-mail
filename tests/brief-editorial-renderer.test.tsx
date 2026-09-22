@@ -1,11 +1,118 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import * as narrative from '../components/narrative/NarrativeBrief';
 import { BriefCanvas } from '../components/report/brief-canvas/BriefCanvas';
 import { type BriefNodeContext, BriefNodeView } from '../components/report/brief-canvas/BriefNodeView';
+import { BriefToolUi, briefComponentRenderers } from '../components/report/brief-canvas/BriefToolUi';
+import * as preparations from '../components/report/PreparedWork';
 import { briefRefKey } from '../lib/brief/hydration';
 import { BriefNodeSchema } from '../lib/shared/brief-document';
 import { editorialFixture } from './fixtures/editorial';
+
+const emptyContext: BriefNodeContext = {
+  entities: new Map(),
+  hiddenRefs: new Set(),
+  completedRefs: new Map(),
+  onAction: () => {},
+  onCanvasAction: () => {},
+  liveSections: true,
+};
+
+test('failed live sections preserve neighboring stories and can recover locally', async () => {
+  const errors = spyOn(console, 'error').mockImplementation(() => {});
+  let failed = true;
+  const Section = () => {
+    if (failed) throw new Error('Section unavailable');
+    return <p>Recovered section</p>;
+  };
+  const narrativeSpy = spyOn(narrative, 'NarrativeBrief').mockImplementation(Section);
+  const preparationsSpy = spyOn(preparations, 'PreparedWork').mockImplementation(Section);
+  let view: ReactTestRenderer | undefined;
+  try {
+    for (const section of ['narrative', 'prepared_work']) {
+      failed = true;
+      const node = BriefNodeSchema.parse({ kind: 'live_section', section, at: 1 });
+      await act(async () => {
+        view = create(
+          <>
+            <p>Source story remains</p>
+            <BriefNodeView node={node} context={emptyContext} />
+          </>,
+        );
+      });
+      expect(JSON.stringify(view!.toJSON())).toContain('Source story remains');
+      expect(JSON.stringify(view!.toJSON())).toContain(
+        section === 'narrative' ? 'Personal context could not load.' : 'Prepared work could not load.',
+      );
+      failed = false;
+      await act(async () => {
+        view!.root.findByType('button').props.onClick();
+      });
+      expect(JSON.stringify(view!.toJSON())).toContain('Recovered section');
+      await act(async () => {
+        view!.unmount();
+      });
+      view = undefined;
+    }
+  } finally {
+    if (view)
+      await act(async () => {
+        view!.unmount();
+      });
+    narrativeSpy.mockRestore();
+    preparationsSpy.mockRestore();
+    errors.mockRestore();
+  }
+});
+
+test('a new saved-answer revision resets a failed component renderer', async () => {
+  const errors = spyOn(console, 'error').mockImplementation(() => {});
+  const original = briefComponentRenderers['option-list'];
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  const node = BriefNodeSchema.parse({
+    kind: 'tool_ui',
+    id: 'choice',
+    component: 'option-list',
+    summary: 'Choose a step',
+    sources: [],
+    props: { id: 'choice', options: [{ id: 'review', label: 'Review' }] },
+  });
+  if (node.kind !== 'tool_ui') throw new Error('Expected component');
+  const key = ['brief-component', 'edition', node.id, JSON.stringify(node.props)];
+  client.setQueryData(key, { stamp: 'a', revision: null, value: null });
+  let view: ReactTestRenderer | undefined;
+  const render = () => (
+    <QueryClientProvider client={client}>
+      <BriefToolUi node={node} context={{ ...emptyContext, reportId: 'edition' }} />
+    </QueryClientProvider>
+  );
+  try {
+    briefComponentRenderers['option-list'] = () => {
+      throw new Error('Bad renderer');
+    };
+    await act(async () => {
+      view = create(render());
+    });
+    expect(JSON.stringify(view!.toJSON())).toContain('Retry section');
+    briefComponentRenderers['option-list'] = () => <p>Saved answer renderer recovered</p>;
+    await act(async () => {
+      client.setQueryData(key, { stamp: 'a', revision: 'saved', value: ['review'] });
+      view!.update(render());
+    });
+    expect(JSON.stringify(view!.toJSON())).toContain('Saved answer renderer recovered');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('Retry section');
+  } finally {
+    if (view)
+      await act(async () => {
+        view!.unmount();
+      });
+    briefComponentRenderers['option-list'] = original;
+    errors.mockRestore();
+    client.clear();
+  }
+});
 
 test('email and hydrated event times use the edition timezone consistently', () => {
   const at = Date.parse('2026-09-22T15:00:00Z');

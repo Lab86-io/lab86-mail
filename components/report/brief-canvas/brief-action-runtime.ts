@@ -113,7 +113,7 @@ export function briefEventRequest(input: {
 }): BriefEventRequest | null {
   const regionId = input.regionId?.trim();
   if (!regionId) return null;
-  const ref = input.ref ?? refFromPayload(input.payload ?? {});
+  const ref = input.ref ?? refFromPayload(input.payload ?? {}, regionId);
   if (!ref) return null;
   return {
     ...(input.reportId ? { reportId: input.reportId } : {}),
@@ -125,14 +125,14 @@ export function briefEventRequest(input: {
   };
 }
 
-function refFromPayload(payload: BriefActionPayload): BriefSourceRefV2 | null {
+function refFromPayload(payload: BriefActionPayload, regionId: string): BriefSourceRefV2 | null {
   const text = (key: string) => {
     const value = payload[key];
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
   };
   const account = text('account');
   if (text('threadId')) return { kind: 'thread', id: text('threadId')!, account };
-  if (text('cardId')) return { kind: 'card', id: text('cardId')! };
+  if (text('cardId')) return { kind: regionId === 'tasks' ? 'task' : 'card', id: text('cardId')! };
   if (text('eventId')) return { kind: 'event', id: text('eventId')!, account };
   return null;
 }

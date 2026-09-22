@@ -42,7 +42,7 @@ An explicit `layout: editorial` marker bypasses the older fixed-letter heuristic
 - Legacy HTML, `composition`, the iframe action bridge and letter rendering still have active historical/client readers. Deleting them because their names are old would break supported editions.
 - The general rich-document prompt still belongs to Work plans. This change does not introduce another Work-plan writer.
 - The context-card writer still provides contextual recommendations and Respond & act. Its UI now says “context writer” and “Retry context,” distinguishing it from page composition.
-- No files in `apps/ios`, `MobileAPI`, or `lib/mobile/v1` were edited. The existing Swift v2 decoder normalizes unknown leaves to a summary; native implementation of the new web live sections remains outside this change.
+- The editorial feature adds web components; the complete staging promotion also includes the native brief round, optional `MobileAPI` framing age, and native Prepared Work. Promotion review fixes protect staged native files and repair fallback navigation. No files in `lib/mobile/v1` were edited. The existing Swift v2 decoder normalizes unknown Tool UI leaves to a summary; native rendering of those web components remains outside this change.
 - All current Tool UI families are authorable. New families must be added to the shared catalogue and renderer; an exhaustive filesystem coverage test fails if those drift. Historical HTML/iframe rendering remains a compatibility path, not a second daily generator.
 
 ## Product research
@@ -79,4 +79,4 @@ Optional live synthetic evaluation: `EDITORIAL_EVAL_ENV_FILE=/path/to/local/env 
 
 ## Release scope
 
-Feature branch and PR target staging. The staging workflow deploys Convex mutations before the web service, so the new atomic input-state mutation arrives before the UI uses it. No production merge, deploy or real brief regeneration is included. No native-owned code was edited; unknown Tool UI leaves retain the existing native summary fallback until the native renderer is extended by its owner.
+The feature was merged into staging in PR #287. Promotion PR #288 targets main and includes the earlier native brief work alongside the editorial feature. Both deployment workflows deploy Convex mutations before the web service, so the new atomic input-state mutation arrives before the UI uses it. The user requested two CodeRabbit promotion reviews, production deployment, then regeneration of today's briefs. Unknown Tool UI leaves retain the existing native summary fallback until the native renderer is extended by its owner. Final review, deployment and regeneration evidence belongs in the promotion PR and completion report.

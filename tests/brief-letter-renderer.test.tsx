@@ -258,12 +258,12 @@ function threadRow(
   id: string,
   subject: string,
   sender: string,
-  extra: { age?: string; actions?: BriefActionV2[] } = {},
+  extra: { age?: string; lane?: string; actions?: BriefActionV2[] } = {},
 ) {
   return {
     ref: { kind: 'thread' as const, id, account, label: subject },
     framing: {
-      lane: 'waiting',
+      lane: extra.lane ?? 'waiting',
       sender,
       reason: 'No answer since Monday.',
       ...(extra.age ? { age: extra.age } : {}),
@@ -411,6 +411,7 @@ function areaRoundDocument(): BriefDocumentV2 {
           variant: 'rows',
           items: [
             threadRow('thread-lease-2', 'Lease: parking clause', 'Daniel Ortiz', {
+              lane: 'mail',
               actions: [
                 {
                   action: 'open_thread',
@@ -721,6 +722,7 @@ describe('review actions in letter rows', () => {
                 ...region.tree,
                 items: [
                   threadRow('thread-passport', 'Passport renewal: form due', 'Passport Office', {
+                    lane: 'today',
                     actions: [
                       {
                         action: 'open_thread',

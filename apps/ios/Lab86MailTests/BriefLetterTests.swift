@@ -521,7 +521,9 @@ struct BriefLetterTests {
         let done = BriefMailRowCopy(item: task, entity: nil, completed: true)
         #expect(done.completed)
         #expect(done.accessibilityLabel == "Book the tent, completed, Due Thursday., action Done, action Skip")
-        #expect(BriefMailRowCopy.fallbackOpen(for: task.ref).action == "open_view")
+        let taskFallback = try #require(BriefMailRowCopy.fallbackOpen(for: task.ref))
+        #expect(taskFallback.action == "open_view")
+        #expect(taskFallback.payload["view"] == .string("tasks"))
 
         let tool = try JSONDecoder().decode(BriefEntityItem.self, from: Data(toolItem(id: "issue-9", label: "Issue 9: seating chart").utf8))
         let copy = BriefMailRowCopy(item: tool, entity: nil)
@@ -529,7 +531,8 @@ struct BriefLetterTests {
         #expect(copy.line == "Two comments since yesterday.")
         #expect(copy.action == "Open")
         #expect(copy.trailingActions.isEmpty)
-        #expect(BriefMailRowCopy.fallbackOpen(for: tool.ref).action == "open_url")
+        #expect(BriefMailRowCopy.fallbackOpen(for: tool.ref) == nil)
+        #expect(BriefRowActions.arrange(nil, fallback: BriefMailRowCopy.fallbackOpen(for: tool.ref)).tap == nil)
     }
 
     // MARK: - Inactive refs

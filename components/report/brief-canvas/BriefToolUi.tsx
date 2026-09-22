@@ -161,14 +161,22 @@ export const briefComponentRenderers: Record<BriefComponentName, ComponentType<a
   'editorial-text': EditorialText,
 };
 
-class ComponentBoundary extends Component<{ children: ReactNode; summary: string }, { failed: boolean }> {
+export class BriefComponentBoundary extends Component<
+  { children: ReactNode; summary: string },
+  { failed: boolean }
+> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
   render() {
     return this.state.failed ? (
-      <p className="text-sm text-[var(--color-text-muted)]">{this.props.summary}</p>
+      <div className="space-y-2 text-sm text-[var(--color-text-muted)]">
+        <p>{this.props.summary}</p>
+        <Button size="xs" variant="ghost" onClick={() => this.setState({ failed: false })}>
+          Retry section
+        </Button>
+      </div>
     ) : (
       this.props.children
     );
@@ -359,7 +367,10 @@ export function BriefToolUi({ node, context }: { node: BriefToolUiNode; context:
       {interactive && !props.title ? (
         <h3 className="font-display text-lg font-semibold leading-snug">{node.summary}</h3>
       ) : null}
-      <ComponentBoundary key={JSON.stringify(node.props)} summary={node.summary}>
+      <BriefComponentBoundary
+        key={`${reportId ?? 'unsaved'}:${state.data?.revision ?? 'initial'}:${editing}:${resetKey}:${JSON.stringify(node.props)}`}
+        summary={node.summary}
+      >
         <fieldset
           disabled={interactive && (pending || !reportId || !state.data || state.isError)}
           className="min-w-0 border-0 p-0 m-0"
@@ -369,7 +380,7 @@ export function BriefToolUi({ node, context }: { node: BriefToolUiNode; context:
             <DraftEditor initial={String(props.body)} onSave={(body) => save({ body })} />
           ) : null}
         </fieldset>
-      </ComponentBoundary>
+      </BriefComponentBoundary>
       {interactive ? (
         <div
           className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-muted)]"

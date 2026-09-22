@@ -362,7 +362,10 @@ export async function generateTextForCurrentUser(
     userId?: string | null;
     userEmail?: string | null;
     userName?: string | null;
+    /** Recreate mutable tool state for each provider attempt, including retries. */
+    toolsForAttempt?: () => Record<string, any>;
   },
+  dependencies = { resolveAiRuntime, generateText, recordUsage, fallbackRuntimes: agentFallbackRuntimes },
 ) {
   const {
     feature = 'generate_text',
@@ -373,25 +376,27 @@ export async function generateTextForCurrentUser(
     model: _ignored,
     maxOutputTokens,
     narrativeModel,
+    toolsForAttempt,
     ...rest
   } = options as any;
-  const runtime = await resolveAiRuntime({ userId, speed, feature, narrativeModel });
+  const runtime = await dependencies.resolveAiRuntime({ userId, speed, feature, narrativeModel });
   return runWithAiRequestContext({ userId: runtime.userId, userEmail, userName, agent: 'ai' }, async () => {
     let lastErr: any;
-    const runtimes = [runtime, ...agentFallbackRuntimes(runtime, feature)];
+    const runtimes = [runtime, ...dependencies.fallbackRuntimes(runtime, feature)];
     try {
       for (let runtimeIndex = 0; runtimeIndex < runtimes.length; runtimeIndex += 1) {
         const activeRuntime = runtimes[runtimeIndex];
         const maxAttempts = FAILOVER_FEATURES.has(feature) && runtimeIndex === 0 ? 2 : 1;
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
-            const result = await generateText({
+            const result = await dependencies.generateText({
               ...rest,
+              ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
               // Tiered ceiling by feature (see FEATURE_MAX_TOKENS) — never unbounded.
               maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
               model: activeRuntime.model,
             });
-            await recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
+            await dependencies.recordUsage(activeRuntime, feature, result.totalUsage ?? result.usage, true);
             return result;
           } catch (err: any) {
             lastErr = err;
@@ -423,7 +428,7 @@ export async function generateTextForCurrentUser(
       }
       throw lastErr;
     } catch (err: any) {
-      await recordUsage(runtime, feature, undefined, false, err?.message);
+      await dependencies.recordUsage(runtime, feature, undefined, false, err?.message);
       throw err;
     }
   });

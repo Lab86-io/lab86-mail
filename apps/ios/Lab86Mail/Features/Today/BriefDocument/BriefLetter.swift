@@ -58,15 +58,15 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
 
 // How one row spends its actions (brief round 2026-09-22). The first known
 // action is the row tap. Every other known action becomes a trailing quiet
-// button. Unknown actions never render. A row without a known action keeps
-// the fallback open action so the tap still goes somewhere.
+// button. Unknown actions never render. Rows without a known action only
+// receive a fallback tap when their source has a supported destination.
 enum BriefRowActions {
     struct Arrangement: Equatable {
-        let tap: BriefDocumentAction
+        let tap: BriefDocumentAction?
         let trailing: [BriefDocumentAction]
     }
 
-    static func arrange(_ actions: [BriefDocumentAction]?, fallback: BriefDocumentAction) -> Arrangement {
+    static func arrange(_ actions: [BriefDocumentAction]?, fallback: BriefDocumentAction?) -> Arrangement {
         let known = (actions ?? []).filter { BriefActionPolicy.known.contains($0.action) }
         guard let first = known.first else { return Arrangement(tap: fallback, trailing: []) }
         return Arrangement(tap: first, trailing: Array(known.dropFirst()))
@@ -341,20 +341,24 @@ struct BriefMailRowCopy: Equatable {
         age = item.framing?.age?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         let arranged = BriefRowActions.arrange(item.actions, fallback: Self.fallbackOpen(for: item.ref))
         let known = (item.actions ?? []).contains { BriefActionPolicy.known.contains($0.action) }
-        action = known ? arranged.tap.label.nilIfBlank : nil
+        action = known ? arranged.tap?.label.nilIfBlank : nil
         trailingActions = arranged.trailing.map(\.label)
         self.completed = completed ?? entity?.completed ?? false
     }
 
     // The tap when the item carries no known action.
-    static func fallbackOpen(for ref: BriefSourceRef) -> BriefDocumentAction {
-        let name = switch ref.kind {
-        case "event": "open_event"
-        case "task", "card": "open_view"
-        case "mcp": "open_url"
-        default: "open_thread"
+    static func fallbackOpen(for ref: BriefSourceRef) -> BriefDocumentAction? {
+        let name: String
+        var payload: [String: BriefJSONValue] = [:]
+        switch ref.kind {
+        case "event": name = "open_event"
+        case "task", "card":
+            name = "open_view"
+            payload["view"] = .string("tasks")
+        case "thread": name = "open_thread"
+        default: return nil
         }
-        return BriefDocumentAction(action: name, label: "Open", payload: [:], style: "quiet")
+        return BriefDocumentAction(action: name, label: "Open", payload: payload, style: "quiet")
     }
 
     var accessibilityLabel: String {
@@ -501,6 +505,16 @@ struct BriefMailRow: View {
     private var dimmed: Bool { entity?.gone == true || copy.completed }
 
     var body: some View {
+        if let tap = arrangement.tap {
+            row
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { Task { await onAction(tap, item.ref) } }
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         let copy = copy
         let arrangement = arrangement
         HStack(alignment: .top, spacing: 12) {
@@ -509,12 +523,16 @@ struct BriefMailRow: View {
                     .padding(.top, 2)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Button {
-                    Task { await onAction(arrangement.tap, item.ref) }
-                } label: {
+                if let tap = arrangement.tap {
+                    Button {
+                        Task { await onAction(tap, item.ref) }
+                    } label: {
+                        textBlock(copy)
+                    }
+                    .buttonStyle(.plain)
+                } else {
                     textBlock(copy)
                 }
-                .buttonStyle(.plain)
                 if stacksAction, !arrangement.trailing.isEmpty {
                     actionWords(arrangement.trailing)
                 }
@@ -529,8 +547,6 @@ struct BriefMailRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(copy.accessibilityLabel)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { Task { await onAction(arrangement.tap, item.ref) } }
         .accessibilityActions {
             ForEach(Array(arrangement.trailing.enumerated()), id: \.offset) { _, action in
                 Button(action.label) { Task { await onAction(action, item.ref) } }
@@ -608,10 +624,15 @@ struct BriefEventRow: View {
     let entity: BriefHydratedEntity?
     let onAction: (BriefDocumentAction, BriefSourceRef?) async -> Void
 
+    private var fallbackAction: BriefDocumentAction {
+        BriefDocumentAction(action: "open_event", label: "Open", payload: [:], style: "quiet")
+    }
+    private var tap: BriefDocumentAction { arrangement.tap ?? fallbackAction }
+
     private var arrangement: BriefRowActions.Arrangement {
         BriefRowActions.arrange(
             item.actions,
-            fallback: BriefDocumentAction(action: "open_event", label: "Open", payload: [:], style: "quiet")
+            fallback: fallbackAction
         )
     }
     private var title: String { entity?.title ?? item.ref.label ?? "Event" }
@@ -640,7 +661,7 @@ struct BriefEventRow: View {
             let arrangement = arrangement
             VStack(alignment: .leading, spacing: 6) {
                 Button {
-                    Task { await onAction(arrangement.tap, item.ref) }
+                    Task { await onAction(tap, item.ref) }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
@@ -673,7 +694,7 @@ struct BriefEventRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { Task { await onAction(arrangement.tap, item.ref) } }
+        .accessibilityAction { Task { await onAction(tap, item.ref) } }
         .accessibilityActions {
             ForEach(Array(arrangement.trailing.enumerated()), id: \.offset) { _, action in
                 Button(action.label) { Task { await onAction(action, item.ref) } }
@@ -683,7 +704,7 @@ struct BriefEventRow: View {
 
     private var accessibilityLabel: String {
         let words = arrangement.trailing.map { "action \($0.label)" }
-        return ([title, detail, "action \(arrangement.tap.label)"].compactMap { $0 } + words)
+        return ([title, detail, "action \(tap.label)"].compactMap { $0 } + words)
             .joined(separator: ", ")
     }
 

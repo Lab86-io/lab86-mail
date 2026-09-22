@@ -15,7 +15,7 @@ window.fetch = async (input, init) => {
   if (url.includes('/briefs/resolve')) return Response.json({ ok: true, entities: [] });
   if (url.includes('/narrative')) return Response.json({ enabled: false });
   if (url.includes('/content')) return Response.json({ items: [] });
-  if (url.includes('/tools/') || url.includes('/briefs/events'))
+  if (url.includes('/tools/') || url.includes('/brief/events'))
     return Response.json({ ok: true, result: {} });
   return Response.json({ error: 'Synthetic preview only' }, { status: 404 });
 };

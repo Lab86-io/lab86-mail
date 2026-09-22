@@ -75,9 +75,17 @@ describe('brief telemetry request', () => {
       surface: 'daily',
       regionId: 'tasks',
       action: 'toggle_task',
-      ref: { kind: 'card', id: 'card-1' },
+      ref: { kind: 'task', id: 'card-1' },
       outcome: 'undone',
     });
+    expect(
+      briefEventRequest({
+        regionId: 'project',
+        action: 'toggle_task',
+        payload: { cardId: 'card-1' },
+        outcome: 'done',
+      })?.ref,
+    ).toEqual({ kind: 'card', id: 'card-1' });
     expect(
       briefEventRequest({
         regionId: '',

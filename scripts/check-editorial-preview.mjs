@@ -19,6 +19,13 @@ try {
     waitUntil: 'networkidle',
   });
   await page.waitForSelector('[data-brief-component-id="review-choice"] [role="option"]');
+  assert.equal(
+    await page.evaluate(
+      async () => (await fetch('/api/brief/events', { method: 'POST', body: '{}' })).status,
+    ),
+    200,
+    'preview handles the production telemetry endpoint',
+  );
   console.log('ready', await page.locator('[data-brief-component]').count());
   await page.locator('[data-brief-component-id="review-choice"]').getByRole('option').first().click();
   await page

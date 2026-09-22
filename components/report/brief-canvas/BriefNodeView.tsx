@@ -41,7 +41,7 @@ import type { BriefHydratedEntity } from '@/lib/shared/brief-hydration';
 import { cn } from '@/lib/utils';
 import { BriefActions } from './BriefActions';
 import { BriefCanvasLeaf } from './BriefCanvasLeaf';
-import { BriefToolUi } from './BriefToolUi';
+import { BriefComponentBoundary, BriefToolUi } from './BriefToolUi';
 import type { BriefActionPayload } from './brief-action-runtime';
 
 const BriefGeoMap = dynamic(() => import('@/components/tool-ui/geo-map').then((module) => module.GeoMap), {
@@ -115,10 +115,17 @@ export function BriefNodeView({
       return <BriefToolUi node={node} context={context} />;
     case 'live_section':
       if (!context.liveSections) return null;
-      return node.section === 'narrative' ? (
-        <NarrativeBrief at={node.at} fallback={null} />
-      ) : (
-        <PreparedWork />
+      return (
+        <BriefComponentBoundary
+          key={`${context.reportId}:${node.section}:${node.at}`}
+          summary={
+            node.section === 'narrative'
+              ? 'Personal context could not load.'
+              : 'Prepared work could not load.'
+          }
+        >
+          {node.section === 'narrative' ? <NarrativeBrief at={node.at} fallback={null} /> : <PreparedWork />}
+        </BriefComponentBoundary>
       );
     case 'stack':
       return (
