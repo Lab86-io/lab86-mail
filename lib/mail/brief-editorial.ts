@@ -186,6 +186,7 @@ export async function writeDailyEditorial(
             date: new Date(report.generatedAt).toISOString(),
             timezone: letter.timezone,
             intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent,
+            coverage: report.errors,
             catalogue: Object.entries(briefComponentCatalog).map(([name, entry]) => ({
               name,
               purpose: entry.description,
@@ -202,7 +203,6 @@ export async function writeDailyEditorial(
           tools: session.tools,
           toolsForAttempt,
           stopWhen: [stepCountIs(18), () => !!session.result()],
-          maxOutputTokens: 12000,
           maxRetries: 0,
           abortSignal: AbortSignal.timeout(150_000),
         }),

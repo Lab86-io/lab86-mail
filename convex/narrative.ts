@@ -79,6 +79,15 @@ async function allowed(
     );
     return remember(Boolean(connection && connection.status !== 'disconnected'));
   }
+  if (source.startsWith('files:')) {
+    const connection = await meteredRead(meter, () =>
+      ctx.db
+        .query('cloudFileConnections')
+        .withIndex('by_user_connection', (q) => q.eq('userId', userId).eq('connectionId', source.slice(6)))
+        .unique(),
+    );
+    return remember(connection?.status === 'connected');
+  }
   if (/^(mail|calendar):/.test(source)) {
     const account = await meteredRead(meter, () =>
       ctx.db
@@ -111,10 +120,11 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any, meter?
         !original ||
         original.userId !== row.userId ||
         original.archivedAt ||
+        original.deleted ||
         ['rejected', 'superseded'].includes(original.status)
       )
         return false;
-      if (row.current && ['aiOperations', 'albatrossIntents'].includes(row.sourceTable)) {
+      if (row.current && ['aiOperations', 'albatrossIntents', 'contentItems'].includes(row.sourceTable)) {
         const baseline = row.corrected ? row.sourceBaseVersion : row.sourceVersion;
         const receipt = observationsForRow(row.sourceTable, original).find((item) => item.key === row.key);
         if (!receipt || (baseline && receipt.sourceVersion !== baseline)) return false;
@@ -144,7 +154,7 @@ export const status = query({
   handler: async (ctx, args) => {
     const userId = await owner(ctx, args);
     const prefs = await settings(ctx, userId);
-    const [accounts, connections, runs] = await Promise.all([
+    const [accounts, connections, runs, files] = await Promise.all([
       ctx.db
         .query('connectedAccounts')
         .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -158,6 +168,10 @@ export const status = query({
         .withIndex('by_user', (q) => q.eq('userId', userId))
         .order('desc')
         .take(8),
+      ctx.db
+        .query('cloudFileConnections')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
     ]);
     const sources = [
       { id: 'checkins', label: 'Reflections and tomorrow intentions', status: 'ready' },
@@ -175,6 +189,13 @@ export const status = query({
             lastSyncedAt: a.lastSyncedAt,
           })),
         ),
+      ...files
+        .filter((file) => file.status !== 'disconnected')
+        .map((file) => ({
+          id: `files:${file.connectionId}`,
+          label: file.displayName || file.provider,
+          status: file.status,
+        })),
       ...connections
         .filter((c) => c.status !== 'disconnected')
         .map((c) => ({
@@ -185,6 +206,7 @@ export const status = query({
         })),
     ];
     return {
+      groups: Object.keys(groups),
       settings: prefs
         ? {
             enabled: prefs.enabled,
@@ -219,7 +241,7 @@ export const configure = mutation({
     if (
       args.sources.length > 40 ||
       args.sources.some(
-        (s) => !/^(checkins|work|areas|chat|documents|(?:mail|calendar|mcp):.{1,220})$/.test(s),
+        (s) => !/^(checkins|work|areas|chat|documents|(?:mail|calendar|mcp|files):.{1,220})$/.test(s),
       )
     )
       throw new Error('Invalid narrative sources');
@@ -582,7 +604,7 @@ export const refreshUser = internalAction({
     if (!url || !secret || !(await ctx.runQuery((internal as any).narrative.refreshTarget, args))) return;
     await fanOutInternalPost(`${url.replace(/\/$/, '')}/api/cron/narrative`, secret, [args], {
       concurrency: 1,
-      timeoutMs: 230_000,
+      timeoutMs: 450_000,
       label: 'narrative-change',
     });
   },
@@ -590,7 +612,7 @@ export const refreshUser = internalAction({
 
 const groups: Record<
   string,
-  { table: string; index: string; kind?: string; prefix: string; timestamp?: 'createdAt' }
+  { table: string; index: string; kind?: string; prefix: string; timestamp?: 'createdAt' | 'indexedAt' }
 > = {
   checkins: { table: 'albatrossDailyCheckins', index: 'by_narrative_updated', prefix: 'checkins' },
   work: { table: 'albatrossIntents', index: 'by_user_updatedAt', prefix: 'work' },
@@ -601,6 +623,7 @@ const groups: Record<
   mcp: { table: 'mcpItems', index: 'by_narrative_updated', prefix: 'mcp:' },
   chat: { table: 'userDocs', index: 'by_user_kind_updatedAt', kind: 'chatSession', prefix: 'chat' },
   documents: { table: 'documents', index: 'by_user_updated', prefix: 'documents' },
+  files: { table: 'contentItems', index: 'by_user_updated', prefix: 'files:', timestamp: 'indexedAt' },
   operations: { table: 'aiOperations', index: 'by_narrative_updated', prefix: '' },
   // Pre-rollout receipts have no updatedAt. A separate bounded cursor recovers
   // recent history without rewriting original action logs or missing undo updates.
@@ -612,20 +635,29 @@ const groups: Record<
   },
 };
 export const ingest = mutation({
-  args: { internalSecret: v.string(), userId: v.string(), group: v.string() },
+  args: {
+    internalSecret: v.string(),
+    userId: v.string(),
+    group: v.string(),
+    recent: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const prefs = await settings(ctx, args.userId),
       group = groups[args.group];
     if (!group || !prefs?.enabled || !prefs.sources.some((s) => s.startsWith(group.prefix)))
       return { done: true, changed: 0 };
-    const previous = await ctx.db
-      .query('narrativeCursors')
-      .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', args.group))
-      .unique();
+    const previous = args.recent
+      ? null
+      : await ctx.db
+          .query('narrativeCursors')
+          .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', args.group))
+          .unique();
     // Current Work/Area state is relevant even if it predates the history window.
-    const since =
-      previous?.since ?? (['work', 'areas', 'facts'].includes(args.group) ? 0 : Date.now() - 30 * 86_400_000);
+    const since = args.recent
+      ? Date.now() - 3 * 86_400_000
+      : (previous?.since ??
+        (['work', 'areas', 'facts'].includes(args.group) ? 0 : Date.now() - 30 * 86_400_000));
     const until = previous?.cursor ? previous.until : Date.now();
     const query = (ctx.db as any).query(group.table).withIndex(group.index, (q: any) => {
       const index = q.eq('userId', args.userId);
@@ -633,7 +665,9 @@ export const ingest = mutation({
         .gte(group.timestamp || 'updatedAt', since)
         .lte(group.timestamp || 'updatedAt', until);
     });
-    const page = await query.paginate({ cursor: previous?.cursor || null, numItems: 40 });
+    const page = await query
+      .order(args.recent ? 'desc' : 'asc')
+      .paginate({ cursor: previous?.cursor || null, numItems: 40 });
     let changed = 0;
     for (const row of page.page)
       for (const item of observationsForRow(group.table, row)) {
@@ -679,8 +713,10 @@ export const ingest = mutation({
       cursor: page.isDone ? undefined : page.continueCursor,
       updatedAt: Date.now(),
     };
-    if (previous) await ctx.db.patch(previous._id, cursorDoc);
-    else await ctx.db.insert('narrativeCursors', cursorDoc);
+    if (!args.recent) {
+      if (previous) await ctx.db.patch(previous._id, cursorDoc);
+      else await ctx.db.insert('narrativeCursors', cursorDoc);
+    }
     if (changed) {
       await ctx.db.patch(prefs._id, { revision: prefs.revision + 1, updatedAt: Date.now() });
     }
@@ -983,10 +1019,12 @@ export const compact = mutation({
     const prefs = await settings(ctx, args.userId);
     if (!prefs?.enabled || prefs.cleaning) return { done: true, scanned: 0, chapters: 0 };
     const group = `compaction-v${COMPACTION_POLICY_VERSION}`;
-    const previous = await ctx.db
-      .query('narrativeCursors')
-      .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
-      .unique();
+    const previous = args.recent
+      ? null
+      : await ctx.db
+          .query('narrativeCursors')
+          .withIndex('by_user_group', (q) => q.eq('userId', args.userId).eq('group', group))
+          .unique();
     const page = await ctx.db
       .query('narrativeEntries')
       .withIndex('by_user_level_time', (q) => q.eq('userId', args.userId).eq('level', 'observation'))
@@ -1021,8 +1059,10 @@ export const compact = mutation({
       until: Date.now(),
       updatedAt: Date.now(),
     };
-    if (previous) await ctx.db.patch(previous._id, cursorDoc);
-    else await ctx.db.insert('narrativeCursors', cursorDoc);
+    if (!args.recent) {
+      if (previous) await ctx.db.patch(previous._id, cursorDoc);
+      else await ctx.db.insert('narrativeCursors', cursorDoc);
+    }
     return { done: page.isDone, scanned: page.page.length, chapters: buckets.size };
   },
 });
@@ -1274,7 +1314,7 @@ export const claim = mutation({
     if (runs >= 24) return null;
     await ctx.db.patch(prefs._id, {
       lease: args.runId,
-      leaseUntil: now + 240_000,
+      leaseUntil: now + 480_000,
       dailyRunDate: date,
       dailyRuns: runs + 1,
     });
@@ -1424,7 +1464,7 @@ export const tick = internalAction({
       `${url.replace(/\/$/, '')}/api/cron/narrative`,
       secret,
       users.map((userId) => ({ userId })),
-      { concurrency: 2, timeoutMs: 230_000, label: 'narrative' },
+      { concurrency: 2, timeoutMs: 450_000, label: 'narrative' },
     );
   },
 });

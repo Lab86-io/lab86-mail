@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 // Artifact generation runs for several seconds; allow a long ceiling so the
 // scheduled edition is fully written before the cron call is acknowledged.
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 interface DailyReportCronDependencies {
   isInternalCronRequest: (request: NextRequest) => boolean;

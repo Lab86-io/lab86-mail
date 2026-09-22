@@ -230,6 +230,7 @@ describe('Area pulse pipeline', () => {
   test('writes generating, then the ready document, HTML fallback, and pulse', async () => {
     const writes: Array<{ args: any }> = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => ({
         ...home,
         area: { ...home.area, name: `Studio & <Lab> "A" 'B'` },
@@ -290,6 +291,7 @@ describe('Area pulse pipeline', () => {
     let touched = false;
     let queryCount = 0;
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => {
         queryCount += 1;
         return queryCount === 1 ? { ...home, livingBrief } : null;
@@ -315,6 +317,7 @@ describe('Area pulse pipeline', () => {
   test('a bad model reply degrades to the deterministic pulse and still lands ready', async () => {
     const writes: any[] = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);
@@ -336,6 +339,7 @@ describe('Area pulse pipeline', () => {
     const writes: any[] = [];
     let queryCount = 0;
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => {
         queryCount += 1;
         if (queryCount === 2) throw new Error('pulse unavailable');
@@ -358,6 +362,7 @@ describe('Area pulse pipeline', () => {
   test('records an error when the ready write fails', async () => {
     const writes: any[] = [];
     const restore = setAreaLivingBriefDependenciesForTest({
+      prepareBriefContext: async () => [],
       convexQuery: (async () => home) as any,
       convexMutation: (async (_ref: unknown, args: any) => {
         writes.push(args);

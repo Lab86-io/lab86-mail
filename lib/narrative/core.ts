@@ -87,7 +87,11 @@ export function narrativeSearchQuery(value: string) {
 }
 
 /** Reserve room for intention, open work, and fresh changes across providers. */
-export function selectBriefEvidence<T extends NarrativeEntry>(entries: T[], now = Date.now()): T[] {
+export function selectBriefEvidence<T extends NarrativeEntry>(
+  entries: T[],
+  now = Date.now(),
+  limit = 40,
+): T[] {
   const ordered = entries
     .filter((e) => e.current && e.level === 'observation')
     .sort((a, b) => b.occurredAt - a.occurredAt);
@@ -97,11 +101,11 @@ export function selectBriefEvidence<T extends NarrativeEntry>(entries: T[], now 
   };
   add(
     ordered.filter((e) => e.source === 'checkins' && e.occurredAt > now - 3 * 86_400_000),
-    6,
+    limit < 40 ? 2 : 6,
   );
   add(
     ordered.filter((e) => e.pinned),
-    8,
+    limit < 40 ? 2 : 8,
   );
   const groups = new Map<string, T[]>();
   for (const row of ordered) {
@@ -110,10 +114,10 @@ export function selectBriefEvidence<T extends NarrativeEntry>(entries: T[], now 
     group.push(row);
     groups.set(row.source, group);
   }
-  for (let round = 0; selected.size < 40; round++) {
+  for (let round = 0; selected.size < limit; round++) {
     let found = false;
     for (const group of groups.values()) {
-      if (group[round] && selected.size < 40) {
+      if (group[round] && selected.size < limit) {
         selected.set(group[round]._id, group[round]);
         found = true;
       }

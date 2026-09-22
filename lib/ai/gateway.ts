@@ -37,23 +37,27 @@ const AGENT_REASONING_EFFORT = (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT ||
   | 'medium'
   | 'high';
 
-// Progressive output ceilings, sized to the job. An UNSET cap makes the
-// provider assume the model's max (65536) and OpenRouter reserves credits for
-// that worst case — 402-ing valid requests. These keep each feature bounded
-// (cheaper, faster) while leaving room for reasoning. Callers may still pass an
-// explicit maxOutputTokens to override.
+// Brief quality is controlled by evidence selection, not by sharing a small
+// output allowance between mandatory reasoning and the finished page. Omitting
+// the SDK limit lets each provider apply its model's supported output limit.
+const UNCAPPED_BRIEF_FEATURES = new Set([
+  'daily_report_insight',
+  'daily_report_narrative',
+  'daily_report_artifact',
+  'daily_brief_prose',
+  'daily_brief_layout',
+  'albatross_area_pulse',
+  'albatross_area_artifact',
+  'narrative_workspace',
+  'narrative_retrieval',
+  'narrative_research',
+  'narrative_write',
+  'narrative_meeting_prep',
+]);
+// Other product features retain their existing request ceilings.
 const FEATURE_MAX_TOKENS: Record<string, number> = {
   summarize_thread: 1500,
   triage_thread: 1500,
-  daily_report_insight: 1500,
-  daily_report_narrative: 4000,
-  daily_report_artifact: 32000,
-  // The budget brief writes a lede, one line per item, and a week-ahead
-  // paragraph in one JSON reply. The area pulse is four short fields.
-  daily_brief_prose: 2500,
-  daily_brief_layout: 12000,
-  albatross_area_pulse: 900,
-  albatross_area_artifact: 32000,
   albatross_plan: 8000,
   albatross_plan_artifact: 24000,
   albatross_place: 2000,
@@ -96,7 +100,8 @@ const FAILOVER_FEATURES = new Set([
   'albatross_area_artifact',
 ]);
 
-function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
+function capForFeature(feature: string, explicit: number | undefined, fallback: number): number | undefined {
+  if (UNCAPPED_BRIEF_FEATURES.has(feature)) return undefined;
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
 }
 type PlatformPreference = {

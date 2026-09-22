@@ -34,14 +34,16 @@ const defaults = {
   fetch,
   extractContent,
 };
-export async function syncCloudContent(userId: string, deps = defaults) {
-  const connections = await deps.listCloudFileConnections(userId);
-  await mapConcurrent(connections, 2, async (connection) => {
+export async function syncCloudContent(userId: string, deps = defaults, connectionIds?: readonly string[]) {
+  const connections = (await deps.listCloudFileConnections(userId)).filter(
+    (connection) => !connectionIds || connectionIds.includes(connection.connectionId),
+  );
+  return mapConcurrent(connections, 2, async (connection) => {
     const claim = await deps.convexMutation<any>(ref.claimSync, {
       userId,
       connectionId: connection.connectionId,
     });
-    if (!claim) return;
+    if (!claim) return { ok: false, pending: true };
     let indexed = 0;
     let skipped = 0;
     let cursor = claim.cursor;
@@ -63,7 +65,7 @@ export async function syncCloudContent(userId: string, deps = defaults) {
           skipped: 0,
           status: result.done ? 'ready' : 'indexing',
         });
-        return;
+        return { ok: true, pending: !result.done };
       }
       const access = await deps.getCloudFileAccess({ userId, connectionId: connection.connectionId });
       if (!access) throw new SourceAccessError('Reconnect to resume indexing.');
@@ -246,6 +248,11 @@ export async function syncCloudContent(userId: string, deps = defaults) {
             ? 'indexing'
             : 'ready',
       });
+      return {
+        ok: true,
+        pending:
+          next.phase === 'backfill' || next.phase === 'reconcile' || Boolean(next.pending || next.generation),
+      };
     } catch (error) {
       await deps.convexMutation(ref.finishSync, {
         userId,
@@ -260,6 +267,7 @@ export async function syncCloudContent(userId: string, deps = defaults) {
             ? error.message
             : 'Sync interrupted; the saved cursor will retry.',
       });
+      return { ok: false, pending: true };
     }
   });
 }

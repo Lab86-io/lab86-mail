@@ -29,6 +29,23 @@ function row(i: number, overrides: Partial<NarrativeEntry> = {}): NarrativeEntry
   };
 }
 describe('age-aware evidence compaction', () => {
+  test('a smaller writer packet still includes new meetings and development changes beside open work', () => {
+    const now = Date.now();
+    const entries = Array.from({ length: 50 }, (_, i) =>
+      row(i, { source: 'work', pinned: true, occurredAt: now - i, text: 'Open commitment. '.repeat(100) }),
+    );
+    entries.push(
+      row(100, { source: 'mcp:granola', occurredAt: now, text: 'Decision changed. '.repeat(100) }),
+      row(101, { source: 'mcp:github', occurredAt: now, text: 'Review changed. '.repeat(100) }),
+    );
+    const selected = writerEvidenceRows(entries, 6000, true);
+    expect(selected.length).toBeLessThanOrEqual(10);
+    expect(selected.map((entry) => entry.source)).toContain('mcp:granola');
+    expect(selected.map((entry) => entry.source)).toContain('mcp:github');
+    expect(selected.reduce((size, entry) => size + JSON.stringify(entry).length, 0)).toBeLessThanOrEqual(
+      6000,
+    );
+  });
   test('a full brief packet reserves recent reflections and tomorrow intentions before sampling other work', () => {
     const now = Date.now();
     const entries = Array.from({ length: 60 }, (_, i) => row(i, { occurredAt: now - i, source: 'mail:one' }));
@@ -56,7 +73,7 @@ describe('age-aware evidence compaction', () => {
       compactionBucket(row(1, { occurredAt: Date.parse('2025-12-01T01:00:00Z') }), 'America/New_York', now)
         .key,
     ).toBe('month:2025-11');
-    expect(narrativeWritingLimit('day', 'brief:today')).toBe(2200);
+    expect(narrativeWritingLimit('day', 'brief:today')).toBe(4000);
     expect(narrativeWritingLimit('week', 'week:x')).toBe(1800);
     expect(narrativeWritingLimit('month', 'month:x')).toBe(1400);
     expect(narrativeWritingLimit('thread', 'thread:x')).toBe(2200);

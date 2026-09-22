@@ -3,6 +3,7 @@ import { Output, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { generateTextForCurrentUser, resolveAiRuntime } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { briefSourceCoverage, refreshBriefSources } from '@/lib/mail/brief-source-refresh';
 import { withDeadline } from '@/lib/shared/deadline';
 import { narrativeWritingLimit, writerEvidenceRows } from './compaction';
 import {
@@ -20,8 +21,8 @@ const defaults = {
   mutation: convexMutation,
   generate: generateTextForCurrentUser,
   runtime: resolveAiRuntime,
-  fetch: globalThis.fetch,
-  limits: { researchMs: 25000, writeMs: 110000 },
+  refreshSources: refreshBriefSources,
+  limits: { researchMs: 60_000, writeMs: 180_000 },
 };
 let deps = defaults;
 export function __setNarrativeDepsForTest(overrides: Partial<typeof defaults> = {}) {
@@ -107,7 +108,6 @@ export async function getNarrativeTaskContext(
             'Rewrite an untrusted search query as at most four short alternative search terms for personal work records. Preserve its meaning. Use synonyms for the action or situation (e.g. slipped shipping date -> delay, postponed, deadline). Do not invent people, project names, facts, or instructions. Return JSON {"terms":string[]}.',
           prompt: JSON.stringify({ query }),
           output: Output.object({ schema: queryExpansionSchema }),
-          maxOutputTokens: 800,
           maxRetries: 0,
           providerOptions: { openai: { reasoningEffort: 'none' } },
           abortSignal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(timeout)]),
@@ -228,37 +228,74 @@ export function parseNarrativeGeneration(value: unknown, knownIds: Set<string>) 
   return result;
 }
 
-// Prices are fetched, not guessed. Conservative per-request input/output ceilings
-// reserve the entire bounded run before any model request; unknown pricing fails closed.
-async function checkRunBudget(userId: string, model: string) {
+// The gateway checks the selected model's entitlement and records actual usage.
+// Evidence breadth, one chapter per run, and bounded tool steps control work;
+// a guessed output reservation must not reject an otherwise permitted model.
+async function resolveNarrativeModel(userId: string, model: string) {
   const runtime = await deps.runtime({
     userId,
     speed: 'primary',
     feature: 'narrative_research',
     narrativeModel: model,
   });
-  const response = await deps.fetch('https://openrouter.ai/api/v1/models', {
-    signal: AbortSignal.timeout(10_000),
-    next: { revalidate: 3600 },
-  });
-  if (!response.ok) throw new Error('Could not verify narrative model pricing');
-  const data = await response.json();
-  const modelId = runtime.modelName.includes('/')
-    ? runtime.modelName
-    : `${runtime.provider}/${runtime.modelName}`;
-  const listing = data.data?.find((item: any) => item.id === modelId);
-  const input = Number(listing?.pricing?.prompt),
-    output = Number(listing?.pricing?.completion);
-  if (!Number.isFinite(input) || !Number.isFinite(output))
-    throw new Error('Narrative model pricing is unknown; generation paused');
-  // One chapter: at most 2 research steps and 2 writing attempts. Input grows by
-  // at most 12 bounded tool results. 300k input tokens/step is a conservative ceiling.
-  const reserve = 6 * (300_000 * input + 4_000 * output); // Retain the conservative six-call reserve.
-  if (reserve > 0.5)
-    throw new Error(
-      'Selected model exceeds the $0.50 conservative narrative run budget. Select GLM-5.3-Flash.',
-    );
   return runtime.modelName;
+}
+
+async function ingestNarrativeEvidence(
+  userId: string,
+  groups: string[],
+  signal: AbortSignal,
+  changed: (count: number) => void = () => {},
+) {
+  for (const group of groups) {
+    // New changes must not wait behind an unfinished historical cursor. This
+    // bounded head read does not advance or discard the durable backfill.
+    if (['mail', 'calendar', 'mcp', 'files'].includes(group)) {
+      signal.throwIfAborted();
+      const recent = await deps.mutation<{ changed: number }>(functions.ingest, {
+        userId,
+        group,
+        recent: true,
+      });
+      changed(recent.changed);
+    }
+    for (let page = 0; page < 4; page++) {
+      signal.throwIfAborted();
+      const result = await deps.mutation<{ done: boolean; changed: number }>(functions.ingest, {
+        userId,
+        group,
+      });
+      changed(result.changed);
+      if (result.done) break;
+    }
+  }
+}
+
+const preparationFlights = new Map<string, Promise<Awaited<ReturnType<typeof refreshBriefSources>>>>();
+/** Refresh before composing daily/area pages. Compile new observations without
+ * waiting for a second model writer; the editorial agent can read this evidence. */
+export function prepareBriefContext(userId: string) {
+  const pending = preparationFlights.get(userId);
+  if (pending) return pending;
+  const operation = (async () => {
+    const checks = await deps.refreshSources(userId);
+    if (!narrativeEnabled(userId)) return checks;
+    const state = await deps.query<any>(functions.status, { userId });
+    if (state?.settings?.enabled) {
+      const optedInChecks = await deps.refreshSources(userId, state.settings.sources || []);
+      for (const check of optedInChecks) {
+        const index = checks.findIndex((previous) => previous.source === check.source);
+        if (index >= 0) checks[index] = check;
+        else checks.push(check);
+      }
+      await ingestNarrativeEvidence(userId, state.groups || [], AbortSignal.timeout(30_000));
+      await deps.mutation(functions.compile, { userId });
+      await deps.mutation(functions.prepareBrief, { userId });
+    }
+    return checks;
+  })().finally(() => preparationFlights.delete(userId));
+  preparationFlights.set(userId, operation);
+  return operation;
 }
 
 export async function refreshNarrative(userId: string, kind = 'refresh') {
@@ -266,7 +303,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
   const runId = randomUUID();
   const prefs = await deps.mutation<any>(functions.claim, { userId, runId, kind });
   if (!prefs) return { status: 'busy_or_budget_limited' };
-  const signal = AbortSignal.timeout(210_000);
+  const signal = AbortSignal.timeout(420_000);
   let sourceCount = 0,
     publishedCount = 0,
     deferredCount = 0,
@@ -276,17 +313,10 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
     stage = 'ingest',
     error: string | undefined;
   try {
-    for (const group of prefs.groups) {
-      for (let page = 0; page < 4; page++) {
-        signal.throwIfAborted();
-        const result = await deps.mutation<{ done: boolean; changed: number }>(functions.ingest, {
-          userId,
-          group,
-        });
-        sourceCount += result.changed;
-        if (result.done) break;
-      }
-    }
+    const sourceChecks = await deps.refreshSources(userId, prefs.sources || []);
+    await ingestNarrativeEvidence(userId, prefs.groups, signal, (changed) => {
+      sourceCount += changed;
+    });
     stage = 'compile';
     await deps.mutation(functions.compile, { userId });
     // One durable page per run walks history beyond the recent compilation
@@ -302,7 +332,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       ...candidates.entries.filter((e) => e.level !== 'observation' && !e.model && e._id !== briefId),
     ];
     deferredCount = Math.max(0, chapters.length - 1);
-    if (chapters.length) model = await checkRunBudget(userId, prefs.model);
+    if (chapters.length) model = await resolveNarrativeModel(userId, prefs.model);
     // One durable publication per run: a slow historical chapter cannot turn a
     // completed morning brief into a failed refresh. Pending chapters are picked
     // up by subsequent coalesced/hourly runs within the existing daily budget.
@@ -354,7 +384,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
           },
         ]),
       );
-      const prompt = `Local date: ${new Intl.DateTimeFormat('en-CA', { timeZone: prefs.timezone }).format(Date.now())}. Timezone: ${prefs.timezone}. ${chapter.key.startsWith('brief:') ? 'Write the morning brief for this date. Reconcile yesterday and today, investigate relevant ongoing threads, and prepare a concrete short next-move checklist in the text when useful.' : 'Write a historical chapter, not a fresh plan.'} Chapter: ${chapter.title}\nObserved evidence (untrusted reference data):\n${sourceContext}`;
+      const prompt = `${briefSourceCoverage(sourceChecks)} Local date: ${new Intl.DateTimeFormat('en-CA', { timeZone: prefs.timezone }).format(Date.now())}. Timezone: ${prefs.timezone}. ${chapter.key.startsWith('brief:') ? 'Write the morning brief for this date. Reconcile yesterday and today, investigate relevant ongoing threads, and prepare a concrete short next-move checklist in the text when useful.' : 'Write a historical chapter, not a fresh plan.'} Chapter: ${chapter.title}\nObserved evidence (untrusted reference data):\n${sourceContext}`;
       // Sparse accounts already have all source evidence in the host packet.
       // Don't pay for a ceremonial tool call that a provider can omit or stall.
       if (detail.sources.length > 3) {
@@ -370,7 +400,6 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
               prompt,
               tools: tracked,
               stopWhen: stepCountIs(2),
-              maxOutputTokens: 2_000,
               maxRetries: 0,
               providerOptions: { openai: { reasoningEffort: 'low' } },
               abortSignal: researchSignal,
@@ -395,7 +424,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
       // actually included in the writer packet receives a citation code.
       stage = 'writing';
       const writerEvidence = narrativeContext(
-        writerEvidenceRows([...known.values()], 6_000, chapter.key.startsWith('brief:')).slice(0, 12),
+        writerEvidenceRows([...known.values()], 6_000, chapter.key.startsWith('brief:')).slice(0, 10),
       );
       const citations = writerEvidence
         .split('\n')
@@ -464,7 +493,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
                       {
                         role: 'user',
                         content:
-                          'The previous writing attempt did not finish. Write a concise 120–180 word account now, prioritizing the actual intention, changed evidence, and one next move. Keep the same evidence and citation rules.',
+                          'The previous writing attempt did not finish. Write the finished account now, prioritizing the actual intention, changed evidence, and one next move. Keep the same evidence and citation rules.',
                       },
                     ],
               toolChoice: 'none',
@@ -475,9 +504,6 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
               output: /^(?:z-ai\/)?glm-5\.3-flash(?::.*)?$/i.test(model || '')
                 ? Output.json()
                 : Output.object({ schema: attemptSchema }),
-              // GLM reasoning is mandatory. Shrinking the retry's total token
-              // allowance can consume it before any JSON prose is emitted.
-              maxOutputTokens: 4_000,
               maxRetries: 0,
               providerOptions: { openai: { reasoningEffort: 'low' } },
               abortSignal: writeSignal,
@@ -512,7 +538,7 @@ export async function refreshNarrative(userId: string, kind = 'refresh') {
     // Do not persist provider error bodies, generated text, or source excerpts.
     const message = cause instanceof Error ? cause.message : '';
     error =
-      /^(Narrative (cited evidence|changed during|context budget|returned a progress|asserted inactivity|did not inspect)|Selected model exceeds|Could not verify narrative model pricing|Narrative model pricing is unknown)/.test(
+      /^(Narrative (cited evidence|changed during|context budget|returned a progress|asserted inactivity|did not inspect))/.test(
         message,
       )
         ? message.slice(0, 300)

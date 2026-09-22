@@ -239,13 +239,18 @@ export async function syncConnection(
     userId,
     connectionId,
     server: row.server,
-    status: 'ready',
+    status: queryErrors.length ? 'error' : 'ready',
+    ...(queryErrors.length ? { error: queryErrors[0] } : {}),
     lastSyncedAt: Date.now(),
     itemCount: items.length,
     accountEmail: accountInfo.email,
     workspaceName: accountInfo.workspaceName,
   });
-  return { ok: true, count: items.length };
+  return {
+    ok: queryErrors.length === 0,
+    count: items.length,
+    ...(queryErrors.length ? { error: queryErrors[0] } : {}),
+  };
 }
 
 export async function syncAllMcpConnections(

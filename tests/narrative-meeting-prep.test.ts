@@ -53,7 +53,6 @@ describe('narrative meeting prep', () => {
     expect(deps.generate.mock.calls[0][0]).toMatchObject({
       userId: 'owner',
       maxRetries: 0,
-      maxOutputTokens: 1600,
     });
     expect(deps.generate.mock.calls[0][0].prompt).toContain('"id":"E1"');
     expect(deps.context).toHaveBeenCalledTimes(2);

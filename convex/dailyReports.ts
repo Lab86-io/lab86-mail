@@ -174,13 +174,13 @@ export const tick = internalAction({
       fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
         label: 'daily-report cron',
         concurrency: 2,
-        timeoutMs: 285_000,
+        timeoutMs: 570_000,
       }),
       fanOutInternalPost(
         `${appUrl}/api/cron/area-briefs`,
         secret,
         due.map((target) => ({ userId: target.userId })),
-        { label: 'area-briefs cron', concurrency: 2, timeoutMs: 285_000 },
+        { label: 'area-briefs cron', concurrency: 2, timeoutMs: 570_000 },
       ),
     ]);
     console.log(
@@ -210,7 +210,7 @@ export const areaRefreshTick = internalAction({
       `${appUrl}/api/cron/area-briefs`,
       secret,
       targets.map((target) => ({ userId: target.userId, force: false })),
-      { label: 'area-refresh cron', concurrency: 2, timeoutMs: 285_000 },
+      { label: 'area-refresh cron', concurrency: 2, timeoutMs: 570_000 },
     );
     console.log(`[area-refresh cron] refreshed ${refreshed}/${targets.length} users`);
   },

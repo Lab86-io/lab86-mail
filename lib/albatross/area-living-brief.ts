@@ -4,8 +4,9 @@ import { getAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { sanitizeLine, sanitizeProse } from '../mail/brief-prose';
+import { briefSourceCoverage } from '../mail/brief-source-refresh';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
-import { narrativePrompt } from '../narrative/service';
+import { narrativePrompt, prepareBriefContext } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
 import { withDeadline } from '../shared/deadline';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
@@ -13,7 +14,7 @@ import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
 // The area pulse (2026-09-03). One small model call writes four fields; the
 // document and the HTML fallback are rendered from them deterministically.
-const AREA_PULSE_DEADLINE_MS = 60_000;
+const AREA_PULSE_DEADLINE_MS = 120_000;
 export const AREA_PULSE_MAX_SENTENCES = 3;
 export const AREA_PULSE_FIELD_MAX_WORDS = 28;
 
@@ -22,6 +23,7 @@ interface AreaLivingBriefDependencies {
   convexQuery: typeof convexQuery;
   generateTextForCurrentUser: typeof generateTextForCurrentUser;
   narrativePrompt: typeof narrativePrompt;
+  prepareBriefContext: typeof prepareBriefContext;
   withDeadline: typeof withDeadline;
 }
 
@@ -30,6 +32,7 @@ const defaultAreaLivingBriefDependencies: AreaLivingBriefDependencies = {
   convexQuery,
   generateTextForCurrentUser,
   narrativePrompt,
+  prepareBriefContext,
   withDeadline,
 };
 
@@ -803,6 +806,9 @@ export async function generateAreaLivingBrief(input: {
   areaId: string;
   force?: boolean;
 }) {
+  const sourceChecks = await areaLivingBriefDependencies
+    .prepareBriefContext(input.userId)
+    .catch(() => [{ source: 'source discovery', status: 'unavailable' as const }]);
   const [home, pulseContext, evidenceIndex] = await Promise.all([
     areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
       userId: input.userId,
@@ -848,7 +854,10 @@ export async function generateAreaLivingBrief(input: {
   });
 
   try {
-    const pulse = await writeAreaPulse(context, input);
+    const pulse = await writeAreaPulse(
+      { ...context, sourceCoverage: briefSourceCoverage(sourceChecks) },
+      input,
+    );
     const document = composeAreaPulseDocument(context, pulse);
     const artifactHtml = renderAreaPulseHtml(areaName, pulse);
     const lede = pulse.lastChange || pulse.nextMove || pulse.prose;

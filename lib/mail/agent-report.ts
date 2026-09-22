@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { api, convexQuery } from '../hosted/convex';
+import { prepareBriefContext } from '../narrative/service';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
@@ -24,6 +25,7 @@ import { writeDailyEditorial } from './brief-editorial';
 import { resolveBriefPlanTier } from './brief-plan';
 import { type BriefProseItemInput, type BriefProseResult, writeBriefProse } from './brief-prose';
 import type { BriefLane } from './brief-score';
+import { briefSourceCoverage } from './brief-source-refresh';
 import { resolveBriefTimezone } from './brief-timezone';
 import { gatherBriefWeather, weatherSentence } from './brief-weather';
 import { generateDailyReport } from './daily-report';
@@ -37,8 +39,8 @@ import { buildNativeDailyReportArtifact } from './report-artifact';
 // that settles the edition instead of wedging it at 'composing'.
 const CONTEXT_DEADLINE_MS = 45_000;
 const PROSE_DEADLINE_MS = 120_000;
-const MAX_MSGS_PER_ITEM = 4;
-const MAX_BODY_CHARS = 4000;
+const MAX_MSGS_PER_ITEM = 2;
+const MAX_BODY_CHARS = 3000;
 // The look back never reaches further than this when no previous edition
 // exists, so a first brief does not list a month of completions.
 const SINCE_FALLBACK_MS = 24 * 3600_000;
@@ -235,8 +237,13 @@ async function runAgentReport(input: {
   reportId?: string;
 }): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
-  // Narrative research runs independently (hourly, after chat, or on request).
-  // Today reads its live result; a slow research run must not delay the base report.
+  // Fresh source observations precede selection; the editorial writer then
+  // chooses a focused account from this refreshed evidence.
+  const sourceChecks = input.userId
+    ? await prepareBriefContext(input.userId).catch(() => [
+        { source: 'source discovery', status: 'unavailable' as const },
+      ])
+    : [];
   const tier = await resolveBriefPlanTier(input.userId);
 
   let structured: DailyReport;
@@ -250,6 +257,8 @@ async function runAgentReport(input: {
       reportId,
       tier,
     });
+    if (sourceChecks.some((check) => check.status === 'unavailable'))
+      structured.errors.push(briefSourceCoverage(sourceChecks));
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.

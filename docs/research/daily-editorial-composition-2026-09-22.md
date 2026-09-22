@@ -80,3 +80,14 @@ Optional live synthetic evaluation: `EDITORIAL_EVAL_ENV_FILE=/path/to/local/env 
 ## Release scope
 
 The feature was merged into staging in PR #287. Promotion PR #288 targets main and includes the earlier native brief work alongside the editorial feature. Both deployment workflows deploy Convex mutations before the web service, so the new atomic input-state mutation arrives before the UI uses it. The user requested two CodeRabbit promotion reviews, production deployment, then regeneration of today's briefs. Unknown Tool UI leaves retain the existing native summary fallback until the native renderer is extended by its owner. Final review, deployment and regeneration evidence belongs in the promotion PR and completion report.
+
+
+## Staging completion failure and source freshness (September 22)
+
+The reported workspace failure returned empty text with `finishReason: length` under a 1,800-token cap. A regression reproduces the source-card fallback through the actual gateway and succeeds when the application ceiling is omitted. Brief/narrative generation now bypasses both caller limits and the gateway's default ceiling; unrelated feature budgets remain. Provider model limits still apply. The workspace gets 120 seconds; narrative research/writing, request deadlines, and its lease allow mandatory reasoning to finish. The old speculative per-run price reservation was removed; gateway entitlement checks and actual usage accounting remain.
+
+Cost and focus move upstream: workspace/writer packets contain at most ten selected observations with source diversity, mail prose reads two recent messages per selected item instead of four, and Narrative brief prose may use the existing 4,000-character storage allowance instead of 2,200. Tool-step bounds, input validation, citation checks, and deadlines remain in place.
+
+Daily and area composition proactively check included mail, calendar, MCP (including Granola details), and connected Drive/OneDrive feeds before selecting evidence. Narrative refresh checks its explicit source opt-ins. Source checks share in-flight work and recently successful checks; failed refreshes are reported as incomplete coverage, not inactivity. Granola detail failures retain usable listing records while recording the incomplete sync. A bounded recent-head ingestion pass prevents new changes waiting behind historical backfill. Connected cloud files are available as individually opt-in Narrative sources; disconnecting/deleting a source revokes its observations at read time.
+
+The source feeds are bounded and may still be indexing. These changes do not assert exhaustive account coverage. Tests cover the original empty-output failure, uncapped brief features, unrelated caps, source permissions, partial failures, overlapping refreshes, expiry, cloud-file revocation, and source diversity in the smaller packet.

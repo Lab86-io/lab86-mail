@@ -9,7 +9,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 // One fast-model call per active area; a user with many areas still finishes
 // well inside this ceiling because briefs regenerate sequentially.
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 // Called by the Convex hourly cron (convex/dailyReports.ts) at each user's
 // local morning hour, alongside the Daily Brief: every active area's living
