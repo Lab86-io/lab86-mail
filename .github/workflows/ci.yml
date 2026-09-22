@@ -14,7 +14,7 @@ jobs:
   checks:
     name: Typecheck, Lint, Test, Build
     if: ${{ !contains(github.event.head_commit.message || '', '[skip release]') }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ vars.WEB_WORKFLOW_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     permissions:
       contents: read
       actions: read # access workflow artifacts for coverage baselines

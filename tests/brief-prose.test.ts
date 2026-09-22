@@ -228,13 +228,18 @@ describe('writeBriefProse', () => {
 
   test('uses the model reply, with fallbacks for empty fields', async () => {
     const result = await writeBriefProse(input, {
-      generate: (async () => ({
-        text: JSON.stringify({
-          lede: '',
-          items: [{ key: 'a:t1', line: 'Say which venue.' }],
-          weekAhead: 'Friday is open.',
-        }),
-      })) as any,
+      generate: (async (options: any) => {
+        expect(options.system).toContain('newer direct evidence outranks');
+        expect(options.system).toContain('match the exact project, PR, task, release, or payment');
+        expect(options.system).toContain('never infer completion from silence');
+        return {
+          text: JSON.stringify({
+            lede: '',
+            items: [{ key: 'a:t1', line: 'Say which venue.' }],
+            weekAhead: 'Friday is open.',
+          }),
+        };
+      }) as any,
     });
     expect(result.lede).toBe(
       'Jakob, here is your morning. Maya is waiting on a reply about Venue. Today holds 1 event.',

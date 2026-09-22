@@ -179,6 +179,11 @@ test('the writer receives the actual module catalogue and can design a different
   const result = await writeDailyEditorial(edition, letter, {
     generate: (async (options: any) => {
       expect(options.feature).toBe('daily_brief_layout');
+      expect(options.system).toContain('newer direct evidence outranks');
+      expect(options.system).toContain(
+        'never also offer it as an outstanding priority or interactive choice',
+      );
+      expect(options.system).toContain('current status is unverified');
       expect(options.abortSignal).toBeUndefined();
       const stops = Array.isArray(options.stopWhen) ? options.stopWhen : [options.stopWhen];
       for (const stop of stops) expect(await stop({ steps: Array(100).fill({}) })).toBe(false);

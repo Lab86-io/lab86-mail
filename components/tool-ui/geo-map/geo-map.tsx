@@ -5,11 +5,7 @@ import { cn } from "./_adapter";
 import { GeoMapEngine } from "./geo-map-engine";
 import styles from "./geo-map-theme.module.css";
 import type { GeoMapProps, GeoMapStyle } from "./schema";
-
-const LIGHT_TILE_URL =
-  "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-const DARK_TILE_URL =
-  "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+import { geoMapTileSource } from "./tile-source";
 
 function getSystemTheme(): "light" | "dark" {
   if (typeof window === "undefined") return "light";
@@ -91,7 +87,6 @@ export const GeoMap = memo(function GeoMap({
   const inheritedTheme = useInheritedTheme();
   const resolvedTheme = theme ?? inheritedTheme;
   const [isMapReady, setIsMapReady] = useState(false);
-  const tileUrl = resolvedTheme === "dark" ? DARK_TILE_URL : LIGHT_TILE_URL;
   const mapAriaLabel = resolveMapAriaLabel(title, description);
   const resolvedRootStyle: GeoMapStyle = {
     "--geo-map-canvas-bg":
@@ -104,6 +99,7 @@ export const GeoMap = memo(function GeoMap({
       className={cn("w-full min-w-80", styles.root, className)}
       style={resolvedRootStyle}
       data-slot="geo-map"
+      data-theme={resolvedTheme}
       data-tool-ui-id={id}
     >
       <div
@@ -118,7 +114,7 @@ export const GeoMap = memo(function GeoMap({
           clustering={clustering}
           viewport={viewport}
           showZoomControl={showZoomControl}
-          tileUrl={tileUrl}
+          tileUrl={geoMapTileSource.url}
           mapAriaLabel={mapAriaLabel}
           tooltipClassName={tooltipClassName}
           popupClassName={popupClassName}
