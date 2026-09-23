@@ -1,6 +1,8 @@
 import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { stripEmoji } from '../shared/format';
+import { parseIsoInTimezone } from '../shared/timezones';
 import type { DailyReportCalendarItem, DailyReportMcpItem, DailyReportProse } from '../shared/types';
 import { BRIEF_EVIDENCE_POLICY } from './brief-evidence-policy';
 import type { BriefLane } from './brief-score';
@@ -89,6 +91,7 @@ export interface BriefWeekDay {
   label: string;
   isToday: boolean;
   isTomorrow: boolean;
+  // A local noon anchor on this calendar day, not an elapsed-time offset.
   startAt: number;
 }
 
@@ -116,13 +119,20 @@ function formatIn(at: number, timeZone: string, options: Intl.DateTimeFormatOpti
 // Seven days starting today, computed in the user's timezone.
 export function briefWeekDays(now: number, timeZone: string, count = 7): BriefWeekDay[] {
   const days: BriefWeekDay[] = [];
+  const zone = normalizeBriefTimezone(timeZone);
+  const firstDate = new Date(`${localDayKey(now, zone)}T12:00:00Z`);
   for (let index = 0; index < count; index += 1) {
-    const at = now + index * 86_400_000;
+    const date = new Date(firstDate);
+    date.setUTCDate(firstDate.getUTCDate() + index);
+    const dayKey = date.toISOString().slice(0, 10);
+    // Calendar addition first, then resolve a safe wall-clock anchor in the
+    // user's zone. A local day may have 23 or 25 hours around DST.
+    const at = parseIsoInTimezone(`${dayKey}T12:00:00`, zone, 'brief day');
     days.push({
       index,
-      dayKey: localDayKey(at, timeZone),
-      weekday: formatIn(at, timeZone, { weekday: 'long' }),
-      label: formatIn(at, timeZone, { weekday: 'short', month: 'short', day: 'numeric' }),
+      dayKey,
+      weekday: formatIn(at, zone, { weekday: 'long' }),
+      label: formatIn(at, zone, { weekday: 'short', month: 'short', day: 'numeric' }),
       isToday: index === 0,
       isTomorrow: index === 1,
       startAt: at,

@@ -13,3 +13,5 @@ This preserves the web design system and existing component catalogue; it change
 The runtime investigation also reproduced an older Area ingestion defect: the deterministic classifier included an extra account identity inside each link, while the Convex validator accepts it only on the enclosing verdict and source references. That field originated in the July 16 classifier change. Removing the redundant nested field keeps account-scoped routing intact. An integration test now runs the real classifier payload through the actual Convex mutation rather than a permissive mock.
 
 Prompt guidance improves evidence handling but cannot guarantee every future model statement. Reading-order completeness and the classifier payload contract are enforced and tested directly.
+
+CodeRabbit's first review also identified an existing DST error in the week-ahead table: adding 24 elapsed hours could duplicate November 1 or skip March 8 in New York. The table now advances calendar dates and resolves a local noon anchor using the existing timezone helper. Spring-forward and fall-back regressions verify seven distinct dates and inclusion of the next day's event.
