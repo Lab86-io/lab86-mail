@@ -1,7 +1,7 @@
 import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { stripEmoji } from '../shared/format';
-import type { DailyReportCalendarItem, DailyReportProse } from '../shared/types';
+import type { DailyReportCalendarItem, DailyReportMcpItem, DailyReportProse } from '../shared/types';
 import { BRIEF_EVIDENCE_POLICY } from './brief-evidence-policy';
 import type { BriefLane } from './brief-score';
 
@@ -49,6 +49,8 @@ export interface BriefProseInput {
   tasks: Array<{ title: string; dueAt: number | null }>;
   // At most 3 area lines.
   areas: Array<{ name: string; line: string }>;
+  // Includes completed items omitted from story ranking, for reconciliation.
+  connectedEvidence?: DailyReportMcpItem[];
   tomorrowIntent?: string | null;
   reflection?: string | null;
   // One short weather sentence, or null.
@@ -414,6 +416,7 @@ export function buildBriefProsePrompt(input: BriefProseInput): string {
       : null,
     week,
     areas: input.areas,
+    connectedEvidence: input.connectedEvidence ?? [],
   };
   return [
     'Write the letter from this data. Return only the JSON object.',

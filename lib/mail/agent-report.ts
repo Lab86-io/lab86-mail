@@ -444,6 +444,7 @@ export async function composeBudgetBrief(
         .filter((task) => !task.completedAt && typeof task.dueAt === 'number')
         .map((task) => ({ title: task.title, dueAt: task.dueAt ?? null })),
       areas: areas.map((area) => ({ name: area.name, line: area.line })),
+      connectedEvidence: report.sections.mcp ?? [],
       tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent ?? null,
       reflection: report.sections.albatross?.dailyAlignment?.reflection ?? null,
       weather,

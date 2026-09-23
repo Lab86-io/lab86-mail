@@ -3,6 +3,7 @@ import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
+import { __setAreaClassifierDepsForTest, classifyThreads } from '../lib/albatross/area-classifier';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
@@ -1564,6 +1565,75 @@ describe('unclassified discovery reads', () => {
 });
 
 describe('recordAreaVerdicts', () => {
+  test('accepts the real deterministic classifier payload and retains the enclosing account identity', () =>
+    withSecret(async () => {
+      const t = convexTest(schema, convexModules);
+      const userId = 'classifier_contract_user';
+      const ts = Date.now();
+      const areaId = await t.run(async (ctx) => {
+        const areaId = await ctx.db.insert('areas', {
+          userId,
+          name: 'Cedar',
+          kind: 'general',
+          status: 'active',
+          createdAt: ts,
+          updatedAt: ts,
+        });
+        await ctx.db.insert('areaFacts', {
+          userId,
+          areaId,
+          kind: 'domain',
+          value: 'cedar.example',
+          status: 'verified',
+          sourceRefs: [],
+          confirmationRefs: [userConfirmation('cedar-domain', userId)],
+          createdAt: ts,
+          updatedAt: ts,
+          verifiedAt: ts,
+        });
+        await ctx.db.insert(
+          'mailCorpusThreads',
+          corpusThread(userId, 'cedar-thread', {
+            fromAddress: 'Sender <sender@cedar.example>',
+            latestMessageId: 'cedar-message',
+            areaRoutingPending: true,
+          }) as any,
+        );
+        await ctx.db.insert(
+          'mailCorpusMessages',
+          corpusMessage(userId, 'cedar-thread', 'cedar-message', {
+            from: 'Sender <sender@cedar.example>',
+          }) as any,
+        );
+        return areaId;
+      });
+      __setAreaClassifierDepsForTest({
+        api,
+        convexQuery: ((fn: any, args: any) => t.query(fn, { ...args, internalSecret: SECRET })) as any,
+        convexMutation: ((fn: any, args: any) => t.mutation(fn, { ...args, internalSecret: SECRET })) as any,
+        generateObjectForCurrentUser: async () => {
+          throw new Error('A verified exact identity does not need a model');
+        },
+      });
+      try {
+        expect(await classifyThreads({ userId })).toMatchObject({
+          deterministic: 1,
+          processed: 1,
+          failed: 0,
+        });
+        const links = await t.run((ctx) => ctx.db.query('areaArtifactLinks').collect());
+        expect(links).toHaveLength(1);
+        expect(links[0]).toMatchObject({
+          areaId,
+          accountId: 'account_1',
+          artifactId: 'cedar-thread',
+          status: 'verified',
+        });
+      } finally {
+        __setAreaClassifierDepsForTest();
+      }
+    }));
+
   test('writes links, skips archived and duplicate areas, and watermarks empty verdicts', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);
