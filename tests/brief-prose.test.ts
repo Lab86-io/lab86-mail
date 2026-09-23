@@ -51,6 +51,9 @@ describe('day table', () => {
     // 03:00Z is still Wednesday evening in New York.
     expect(localDayKey(Date.parse('2026-09-03T03:00:00Z'), TZ)).toBe('2026-09-02');
     expect(localDayKey(Date.parse('2026-09-03T03:00:00Z'), 'Not/AZone')).toBe('2026-09-03');
+    const fallback = briefWeekDays(NOW, 'Not/AZone');
+    expect(fallback[0]).toMatchObject({ dayKey: '2026-09-03', isToday: true });
+    expect(fallback[0].weekday.length).toBeGreaterThan(0);
   });
 
   test('groups events by local day and sorts them', () => {
@@ -182,6 +185,7 @@ describe('parseBriefProse', () => {
   test('returns null for missing or broken JSON', () => {
     expect(parseBriefProse('nope', [])).toBeNull();
     expect(parseBriefProse('{ broken', [])).toBeNull();
+    expect(parseBriefProse('{ "lede": }', [])).toBeNull();
     expect(parseBriefProse('[1]', [])).toBeNull();
     expect(parseBriefProse('"text"', [])).toBeNull();
   });
