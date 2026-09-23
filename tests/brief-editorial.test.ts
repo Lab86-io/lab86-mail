@@ -11,12 +11,74 @@ import { briefLetterKind } from '../lib/brief/letter';
 import { projectBriefMail } from '../lib/jev/report';
 import { composeDailyBrief, finalizeBudgetReport } from '../lib/mail/agent-report';
 import { composeBudgetBriefDocument } from '../lib/mail/brief-budget-document';
-import { writeDailyEditorial } from '../lib/mail/brief-editorial';
+import { createDailyEditorialSession, writeDailyEditorial } from '../lib/mail/brief-editorial';
 import { lintBriefDocument, parseBriefDocument } from '../lib/shared/brief-document';
 import { migrateDailyReport } from '../lib/store/daily-reports';
 import { editorialFixture } from './fixtures/editorial';
 import { assessment, NOW, policy, report, thread } from './fixtures/jev';
 import { withToolContext } from './tools/harness';
+
+test('final reading order is independent of creation and repair order and cannot omit or repeat regions', async () => {
+  const { edition, letter, plan } = editorialFixture();
+  const session = createDailyEditorialSession(edition, letter);
+  const options = { toolCallId: 'reading-order', messages: [] };
+  const regions = structuredClone(plan.regions);
+  expect((await session.tools.place_regions.execute!({ regions: [...regions].reverse() }, options)).ok).toBe(
+    true,
+  );
+  const order = regions.map((region) => region.id);
+  for (const invalid of [order.slice(1), [...order.slice(1), order[1]], [...order.slice(1), 'invented']]) {
+    expect(
+      (
+        await session.tools.finalize_brief.execute!(
+          { title: 'Today', summary: 'Review', regionOrder: invalid },
+          options,
+        )
+      ).ok,
+    ).toBe(false);
+    expect(session.result()).toBeNull();
+  }
+  expect(
+    (
+      await session.tools.finalize_brief.execute!(
+        { title: 'Today', summary: 'Review', regionOrder: order },
+        options,
+      )
+    ).ok,
+  ).toBe(true);
+  expect(session.result()?.plan.regions.map((region) => region.id)).toEqual(order);
+  expect(session.result()?.document.regions.map((region) => region.id)).toEqual(
+    order.map((id) => `editorial-${id}`),
+  );
+});
+
+test('the writer receives the local edition date and completion evidence excluded from story ranking', async () => {
+  const { edition, letter, plan } = editorialFixture();
+  edition.generatedAt = Date.parse('2026-09-23T01:30:00Z');
+  letter.timezone = 'America/New_York';
+  edition.sections.mcp = [
+    {
+      server: 'github',
+      kind: 'pull_request',
+      title: 'Cedar PR #42',
+      state: 'merged',
+      updatedAt: edition.generatedAt,
+      repository: 'cedar/app',
+    },
+  ];
+  const result = await writeDailyEditorial(edition, letter, {
+    generate: (async (options: any) => {
+      const prompt = JSON.parse(options.prompt);
+      expect(prompt.localDate).toBe('Tuesday, September 22');
+      expect(prompt.localTime).toBe('9:30 PM');
+      expect(prompt.connectedEvidence[0]).toMatchObject({ title: 'Cedar PR #42', state: 'merged' });
+      expect(options.system).toContain('never rename this edition');
+      expect(options.system).toContain('secondary snapshots');
+      return { output: plan };
+    }) as any,
+  });
+  expect(result.editorial.mode).toBe('generated');
+});
 
 test('an authored page preserves grounded sources, calendar actions, task completion, and explicit layout identity', () => {
   const { edition, letter } = editorialFixture();
@@ -225,6 +287,7 @@ test('bad JSON, unsupported layout, provider failure, and missing AI all leave a
 
 test('the active daily pipeline calls prose then design and persists the design with final source prose', async () => {
   const { edition, modules } = editorialFixture();
+  edition.sections.mcp = [{ server: 'github', kind: 'pull_request', title: 'Cedar PR #42', state: 'merged' }];
   const calls: string[] = [];
   const composed = await withToolContext(() =>
     composeDailyBrief(edition, null, {
@@ -232,7 +295,8 @@ test('the active daily pipeline calls prose then design and persists the design 
       loadWeather: async () => null,
       generate: (async (options: any) => {
         calls.push(options.feature);
-        if (options.feature === 'daily_brief_prose')
+        if (options.feature === 'daily_brief_prose') {
+          expect(options.prompt).toContain('"state": "merged"');
           return {
             text: JSON.stringify({
               lede: 'Read the budget before the review.',
@@ -241,6 +305,8 @@ test('the active daily pipeline calls prose then design and persists the design 
               weekAhead: 'Prepare for Thursday.',
             }),
           };
+        }
+        expect(JSON.parse(options.prompt).connectedEvidence).toEqual(edition.sections.mcp);
         // This run has no area pulse loader, so only select the supplied IDs.
         const ids = new Set(JSON.parse(options.prompt).modules.map((module: any) => module.id));
         return { output: defaultEditorialPlan(modules.filter((module) => ids.has(module.id))) };

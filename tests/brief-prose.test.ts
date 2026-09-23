@@ -7,6 +7,7 @@ import {
   eventsByDay,
   ledeFallback,
   localDayKey,
+  localTimeLabel,
   parseBriefProse,
   sanitizeLine,
   sanitizeProse,
@@ -51,6 +52,53 @@ describe('day table', () => {
     // 03:00Z is still Wednesday evening in New York.
     expect(localDayKey(Date.parse('2026-09-03T03:00:00Z'), TZ)).toBe('2026-09-02');
     expect(localDayKey(Date.parse('2026-09-03T03:00:00Z'), 'Not/AZone')).toBe('2026-09-03');
+    const fallback = briefWeekDays(NOW, 'Not/AZone');
+    expect(fallback[0]).toMatchObject({ dayKey: '2026-09-03', isToday: true });
+    expect(fallback[0].weekday.length).toBeGreaterThan(0);
+    expect(localTimeLabel(NOW, 'Not/AZone').length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    {
+      now: '2026-11-01T04:30:00Z',
+      keys: [
+        '2026-11-01',
+        '2026-11-02',
+        '2026-11-03',
+        '2026-11-04',
+        '2026-11-05',
+        '2026-11-06',
+        '2026-11-07',
+      ],
+      nextEvent: '2026-11-02T15:00:00Z',
+      weekday: 'Monday',
+    },
+    {
+      now: '2026-03-08T04:30:00Z',
+      keys: [
+        '2026-03-07',
+        '2026-03-08',
+        '2026-03-09',
+        '2026-03-10',
+        '2026-03-11',
+        '2026-03-12',
+        '2026-03-13',
+      ],
+      nextEvent: '2026-03-08T14:00:00Z',
+      weekday: 'Sunday',
+    },
+  ])('keeps seven distinct calendar days and tomorrow events across DST at $now', ({
+    now,
+    keys,
+    nextEvent,
+    weekday,
+  }) => {
+    const days = briefWeekDays(Date.parse(now), TZ);
+    expect(days.map((day) => day.dayKey)).toEqual(keys);
+    expect(days.map((day) => localDayKey(day.startAt, TZ))).toEqual(keys);
+    expect(days[1]).toMatchObject({ weekday, isTomorrow: true });
+    const byDay = eventsByDay([event('tomorrow', 'Review', nextEvent)], days, TZ);
+    expect(byDay.get(keys[1])?.map((item) => item.eventId)).toEqual(['tomorrow']);
   });
 
   test('groups events by local day and sorts them', () => {
@@ -182,6 +230,7 @@ describe('parseBriefProse', () => {
   test('returns null for missing or broken JSON', () => {
     expect(parseBriefProse('nope', [])).toBeNull();
     expect(parseBriefProse('{ broken', [])).toBeNull();
+    expect(parseBriefProse('{ "lede": }', [])).toBeNull();
     expect(parseBriefProse('[1]', [])).toBeNull();
     expect(parseBriefProse('"text"', [])).toBeNull();
   });

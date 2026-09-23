@@ -15,6 +15,7 @@ import {
   editorialPlanSchema,
 } from '../brief/editorial';
 import type { BriefDocumentV2 } from '../shared/brief-document';
+import { dailyBriefDatelineAt, normalizeBriefTimezone } from '../shared/brief-edition';
 import type { DailyReport } from '../shared/types';
 import { BRIEF_EVIDENCE_POLICY } from './brief-evidence-policy';
 
@@ -41,8 +42,15 @@ Interactive answers are saved to this edition; Continue in assistant passes thos
 to the real agent. These controls do not independently send, buy, publish or change account settings.
 Use existing source actions for actual task completion, navigation and reviewed changes.
 
-Use read_sources for the original excerpts behind an important story. Compose with place_regions,
-inspect with inspect_brief, fix any returned errors, and finish with finalize_brief.
+Use read_sources for the original excerpts behind an important story. The edition's local date and
+time are authoritative. A tomorrowIntent describes the NEXT local day; never rename this edition
+or call tomorrow's events today's. Treat the supplied connectedEvidence as reconciliation context:
+it includes completed items that did not rank as stories. Use it to retire stale open-item claims;
+it does not require another visible card for every completed item.
+Compose with place_regions, inspect with inspect_brief, fix any returned errors, and finish with
+finalize_brief. Its regionOrder must list every region id exactly once in the intended reading order.
+Start with the opening, then the strongest story; put supporting and private live sections afterward.
+Region creation and repair order is not reading order: explicitly order the finished page.
 A region is {id,summary,tree}. A tree is one of:
 - {kind:'component',id,component,props,summary,sources:[EXACT_MODULE_ID,...],footprint?,emphasis?}
 - {kind:'module',id:EXACT_MODULE_ID,presentation?:'story'|'compact'|'timeline'|'checklist',footprint?,emphasis?}
@@ -136,15 +144,26 @@ export function createDailyEditorialSession(
     }),
     finalize_brief: tool({
       description:
-        'Validate every source, component and region, then finish the daily edition. Errors must be corrected with place_regions.',
+        'Set the final reading order, validate every source, component and region, then finish the daily edition. List every current region id exactly once in regionOrder. Errors must be corrected with place_regions.',
       inputSchema: z.object({
         title: z.string().trim().min(1).max(160),
         summary: z.string().trim().min(1).max(1200),
+        regionOrder: z.array(z.string()).min(1).max(12),
       }),
       execute: async (value) =>
         attempt(() => {
-          metadata = value;
-          finalized = compile(regions, true);
+          const order = value.regionOrder;
+          if (
+            !Array.isArray(order) ||
+            order.length !== regions.length ||
+            new Set(order).size !== regions.length ||
+            order.some((id) => !regions.some((region) => region.id === id))
+          )
+            throw new Error('regionOrder must list every current region id exactly once');
+          const ordered = order.map((id) => regions.find((region) => region.id === id)!);
+          metadata = { title: value.title, summary: value.summary };
+          finalized = compile(ordered, true);
+          regions = ordered;
           return { ok: true, regions: regions.length, title: value.title };
         }),
     }),
@@ -166,6 +185,7 @@ export async function writeDailyEditorial(
     evidence?: Record<string, unknown>;
   } = {},
 ): Promise<{ document: BriefDocumentV2; editorial: NonNullable<DailyReport['editorial']>; failed: boolean }> {
+  const timezone = normalizeBriefTimezone(letter.timezone);
   let session = createDailyEditorialSession(report, letter, options.evidence);
   const fallback = defaultEditorialPlan(session.modules);
   const toolsForAttempt = () => {
@@ -182,8 +202,15 @@ export async function writeDailyEditorial(
         system: DAILY_EDITORIAL_SYSTEM,
         prompt: JSON.stringify({
           date: new Date(report.generatedAt).toISOString(),
-          timezone: letter.timezone,
-          intention: report.sections.albatross?.dailyAlignment?.tomorrowIntent,
+          timezone,
+          localDate: dailyBriefDatelineAt(report.generatedAt, timezone),
+          localTime: new Intl.DateTimeFormat('en-US', {
+            timeZone: timezone,
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(new Date(report.generatedAt)),
+          tomorrowIntent: report.sections.albatross?.dailyAlignment?.tomorrowIntent,
+          connectedEvidence: report.sections.mcp ?? [],
           coverage: report.errors,
           catalogue: Object.entries(briefComponentCatalog).map(([name, entry]) => ({
             name,

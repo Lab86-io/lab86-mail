@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import {
   __setAreaClassifierDepsForTest,
@@ -9,6 +9,7 @@ import {
   classifyThreads,
   extractEmail,
   groundedAssignments,
+  kickAreaClassification,
   LLM_BATCH_CAP,
   MODEL_CONCURRENCY,
   MODEL_PROFILE_CHAR_BUDGET,
@@ -517,4 +518,46 @@ test('the strict classifier response schema requires every declared assignment f
   const assignments = schema.properties.assignments.items;
   expect(assignments.required).toContain('factIds');
   expect([...assignments.required].sort()).toEqual(Object.keys(assignments.properties).sort());
+});
+
+test('ingest kicks coalesce and recover a requested rerun after classification fails', async () => {
+  const userId = 'ingest_kick_recovery';
+  const started = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+  const first = Promise.withResolvers<void>();
+  const logged = spyOn(console, 'error').mockImplementation(() => {});
+  let scans = 0;
+  __setAreaClassifierDepsForTest({
+    api: apiMock as any,
+    convexQuery: (async (fn: any) => {
+      if (fn === apiMock.albatross.unclassifiedThreads) {
+        const index = scans++;
+        started[index]?.resolve();
+        if (index === 0) await first.promise;
+      }
+      return [];
+    }) as any,
+  });
+  try {
+    kickAreaClassification('', 0);
+    kickAreaClassification(userId, 0);
+    kickAreaClassification(userId, 0);
+    await started[0].promise;
+    expect(scans).toBe(1);
+    kickAreaClassification(userId, 0);
+    kickAreaClassification(userId, 0);
+    const failure = new Error('Temporary classifier write failure');
+    first.reject(failure);
+    await started[1].promise;
+    // Let the completed batch clear its ownership before the next ingest.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(scans).toBe(2);
+    expect(logged).toHaveBeenCalledWith('[area-classifier] ingest kick failed', failure);
+    kickAreaClassification(userId, 0);
+    await started[2].promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(scans).toBe(3);
+  } finally {
+    logged.mockRestore();
+    __setAreaClassifierDepsForTest();
+  }
 });

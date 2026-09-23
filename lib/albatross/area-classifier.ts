@@ -249,7 +249,7 @@ export function groundedAssignments(input: {
   return accepted;
 }
 
-function deterministicLink(thread: ClassifiableThread, match: FactMatch) {
+function deterministicLink(match: FactMatch) {
   const confirmationRefs = (match.fact.confirmationRefs || [])
     .filter((ref) => ref.kind === 'userConfirmation' && Number.isFinite(ref.confirmedAt))
     .map((ref) => ({
@@ -266,7 +266,6 @@ function deterministicLink(thread: ClassifiableThread, match: FactMatch) {
       { kind: 'areaFact', id: String(match.fact._id), label: `${match.fact.kind}: ${match.fact.value}` },
     ],
     confirmationRefs,
-    accountId: thread.accountId,
   };
 }
 
@@ -390,7 +389,7 @@ export async function classifyThreads({ userId }: { userId: string }): Promise<C
         artifactId: thread.providerThreadId,
         accountId: thread.accountId,
         messageId: thread.messageId,
-        links: [deterministicLink(thread, match)],
+        links: [deterministicLink(match)],
       });
       totals.deterministic += 1;
     } else if (!areas.length) {

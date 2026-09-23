@@ -78,7 +78,7 @@ test('gateway retries and provider failover each start a fresh editorial session
           expect(
             (
               await request.tools.finalize_brief.execute(
-                { title: `Attempt ${attempts}`, summary: 'Complete' },
+                { title: `Attempt ${attempts}`, summary: 'Complete', regionOrder: regions.map((r) => r.id) },
                 toolOptions,
               )
             ).ok,
@@ -228,7 +228,11 @@ test('daily editor can discover, read, repair, compose and finalize custom funct
       expect(
         (
           await tools.finalize_brief.execute(
-            { title: 'The support decision', summary: 'Two proposals and one unresolved owner' },
+            {
+              title: 'The support decision',
+              summary: 'Two proposals and one unresolved owner',
+              regionOrder: [...custom.regions, extra].map((region) => region.id),
+            },
             toolOptions,
           )
         ).ok,
