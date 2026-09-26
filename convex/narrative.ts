@@ -19,6 +19,7 @@ import { type Observation, observationsForRow } from '../lib/narrative/observati
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 import { narrativeLevel } from './narrativeSchema';
 
@@ -468,7 +469,7 @@ export const read = query({
             };
           }
           if (evidence.sourceTable === 'documents')
-            detail.text = cleanNarrativeText(JSON.stringify(original.model), 12_000);
+            detail.text = cleanNarrativeText(JSON.stringify(await documentModel(ctx, original)), 12_000);
         }
       }
       sources.push({ ...evidence, ...(args.sources ? { detail, sourceAvailable: Boolean(detail) } : {}) });

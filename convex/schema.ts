@@ -2043,7 +2043,10 @@ export default defineSchema({
     documentId: v.string(),
     kind: v.union(v.literal('doc'), v.literal('sheet'), v.literal('deck')),
     title: v.string(),
-    model: v.any(),
+    // Inline only on rows written before models moved to documentModels.
+    model: v.optional(v.any()),
+    modelId: v.optional(v.id('documentModels')),
+    modelBytes: v.optional(v.number()),
     currentRevision: v.number(),
     sourceRefs: v.array(v.any()),
     google: v.optional(
@@ -2101,7 +2104,9 @@ export default defineSchema({
     documentId: v.string(),
     revision: v.number(),
     title: v.string(),
-    model: v.any(),
+    // Inline only on rows written before models moved to documentModels.
+    model: v.optional(v.any()),
+    modelId: v.optional(v.id('documentModels')),
     reason: v.string(),
     actor: v.union(v.literal('user'), v.literal('ai'), v.literal('system')),
     createdAt: v.number(),
@@ -2110,6 +2115,19 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_document_revision', ['userId', 'documentId', 'revision']),
+
+  // Document and revision models, apart from their rows so that lists and
+  // history read metadata only. A document row shares the model row of its
+  // current revision; every other revision has its own.
+  documentModels: defineTable({
+    userId: v.string(),
+    documentId: v.string(),
+    model: v.any(),
+    bytes: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_document', ['userId', 'documentId']),
 
   documentSuggestions: defineTable({
     userId: v.string(),
