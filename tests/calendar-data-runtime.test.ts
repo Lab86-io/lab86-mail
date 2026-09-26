@@ -369,6 +369,76 @@ describe('event reads', () => {
     expect(rows.map((r) => r.providerEventId).sort()).toEqual(['inside', 'overlap']);
   });
 
+  test('listEvents returns the window even when old history exceeds the limit (CAL-1)', async () => {
+    const t = newHarness();
+    const DAY = 24 * HOUR;
+    // Thirty old events in the 62-day span lookback, all over before the window.
+    const history = Array.from({ length: 30 }, (_, index) =>
+      eventInput({
+        providerEventId: `old_${index}`,
+        startAt: BASE - (index + 2) * DAY,
+        endAt: BASE - (index + 2) * DAY + HOUR,
+      }),
+    );
+    await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: [
+        ...history,
+        eventInput({ providerEventId: 'today' }),
+        // A week-long trip that started before the window and still runs.
+        eventInput({ providerEventId: 'trip', startAt: BASE - 5 * DAY, endAt: BASE + 2 * DAY, allDay: true }),
+      ],
+    });
+    const rows = await t.query(api.calendarData.listEvents, {
+      internalSecret: SECRET,
+      userId: USER,
+      startAt: BASE - HOUR,
+      endAt: BASE + 5 * HOUR,
+      limit: 10,
+    });
+    expect(rows.map((r) => r.providerEventId)).toEqual(['trip', 'today']);
+
+    const page = await t.query(api.calendarData.listEventsPage, {
+      internalSecret: SECRET,
+      userId: USER,
+      startAt: BASE - HOUR,
+      endAt: BASE + 5 * HOUR,
+      limit: 10,
+    });
+    expect(page.truncated).toBe(false);
+    expect(page.events).toHaveLength(2);
+  });
+
+  test('listEventsPage marks a capped window as truncated (CAL-1)', async () => {
+    const t = newHarness();
+    await t.mutation(api.calendarData.upsertEventBatch, {
+      ...scope,
+      events: Array.from({ length: 4 }, (_, index) =>
+        eventInput({
+          providerEventId: `slot_${index}`,
+          startAt: BASE + index * HOUR,
+          endAt: BASE + (index + 1) * HOUR,
+        }),
+      ),
+    });
+    const page = await t.query(api.calendarData.listEventsPage, {
+      internalSecret: SECRET,
+      userId: USER,
+      startAt: BASE,
+      endAt: BASE + 10 * HOUR,
+      limit: 3,
+    });
+    expect(page.truncated).toBe(true);
+    expect(page.events.map((r) => r.providerEventId)).toEqual(['slot_0', 'slot_1', 'slot_2']);
+    const count = await t.query(api.calendarData.countEvents, {
+      internalSecret: SECRET,
+      userId: USER,
+      startAt: BASE,
+      endAt: BASE + 10 * HOUR,
+    });
+    expect(count).toEqual({ count: 4, approximate: false });
+  });
+
   test('searchEvents merges legacy rows before cutover and trusts canonical after', async () => {
     const t = newHarness();
     await t.mutation(api.calendarData.upsertEventBatch, {

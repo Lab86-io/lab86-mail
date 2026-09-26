@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { executeMobileCommand } from '../lib/mobile/v1/command-executor';
 import { MobileCommandSchema } from '../lib/mobile/v1/contract';
-import { calendarSyncNow } from '../lib/tools/calendar';
+import { calendarListEvents, calendarSyncNow } from '../lib/tools/calendar';
 
 // The `calendar_sync_now` tool and the default mobile executor both reach the
 // shared resync helper without an injection seam, so one Convex fetch stub
@@ -112,6 +112,41 @@ describe('calendar_sync_now', () => {
       expect(result.results).toHaveLength(1);
       expect(calls.some((call) => call.path === 'accounts:listConnectedAccounts')).toBe(true);
     });
+  });
+});
+
+describe('calendar_list_events', () => {
+  test('reads the window page and reports truncation (CAL-1)', async () => {
+    const row = {
+      providerEventId: 'evt_1',
+      accountId: 'acct_1',
+      providerCalendarId: 'cal_1',
+      title: 'Standup',
+      startAt: Date.parse('2026-09-04T13:00:00.000Z'),
+      endAt: Date.parse('2026-09-04T13:30:00.000Z'),
+    };
+    await withConvexStub(
+      {
+        'calendarData:listEventsPage': () => ({
+          events: [row, { ...row, providerEventId: 'evt_2', accountId: 'acct_2' }],
+          truncated: true,
+        }),
+      },
+      async (calls) => {
+        const result = await calendarListEvents.handler(
+          {
+            fromIso: '2026-09-04T00:00:00Z',
+            toIso: '2026-09-05T00:00:00Z',
+            accountIds: ['acct_1'],
+            limit: 2,
+          },
+          { agent: 'user', userId: 'user_sync_now' },
+        );
+        expect(result.truncated).toBe(true);
+        expect(result.events).toHaveLength(1);
+        expect(calls[0]?.args).toMatchObject({ userId: 'user_sync_now', limit: 2 });
+      },
+    );
   });
 });
 

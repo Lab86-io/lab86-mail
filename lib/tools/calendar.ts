@@ -100,11 +100,11 @@ export const calendarListEvents = defineTool({
         'Maximum event summaries to return (default 50 — keep result payloads small so the agent stays reliable). Use calendar_event_detail for full descriptions/attendees, or calendar_search_events to target by name.',
       ),
   }),
-  output: z.object({ events: z.array(z.any()) }),
+  output: z.object({ events: z.array(z.any()), truncated: z.boolean() }),
   async handler(args, ctx) {
     const userId = requireUserId(ctx.userId);
     const parseIso = makeParseIso(ctx.userTimezone);
-    const rows = await convexQuery<any[]>(calendarApi.listEvents, {
+    const page = await convexQuery<{ events: any[]; truncated: boolean }>(calendarApi.listEventsPage, {
       userId,
       startAt: parseIso(args.fromIso, 'fromIso'),
       endAt: parseIso(args.toIso, 'toIso'),
@@ -113,10 +113,12 @@ export const calendarListEvents = defineTool({
     const accountFilter = args.accountIds?.length ? new Set(args.accountIds) : null;
     const calendarFilter = args.calendarIds?.length ? new Set(args.calendarIds) : null;
     return {
-      events: (rows || [])
+      events: (page?.events || [])
         .filter((row) => !accountFilter || accountFilter.has(row.accountId))
         .filter((row) => !calendarFilter || calendarFilter.has(row.providerCalendarId))
         .map((row) => toToolEvent(row)),
+      // True when the limit cut events off: narrow the window or raise the limit.
+      truncated: Boolean(page?.truncated),
     };
   },
 });
