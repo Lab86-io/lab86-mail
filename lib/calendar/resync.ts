@@ -1,7 +1,7 @@
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { type CalendarSyncResult, syncAllCalendarAccounts, syncCalendarAccount } from './sync';
 
-const calendarApi = (api as any).calendarData;
+const calendarApi = api.calendarData;
 
 // One entry point for every user-triggered calendar resync: the HTTP route,
 // the mobile `calendar.resync` command, and the `calendar_sync_now` tool.

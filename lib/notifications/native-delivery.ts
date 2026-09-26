@@ -54,7 +54,7 @@ export async function dispatchNativeNotification(
   options: NativeDeliveryOptions = {},
 ) {
   const context = await dependencies.query<NativeDeliveryContext | null>(
-    (api as any).albatrossNotifications.nativeDeliveryContext,
+    api.albatrossNotifications.nativeDeliveryContext,
     { userId, notificationId },
   );
   if (!context?.notification) return { sent: 0, failed: 0, skipped: 'not_found' as const };
@@ -76,7 +76,7 @@ export async function dispatchNativeNotification(
     const delivered = (context.nativeDeviceDeliveries || []).some(
       (delivery) => delivery.status === 'delivered',
     );
-    await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
+    await dependencies.mutate(api.albatrossNotifications.recordDelivery, {
       userId,
       notificationId,
       channel: 'native_push',
@@ -107,7 +107,7 @@ export async function dispatchNativeNotification(
     error?: string,
   ) => {
     try {
-      await dependencies.mutate((api as any).albatrossNotifications.recordNativeDeviceDelivery, {
+      await dependencies.mutate(api.albatrossNotifications.recordNativeDeviceDelivery, {
         userId,
         notificationId,
         token,
@@ -144,7 +144,7 @@ export async function dispatchNativeNotification(
     }
   }
   const status = sent > 0 && unresolvedErrors.length === 0 ? 'sent' : 'failed';
-  await dependencies.mutate((api as any).albatrossNotifications.recordDelivery, {
+  await dependencies.mutate(api.albatrossNotifications.recordDelivery, {
     userId,
     notificationId,
     channel: 'native_push',

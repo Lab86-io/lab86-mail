@@ -60,16 +60,16 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
     });
   },
   enqueueApproval(input) {
-    return convexMutation<string>((api as any).albatrossWork.enqueueApproval, input);
+    return convexMutation<string>(api.albatrossWork.enqueueApproval, input);
   },
   capture: captureWork,
   captureFromChat,
   resyncCalendar: startCalendarResync,
   setWorkHorizon(input) {
-    return convexMutation((api as any).albatrossWorkV2.setHorizon, input);
+    return convexMutation(api.albatrossWorkV2.setHorizon, input);
   },
   workShapeMutation(name, input) {
-    return convexMutation((api as any).albatrossWorkV2[name], input);
+    return convexMutation(api.albatrossWorkV2[name], input);
   },
 };
 

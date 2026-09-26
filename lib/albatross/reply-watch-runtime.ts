@@ -19,7 +19,7 @@ export async function checkWaitingReplies(
     watches: Array<{ workId: string; title: string; watch: ReplyWatch }>;
     watchKey?: string;
     scanCursor?: string | null;
-  }>((api as any).albatrossReplies.waiting, input);
+  }>(api.albatrossReplies.waiting, input);
   const pending = new Map(state.watches.map((row) => [row.workId, row]));
   const result = { watched: pending.size, resumed: 0, unavailable: false };
   if (!pending.size) return result;
@@ -29,7 +29,7 @@ export async function checkWaitingReplies(
   let pages = 0;
   do {
     const page: { page: Array<ReplyMessage & { _id: string }>; isDone: boolean; continueCursor: string } =
-      await deps.convexQuery((api as any).albatrossReplies.messages, {
+      await deps.convexQuery(api.albatrossReplies.messages, {
         userId: input.userId,
         after,
         paginationOpts: { cursor, numItems: 100 },
@@ -53,7 +53,7 @@ export async function checkWaitingReplies(
           continue;
         }
         if (!verdict.satisfies) continue;
-        const saved = await deps.convexMutation<{ resumed: boolean }>((api as any).albatrossReplies.resume, {
+        const saved = await deps.convexMutation<{ resumed: boolean }>(api.albatrossReplies.resume, {
           userId: input.userId,
           workId: row.workId,
           watchId: row.watch.id,
@@ -77,7 +77,7 @@ export async function checkWaitingReplies(
     }
   } while (cursor);
   if (state.watchKey)
-    await deps.convexMutation((api as any).albatrossReplies.checkpoint, {
+    await deps.convexMutation(api.albatrossReplies.checkpoint, {
       ...input,
       watchKey: state.watchKey,
       previousCursor: startCursor,

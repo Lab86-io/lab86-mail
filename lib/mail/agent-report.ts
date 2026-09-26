@@ -116,10 +116,8 @@ export async function loadSinceLastEditionFromConvex(
   query: <T>(fn: unknown, args: Record<string, unknown>) => Promise<T> = convexQuery,
 ): Promise<DailyReportSinceLastEdition> {
   const [completions, operations] = await Promise.all([
-    query<any[]>((api as any).albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(
-      () => [] as any[],
-    ),
-    query<any[]>((api as any).operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
+    query<any[]>(api.albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(() => [] as any[]),
+    query<any[]>(api.operations.listRecent, { userId, limit: 60 }).catch(() => [] as any[]),
   ]);
   return {
     previousGeneratedAt: since,
@@ -409,7 +407,7 @@ function cleanBody(message: Message): string {
 }
 
 async function loadAreaPulsesFromConvex(userId: string): Promise<AreaPulseRecord[]> {
-  const rows = await convexQuery<any[]>((api as any).albatrossAreaPulse.listAreaPulses, {
+  const rows = await convexQuery<any[]>(api.albatrossAreaPulse.listAreaPulses, {
     userId,
     limit: 12,
   });

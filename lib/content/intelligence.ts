@@ -137,7 +137,7 @@ const searchDefaults = {
   convexQuery,
   embedContent,
   vectorSearch: (userId: string, vector: number[]) =>
-    requireConvexClient().action((api as any).content.semanticSearch, convexArgs({ userId, vector })),
+    requireConvexClient().action(api.content.semanticSearch, convexArgs({ userId, vector })),
 };
 export async function searchContent(
   userId: string,
@@ -146,7 +146,7 @@ export async function searchContent(
   deps = searchDefaults,
 ) {
   const lexical = await deps.convexQuery<ContentItem[]>(
-    (api as any).content.search,
+    api.content.search,
     { userId, query },
     options.signal,
   );

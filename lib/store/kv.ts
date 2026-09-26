@@ -7,7 +7,7 @@ import { isConvexConfigured } from '../hosted/env';
 // the tenancy boundary. The old NeDB file store had none, which let one
 // user's daily brief, memories, and labels leak to every other user.
 
-const userDataApi = (api as any).userData;
+const userDataApi = api.userData;
 
 export interface KvRecord<T = any> {
   key: string;

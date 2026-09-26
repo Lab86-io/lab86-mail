@@ -4,8 +4,8 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { downloadNylasAttachment } from '@/lib/nylas/provider';
 import { normalizeUrl } from '@/lib/shared/url';
 
-const boardsApi = (api as any).boards;
-const agentUploadsApi = (api as any).agentUploads;
+const boardsApi = api.boards;
+const agentUploadsApi = api.agentUploads;
 
 // Cap fetched/uploaded attachment size so a runaway URL can't exhaust memory
 // or Convex storage. 25 MB matches typical mail-provider attachment limits.

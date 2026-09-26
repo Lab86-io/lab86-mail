@@ -95,7 +95,7 @@ interface SteeringInverse {
 
 const defaults = {
   setCorrection: (userId: string, id: string, correction: JevCorrection | null) =>
-    convexMutation<{ previous: JevCorrection | null }>((api as any).dailyReports.setBriefCorrection, {
+    convexMutation<{ previous: JevCorrection | null }>(api.dailyReports.setBriefCorrection, {
       userId,
       id,
       correction,
@@ -103,11 +103,11 @@ const defaults = {
   // The Jev sender of the conversation, never the user's own address.
   lookupSender: async (userId: string, account: string, threadId: string) => {
     const [threads, accounts] = await Promise.all([
-      convexQuery<any[]>((api as any).jev.threadAssessments, {
+      convexQuery<any[]>(api.jev.threadAssessments, {
         userId,
         threads: [{ accountId: account, threadId }],
       }),
-      convexQuery<Array<{ email: string }>>((api as any).accounts.listConnectedAccounts, { userId }),
+      convexQuery<Array<{ email: string }>>(api.accounts.listConnectedAccounts, { userId }),
     ]);
     const self = new Set((accounts || []).map((row) => String(row.email || '').toLowerCase()));
     const thread = threads?.[0];

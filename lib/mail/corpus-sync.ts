@@ -13,8 +13,8 @@ import { keptMessageHeaders } from './sender-cleanup';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
 
-const mailCorpusApi = (api as any).mailCorpus;
-const accountsApi = (api as any).accounts;
+const mailCorpusApi = api.mailCorpus;
+const accountsApi = api.accounts;
 
 const defaultClassifierLoaders = {
   smart: () => import('./llm-classify'),

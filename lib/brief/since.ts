@@ -151,7 +151,7 @@ export async function loadOperationStates(
   query: typeof convexQuery = convexQuery,
 ): Promise<Map<string, string>> {
   if (!ids.length) return new Map();
-  const rows = await query<Array<{ id: string; status: string }>>((api as any).dailyReports.operationStates, {
+  const rows = await query<Array<{ id: string; status: string }>>(api.dailyReports.operationStates, {
     userId,
     ids,
   });

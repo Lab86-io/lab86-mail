@@ -129,7 +129,7 @@ export async function postOneClickUnsubscribe(
 const defaultDependencies: UnsubscribeDependencies = {
   threadMessages: (account, threadId, userId) => resolveThreadMessages(account, threadId, { userId }),
   fetchHeaders: getNylasMessageHeaders,
-  storeHeaders: (input) => convexMutation((api as any).mailCorpus.setMessageListHeaders, input),
+  storeHeaders: (input) => convexMutation(api.mailCorpus.setMessageListHeaders, input),
   postOneClick: (url) => postOneClickUnsubscribe(url),
   sendMail: sendNylasMessage,
   record: recordMailOperation,

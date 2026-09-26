@@ -56,7 +56,7 @@ export async function markGrantNeedsReconnect(
 ): Promise<boolean> {
   if (!grantId) return false;
   try {
-    const result = await mutate<{ updated: number }>((api as any).accounts.markGrantReconnectNeeded, {
+    const result = await mutate<{ updated: number }>(api.accounts.markGrantReconnectNeeded, {
       grantId,
       reason: reconnectReason(detail),
     });

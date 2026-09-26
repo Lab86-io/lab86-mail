@@ -141,7 +141,7 @@ export async function gatherBriefWeather(
     if (storedLocation === undefined && userId) {
       const preference = await (opts.mobilePreferencesQuery
         ? opts.mobilePreferencesQuery(userId)
-        : convexQuery<any>((api as any).albatrossNotifications.mobilePreferences, { userId })
+        : convexQuery<any>(api.albatrossNotifications.mobilePreferences, { userId })
       ).catch(() => null);
       storedLocation =
         preference?.briefLocationEnabled === true &&

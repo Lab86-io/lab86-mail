@@ -19,7 +19,7 @@ export function __setChatUploadDepsForTest(overrides: Partial<typeof defaults> =
 }
 export async function readChatUpload(userId: string, uploadId: string, signal?: AbortSignal) {
   signal?.throwIfAborted();
-  const file = await deps.convexQuery<any>((api as any).agentUploads.getUpload, { userId, uploadId }, signal);
+  const file = await deps.convexQuery<any>(api.agentUploads.getUpload, { userId, uploadId }, signal);
   if (!file?.url) throw new Error('This attachment is no longer available. Attach it again.');
   if (file.size > MAX_CHAT_BYTES) throw new Error('This attachment exceeds 25 MB.');
   const response = await deps.fetch(file.url, {

@@ -6,8 +6,8 @@ import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
 import { stripLoneSurrogatesDeep } from '@/lib/shared/text';
 import { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } from './corpus';
 
-const calendarApi = (api as any).calendarData;
-const accountsApi = (api as any).accounts;
+const calendarApi = api.calendarData;
+const accountsApi = api.accounts;
 
 // Rolling sync window: recurring events arrive pre-expanded inside it via
 // expand_recurring, so no client-side RRULE math on the read path. A daily

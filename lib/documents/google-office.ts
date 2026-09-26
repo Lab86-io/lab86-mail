@@ -27,7 +27,7 @@ let deps = defaults;
 export function __setGoogleOfficeDepsForTest(overrides: Partial<typeof defaults> = {}) {
   deps = { ...defaults, ...overrides };
 }
-const office = (api as any).officeDocuments;
+const office = api.officeDocuments;
 function version(session: string) {
   return JSON.parse(deps.decryptSecret(session)) as {
     userId: string;

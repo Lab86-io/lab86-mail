@@ -78,7 +78,7 @@ export async function assetsFromUploads(userId: string, uploadIds: string[]): Pr
   for (const uploadId of ids) {
     let row: UploadRow | null;
     try {
-      row = await dependencies.convexQuery<UploadRow | null>((api as any).agentUploads.getUpload, {
+      row = await dependencies.convexQuery<UploadRow | null>(api.agentUploads.getUpload, {
         userId,
         uploadId,
       });

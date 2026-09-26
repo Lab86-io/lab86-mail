@@ -16,7 +16,7 @@ export type AccountDeletionResult =
 export const defaultAccountDeletionDeps: AccountDeletionDeps = {
   listConnectedAccounts: (userId) => convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId }),
   deleteNylasAccount,
-  deleteUserCascade: (userId) => convexMutation<any>((api as any).accounts.deleteUserCascade, { userId }),
+  deleteUserCascade: (userId) => convexMutation<any>(api.accounts.deleteUserCascade, { userId }),
 };
 
 /**

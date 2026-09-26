@@ -43,7 +43,7 @@ export async function completeWorkStep(
 ) {
   let stepKey = input.stepKey;
   if (!stepKey) {
-    const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+    const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
       userId: input.userId,
       workId: input.workId,
     });
@@ -63,7 +63,7 @@ export async function completeWorkStep(
     transitioned: boolean;
   };
   try {
-    completed = await deps.convexMutation((api as any).albatrossWorkV2.completeStep, {
+    completed = await deps.convexMutation(api.albatrossWorkV2.completeStep, {
       userId: input.userId,
       workId: input.workId,
       stepKey,

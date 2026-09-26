@@ -39,8 +39,8 @@ function threadItem(thread: Thread): DailyReportItem {
 
 const defaults = {
   loadCompletions: (userId: string, since: number) =>
-    convexQuery<any[]>((api as any).albatrossWork.completionsSince, { userId, since, limit: 40 }),
-  loadAttention: (userId: string) => convexQuery<Thread[]>((api as any).jev.attentionCandidates, { userId }),
+    convexQuery<any[]>(api.albatrossWork.completionsSince, { userId, since, limit: 40 }),
+  loadAttention: (userId: string) => convexQuery<Thread[]>(api.jev.attentionCandidates, { userId }),
   loadTasks: loadTaskContext,
   loadCalendar: loadCalendarContext,
   save: saveDailyReport,

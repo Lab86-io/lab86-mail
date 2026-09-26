@@ -2,7 +2,7 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { MAIL_UNDO, recordMailOperation } from '@/lib/mail/mail-operations';
 import { moveNylasMessage } from '@/lib/nylas/provider';
 
-const oneTimeCodesApi = (api as any).mailOneTimeCodes;
+const oneTimeCodesApi = api.mailOneTimeCodes;
 
 export type CodeCleanupMode = 'none' | 'archive' | 'trash';
 

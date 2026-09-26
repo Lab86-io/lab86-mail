@@ -8,7 +8,7 @@ import {
   signOfficeToken,
 } from './office-security';
 
-const office = (api as any).officeDocuments;
+const office = api.officeDocuments;
 const defaults = {
   convexQuery,
   convexMutation,

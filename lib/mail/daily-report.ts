@@ -278,7 +278,7 @@ export async function generateDailyReport(input: {
 
   const attentionKeys = new Set<string>();
   if (input.userId) {
-    const attention = await convexQuery<Thread[]>((api as any).jev.attentionCandidates, {
+    const attention = await convexQuery<Thread[]>(api.jev.attentionCandidates, {
       userId: input.userId,
       accountIds: accounts,
     }).catch(() => []);
@@ -367,7 +367,7 @@ export async function generateDailyReport(input: {
 
   // ---- Tier 1: batched smart classification (local-first) ------------------
   const storedThreads = input.userId
-    ? await convexQuery<Thread[]>((api as any).jev.threadAssessments, {
+    ? await convexQuery<Thread[]>(api.jev.threadAssessments, {
         userId: input.userId,
         threads: bounded.slice(0, 600).map((thread) => ({ accountId: thread.account, threadId: thread._id })),
       }).catch(() => [])
@@ -1424,7 +1424,7 @@ function calendarContextLine(event: DailyReportCalendarItem) {
 async function loadMcpContext(userId: string | null | undefined): Promise<DailyReportMcpItem[]> {
   if (!userId) return [];
   try {
-    const rows = await convexQuery<any[]>((api as any).mcp.listItemsForBrief, { userId, limit: 25 });
+    const rows = await convexQuery<any[]>(api.mcp.listItemsForBrief, { userId, limit: 25 });
     return (rows || []).map((row) => ({
       server: row.server,
       externalId: row.externalId ? String(row.externalId) : undefined,
@@ -1476,7 +1476,7 @@ export async function loadTaskContext(
   if (!userId) return [];
   try {
     const dismissedTaskIds = await listDismissedDailyReportTaskIds().catch(() => new Set<string>());
-    const rows = await convexQuery<any[]>((api as any).boards.listReportCards, {
+    const rows = await convexQuery<any[]>(api.boards.listReportCards, {
       userId,
       since: now - MONTH_CONTEXT_WINDOW,
       endAt: now + FUTURE_CONTEXT_WINDOW,
@@ -1574,7 +1574,7 @@ export async function loadCalendarContext(
     // midnight (not UTC) so the window isn't shifted for non-UTC users.
     const tz = getAiRequestContext().userTimezone || 'UTC';
     const startOfToday = startOfLocalDay(now, tz);
-    const rows = await convexQuery<any[]>((api as any).calendarData.listEvents, {
+    const rows = await convexQuery<any[]>(api.calendarData.listEvents, {
       userId,
       startAt: startOfToday,
       endAt: startOfToday + 8 * 86_400_000,

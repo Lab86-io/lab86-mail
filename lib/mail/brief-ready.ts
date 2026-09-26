@@ -40,7 +40,7 @@ const defaults = {
     localDate: string;
     body?: string;
     title?: string;
-  }) => convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, input),
+  }) => convexMutation<any>(api.albatrossNotifications.queueBriefReady, input),
   dispatchNativeNotification,
 };
 export const WEEKLY_REVIEW_READY_TITLE = 'Your weekly review is ready';

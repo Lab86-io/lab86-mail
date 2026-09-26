@@ -4,8 +4,8 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { defineTool } from './registry';
 import { resolveBoardAndColumn } from './tasks';
 
-const mcpApi = (api as any).mcp;
-const boardsApi = (api as any).boards;
+const mcpApi = api.mcp;
+const boardsApi = api.boards;
 
 const defaultDeps = {
   convexQuery,

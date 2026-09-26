@@ -13,7 +13,7 @@ let cached: { at: number; selection: ClassifierSelection } | null = null;
 
 export async function loadClassifierSelection(query = convexQuery): Promise<ClassifierSelection> {
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.selection;
-  const selection = await query<ClassifierSelection>((api as any).classifier.selection, {});
+  const selection = await query<ClassifierSelection>(api.classifier.selection, {});
   cached = { at: Date.now(), selection };
   return selection;
 }
@@ -27,7 +27,7 @@ export async function saveClassifierSelection(
   mutate = convexMutation,
 ) {
   const result = await mutate<{ classifierId: string; revision: number; requeued: boolean }>(
-    (api as any).classifier.select,
+    api.classifier.select,
     input,
   );
   cached = null;

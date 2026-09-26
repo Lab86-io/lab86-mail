@@ -33,12 +33,12 @@ interface Snapshot {
 const defaults = {
   snapshot: async (userId: string, at: number): Promise<Snapshot | null> => {
     if (!narrativeEnabled(userId)) return null;
-    const brief = await convexQuery<any>((api as any).narrative.brief, { userId, at });
+    const brief = await convexQuery<any>(api.narrative.brief, { userId, at });
     if (!brief.enabled || !brief.entry) return null;
     return readNarrative(userId, brief.entry._id);
   },
   work: async (userId: string, id: string): Promise<WorkspaceWork | null> => {
-    const detail = await convexQuery<any>((api as any).albatrossWorkV2.workDetail, { userId, workId: id });
+    const detail = await convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId: id });
     if (!detail?.work) return null;
     return {
       id,

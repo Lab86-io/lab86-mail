@@ -85,7 +85,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
       let requestId: string | undefined;
       let complete = false;
       const coordinate = (action: 'request' | 'complete' | 'fail') =>
-        deps.convexMutation<{ ok: boolean; ready?: boolean }>((api as any).officeDocuments.coordinateEdit, {
+        deps.convexMutation<{ ok: boolean; ready?: boolean }>(api.officeDocuments.coordinateEdit, {
           userId,
           documentId,
           requestId: requestId!,
@@ -137,7 +137,7 @@ export function createWordService(overrides: Partial<typeof defaults> = {}) {
           throw new OfficeError('The requested edits did not change the document.');
         const storageId = await deps.storeOfficeBytes(userId, updated, 'docx');
         const result = await deps.convexMutation<{ ok: boolean; revision?: number; code?: string }>(
-          (api as any).officeDocuments.saveEditedVersion,
+          api.officeDocuments.saveEditedVersion,
           {
             userId,
             documentId,

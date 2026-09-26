@@ -158,7 +158,7 @@ async function loadClosedTracked(ids: string[]): Promise<Set<string>> {
 // The user's own addresses. A thread whose newest message is from one of them
 // was answered after the edition.
 async function loadSelfAddresses(userId: string): Promise<Set<string>> {
-  const accounts = await convexQuery<Array<{ email?: string }>>((api as any).accounts.listConnectedAccounts, {
+  const accounts = await convexQuery<Array<{ email?: string }>>(api.accounts.listConnectedAccounts, {
     userId,
   });
   return new Set((accounts || []).map((row) => String(row.email || '').toLowerCase()).filter(Boolean));
@@ -209,7 +209,7 @@ async function readReportRows<T>(
   let cursor: string | null = null;
   do {
     const result: { page: T[]; continueCursor: string; isDone: boolean } = await readDependencies.query(
-      (api as any).userData.dailyReportPage,
+      api.userData.dailyReportPage,
       { userId, edition, cursor, limit: Math.min(8, count - rows.length), summaryOnly },
     );
     rows.push(...result.page);
@@ -269,12 +269,12 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
     const userId = requireStoreUserId();
     const [policy, threads, arrivals, selfAddresses] = await Promise.all([
       readDependencies.loadPolicy(userId),
-      readDependencies.query<Thread[]>((api as any).jev.threadAssessments, {
+      readDependencies.query<Thread[]>(api.jev.threadAssessments, {
         userId,
         threads: items.slice(0, 300).map((item) => ({ accountId: item.account, threadId: item.threadId })),
       }),
       readDependencies
-        .query<Thread[]>((api as any).jev.liveBriefCandidates, {
+        .query<Thread[]>(api.jev.liveBriefCandidates, {
           userId,
           since: report.generatedAt,
           accountIds: report.accounts,

@@ -85,7 +85,7 @@ export async function captureFromChat(
 ): Promise<ChatCaptureResult> {
   const rawText = chatCaptureRawText(input.text, input.replyText);
   if (!rawText) throw new Error('text required');
-  const chatApi = (api as any).albatrossChatCapture;
+  const chatApi = api.albatrossChatCapture;
   const externalId = chatCaptureExternalId(input.conversationId, input.sourceMessageId);
 
   if (externalId) {
@@ -118,14 +118,14 @@ export async function captureFromChat(
   }
   for (const workId of captured.workIds) {
     if (input.shape) {
-      await dependencies.mutate((api as any).albatrossWorkV2.setShape, {
+      await dependencies.mutate(api.albatrossWorkV2.setShape, {
         userId: user.userId,
         workId,
         shape: input.shape,
       });
     }
     if (input.horizon) {
-      await dependencies.mutate((api as any).albatrossWorkV2.setHorizon, {
+      await dependencies.mutate(api.albatrossWorkV2.setHorizon, {
         userId: user.userId,
         workId,
         horizon: input.horizon,

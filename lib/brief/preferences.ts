@@ -47,12 +47,9 @@ function emailState(configured: boolean) {
 }
 
 export async function loadBriefPreferences(userId: string, deps = defaults): Promise<BriefPreferences> {
-  const stored = await deps.query<Omit<BriefPreferences, 'email'>>(
-    (api as any).dailyReports.briefPreferences,
-    {
-      userId,
-    },
-  );
+  const stored = await deps.query<Omit<BriefPreferences, 'email'>>(api.dailyReports.briefPreferences, {
+    userId,
+  });
   const email = emailState(deps.emailConfigured());
   // An edition by email cannot go out without the email service, so the
   // stored choice reads as off until the service exists.
@@ -68,7 +65,7 @@ export async function saveBriefPreferences(
   const parsed = briefPreferencesInputSchema.parse(input);
   const email = emailState(deps.emailConfigured());
   if (parsed.emailEnabled === true && !email.available) throw new Error(BRIEF_EMAIL_UNAVAILABLE_REASON);
-  await deps.mutation((api as any).dailyReports.saveBriefPreferences, {
+  await deps.mutation(api.dailyReports.saveBriefPreferences, {
     userId,
     ...parsed,
     ...(options.timezone ? { timezone: options.timezone } : {}),

@@ -15,8 +15,8 @@ import { safeSlice } from '@/lib/shared/text';
 import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
-const calendarApi = (api as any).calendarData;
-const accountsApi = (api as any).accounts;
+const calendarApi = api.calendarData;
+const accountsApi = api.accounts;
 
 function requireUserId(userId: string | null | undefined): string {
   if (!userId) throw new Error('Not authenticated.');

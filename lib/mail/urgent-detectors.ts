@@ -12,8 +12,8 @@ import { truncateText } from '@/lib/shared/text';
 import { extractOneTimeCode, type OneTimeCodeMessage } from './otp-detect';
 import { assessUrgency, parseUrgencyConfirmation, URGENCY_CONFIRMATION_SYSTEM_PROMPT } from './urgency';
 
-const notificationsApi = (api as any).albatrossNotifications;
-const oneTimeCodesApi = (api as any).mailOneTimeCodes;
+const notificationsApi = api.albatrossNotifications;
+const oneTimeCodesApi = api.mailOneTimeCodes;
 
 export interface UrgentScanMessage extends OneTimeCodeMessage {
   providerMessageId: string;

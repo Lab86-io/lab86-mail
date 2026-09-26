@@ -12,8 +12,8 @@ import { parseIsoInTimezone } from '@/lib/shared/timezones';
 import { normalizeUrl } from '@/lib/shared/url';
 import { defineTool } from './registry';
 
-const boardsApi = (api as any).boards;
-const calendarApi = (api as any).calendarData;
+const boardsApi = api.boards;
+const calendarApi = api.calendarData;
 
 // AI control over the Kanban (spec M2). Every mutation records an inverse so
 // "filed 10 tasks" is one reviewable, undoable change-set.

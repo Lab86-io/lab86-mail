@@ -56,7 +56,7 @@ export async function executeCheckpointedTool(
 ) {
   const key = toolExecutionKey(input.name, input.args);
   const identity = { userId: input.userId, runId: input.runId, key };
-  const claim: any = await deps.convexMutation((api as any).agentExecution.beginTool, {
+  const claim: any = await deps.convexMutation(api.agentExecution.beginTool, {
     ...identity,
     toolName: input.name,
     mutating: input.mutating,
@@ -75,7 +75,7 @@ export async function executeCheckpointedTool(
   }
   try {
     const output = await invoke(key);
-    await deps.convexMutation((api as any).agentExecution.finishTool, {
+    await deps.convexMutation(api.agentExecution.finishTool, {
       ...identity,
       status: 'succeeded',
       output: checkpointOutput(output),
@@ -84,7 +84,7 @@ export async function executeCheckpointedTool(
   } catch (error) {
     // A handler exception cannot prove a remote mutation failed. Validation ran before this claim.
     await deps
-      .convexMutation((api as any).agentExecution.finishTool, {
+      .convexMutation(api.agentExecution.finishTool, {
         ...identity,
         status: input.mutating ? 'unknown' : 'failed',
         error: 'Tool execution was interrupted. Read the current source before continuing.',
@@ -98,7 +98,7 @@ export async function readRecoveryContext(userId: string, runId: string, read = 
   const records: any[] = [];
   let cursor: string | undefined;
   do {
-    const result = await read<any>((api as any).agentExecution.readRun, {
+    const result = await read<any>(api.agentExecution.readRun, {
       userId,
       runId,
       ...(cursor ? { cursor } : {}),

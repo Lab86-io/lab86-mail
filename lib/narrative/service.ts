@@ -14,7 +14,7 @@ import {
 } from './context';
 import { NARRATIVE_SKILL, type NarrativeEntry, narrativeContext } from './core';
 
-const functions = (api as any).narrative;
+const functions = api.narrative;
 const queryExpansionSchema = z.object({ terms: z.array(z.string().min(3).max(60)).max(4) });
 const defaults = {
   query: convexQuery,

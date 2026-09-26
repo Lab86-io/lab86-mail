@@ -97,7 +97,7 @@ const defaults = {
   latest: (userId: string) =>
     runWithAiRequestContext({ userId, agent: 'user' }, () => getLatestDailyReport(undefined, true)),
   events: (userId: string, now: number) =>
-    convexQuery<TodaySummaryEvent[]>((api as any).calendarData.listEvents, {
+    convexQuery<TodaySummaryEvent[]>(api.calendarData.listEvents, {
       userId,
       // Four hours back keeps a meeting that is still running.
       startAt: now - 4 * 3600_000,

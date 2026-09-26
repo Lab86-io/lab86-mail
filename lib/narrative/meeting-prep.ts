@@ -49,7 +49,7 @@ export async function readMeetingRecord(
   } catch {
     return null;
   }
-  return deps.query((api as any).calendarData.getEventByProviderId, {
+  return deps.query(api.calendarData.getEventByProviderId, {
     userId,
     accountId: selector.accountId,
     providerCalendarId: selector.calendarId,

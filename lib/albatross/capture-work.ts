@@ -41,7 +41,7 @@ const defaultDependencies: CaptureWorkDependencies = {
   query: convexQuery,
   now: () => Date.now(),
   timezone: async (userId) => {
-    const zone = await convexQuery<string>((api as any).albatrossNotifications.deliveryTimezone, { userId });
+    const zone = await convexQuery<string>(api.albatrossNotifications.deliveryTimezone, { userId });
     return typeof zone === 'string' && zone ? zone : undefined;
   },
 };
@@ -63,7 +63,7 @@ export async function captureWork(
   const timezone = dependencies.timezone
     ? await dependencies.timezone(user.userId).catch(() => undefined)
     : undefined;
-  const captureId = await dependencies.mutate<string>((api as any).albatrossWorkV2.beginCapture, {
+  const captureId = await dependencies.mutate<string>(api.albatrossWorkV2.beginCapture, {
     userId: user.userId,
     rawText,
     transcript: input.transcript,
@@ -80,7 +80,7 @@ export async function captureWork(
         ...shapeForSplitItem({}, item.rawText, dependencies.now(), timezone),
       }));
       if (items.some((item) => !item.rawText)) throw new Error('Reviewed Work cannot be empty.');
-      const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+      const workIds = await dependencies.mutate<string[]>(api.albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
         items,
@@ -89,11 +89,9 @@ export async function captureWork(
     }
     const [areas, facts] = await Promise.all([
       dependencies
-        .query<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' })
+        .query<any[]>(api.albatross.listAreas, { userId: user.userId, status: 'active' })
         .catch(() => []),
-      dependencies
-        .query<any[]>((api as any).albatross.listVerifiedFacts, { userId: user.userId })
-        .catch(() => []),
+      dependencies.query<any[]>(api.albatross.listVerifiedFacts, { userId: user.userId }).catch(() => []),
     ]);
     const areaContext = areas.map((area) => ({
       name: area.name,
@@ -159,7 +157,7 @@ Return one JSON object only:
         ...(read.metric ? { metric: read.metric } : {}),
       };
     });
-    const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+    const workIds = await dependencies.mutate<string[]>(api.albatrossWorkV2.finishCapture, {
       userId: user.userId,
       captureId,
       items,
@@ -169,7 +167,7 @@ Return one JSON object only:
     // Raw input is never lost. A model or Area lookup failure commits one
     // verbatim Work item and lets the normal advancement path continue.
     const workIds = await dependencies
-      .mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
+      .mutate<string[]>(api.albatrossWorkV2.finishCapture, {
         userId: user.userId,
         captureId,
         items: [
@@ -181,7 +179,7 @@ Return one JSON object only:
         ],
       })
       .catch(async () => {
-        await dependencies.mutate((api as any).albatrossWorkV2.failCapture, {
+        await dependencies.mutate(api.albatrossWorkV2.failCapture, {
           userId: user.userId,
           captureId,
           error: error instanceof Error ? error.message : String(error),

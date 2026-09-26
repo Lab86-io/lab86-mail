@@ -36,12 +36,11 @@ export interface BlockSenderDependencies {
 const defaultDependencies: BlockSenderDependencies = {
   listRules: () => listSmartRules(false),
   createRule: createSmartRule,
-  reclassify: (userId, rule) =>
-    convexMutation((api as any).smart.reclassifyMatchingThreads, { userId, ...rule }),
+  reclassify: (userId, rule) => convexMutation(api.smart.reclassifyMatchingThreads, { userId, ...rule }),
   inboxThreads: async (userId, sender, limit) =>
     (
       await convexQuery<{ threads: Array<{ accountId: string; threadId: string }> }>(
-        (api as any).mailCorpus.inboxThreadsFromSender,
+        api.mailCorpus.inboxThreadsFromSender,
         { userId, sender, limit },
       )
     ).threads,

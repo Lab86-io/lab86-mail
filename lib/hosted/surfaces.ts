@@ -29,7 +29,7 @@ function asUser<T>(userId: string, run: () => Promise<T>) {
 export const surfaceDefaults: SurfaceDependencies = {
   readPref: (userId) => asUser(userId, () => getPref(FILES_PREF)),
   writePref: (userId, value) => asUser(userId, () => setPref(FILES_PREF, value)),
-  hasDocuments: (userId) => convexQuery<boolean>((api as any).accounts.hasDocuments, { userId }),
+  hasDocuments: (userId) => convexQuery<boolean>(api.accounts.hasDocuments, { userId }),
 };
 
 export async function resolveSurfaces(

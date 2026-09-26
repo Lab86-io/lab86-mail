@@ -9,7 +9,7 @@ import { syncMailAttachments } from './mail-attachments';
 import { syncMcpContent } from './mcp-sync';
 import { prepareBriefWork } from './prepare';
 
-const ref = (api as any).content;
+const ref = api.content;
 const defaults = {
   convexMutation,
   convexQuery,

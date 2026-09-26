@@ -27,8 +27,8 @@ export interface DataExportDependencies {
 }
 
 export const dataExportDefaults: DataExportDependencies = {
-  tables: () => convexQuery<string[]>((api as any).accounts.exportTableList, {}),
-  page: (input) => convexQuery<ExportPage>((api as any).accounts.exportUserTablePage, input),
+  tables: () => convexQuery<string[]>(api.accounts.exportTableList, {}),
+  page: (input) => convexQuery<ExportPage>(api.accounts.exportUserTablePage, input),
   now: () => new Date(),
 };
 

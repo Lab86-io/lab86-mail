@@ -13,7 +13,7 @@ import {
 } from './contract';
 import { searchContent } from './intelligence';
 
-const ref = (api as any).briefPreparations;
+const ref = api.briefPreparations;
 const defaults = {
   generateObjectForCurrentUser,
   convexMutation,
@@ -53,7 +53,7 @@ export async function prepareBriefWork(userId: string, deps = defaults) {
     const candidates = [
       ...new Map([seed, ...found.flatMap((r) => r.items)].map((item) => [item._id, item])).values(),
     ].slice(0, 14);
-    const sources = await deps.convexQuery<ContentItem[]>((api as any).content.preparationSources, {
+    const sources = await deps.convexQuery<ContentItem[]>(api.content.preparationSources, {
       userId,
       ids: candidates.map((s) => s._id),
     });

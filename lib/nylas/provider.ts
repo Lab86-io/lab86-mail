@@ -33,7 +33,7 @@ import {
 } from './normalize';
 import { RATE_LIMIT_MAX_DELAY_MS, retryAfterMs } from './retry';
 
-const mailCorpusApi = (api as any).mailCorpus;
+const mailCorpusApi = api.mailCorpus;
 
 export interface NylasAccountRow {
   userId: string;
@@ -300,7 +300,7 @@ async function searchLocalCorpusThreads({
       ...thread,
       searchRank: (thread.searchRank || 0) + rankOffset,
     }));
-    const stored = await convexQuery<any[]>((api as any).jev.threadAssessments, {
+    const stored = await convexQuery<any[]>(api.jev.threadAssessments, {
       userId: row.userId,
       threads: grouped.slice(0, 300).map((thread) => ({ accountId: row.accountId, threadId: thread._id })),
     }).catch(() => []);

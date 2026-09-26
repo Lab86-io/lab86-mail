@@ -6,7 +6,7 @@ import { moveNylasThread, updateNylasThread } from '../nylas/provider';
 // cron calls restoreDueSnoozes, which moves due threads back to the inbox and
 // marks them unread so they surface again.
 
-const corpusApi = (api as any).mailCorpus;
+const corpusApi = api.mailCorpus;
 
 export interface SnoozeDependencies {
   query: typeof convexQuery;

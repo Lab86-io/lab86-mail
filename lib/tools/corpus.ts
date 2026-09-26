@@ -6,7 +6,7 @@ import { emailFromHeader } from '../shared/format';
 import { recallSender } from '../store/memories';
 import { defineTool } from './registry';
 
-const mailCorpusApi = (api as any).mailCorpus;
+const mailCorpusApi = api.mailCorpus;
 const defaultSearchDependencies = { listNylasAccounts, searchNylasThreads, convexQuery };
 let searchDependencies = defaultSearchDependencies;
 const defaultCountDependencies = { listNylasAccounts, convexQuery, isConvexConfigured };
@@ -88,7 +88,7 @@ export const corpusSearch = defineTool({
       // to connections the user enabled for search.
       includeConnectedTools && ctx.userId
         ? searchDependencies
-            .convexQuery<any[]>((api as any).mcp.searchItems, {
+            .convexQuery<any[]>(api.mcp.searchItems, {
               userId: ctx.userId,
               query,
               limit: max,

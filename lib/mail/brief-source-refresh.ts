@@ -13,7 +13,7 @@ export interface BriefSourceCheck {
 }
 const defaults = {
   accounts: (userId: string) =>
-    convexQuery<Array<{ accountId: string; status: string }>>((api as any).accounts.listConnectedAccounts, {
+    convexQuery<Array<{ accountId: string; status: string }>>(api.accounts.listConnectedAccounts, {
       userId,
     }),
   connections: listUserConnections,

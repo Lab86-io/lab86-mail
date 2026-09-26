@@ -14,7 +14,7 @@ import { generateAgentReport } from './agent-report';
 import { deliverBriefEmail } from './brief-email';
 import { notifyBriefReady } from './brief-ready';
 
-const functions = (api as any).briefJobs;
+const functions = api.briefJobs;
 export async function enqueueBriefJob(input: {
   userId: string;
   kind: 'daily' | 'area' | 'narrative';
@@ -68,7 +68,7 @@ async function recordEditionTelemetry(
   budget: BriefEditionBudget,
 ) {
   if (!job.reportId) return;
-  await convexMutation((api as any).dailyReports.recordEditionTelemetry, {
+  await convexMutation(api.dailyReports.recordEditionTelemetry, {
     userId,
     reportId: job.reportId,
     kind: job.edition || 'manual',
@@ -208,7 +208,7 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             console.error('[brief jobs] brief email failed', userId);
           });
         } else if (job.kind === 'area') {
-          const home = await deps.query<any>((api as any).albatross.areaHome, { userId, areaId: job.areaId });
+          const home = await deps.query<any>(api.albatross.areaHome, { userId, areaId: job.areaId });
           const saved = home.livingBrief;
           if (
             !(

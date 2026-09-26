@@ -4,7 +4,7 @@ import { decryptSecret, encryptSecret, maskFingerprint, secretFingerprint } from
 import { oauthExpiresAt, oauthScopes, type PersistedMcpOAuthState, refreshMcpOAuth } from './oauth';
 import { getServerDef, type McpServerId } from './servers';
 
-const mcpApi = (api as any).mcp;
+const mcpApi = api.mcp;
 
 const defaultDeps = {
   convexMutation,

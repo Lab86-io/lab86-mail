@@ -174,7 +174,7 @@ const defaultDependencies: MailUndoDependencies = {
   unsnooze: unsnoozeThread,
   disableRule: (ruleId) => setSmartRuleEnabled(ruleId, false),
   reclassify: (userId, rule) =>
-    convexMutation((api as any).smart.reclassifyMatchingThreads, {
+    convexMutation(api.smart.reclassifyMatchingThreads, {
       userId,
       scope: rule.scope,
       match: rule.match,

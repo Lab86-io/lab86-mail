@@ -12,7 +12,7 @@ import {
 } from './granola';
 import { getServerDef, type NormalizedMcpItem, normalizeItems, resolveMcpConnectionConfig } from './servers';
 
-const mcpApi = (api as any).mcp;
+const mcpApi = api.mcp;
 const UPSERT_BATCH_SIZE = 100;
 
 export interface SyncConnectionDeps {

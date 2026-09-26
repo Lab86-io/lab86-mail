@@ -12,7 +12,7 @@ import { safeExternalUrl } from '@/lib/shared/url';
 import { normalizeAllDayRange } from './all-day';
 import { type EventInputRow, maybeKickCalendarSync, toEventInput } from './sync';
 
-const calendarApi = (api as any).calendarData;
+const calendarApi = api.calendarData;
 const CREATE_REQUEST_ID_KEY = 'lab86CreateRequestId';
 const DEFAULT_CALENDAR_WRITE_TIMEOUT_SECONDS = 20;
 

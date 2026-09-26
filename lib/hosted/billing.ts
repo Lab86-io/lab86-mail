@@ -74,7 +74,7 @@ const billingDefaults = {
     input: { days: number; monthlyCredits: number },
   ): Promise<TrialGrant> => {
     if (!isConvexConfigured()) return { granted: false, trialStartedAt: null, trialEndsAt: null };
-    return convexMutation<TrialGrant>((api as any).ai.grantTrial, { userId, ...input });
+    return convexMutation<TrialGrant>(api.ai.grantTrial, { userId, ...input });
   },
   now: () => Date.now(),
 };

@@ -150,7 +150,7 @@ export const listSenderCleanup = defineTool({
   async handler(input, ctx) {
     if (!isConvexConfigured()) return { senders: [] as SenderCleanupRow[], scanned: 0 };
     return await convexQuery<{ senders: SenderCleanupRow[]; scanned: number }>(
-      (api as any).mailCorpus.senderCleanupCandidates,
+      api.mailCorpus.senderCleanupCandidates,
       { userId: requireUser(ctx.userId), limit: input?.limit },
     );
   },

@@ -109,7 +109,7 @@ export async function proposeWorkSplit(
   dependencies: Partial<SplitWorkDependencies> = {},
 ): Promise<{ workTitle: string; items: SplitWorkChild[] }> {
   const deps = { ...defaultDependencies, ...dependencies };
-  const detail = await deps.query<any>((api as any).albatrossWorkV2.workDetail, {
+  const detail = await deps.query<any>(api.albatrossWorkV2.workDetail, {
     userId: input.userId,
     workId: input.workId,
   });
@@ -166,7 +166,7 @@ export async function commitWorkSplit(
   if (items.length < 2 || items.length > 6) {
     throw new Error('A split needs between 2 and 6 Works.');
   }
-  const detail = await deps.query<any>((api as any).albatrossWorkV2.workDetail, {
+  const detail = await deps.query<any>(api.albatrossWorkV2.workDetail, {
     userId: input.userId,
     workId: input.workId,
   });
@@ -181,7 +181,7 @@ export async function commitWorkSplit(
   for (const item of items) {
     const externalId = uniqueExternalId(`split:${input.workId}:${contentSlug(item.title)}`, taken);
     taken.add(externalId);
-    const upserted = await deps.mutate<any>((api as any).albatrossIntents.createIntent, {
+    const upserted = await deps.mutate<any>(api.albatrossIntents.createIntent, {
       userId: input.userId,
       externalId,
       rawText: item.rawText,
@@ -200,7 +200,7 @@ export async function commitWorkSplit(
   // failure after this point never loses work.
   const titles = items.map((item) => item.title);
   await deps
-    .mutate((api as any).albatrossWorkV2.attachProof, {
+    .mutate(api.albatrossWorkV2.attachProof, {
       userId: input.userId,
       workId: input.workId,
       claim: truncateText(`Split into ${workIds.length} Works: ${titles.join('; ')}`, 900),
@@ -216,7 +216,7 @@ export async function commitWorkSplit(
       console.error('[split-work] provenance evidence failed', input.workId, error);
       return undefined;
     });
-  await deps.mutate((api as any).albatrossWorkV2.releaseWork, {
+  await deps.mutate(api.albatrossWorkV2.releaseWork, {
     userId: input.userId,
     workId: input.workId,
     reason: truncateText(`Split into: ${titles.join('; ')}`, 400),

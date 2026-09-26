@@ -5,7 +5,7 @@ import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { stripLoneSurrogates } from '../shared/text';
 import { boundedBytes, extractContent, MAX_DOWNLOAD_BYTES, supportedContent } from './extract';
 
-const ref = (api as any).content;
+const ref = api.content;
 class SourceAccessError extends Error {}
 class SourceCursorError extends Error {}
 class SourceFileUnavailable extends Error {

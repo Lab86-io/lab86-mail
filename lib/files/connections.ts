@@ -8,7 +8,7 @@ import {
   cloudFileProviderCredentials,
 } from './providers';
 
-const cloudFilesApi = (api as any).cloudFiles;
+const cloudFilesApi = api.cloudFiles;
 
 export interface CloudFileConnectionRow {
   connectionId: string;

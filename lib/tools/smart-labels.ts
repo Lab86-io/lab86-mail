@@ -36,7 +36,7 @@ import { defineTool } from './registry';
 async function reclassifyRuleMatches(rule: Pick<SmartRule, 'scope' | 'match'>) {
   if (!isConvexConfigured()) return;
   try {
-    await convexMutation((api as any).smart.reclassifyMatchingThreads, {
+    await convexMutation(api.smart.reclassifyMatchingThreads, {
       userId: requireStoreUserId(),
       scope: rule.scope,
       match: rule.match,

@@ -64,7 +64,7 @@ export async function resolveThread(account: string, id: string): Promise<Thread
   if (!isConvexConfigured()) return kv;
   let corpus: any = null;
   try {
-    corpus = await convexQuery((api as any).mailCorpus.getCorpusThread, {
+    corpus = await convexQuery(api.mailCorpus.getCorpusThread, {
       userId: requireStoreUserId(),
       accountId: account,
       providerThreadId: id,

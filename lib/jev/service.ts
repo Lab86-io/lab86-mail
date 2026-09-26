@@ -7,7 +7,7 @@ import { assessmentFromResponse, buildMailQuestions, type JevMailInput } from '.
 
 export function loadJevPolicy(userId: string) {
   return convexQuery<{ preferences: JevPreferences; corrections: JevCorrection[]; revision: number }>(
-    (api as any).jev.policy,
+    api.jev.policy,
     { userId },
   );
 }
@@ -40,7 +40,7 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
     const page = await convexMutation<{
       items: Array<JevMailInput & { leaseId: string }>;
       moreRemaining: boolean;
-    }>((api as any).jev.claimPending, { userId, limit: 12 });
+    }>(api.jev.claimPending, { userId, limit: 12 });
     if (!page.items.length) {
       moreRemaining = false;
       break;
@@ -74,7 +74,7 @@ export async function runJevSweep(userId: string, dependencies = sweepDefaults) 
         return { ...target, error: 'unavailable' };
       }
     });
-    const result = await convexMutation<{ stored: number }>((api as any).jev.storeAssessments, {
+    const result = await convexMutation<{ stored: number }>(api.jev.storeAssessments, {
       userId,
       items,
     });
@@ -101,5 +101,5 @@ export async function markJevBriefItems(report: DailyReport, userId: string, mut
       sourceRevision: item.jev!.sourceRevision,
     }));
   if (!items.length) return;
-  await mutate((api as any).jev.markBriefItems, { userId, items });
+  await mutate(api.jev.markBriefItems, { userId, items });
 }

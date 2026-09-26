@@ -542,7 +542,7 @@ export async function loadLiveAlbatrossDailyReportContext(
   try {
     const live = await (input.query
       ? input.query({ userId: input.userId, limit: 50 })
-      : convexQuery<BuildAlbatrossDailyReportFromLiveInput>((api as any).albatrossWork.dailyReportContext, {
+      : convexQuery<BuildAlbatrossDailyReportFromLiveInput>(api.albatrossWork.dailyReportContext, {
           userId: input.userId,
           limit: 50,
         }));

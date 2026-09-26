@@ -55,7 +55,7 @@ interface BriefTimezoneSources {
 async function loadBriefTimezoneSources(userId: string): Promise<BriefTimezoneSources> {
   if (!isConvexConfigured()) return {};
   return (
-    (await convexQuery<BriefTimezoneSources | null>((api as any).dailyReports.briefTimezoneSources, {
+    (await convexQuery<BriefTimezoneSources | null>(api.dailyReports.briefTimezoneSources, {
       userId,
     })) ?? {}
   );

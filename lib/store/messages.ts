@@ -9,7 +9,7 @@ import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 const HTML_BODY_CAP = 200_000;
 const TEXT_BODY_CAP = 64_000;
 
-const corpusApi = (api as any).mailCorpus;
+const corpusApi = api.mailCorpus;
 
 // The hosted source of truth for mail is the Convex corpus, which webhook and
 // backfill sync keep current. The KV `msgCache` is only the local store for a

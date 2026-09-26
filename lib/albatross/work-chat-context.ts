@@ -139,7 +139,7 @@ export function formatWorkChatContext(detail: WorkChatContextData): string {
 }
 
 export async function readWorkChatContext(input: { userId: string; workId: string }) {
-  const detail = await convexQuery<WorkChatContextData | null>((api as any).albatrossWorkV2.workDetail, {
+  const detail = await convexQuery<WorkChatContextData | null>(api.albatrossWorkV2.workDetail, {
     userId: input.userId,
     workId: input.workId,
   });

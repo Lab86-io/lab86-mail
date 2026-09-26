@@ -172,7 +172,7 @@ const defaultDependencies: VoiceDependencies = {
   save: (profile) => kvUpsert(VOICE_PROFILE_KIND, VOICE_PROFILE_KEY, profile),
   sentMessages: async (userId, limit) =>
     (
-      await convexQuery<{ messages: SentSample[] }>((api as any).mailCorpus.recentSentMessages, {
+      await convexQuery<{ messages: SentSample[] }>(api.mailCorpus.recentSentMessages, {
         userId,
         limit,
       })

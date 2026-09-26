@@ -6,7 +6,7 @@ import { dispatchNativeNotification } from './native-delivery';
 // mail-digest route when a hold is due; Jev classification calls
 // promoteHeldPriorityMail when held mail turns out to need a reply.
 
-const notificationsApi = (api as any).albatrossNotifications;
+const notificationsApi = api.albatrossNotifications;
 
 export interface MailDigestDependencies {
   query: typeof convexQuery;

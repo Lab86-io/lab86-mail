@@ -253,5 +253,5 @@ export async function loadBriefSourceRows(
   userId: string,
   query: typeof convexQuery = convexQuery,
 ): Promise<BriefSourceRows> {
-  return query<BriefSourceRows>((api as any).dailyReports.briefSourceRows, { userId });
+  return query<BriefSourceRows>(api.dailyReports.briefSourceRows, { userId });
 }

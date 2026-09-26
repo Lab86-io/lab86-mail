@@ -4,8 +4,8 @@ import { dispatchNativeNotification } from '@/lib/notifications/native-delivery'
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { truncateText } from '@/lib/shared/text';
 
-const suggestionsApi = (api as any).suggestions;
-const notificationsApi = (api as any).albatrossNotifications;
+const suggestionsApi = api.suggestions;
+const notificationsApi = api.albatrossNotifications;
 const DAY_MS = 86_400_000;
 
 // Proactive-agent detectors scan freshly ingested mail for things worth

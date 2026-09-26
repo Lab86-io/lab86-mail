@@ -1,7 +1,7 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import type { sendNylasMessage } from '@/lib/nylas/provider';
 
-const outbox = (api as any).mailOutbox;
+const outbox = api.mailOutbox;
 export type OutboxPayload = Omit<Parameters<typeof sendNylasMessage>[0], 'sendAt' | 'useDraft'>;
 export type OutboxReceipt = { id: string; fireAt: number; undoSeconds: number; status: string };
 export async function enqueueOutbox(

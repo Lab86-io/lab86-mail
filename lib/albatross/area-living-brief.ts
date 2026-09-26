@@ -791,22 +791,19 @@ export async function generateAreaLivingBrief(input: {
     .prepareBriefContext(input.userId)
     .catch(() => [{ source: 'source discovery', status: 'unavailable' as const }]);
   const [home, pulseContext, evidenceIndex] = await Promise.all([
-    areaLivingBriefDependencies.convexQuery<AreaHomeLike>((api as any).albatross.areaHome, {
+    areaLivingBriefDependencies.convexQuery<AreaHomeLike>(api.albatross.areaHome, {
       userId: input.userId,
       areaId: input.areaId,
     }),
-    areaLivingBriefDependencies.convexQuery<Record<string, any>>((api as any).albatrossRoutines.areaPulse, {
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>(api.albatrossRoutines.areaPulse, {
       userId: input.userId,
       areaId: input.areaId,
     }),
-    areaLivingBriefDependencies.convexQuery<Record<string, any>>(
-      (api as any).albatrossEvidence.indexSummary,
-      {
-        userId: input.userId,
-        targetKind: 'area',
-        targetId: input.areaId,
-      },
-    ),
+    areaLivingBriefDependencies.convexQuery<Record<string, any>>(api.albatrossEvidence.indexSummary, {
+      userId: input.userId,
+      targetKind: 'area',
+      targetId: input.areaId,
+    }),
   ]);
   const timezone = await resolveBriefTimezone(input.userId, getAiRequestContext().userTimezone).catch(
     () => getAiRequestContext().userTimezone,
@@ -824,7 +821,7 @@ export async function generateAreaLivingBrief(input: {
 
   const areaName = String(home.area?.name || 'Area');
   const previous = fallbackAreaPulse(context);
-  await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+  await areaLivingBriefDependencies.convexMutation(api.albatrossWorkV2.saveAreaBrief, {
     briefJob: getAiRequestContext().briefJob,
     userId: input.userId,
     areaId: input.areaId,
@@ -843,7 +840,7 @@ export async function generateAreaLivingBrief(input: {
     const document = composeAreaPulseDocument(context, pulse);
     const artifactHtml = renderAreaPulseHtml(areaName, pulse);
     const lede = pulse.lastChange || pulse.nextMove || pulse.prose;
-    await areaLivingBriefDependencies.convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+    await areaLivingBriefDependencies.convexMutation(api.albatrossWorkV2.saveAreaBrief, {
       briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
@@ -856,7 +853,7 @@ export async function generateAreaLivingBrief(input: {
       sourceRefs: [],
       basedOnRevision: revision,
     });
-    await areaLivingBriefDependencies.convexMutation((api as any).albatrossAreaPulse.saveAreaPulse, {
+    await areaLivingBriefDependencies.convexMutation(api.albatrossAreaPulse.saveAreaPulse, {
       briefJob: getAiRequestContext().briefJob,
       userId: input.userId,
       areaId: input.areaId,
@@ -874,7 +871,7 @@ export async function generateAreaLivingBrief(input: {
     };
   } catch (error) {
     await areaLivingBriefDependencies
-      .convexMutation((api as any).albatrossWorkV2.saveAreaBrief, {
+      .convexMutation(api.albatrossWorkV2.saveAreaBrief, {
         briefJob: getAiRequestContext().briefJob,
         userId: input.userId,
         areaId: input.areaId,

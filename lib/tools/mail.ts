@@ -90,7 +90,7 @@ export const listAccounts = defineTool({
         ...(row.status === 'error' ? { reconnectReason: row.error || 'Reconnect needed' } : {}),
       }));
     const syncStates = ctx.userId
-      ? await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+      ? await convexQuery<any[]>(api.mailCorpus.listSyncTargets, {
           userId: ctx.userId,
           limit: 500,
         }).catch(() => [])
@@ -226,7 +226,7 @@ export const listSmartCategory = defineTool({
     {
       const before = localCursorPayload !== undefined ? Number(localCursorPayload) : undefined;
       const result = await convexQuery<{ items: any[]; nextBefore?: number; nextCursor?: string }>(
-        (api as any).mailCorpus.listSmartCategoryThreads,
+        api.mailCorpus.listSmartCategoryThreads,
         {
           userId: ctx.userId,
           accountId: account,
@@ -301,7 +301,7 @@ export const listSmartCategory = defineTool({
 });
 
 async function accountHasCorpusRows(userId: string, accountId: string) {
-  const state = await convexQuery<any | null>((api as any).mailCorpus.getSyncState, {
+  const state = await convexQuery<any | null>(api.mailCorpus.getSyncState, {
     userId,
     accountId,
   });
@@ -428,7 +428,7 @@ export const getThread = defineTool({
     // Fast path: the corpus already holds every message body — pure local
     // read, no provider round-trip.
     if (!refresh && ctx.userId && isConvexConfigured()) {
-      const bundle = await convexQuery<any | null>((api as any).mailCorpus.getCorpusThreadBundle, {
+      const bundle = await convexQuery<any | null>(api.mailCorpus.getCorpusThreadBundle, {
         userId: ctx.userId,
         accountId: account,
         providerThreadId: threadId,
@@ -541,7 +541,7 @@ export const listAccountThreads = defineTool({
   output: z.object({ threads: z.array(z.any()) }),
   async handler({ account, limit }, ctx) {
     if (ctx.userId && isConvexConfigured()) {
-      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+      const rows = await convexQuery<any[]>(api.mailCorpus.listRecentCorpusThreads, {
         userId: ctx.userId,
         accountId: account,
         limit,
@@ -574,7 +574,7 @@ export async function listSnoozedForUser(
   query: typeof convexQuery = convexQuery,
 ): Promise<Array<z.infer<typeof SnoozedThread>>> {
   const result = await query<{ items: Array<Omit<z.infer<typeof SnoozedThread>, 'untilIso'>> }>(
-    (api as any).mailCorpus.listSnoozedThreadsInternal,
+    api.mailCorpus.listSnoozedThreadsInternal,
     { userId, limit },
   );
   return (result?.items || []).map((item) => ({ ...item, untilIso: new Date(item.untilTs).toISOString() }));
