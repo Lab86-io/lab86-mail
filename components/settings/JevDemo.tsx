@@ -19,11 +19,11 @@ export function JevDemo({ configured }: { configured: boolean }) {
       className="space-y-3 border-t border-[var(--color-border)] pt-6"
     >
       <h3 id="jev-demo-heading" className="text-sm font-medium">
-        Try Jev live
+        Try mail sorting
       </h3>
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Try an example or edit the text. Jev will classify it now using the same questions as incoming mail.
-        This demo does not change your mailbox.
+        Try an example or edit the text. Mail sorting classifies it now using the same questions as incoming
+        mail. This demo does not change your mailbox.
       </p>
       <form
         className="space-y-3"
@@ -156,7 +156,7 @@ export function JevDemo({ configured }: { configured: boolean }) {
                 {result.briefEligible ? 'Eligible for the Brief' : 'Kept out of the Brief'}
               </p>
               <span className="text-xs tabular-nums text-[var(--color-text-muted)]">
-                Jev call: {result.inferenceMs} ms
+                Sorted in {result.inferenceMs} ms
               </span>
             </div>
             <p className="text-sm">{result.reason}</p>

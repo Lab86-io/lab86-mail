@@ -36,9 +36,9 @@ export function ContentSettings() {
         Connected content and prepared work
       </h3>
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Keep source content searchable, classify changes with Jev, and let your writing model research and
-        prepare drafts in the Brief. Prepared work stays there until you adopt it. History fills in
-        progressively; provider limits and partially read files are shown below.
+        Keep source content searchable, classify changes with mail sorting, and let your writing model
+        research and prepare drafts in the Brief. Prepared work stays there until you adopt it. History fills
+        in progressively; provider limits and partially read files are shown below.
       </p>
       {state.error || change.error ? (
         <p role="alert" className="text-sm text-[var(--color-danger)]">

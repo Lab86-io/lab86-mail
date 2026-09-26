@@ -30,7 +30,7 @@ export async function settingsRequest(body?: unknown) {
       : { cache: 'no-store' },
   );
   const result = await response.json().catch(() => null);
-  if (!response.ok || !result) throw new Error(result?.error || 'Jev settings could not load.');
+  if (!response.ok || !result) throw new Error(result?.error || 'Mail sorting settings could not load.');
   return result;
 }
 const controls: Array<{
@@ -332,7 +332,7 @@ export function JevSettingsPanel({
         </form>
       </section>
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Jev classifies messages and keeps evidence for its results. It does not send replies, archive
+        Mail sorting classifies messages and keeps evidence for its results. It does not send replies, archive
         messages, or complete work. Your corrections take precedence. Mail needing more context remains
         available for review.
       </p>
@@ -367,13 +367,13 @@ export function JevSection() {
   if (query.isPending)
     return (
       <p role="status" className="text-sm text-[var(--color-text-muted)]">
-        Loading Jev settings…
+        Loading mail sorting settings…
       </p>
     );
   if (query.isError || !query.data)
     return (
       <div role="alert">
-        <p>Jev settings could not load.</p>
+        <p>Mail sorting settings could not load.</p>
         <Button variant="outline" onClick={() => query.refetch()}>
           Try again
         </Button>

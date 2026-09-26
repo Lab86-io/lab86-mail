@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { settingsRequest } from '@/components/settings/JevSection';
 import { type JevAssessment, jevReason } from '@/lib/jev/contract';
+import { mailSortingLine } from '@/lib/shell/mail-sorting-labels';
 
 export function JevMailDetails({ assessment }: { assessment?: JevAssessment | null }) {
   const settings = useQuery({
@@ -23,10 +24,7 @@ export function JevMailDetails({ assessment }: { assessment?: JevAssessment | nu
         {jevReason(assessment)}
       </summary>
       <div className="mt-3 space-y-3">
-        <p className="text-[var(--color-text-muted)]">
-          Jev · {assessment.purpose} ·{' '}
-          {assessment.status === 'uncertain' ? 'More context may be needed' : 'Classified'}
-        </p>
+        <p className="text-[var(--color-text-muted)]">{mailSortingLine(assessment)}</p>
         {evidence.map((item) => (
           <blockquote
             key={`${item.kind}:${item.messageId}`}
@@ -45,7 +43,7 @@ export function JevMailDetails({ assessment }: { assessment?: JevAssessment | nu
           </blockquote>
         ))}
         <Link href="/settings?tab=jev" className="inline-block underline">
-          Jev settings and Brief corrections
+          Mail sorting settings and Brief corrections
         </Link>
       </div>
     </details>
