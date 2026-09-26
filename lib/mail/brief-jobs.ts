@@ -24,7 +24,13 @@ export async function enqueueBriefJob(input: {
   /** The first edition after the first mailbox connects: deterministic first. */
   first?: boolean;
 }) {
-  return convexMutation<{ jobId: string; reportId?: string; started: boolean }>(functions.enqueue, {
+  return convexMutation<{
+    // Only a skipped first edition (skipped: 'has_edition') answers without a job.
+    jobId: string;
+    reportId?: string;
+    started: boolean;
+    skipped?: 'has_edition';
+  }>(functions.enqueue, {
     ...input,
     ...(input.kind === 'daily' ? { reportId: randomUUID() } : {}),
   });
@@ -106,7 +112,21 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
       { userId, agent: 'ai', userTimezone: job.timezone, briefJob: { id, token: owner.token } },
       async () => {
         if (job.kind === 'daily') {
-          const saved = await deps.readDaily(job.reportId);
+          let saved = await deps.readDaily(job.reportId);
+          // The first edition (FEATURES item 4): publish a deterministic
+          // edition at once, then upgrade the same edition with the writer.
+          if (job.first === true && !isPublishedEdition(saved)) {
+            saved = await deps.daily({
+              userId,
+              kind: job.edition,
+              reportId: job.reportId,
+              now: job.createdAt,
+              first: true,
+              deterministic: true,
+            });
+            // No model access: the deterministic edition is the final one.
+            if (await deps.noAccess(userId, 'daily_brief_layout')) return;
+          }
           const report =
             saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated'
               ? saved
@@ -117,6 +137,7 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
                   now: job.createdAt,
                   quiet: isPublishedEdition(saved),
                   ...(job.light === true ? { light: true } : {}),
+                  ...(job.first === true ? { first: true } : {}),
                 });
           if (report.editorial?.mode !== 'generated' && !finalAttempt && !recordedNoAccess(report, startedAt))
             throw new Error('Editorial writer needs another attempt');
@@ -170,5 +191,21 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
     });
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+// The first edition after the first mailbox connects (FEATURES item 4). The
+// backfill calls this after its first page; the enqueue does nothing once
+// the user has any edition, so every later page and every other mailbox is a
+// no-op.
+export async function kickFirstEdition(
+  userId: string,
+  deps: { enqueue: typeof enqueueBriefJob } = { enqueue: enqueueBriefJob },
+) {
+  try {
+    return await deps.enqueue({ userId, kind: 'daily', edition: 'manual', first: true });
+  } catch {
+    console.error('[brief jobs] first edition could not be queued', userId);
+    return null;
   }
 }

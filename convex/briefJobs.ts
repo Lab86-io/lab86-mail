@@ -102,6 +102,15 @@ export const enqueue = mutation({
       if (!area || area.userId !== args.userId) throw new Error('Area not found');
     }
     if (args.kind === 'daily' && (!args.reportId || !args.edition)) throw new Error('Edition required');
+    // The first edition is queued once: never after any edition exists.
+    if (args.first) {
+      const existing = await ctx.db
+        .query('userDocs')
+        .withIndex('by_user_kind', (q) => q.eq('userId', args.userId).eq('kind', 'dailyReport'))
+        .first();
+      if (existing)
+        return { jobId: null, reportId: undefined, started: false, skipped: 'has_edition' as const };
+    }
     const now = Date.now();
     // A slow earlier edition must not prevent tomorrow's cron from starting.
     // Each day's active edition is coalesced independently, without expiring it.

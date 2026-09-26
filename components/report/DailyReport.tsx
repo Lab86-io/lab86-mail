@@ -9,7 +9,7 @@ import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/prov
 import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
-import { BriefSourceLine } from '@/components/report/BriefSourceLine';
+import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
@@ -117,7 +117,9 @@ interface DailyReportArtifactError {
 
 interface DailyReportPayload {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
+  first?: boolean;
+  light?: boolean;
   generatedAt: number;
   title: string;
   narrative: string;
@@ -163,7 +165,7 @@ interface DailyReportPayload {
 
 interface ReportSummary {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
   generatedAt: number;
   title?: string;
 }
@@ -182,6 +184,7 @@ const EDITION: Record<DailyReportPayload['kind'], string> = {
   morning: 'Morning Edition',
   evening: 'Evening Edition',
   manual: 'Latest Edition',
+  weekly: 'Weekly Review',
 };
 
 // "Tuesday, May 26 · Morning Edition" — the broadsheet dateline.
@@ -1223,7 +1226,11 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   belowMasthead={
                     selectedId ? null : (
-                      <BriefSourceLine reportId={report._id} className="daily-brief-layout" />
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        className="daily-brief-layout"
+                      />
                     )
                   }
                   footer={
@@ -1260,7 +1267,11 @@ export function DailyReport({
                   noiseCount={noiseCount}
                   belowMasthead={
                     selectedId ? null : (
-                      <BriefSourceLine reportId={report._id} className="daily-brief-layout" />
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        className="daily-brief-layout"
+                      />
                     )
                   }
                   footer={

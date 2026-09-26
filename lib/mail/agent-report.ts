@@ -230,6 +230,13 @@ export interface AgentReportInput {
   quiet?: boolean;
   /** A weekend edition without the know, waiting, task, and tool sections. */
   light?: boolean;
+  /** The first edition after the first mailbox connects (FEATURES item 4). */
+  first?: boolean;
+  /**
+   * Publish from the last 48 hours of mail and the next 7 days of calendar
+   * with no model call. The writer upgrades the same edition in place later.
+   */
+  deterministic?: boolean;
 }
 
 export async function generateAgentReport(input: AgentReportInput): Promise<DailyReport> {
@@ -245,11 +252,14 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
   // Fresh source observations precede selection; the editorial writer then
   // chooses a focused account from this refreshed evidence.
-  const sourceChecks = input.userId
-    ? await prepareBriefContext(input.userId).catch(() => [
-        { source: 'source discovery', status: 'unavailable' as const },
-      ])
-    : [];
+  // The deterministic first edition reads what the first sync stored; it
+  // does not wait for a source refresh.
+  const sourceChecks =
+    input.userId && !input.deterministic
+      ? await prepareBriefContext(input.userId).catch(() => [
+          { source: 'source discovery', status: 'unavailable' as const },
+        ])
+      : [];
   const tier = await resolveBriefPlanTier(input.userId);
 
   let structured: DailyReport;
@@ -259,7 +269,8 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
       includeCalendar: true,
       userId: input.userId,
       now: input.now,
-      scope: 'week',
+      scope: input.deterministic ? 'first' : 'week',
+      ...(input.deterministic ? { noModel: true } : {}),
       reportId,
       tier,
       silent: input.quiet === true,
@@ -267,6 +278,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
     if (input.light) structured.light = true;
+    if (input.first) structured.first = true;
     if (sourceChecks.length) structured.sourceChecks = sourceChecks.slice(0, 24);
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
@@ -301,12 +313,14 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   // availability error is recorded so the UI can explain the plain letter.
   let availability: DailyReportArtifactError | undefined;
   let generate: typeof generateTextForCurrentUser | null = generateTextForCurrentUser;
-  try {
-    await resolveAiRuntime({ userId: input.userId, speed: 'primary', feature: 'daily_brief_prose' });
-  } catch (err) {
-    availability = artifactError('ai_availability', err);
-    generate = null;
-  }
+  if (input.deterministic) generate = null;
+  else
+    try {
+      await resolveAiRuntime({ userId: input.userId, speed: 'primary', feature: 'daily_brief_prose' });
+    } catch (err) {
+      availability = artifactError('ai_availability', err);
+      generate = null;
+    }
 
   try {
     const composed = await composeDailyBrief(structured, input.userId, { generate, previous });

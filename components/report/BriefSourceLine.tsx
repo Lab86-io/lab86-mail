@@ -95,7 +95,28 @@ export function BriefSourceLineView({
   );
 }
 
-export function BriefSourceLine({ reportId, className }: { reportId?: string | null; className?: string }) {
+/** One-line notes about the edition itself, shown with the source line. Exported for tests. */
+export function briefEditionNotes(report: { first?: boolean; light?: boolean; kind?: string } | null) {
+  if (!report) return [];
+  const notes: string[] = [];
+  if (report.first)
+    notes.push(
+      'Your first brief, from the last two days of mail and the week ahead. It fills in as your mailbox finishes syncing.',
+    );
+  if (report.light && report.kind !== 'weekly')
+    notes.push('A light weekend edition: replies owed, today, and your calendar.');
+  return notes;
+}
+
+export function BriefSourceLine({
+  reportId,
+  className,
+  notes = [],
+}: {
+  reportId?: string | null;
+  className?: string;
+  notes?: string[];
+}) {
   const health = useQuery({
     queryKey: ['brief-sources', reportId ?? 'none'],
     queryFn: async () =>
@@ -108,6 +129,15 @@ export function BriefSourceLine({ reportId, className }: { reportId?: string | n
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
-  if (!health.data) return null;
-  return <BriefSourceLineView health={health.data} className={className} />;
+  if (!health.data && !notes.length) return null;
+  return (
+    <div className={cn('flex flex-col gap-1', className)}>
+      {notes.map((note) => (
+        <p key={note} data-brief-edition-note className="text-[12px] text-[var(--color-text-muted)]">
+          {note}
+        </p>
+      ))}
+      {health.data ? <BriefSourceLineView health={health.data} /> : null}
+    </div>
+  );
 }

@@ -140,7 +140,20 @@ const LANE_PRIORITY: Record<ReportLane, number> = {
 // How wide to cast the candidate net. 'week' is the fast first pass (just the
 // last several days, fewer candidates, less enrichment) so a brief appears
 // quickly; 'full' is the broader month sweep run afterward in the background.
-function scopeProfile(scope: 'week' | 'full' = 'full') {
+// 'first' is the first edition after the first mailbox connects (FEATURES
+// item 4): the last 48 hours only, a small candidate set, and no model call.
+function scopeProfile(scope: 'first' | 'week' | 'full' = 'full') {
+  if (scope === 'first') {
+    return {
+      queries: [
+        { q: 'in:inbox newer_than:2d -in:trash -in:spam', max: 60, human: true },
+        { q: 'is:starred newer_than:2d -in:trash -in:spam', max: 20, human: true },
+      ] as typeof RECENT_QUERIES,
+      sentMax: 40,
+      candidateLimit: 40,
+      enrichCap: 0,
+    };
+  }
   if (scope === 'week') {
     return {
       queries: [
@@ -174,7 +187,9 @@ export async function generateDailyReport(input: {
   maxRecentPerAccount?: number;
   includeCalendar?: boolean;
   // 'week' = fast first pass; 'full' = broad month sweep (default).
-  scope?: 'week' | 'full';
+  scope?: 'first' | 'week' | 'full';
+  // Write the edition with no model call at all (the first edition).
+  noModel?: boolean;
   // Reuse an edition id so a later pass overwrites the same report in place.
   reportId?: string;
   // Skip the progressive partial saves (used by the silent background pass so
@@ -289,7 +304,7 @@ export async function generateDailyReport(input: {
     }
   }
 
-  if (input.userId) {
+  if (input.userId && !input.noModel) {
     try {
       const replies = await checkWaitingReplies({ userId: input.userId });
       if (replies.unavailable)
@@ -437,7 +452,7 @@ export async function generateDailyReport(input: {
     Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || ENRICH_CAP),
     profile.enrichCap,
   );
-  const aiAvailable = await hasAiForCurrentUser();
+  const aiAvailable = !input.noModel && (await hasAiForCurrentUser());
   const enrichKeys = new Set<string>(
     bounded
       .filter((thread) => {
