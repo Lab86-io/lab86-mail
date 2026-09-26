@@ -1,4 +1,5 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
+import type { BriefEditionBudget } from '../brief/budget';
 import type { EditorialPlan } from '../brief/editorial';
 import type { JevAssessment, JevBriefDigest } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
@@ -622,6 +623,9 @@ export interface DailyReport {
   sourceChecks?: Array<{ source: string; status: 'checked' | 'unavailable' }>;
   // The plan tier that sized this edition's item budget.
   tier?: 'free' | 'pro' | 'team';
+  // Writer time, model cost, tokens, and fallback of this edition, summed over
+  // its attempts (FEATURES item 5; lib/brief/budget.ts).
+  budget?: BriefEditionBudget;
   // Model-written prose for the budget brief (2026-09-03).
   prose?: DailyReportProse;
   sections: {

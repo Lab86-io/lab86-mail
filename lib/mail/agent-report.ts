@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
+import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
 import { api, convexQuery } from '../hosted/convex';
 import { prepareBriefContext } from '../narrative/service';
 import { compositionFromReport } from '../shared/brief-composition';
@@ -330,24 +331,38 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
     availability ??= composed.writerTerminalError
       ? artifactError('ai_availability', composed.writerTerminalError)
       : undefined;
-    const settled = availability ? withArtifactError(report, availability) : report;
+    const settled = withEditionBudget(availability ? withArtifactError(report, availability) : report);
     await saveDailyReport(settled);
     return settled;
   } catch (err) {
     console.error('[agent-report] budget composition failed:', err);
-    const fallback = withArtifactError(
-      {
-        ...structured,
-        composition,
-        html,
-        artifactStatus: 'rendered',
-        artifactSource: 'deterministic',
-      },
-      artifactError('document_v2', err),
+    const fallback = withEditionBudget(
+      withArtifactError(
+        {
+          ...structured,
+          composition,
+          html,
+          artifactStatus: 'rendered',
+          artifactSource: 'deterministic',
+        },
+        artifactError('document_v2', err),
+      ),
     );
     await saveDailyReport(fallback);
     return fallback;
   }
+}
+
+// The edition budget record (FEATURES item 5): the meter of the running
+// brief job, with the budget that ran out noted in the artifact errors.
+export function withEditionBudget(report: DailyReport): DailyReport {
+  const meter = currentBriefMeter();
+  if (!meter) return report;
+  const budget = meter.record(report.editorial?.mode !== 'generated');
+  const next = { ...report, budget };
+  return budget.exhausted
+    ? withArtifactError(next, artifactError('document_v2', new BriefBudgetExhaustedError(budget.exhausted)))
+    : next;
 }
 
 // ---- Budget composition ----------------------------------------------------

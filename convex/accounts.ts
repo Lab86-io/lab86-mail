@@ -323,6 +323,7 @@ export const USER_BULK_TABLES = [
   // Append-only telemetry with no pruning; an active account outgrows one
   // transaction, so it drains in batches like the other bulk tables.
   'briefItemEvents',
+  'briefEditionTelemetry',
   // Shared narrative memory and connected content grow with the mailbox.
   // Each contentItems row takes its contentChunks with it (see below).
   'narrativeEntries',

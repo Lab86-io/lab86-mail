@@ -616,3 +616,105 @@ export const operationStates = query({
     return rows.filter((row) => row !== null);
   },
 });
+
+// ---- Edition budget telemetry (FEATURES item 5) ----------------------------
+
+const budgetLimit = v.optional(v.union(v.literal('time'), v.literal('cost')));
+
+export const recordEditionTelemetry = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    reportId: v.string(),
+    kind: v.string(),
+    timeMs: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    calls: v.number(),
+    fallback: v.boolean(),
+    exhausted: budgetLimit,
+    attempts: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const { internalSecret: _secret, ...row } = args;
+    const now = Date.now();
+    const existing = await ctx.db
+      .query('briefEditionTelemetry')
+      .withIndex('by_user_report', (q) => q.eq('userId', args.userId).eq('reportId', args.reportId))
+      .unique();
+    if (existing) await ctx.db.patch(existing._id, { ...row, updatedAt: now });
+    else await ctx.db.insert('briefEditionTelemetry', { ...row, createdAt: now, updatedAt: now });
+  },
+});
+
+function percentile(sorted: number[], p: number) {
+  if (!sorted.length) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
+}
+
+/** Pure: the summary of telemetry rows. Exported for tests. */
+export function summarizeEditionTelemetry(
+  rows: Array<{
+    userId: string;
+    kind: string;
+    timeMs: number;
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    fallback: boolean;
+    exhausted?: 'time' | 'cost';
+  }>,
+) {
+  const times = rows.map((row) => row.timeMs).sort((a, b) => a - b);
+  const costs = rows.map((row) => row.costUsd).sort((a, b) => a - b);
+  const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
+  const round = (value: number) => Math.round(value * 10_000) / 10_000;
+  const byKind: Record<string, number> = {};
+  for (const row of rows) byKind[row.kind] = (byKind[row.kind] ?? 0) + 1;
+  return {
+    editions: rows.length,
+    users: new Set(rows.map((row) => row.userId)).size,
+    byKind,
+    timeMs: {
+      average: rows.length ? Math.round(times.reduce((sum, time) => sum + time, 0) / rows.length) : 0,
+      p50: percentile(times, 0.5),
+      p90: percentile(times, 0.9),
+      max: times.at(-1) ?? 0,
+    },
+    costUsd: {
+      total: round(totalCost),
+      average: rows.length ? round(totalCost / rows.length) : 0,
+      p50: round(percentile(costs, 0.5)),
+      p90: round(percentile(costs, 0.9)),
+      max: round(costs.at(-1) ?? 0),
+      // One edition a day for a month, to hold against the plan price.
+      perUserMonthAtDaily: rows.length ? round((totalCost / rows.length) * 30) : 0,
+    },
+    tokens: {
+      input: rows.reduce((sum, row) => sum + row.inputTokens, 0),
+      output: rows.reduce((sum, row) => sum + row.outputTokens, 0),
+    },
+    fallbackRate: rows.length ? round(rows.filter((row) => row.fallback).length / rows.length) : 0,
+    exhausted: {
+      time: rows.filter((row) => row.exhausted === 'time').length,
+      cost: rows.filter((row) => row.exhausted === 'cost').length,
+    },
+  };
+}
+
+// Internal and admin only: the app route checks the operator plan before it
+// calls this. Reads at most 2000 of the newest rows since `since`.
+export const editionTelemetrySummary = query({
+  args: { internalSecret: v.optional(v.string()), since: v.number() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('briefEditionTelemetry')
+      .withIndex('by_updated', (q) => q.gte('updatedAt', args.since))
+      .order('desc')
+      .take(2000);
+    return { since: args.since, truncated: rows.length === 2000, ...summarizeEditionTelemetry(rows) };
+  },
+});

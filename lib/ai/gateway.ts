@@ -6,6 +6,7 @@ import { isLab86AiDisabled, isUserOpenRouterKeyRequired } from '@/lib/hosted/con
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
+import { meterGenerateOptions } from '../brief/budget';
 import {
   CLASSIFIER_MODELS,
   type ClassifierCredential,
@@ -445,7 +446,9 @@ export async function generateTextForCurrentUser(
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
             const result = await dependencies.generateText({
-              ...rest,
+              // Inside a Daily Brief edition the budget meter counts each step
+              // and can stop the call (FEATURES item 5).
+              ...meterGenerateOptions(rest, activeRuntime),
               ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
               // Brief writers share one high ceiling; other features keep their budgets.
               maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),

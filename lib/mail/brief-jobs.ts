@@ -4,6 +4,7 @@ import { BRIEF_JOB_MAX_ATTEMPTS } from '../../convex/briefJobState';
 import { runWithAiRequestContext } from '../ai/context';
 import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
+import { type BriefEditionBudget, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { refreshNarrative } from '../narrative/service';
 import type { BriefEditionKind, DailyReport } from '../shared/types';
@@ -58,9 +59,32 @@ async function writerHasNoAccess(userId: string, feature: string) {
   }
 }
 
+// One telemetry row per edition, updated with its running totals. Best effort.
+async function recordEditionTelemetry(
+  userId: string,
+  job: { reportId?: string; edition?: string; attempts?: number },
+  budget: BriefEditionBudget,
+) {
+  if (!job.reportId) return;
+  await convexMutation((api as any).dailyReports.recordEditionTelemetry, {
+    userId,
+    reportId: job.reportId,
+    kind: job.edition || 'manual',
+    timeMs: budget.timeMs,
+    costUsd: budget.costUsd,
+    inputTokens: budget.inputTokens,
+    outputTokens: budget.outputTokens,
+    calls: budget.calls,
+    fallback: budget.fallback,
+    ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
+    attempts: Number(job.attempts) || 1,
+  }).catch(() => undefined);
+}
+
 const defaults = {
   mutation: convexMutation,
   query: convexQuery,
+  telemetry: recordEditionTelemetry,
   daily: generateAgentReport,
   area: generateAreaLivingBrief,
   narrative: refreshNarrative,
@@ -127,10 +151,15 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             // No model access: the deterministic edition is the final one.
             if (await deps.noAccess(userId, 'daily_brief_layout')) return;
           }
-          const report =
-            saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated'
-              ? saved
-              : await deps.daily({
+          let report: DailyReport;
+          if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated') report = saved;
+          else {
+            // The edition budget (FEATURES item 5) runs across attempts: the
+            // meter starts from the time and cost the saved edition used.
+            const meter = new BriefEditionMeter({ prior: saved?.budget });
+            try {
+              report = await runWithBriefMeter(meter, () =>
+                deps.daily({
                   userId,
                   kind: job.edition,
                   reportId: job.reportId,
@@ -138,8 +167,25 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
                   quiet: isPublishedEdition(saved),
                   ...(job.light === true ? { light: true } : {}),
                   ...(job.first === true ? { first: true } : {}),
-                });
-          if (report.editorial?.mode !== 'generated' && !finalAttempt && !recordedNoAccess(report, startedAt))
+                }),
+              );
+            } catch (error) {
+              await deps.telemetry(userId, job, meter.record(true));
+              throw error;
+            }
+            await deps.telemetry(
+              userId,
+              job,
+              report.budget ?? meter.record(report.editorial?.mode !== 'generated'),
+            );
+          }
+          // A spent budget is final: the edition publishes what exists.
+          if (
+            report.editorial?.mode !== 'generated' &&
+            !finalAttempt &&
+            !recordedNoAccess(report, startedAt) &&
+            !report.budget?.exhausted
+          )
             throw new Error('Editorial writer needs another attempt');
           if (lost || !(await deps.mutation<boolean>(functions.heartbeat, owner))) return;
           await deps.notify(userId, job.edition, report, job.timezone);

@@ -1,3 +1,4 @@
+import { parseBriefEditionBudget } from '../brief/budget';
 import { editorialPlanSchema } from '../brief/editorial';
 import { applySinceOperationStates, loadOperationStates, sinceOperationIds } from '../brief/since';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
@@ -392,6 +393,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
     tier: raw.tier === 'free' || raw.tier === 'pro' || raw.tier === 'team' ? raw.tier : undefined,
+    ...(raw.budget ? { budget: parseBriefEditionBudget(raw.budget) } : {}),
     prose:
       raw.prose && typeof raw.prose === 'object'
         ? {

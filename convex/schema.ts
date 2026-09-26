@@ -2726,6 +2726,29 @@ export default defineSchema({
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId']),
 
+  // One row per Daily Brief edition (FEATURES item 5): writer time, model
+  // cost, tokens, and whether the edition fell back or ran out of budget.
+  // Updated on each attempt with the edition's running totals. An admin-only
+  // summary reads it (dailyReports.editionTelemetrySummary).
+  briefEditionTelemetry: defineTable({
+    userId: v.string(),
+    reportId: v.string(),
+    kind: v.string(),
+    timeMs: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    calls: v.number(),
+    fallback: v.boolean(),
+    exhausted: v.optional(v.union(v.literal('time'), v.literal('cost'))),
+    attempts: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_report', ['userId', 'reportId'])
+    .index('by_updated', ['updatedAt']),
+
   // One row per user action on a brief item (brief round 2026-09-22). The
   // generator reads nothing from here yet; the rows measure which regions and
   // actions earn use, so scoring changes can be checked against real use.
