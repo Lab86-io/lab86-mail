@@ -10,6 +10,7 @@ import {
 import { yesterdayFallback } from '../lib/mail/brief-prose';
 import { composeReport, WAITING_LIMIT } from '../lib/mail/daily-report';
 import type { DailyReport, ThreadInsight, TrackedThread } from '../lib/shared/types';
+import { dismissDailyReportThread } from '../lib/store/daily-report-dismissals';
 import { withToolContext } from './tools/harness';
 
 const NOW = Date.parse('2026-09-22T11:00:00Z');
@@ -379,4 +380,40 @@ describe('waiting section in composeReport', () => {
     expect(waiting[1].sender).toBe('Daniel Ruiz');
     expect(waiting[1].trackedThreadId).toBe('tracked-tracked-wait');
   });
+});
+
+test('a thread the reader put away stays out of the edition until newer mail arrives', async () => {
+  const user = { userId: 'dismissal_cov_user' };
+  const report = await withToolContext(async () => {
+    await dismissDailyReportThread({ account: ACCOUNT, threadId: 'put-away', receivedAt: NOW - DAY });
+    await dismissDailyReportThread({ account: ACCOUNT, threadId: 'came-back', receivedAt: NOW - 3 * DAY });
+    return composeReport({
+      kind: 'morning',
+      now: NOW,
+      accounts: [ACCOUNT],
+      insights: [
+        insight('put-away', { lane: 'answer', needsReply: true, replyOwed: true }),
+        insight('came-back', { lane: 'answer', needsReply: true, replyOwed: true }),
+      ],
+      tracked: [],
+      lastDateByKey: new Map([
+        [`${ACCOUNT}:put-away`, NOW - DAY],
+        [`${ACCOUNT}:came-back`, NOW - DAY],
+      ]),
+      calendarContext: [],
+      taskContext: [],
+      memoryContext: [],
+      albatrossContext: buildAlbatrossDailyReportContext({ now: NOW }),
+      errors: [],
+      reportId: 'r-dismissed',
+      tier: 'pro',
+    });
+  }, user);
+  const shown = Object.values(report.sections)
+    .filter(Array.isArray)
+    .flat()
+    .map((item: any) => item?.threadId)
+    .filter(Boolean);
+  expect(shown).not.toContain('put-away');
+  expect(shown).toContain('came-back');
 });

@@ -166,6 +166,8 @@ async function convexQueryMock(fn: string, args: any) {
   if (fn === apiMock.albatrossWork.listProjects) return [{ projectId: 'project_live', status: args.status }];
   if (fn === apiMock.albatrossWork.getProjectPane) return { project: { projectId: args.projectId } };
   if (fn === apiMock.albatrossWork.listSprints) return [{ sprintId: 'sprint_live', status: args.status }];
+  if (fn === apiMock.albatrossRoutines.listForProject)
+    return [{ routineId: 'routine_1', projectId: args.projectId }];
   if (fn === apiMock.albatrossWorkV2.workDetail) return workDetailFixture;
   if (fn === apiMock.albatrossWork.listPlanApplications) return [];
   return null;
@@ -787,6 +789,16 @@ describe('Albatross tools', () => {
       status: 'planned',
     });
     expect(operationCalls.at(-1)?.batchId).toBe('batch_mocked');
+  });
+
+  test('routine tools list a project routines and run one now as the user', async () => {
+    const listed = await runTool(albatross.albatrossListRoutines.handler, { projectId: 'project_live' });
+    expect(listed.routines).toEqual([{ routineId: 'routine_1', projectId: 'project_live' }]);
+    const ran = await runTool(albatross.albatrossRunRoutineNow.handler, { routineId: 'routine_1' });
+    expect(ran).toEqual({ ok: true });
+    expect(mutationCalls.find((call) => call.fn === apiMock.albatrossRoutines.runNow)?.args).toMatchObject({
+      routineId: 'routine_1',
+    });
   });
 
   test('approval queue tools claim before execution, reject, undo provider operations, and protect unsupported approvals', async () => {

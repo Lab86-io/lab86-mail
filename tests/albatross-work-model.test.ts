@@ -7,7 +7,11 @@ import {
   prioritizeHandoffsForIntent,
   summarizeAlbatrossDailyReportContext,
 } from '../lib/albatross/daily-report';
-import { appliedStepsFromApplyResult, buildAlbatrossApplicationPlan } from '../lib/albatross/work-model';
+import {
+  appliedStepsFromApplyResult,
+  buildAlbatrossApplicationPlan,
+  mergeAppliedSteps,
+} from '../lib/albatross/work-model';
 
 describe('Albatross plan application model', () => {
   test('separates executable artifacts, approval-gated actions, and unresolved actions', () => {
@@ -183,6 +187,21 @@ describe('Albatross plan application model', () => {
     });
     expect(plan.executableSteps[0].sourceRefs).toEqual([
       { kind: 'mailThread', id: 'thread-1', label: 'Acme proposal' },
+    ]);
+  });
+
+  test('a later approval never hides an artifact an earlier list created', () => {
+    const merged = mergeAppliedSteps(
+      [{ stepKey: 'step-1', kind: 'task', cardId: 'card_1' }],
+      [
+        { stepKey: 'step-1', kind: 'task' },
+        { stepKey: 'step-2', kind: 'email_send' },
+      ],
+      [{ stepKey: 'step-2', kind: 'email_send' }],
+    );
+    expect(merged).toEqual([
+      { stepKey: 'step-1', kind: 'task', cardId: 'card_1' },
+      { stepKey: 'step-2', kind: 'email_send' },
     ]);
   });
 

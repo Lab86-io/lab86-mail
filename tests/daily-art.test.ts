@@ -44,6 +44,14 @@ describe('daily art image URLs', () => {
     }
   });
 
+  test('an empty catalog still returns the bundled backstops', () => {
+    const art = getDailyArt(Date.parse('2026-06-30T05:49:00.000Z'), []);
+    expect(art.imageUrl).toMatch(/\/art\/fallback-1\.jpg$/);
+    expect(art.fallbacks).toHaveLength(2);
+    expect(art.fallbackArt).toHaveLength(2);
+    expect(art.title).toBe('');
+  });
+
   test('ships a deeper catalog with image palettes, provenance and four working sources', () => {
     expect(ART_POOL.length).toBeGreaterThanOrEqual(300);
     expect(new Set(ART_POOL.map((piece) => piece.source)).size).toBe(4);

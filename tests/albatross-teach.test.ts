@@ -231,6 +231,11 @@ describe('teachPaneReducer', () => {
     });
   });
 
+  test('an unknown event leaves the pane as it is', () => {
+    const state = { loaded: true, collapsed: true };
+    expect(teachPaneReducer(state, { type: 'unknown' } as any)).toBe(state);
+  });
+
   test('expand and collapse toggle without losing loaded', () => {
     const collapsed = teachPaneReducer(TEACH_PANE_INITIAL, { type: 'loaded', messageCount: 5 });
     const expanded = teachPaneReducer(collapsed, { type: 'expand' });

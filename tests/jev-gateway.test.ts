@@ -186,3 +186,30 @@ test('OpenRouter utility calls keep OpenRouter credentials whichever classifier 
   expect(runtime.apiKey).toBe('platform-key');
   expect(runtime.model.credential).toBe('openrouter');
 });
+
+test('agent usage recording never throws when Convex is unavailable', async () => {
+  const { recordAgentUsage } = await import('../lib/ai/gateway');
+  const previous = { url: process.env.NEXT_PUBLIC_CONVEX_URL, alt: process.env.CONVEX_URL };
+  delete process.env.NEXT_PUBLIC_CONVEX_URL;
+  delete process.env.CONVEX_URL;
+  try {
+    const runtime = { userId: 'owner', source: 'lab86', provider: 'openrouter', modelName: 'openai/gpt-5.5' };
+    await expect(
+      recordAgentUsage(
+        runtime as any,
+        'agent',
+        { inputTokens: 120, outputTokens: 30, cachedInputTokens: 20 },
+        true,
+      ),
+    ).resolves.toBeUndefined();
+    // A runtime with no user records nothing.
+    await expect(
+      recordAgentUsage({ ...runtime, userId: null } as any, 'agent', {}, false, 'x'),
+    ).resolves.toBe(undefined);
+  } finally {
+    if (previous.url === undefined) delete process.env.NEXT_PUBLIC_CONVEX_URL;
+    else process.env.NEXT_PUBLIC_CONVEX_URL = previous.url;
+    if (previous.alt === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = previous.alt;
+  }
+});

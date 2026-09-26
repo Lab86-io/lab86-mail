@@ -556,9 +556,7 @@ export const useClientStore = create<ClientState>()(
       // A previous build mapped an empty/cleared search to All Mail
       // (-in:trash …), which got persisted; reset that stale value so the
       // default view is the unified inbox again.
-      migrate: (persisted: any) => {
-        return migratePersistedClientState(persisted);
-      },
+      migrate: (persisted: any) => migratePersistedClientState(persisted),
       partialize: persistedClientState,
     },
   ),

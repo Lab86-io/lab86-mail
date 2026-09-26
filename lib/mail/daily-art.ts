@@ -39,8 +39,9 @@ function localFallbacks(): string[] {
 
 // One piece per calendar day, chosen deterministically from the date so every
 // user sees the same piece and it stays stable across the day's morning and
-// evening editions (and in history) — no shared storage needed.
-export function getDailyArt(at: number = Date.now()): DailyArt {
+// evening editions (and in history) — no shared storage needed. `pool` is the
+// catalog; tests pass an empty one to prove the bundled backstops still load.
+export function getDailyArt(at: number = Date.now(), pool: readonly ArtPiece[] = ART_POOL): DailyArt {
   const day = new Date(at);
   const key = `${day.getUTCFullYear()}-${day.getUTCMonth() + 1}-${day.getUTCDate()}`;
   const hash = hashString(key);
@@ -56,7 +57,7 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
     palette: [...LOCAL_ART_PALETTES[index]],
   }));
 
-  if (ART_POOL.length === 0) {
+  if (pool.length === 0) {
     return {
       imageUrl: locals[0],
       fallbacks: locals.slice(1),
@@ -70,9 +71,9 @@ export function getDailyArt(at: number = Date.now()): DailyArt {
   }
 
   // Choose the museum first so a larger collection cannot crowd out the others.
-  const sources = [...new Set(ART_POOL.map((piece) => piece.source))];
+  const sources = [...new Set(pool.map((piece) => piece.source))];
   const source = sources[hash % sources.length];
-  const collection = ART_POOL.filter((piece) => piece.source === source);
+  const collection = pool.filter((piece) => piece.source === source);
   const primary = collection[hashString(`art:${key}`) % collection.length];
   const alternates = pickAlternates(primary, hash).map(artCandidate);
   const fallbackArt = [...alternates, ...localArt];

@@ -151,6 +151,30 @@ describe('smart label and rule tools', () => {
     expect(cached?.smartCategory ?? null).toBeNull();
   });
 
+  test('apply_smart_correction can send a whole domain to noise', async () => {
+    const { account, threadId } = await seedThreadMessage({
+      threadId: 'noise-domain-thread',
+      messageId: 'noise-domain-message',
+      from: 'Deals <deals@promo.example.test>',
+      subject: 'Weekend sale',
+    });
+    const corrected = await runTool(applySmartCorrection.handler, {
+      account,
+      threadId,
+      action: 'always_noise',
+      scope: 'domain',
+    });
+    expect(corrected.ok).toBe(true);
+    expect(corrected.rule).toMatchObject({
+      scope: 'domain',
+      match: 'promo.example.test',
+      effect: 'always_noise',
+    });
+    const { corrections } = await runTool(listSmartRules.handler, { correctionLimit: 10 });
+    const correction: any = corrections.find((item: any) => item.ruleId === corrected.rule._id);
+    expect(correction?.newCategory).toBe('noise');
+  });
+
   test('apply_smart_correction requires move_to targets', async () => {
     const { account, threadId } = await seedThreadMessage();
     await expect(
