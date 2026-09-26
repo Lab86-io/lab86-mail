@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { isTerminalWork } from '../lib/albatross/work-lifecycle';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -344,7 +345,7 @@ export const queryBriefCatalog = query({
       .order('desc')
       .take(200);
     return work
-      .filter((item) => item.workState !== 'done' && item.workState !== 'archived')
+      .filter((item) => !isTerminalWork(item))
       .slice(0, limit)
       .map((item) => ({
         kind: 'work',

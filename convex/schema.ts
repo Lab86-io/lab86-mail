@@ -820,7 +820,8 @@ export default defineSchema({
     endedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId', 'workId'])
-    .index('by_user_session', ['userId', 'sessionId']),
+    .index('by_user_session', ['userId', 'sessionId'])
+    .index('by_status_created', ['status', 'createdAt']),
 
   albatrossEvidence: defineTable({
     userId: v.string(),
@@ -1307,6 +1308,10 @@ export default defineSchema({
     // state, horizon). The conductor stays quiet on Work the user has not
     // touched. `updatedAt` cannot carry this, because the conductor bumps it.
     lastUserTouchAt: v.optional(v.number()),
+    // A timed-out plan generation is retried with a backoff. The plan
+    // reconcile cron reads `by_plan_retry` and clears the field on each try.
+    planRetryAt: v.optional(v.number()),
+    planTimeoutRetries: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1324,6 +1329,7 @@ export default defineSchema({
     .index('by_mail_watch', ['mailWatchAt'])
     .index('by_user_reply_received', ['userId', 'replyReceivedAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
+    .index('by_plan_retry', ['planRetryAt'])
     .index('by_capture', ['captureId']),
 
   // One logged value for a practice-shaped Work. The trend, the streak of
@@ -1488,6 +1494,7 @@ export default defineSchema({
           cardId: v.optional(v.string()),
           eventId: v.optional(v.string()),
           draftId: v.optional(v.string()),
+          documentId: v.optional(v.string()),
         }),
       ),
     ),
@@ -2421,6 +2428,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
+    .index('by_user_type_created', ['userId', 'type', 'createdAt'])
     .index('by_user_dedupe', ['userId', 'dedupeKey'])
     .index('by_scheduled', ['scheduledFor']),
 

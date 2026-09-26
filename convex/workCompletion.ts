@@ -45,6 +45,75 @@ export async function recordWorkCompletion(ctx: MutationCtx, work: Doc<'albatros
   });
 }
 
+/**
+ * Conductor flags that no closed Work may keep. Each cron reads one of these
+ * indexes with a bounded take, so a closed row that keeps its flag takes a
+ * slot from open Work (WRK-9). Every terminal transition spreads this patch.
+ */
+export const TERMINAL_WORK_FLAG_CLEAR = {
+  mailWatchAt: undefined,
+  mailWatchClaimedAt: undefined,
+  replyWatch: undefined,
+  evidenceReconcileClaimedAt: undefined,
+  horizonWakeAt: undefined,
+  pendingStepEvidenceAt: undefined,
+  pendingStepEvidence: undefined,
+  planRetryAt: undefined,
+} as const;
+
+/** The plan cards of one Work, found through the card's `source.intentId`. */
+async function workCards(ctx: MutationCtx, work: Doc<'albatrossIntents'>) {
+  return ctx.db
+    .query('cards')
+    .withIndex('by_user_source_intent', (q) =>
+      q.eq('userId', work.userId).eq('source.intentId', String(work._id)),
+    )
+    .collect();
+}
+
+/** Open cards leave the boards when their Work closes. A reopen restores them. */
+export async function retireOpenWorkCards(
+  ctx: MutationCtx,
+  work: Doc<'albatrossIntents'>,
+  ts: number,
+  cards?: Doc<'cards'>[],
+) {
+  let retired = 0;
+  for (const card of cards ?? (await workCards(ctx, work))) {
+    if (card.completedAt || card.retiredAt) continue;
+    await ctx.db.patch(card._id, { retiredByWorkId: String(work._id), retiredAt: ts, updatedAt: ts });
+    retired += 1;
+  }
+  return retired;
+}
+
+/**
+ * The side effects every close path shares: a pending question or approval
+ * for closed Work can only mislead (WRK-11), and its open cards retire.
+ */
+export async function closeWorkArtifacts(
+  ctx: MutationCtx,
+  work: Doc<'albatrossIntents'>,
+  ts: number,
+  cards?: Doc<'cards'>[],
+) {
+  const questions = await ctx.db
+    .query('albatrossWorkQuestions')
+    .withIndex('by_user_work_status', (q) =>
+      q.eq('userId', work.userId).eq('workId', work._id).eq('status', 'pending'),
+    )
+    .collect();
+  for (const question of questions) await ctx.db.patch(question._id, { status: 'superseded', updatedAt: ts });
+  const approvals = await ctx.db
+    .query('albatrossApprovals')
+    .withIndex('by_user_intent', (q) => q.eq('userId', work.userId).eq('intentId', String(work._id)))
+    .collect();
+  for (const approval of approvals)
+    if (approval.status === 'pending')
+      await ctx.db.patch(approval._id, { status: 'rejected', updatedAt: ts });
+  await retireOpenWorkCards(ctx, work, ts, cards);
+}
+
 /** Shared, idempotent terminal transition. Called inside the evidence transaction too. */
 export async function completeWorkInMutation(ctx: MutationCtx, work: Doc<'albatrossIntents'>, ts: number) {
   if (workLifecycle(work) !== 'done') await recordWorkCompletion(ctx, work, ts);
@@ -54,35 +123,12 @@ export async function completeWorkInMutation(ctx: MutationCtx, work: Doc<'albatr
     agentState: 'idle',
     planError: undefined,
     pendingPlanId: undefined,
-    mailWatchAt: undefined,
-    mailWatchClaimedAt: undefined,
-    replyWatch: undefined,
-    evidenceReconcileClaimedAt: undefined,
-    horizonWakeAt: undefined,
+    ...TERMINAL_WORK_FLAG_CLEAR,
     lastEvidenceReconcileAt: work.lastEvidenceAt,
     lastUserTouchAt: ts,
     updatedAt: ts,
   });
-  const questions = await ctx.db
-    .query('albatrossWorkQuestions')
-    .withIndex('by_user_work_status', (q) =>
-      q.eq('userId', work.userId).eq('workId', work._id).eq('status', 'pending'),
-    )
-    .collect();
-  for (const question of questions) await ctx.db.patch(question._id, { status: 'superseded', updatedAt: ts });
-  const cards = await ctx.db
-    .query('cards')
-    .withIndex('by_user_source_intent', (q) =>
-      q.eq('userId', work.userId).eq('source.intentId', String(work._id)),
-    )
-    .collect();
-  const approvals = await ctx.db
-    .query('albatrossApprovals')
-    .withIndex('by_user_intent', (q) => q.eq('userId', work.userId).eq('intentId', String(work._id)))
-    .collect();
-  for (const approval of approvals)
-    if (approval.status === 'pending')
-      await ctx.db.patch(approval._id, { status: 'rejected', updatedAt: ts });
+  const cards = await workCards(ctx, work);
   // A project can also contain independent work. Only its own outcome may close it.
   if (work.primaryProjectId) {
     const project = await ctx.db.get(work.primaryProjectId);
@@ -112,22 +158,14 @@ export async function completeWorkInMutation(ctx: MutationCtx, work: Doc<'albatr
       });
     }
   }
-  for (const card of cards) {
-    if (card.completedAt) continue;
-    await ctx.db.patch(card._id, { retiredByWorkId: String(work._id), retiredAt: ts, updatedAt: ts });
-  }
+  await closeWorkArtifacts(ctx, work, ts, cards);
   await scheduleNarrativeSource(ctx, work.userId, 'albatrossIntents', String(work._id));
   return { previousState: workLifecycle(work), state: 'done' as const };
 }
 
 /** Restore only artifacts retired by this completion, preserving independently completed tasks. */
 export async function restoreWorkArtifacts(ctx: MutationCtx, work: Doc<'albatrossIntents'>, ts: number) {
-  const cards = await ctx.db
-    .query('cards')
-    .withIndex('by_user_source_intent', (q) =>
-      q.eq('userId', work.userId).eq('source.intentId', String(work._id)),
-    )
-    .collect();
+  const cards = await workCards(ctx, work);
   for (const card of cards)
     if (card.retiredByWorkId === String(work._id))
       await ctx.db.patch(card._id, { retiredByWorkId: undefined, retiredAt: undefined, updatedAt: ts });
