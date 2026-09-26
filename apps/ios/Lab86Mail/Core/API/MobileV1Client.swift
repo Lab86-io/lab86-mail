@@ -125,6 +125,60 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MailPage
         }
     }
 
+    /// The Today summary for the widget (`GET /api/mobile/v1/today/summary`).
+    func fetchTodaySummary() async throws -> TodayWidgetSnapshot {
+        let output = try await client.getMobileTodaySummary(.init())
+        switch output {
+        case .ok(let response):
+            return Self.todaySnapshot(from: try response.body.json)
+        case .badRequest(let response):
+            throw Self.error(from: try response.body.json, status: 400)
+        case .unauthorized(let response):
+            throw Self.error(from: try response.body.json, status: 401)
+        case .conflict(let response):
+            throw Self.error(from: try response.body.json, status: 409)
+        case .tooManyRequests(let response):
+            throw Self.error(from: try response.body.json, status: 429)
+        case .internalServerError(let response):
+            throw Self.error(from: try response.body.json, status: 500)
+        case .undocumented(let status, _):
+            throw MobileV1ClientError.undocumented(status: status)
+        }
+    }
+
+    static func todaySnapshot(
+        from value: Components.Schemas.TodaySummary,
+        fetchedAt: Date = .now
+    ) -> TodayWidgetSnapshot {
+        TodayWidgetSnapshot(
+            reportID: value.reportID,
+            isWeeklyReview: value.kind?.rawValue == "weekly",
+            generatedAt: value.generatedAt,
+            leadLine: value.leadLine,
+            nextMove: value.nextMove.map { move in
+                TodayWidgetSnapshot.Move(
+                    title: move.title,
+                    detail: move.detail?.nilIfBlank,
+                    kind: move.refKind.rawValue == "task" ? .task : .thread,
+                    refID: move.refID,
+                    accountID: move.accountID
+                )
+            },
+            nextMeeting: value.nextMeeting.map { meeting in
+                TodayWidgetSnapshot.Meeting(
+                    eventID: meeting.eventID,
+                    accountID: meeting.accountID,
+                    title: meeting.title,
+                    startAt: meeting.startAt,
+                    endAt: meeting.endAt,
+                    location: meeting.location?.nilIfBlank
+                )
+            },
+            sourcesNeedingAttention: max(0, value.sourcesNeedingAttention),
+            fetchedAt: fetchedAt
+        )
+    }
+
     private static func mailListPage(from value: Components.Schemas.MailThreadPage) -> MailListPage {
         MailListPage(
             items: value.items.map { item in

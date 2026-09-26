@@ -39,6 +39,8 @@ final class AppEnvironment {
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
     let accountStore: AccountStore
+    // The plan, the trial note, and the optional Files surface (round 2).
+    let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.
@@ -70,6 +72,7 @@ final class AppEnvironment {
         }
         self.backend = backend
         self.tools = tools
+        trust = AccountTrustStore(backend: backend)
         documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)
@@ -247,6 +250,16 @@ final class AppEnvironment {
         // relaunch; the lists keep or roll back their changes (NAT-10).
         await store.reconcileMailCommands(await mailCommands.listCommands(ownerID: ownerID))
         return drained
+    }
+
+    /// Reads the Today summary and hands it to the widget (round 2, FEATURES
+    /// item 19). A failed read keeps the widget's last good snapshot.
+    func refreshTodayWidget() async {
+        #if os(iOS)
+        guard sessionStore.ownerID != nil, let mobileClient else { return }
+        guard let snapshot = try? await mobileClient.fetchTodaySummary() else { return }
+        TodayWidgetBridge.publish(snapshot)
+        #endif
     }
 
     func refreshAccounts(ownerID: String) async -> Bool {

@@ -35,7 +35,17 @@ struct ComposeView: View {
     @State private var baselineFingerprint = ""
     @State private var isSavingDraft = false
     @State private var isDraftingWithAlbatross = false
+    // Round 2 (FEATURES item 11): the mailbox signature the server adds on
+    // send, with a Leave off control, and the saved replies menu.
+    @State private var signatures: [MailSignature] = []
+    @State private var includeSignature = true
+    @State private var savedReplies: [SavedReply] = []
+    @State private var savedRepliesState: SavedRepliesState = .idle
     @FocusState private var focusedField: Field?
+
+    private enum SavedRepliesState: Equatable {
+        case idle, loading, loaded, failed
+    }
 
     private enum Field: Hashable {
         case to, cc, bcc, subject, body
@@ -51,6 +61,7 @@ struct ComposeView: View {
                     subjectField
                     hairline
                     bodyEditor
+                    signatureRow
                     if !attachments.isEmpty {
                         attachmentRows
                     }
@@ -136,6 +147,7 @@ struct ComposeView: View {
                         didSeedDraft = true
                     }
                 }
+                Task { await loadSignatures() }
             }
             .task(id: draftFingerprint) {
                 guard didSeedDraft, hasMeaningfulDraft, isDirty, !isSending else { return }
@@ -351,6 +363,94 @@ struct ComposeView: View {
         }
     }
 
+    /// The signature the server adds below this message, and the control
+    /// that leaves it off for this one message.
+    @ViewBuilder private var signatureRow: some View {
+        if let signature = activeSignature {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                if includeSignature {
+                    Text(signature.text)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Signature: \(signature.text)")
+                } else {
+                    Text("This message goes out without your signature.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Button(includeSignature ? "Leave off" : "Add it back") {
+                    includeSignature.toggle()
+                }
+                .font(.footnote.weight(.medium))
+                .buttonStyle(.plain)
+                .foregroundStyle(environment.theme.accentColor)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+        }
+    }
+
+    private var activeSignature: MailSignature? {
+        MailSignature.active(in: signatures, account: accountID)
+    }
+
+    // Saved replies go after what the user wrote. The menu loads them with
+    // the composer, and again after a failure.
+    private var savedRepliesMenu: some View {
+        Menu {
+            switch savedRepliesState {
+            case .idle, .loading:
+                Text("Loading saved replies…")
+            case .failed:
+                Button("Saved replies could not load. Try again") {
+                    Task { await loadSavedReplies() }
+                }
+            case .loaded where savedReplies.isEmpty:
+                Text("No saved replies yet. Add them in Settings.")
+            case .loaded:
+                Section("Saved replies") {
+                    ForEach(savedReplies) { reply in
+                        Button {
+                            bodyText = SavedReply.insert(reply.body, into: bodyText)
+                            previewsMarkdown = false
+                            focusedField = .body
+                        } label: {
+                            Text(reply.name)
+                            if !reply.preview.isEmpty { Text(reply.preview) }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "text.insert")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .contentShape(.rect)
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Insert a saved reply")
+        .task { if savedRepliesState == .idle { await loadSavedReplies() } }
+    }
+
+    private func loadSignatures() async {
+        guard let loaded = try? await MailTemplatesClient(tools: environment.tools).signatures() else { return }
+        signatures = loaded
+    }
+
+    private func loadSavedReplies() async {
+        savedRepliesState = .loading
+        do {
+            savedReplies = try await MailTemplatesClient(tools: environment.tools).savedReplies()
+            savedRepliesState = .loaded
+        } catch {
+            savedRepliesState = .failed
+        }
+    }
+
     private var attachmentRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             hairline
@@ -416,6 +516,7 @@ struct ComposeView: View {
             .padding(.vertical, 9)
             .disabled(isDraftingWithAlbatross)
             .accessibilityLabel("Draft with Albatross")
+            savedRepliesMenu
             Spacer(minLength: 0)
             Menu {
                 Button("Send now") { sendsLater = false }
@@ -517,7 +618,8 @@ struct ComposeView: View {
                 body: bodyText,
                 attachments: attachments,
                 sendAt: sendsLater ? sendLaterDate : nil,
-                undoSeconds: sendsLater ? 0 : undoSendSeconds
+                undoSeconds: sendsLater ? 0 : undoSendSeconds,
+                includeSignature: includeSignature
             )
             switch submission {
             case .pending(let receipt):

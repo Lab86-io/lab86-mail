@@ -2,9 +2,11 @@ import MobileAPI
 import SwiftUI
 
 // The budget brief (2026-09-03) reads as a short letter. The server emits a
-// fixed region layout: `lede`, `yesterday`, then the lanes `answer`, `today`,
-// `know`, `waiting`, `tasks`, `connected`, then `week-ahead`, then `areas`.
-// The area brief emits `lede`, `pulse`, `ask`, `week`, `mail`, `open-work`.
+// fixed region layout: `lede`, `yesterday`, `since`, then the lanes `answer`,
+// `today`, `know`, `waiting`, `tasks`, `connected`, then `week-ahead`, then
+// `areas`. The area brief emits `lede`, `pulse`, `ask`, `week`, `mail`,
+// `open-work`. The weekly review (round 2) emits `lede`, `done`, `open`,
+// `waiting`, `next-week`.
 // This file holds the pure layout decision and the letter views. Any region
 // the layout does not recognise falls back to the node renderer, so older
 // editions keep their look.
@@ -13,6 +15,8 @@ import SwiftUI
 
 // One row section of a letter. The raw value is the region id.
 enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
+    // What Albatross did since the last edition, each with Undo (round 2).
+    case since
     case answer
     case today
     case know
@@ -21,9 +25,14 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
     case connected
     // The area letter's verified mail (brief round 2026-09-22).
     case mail
+    // The weekly review (round 2): finished, still open, and next week.
+    case done
+    case open
+    case nextWeek = "next-week"
 
     var title: String {
         switch self {
+        case .since: "What Albatross did"
         case .answer: "Answer"
         case .today: "Today"
         case .know: "Know"
@@ -31,11 +40,15 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
         case .tasks: "Tasks this week"
         case .connected: "Connected tools"
         case .mail: "Mail"
+        case .done: "Done this week"
+        case .open: "Still open"
+        case .nextWeek: "Next week"
         }
     }
 
     var note: String? {
         switch self {
+        case .since: "Since the last edition"
         case .answer: "Replies you owe"
         case .today: "Deadlines and the calendar"
         case .know: "Worth a look"
@@ -43,16 +56,27 @@ enum BriefLetterLane: String, CaseIterable, Equatable, Sendable {
         case .tasks: "Due inside seven days"
         case .connected: "From your tools"
         case .mail: "Linked to this area"
+        case .done: "Finished"
+        case .open: "Defer or drop what will not happen"
+        case .nextWeek: "The next seven days"
         }
     }
 
     // Mail lanes lead with the sender avatar. Task and tool rows have no
-    // sender, so they start at the text column.
+    // sender, so they start at the text column. A look-back row leads with
+    // a check mark in the avatar's place.
     var showsAvatar: Bool {
         switch self {
-        case .answer, .today, .know, .waiting, .mail: true
-        case .tasks, .connected: false
+        case .since, .answer, .today, .know, .waiting, .mail, .open: true
+        case .tasks, .connected, .done, .nextWeek: false
         }
+    }
+
+    // A lane that mixes threads with tasks (the weekly `open`) gives the
+    // avatar to the thread rows only.
+    func showsAvatar(for item: BriefEntityItem) -> Bool {
+        guard showsAvatar else { return false }
+        return !["task", "card", "work", "event"].contains(item.ref.kind)
     }
 }
 
@@ -67,8 +91,13 @@ enum BriefRowActions {
     }
 
     static func arrange(_ actions: [BriefDocumentAction]?, fallback: BriefDocumentAction?) -> Arrangement {
-        let known = (actions ?? []).filter { BriefActionPolicy.known.contains($0.action) }
+        // Steering choices go to the overflow menu, never to the row.
+        let known = (actions ?? []).filter {
+            BriefActionPolicy.known.contains($0.action) && !BriefActionPolicy.isSteering($0.action)
+        }
         guard let first = known.first else { return Arrangement(tap: fallback, trailing: []) }
+        // An Undo runs only from its own word, never from a tap on the row.
+        if first.action == "undo_operation" { return Arrangement(tap: fallback, trailing: known) }
         return Arrangement(tap: first, trailing: Array(known.dropFirst()))
     }
 }
@@ -331,19 +360,33 @@ struct BriefMailRowCopy: Equatable {
     let action: String?
     // The trailing quiet buttons, in order.
     let trailingActions: [String]
+    // The steering choices behind the overflow control (round 2).
+    let steeringActions: [String]
     let completed: Bool
+    // A logged operation from "What Albatross did" (round 2).
+    let isOperation: Bool
 
     init(item: BriefEntityItem, entity: BriefHydratedEntity?, completed: Bool? = nil) {
-        sender = item.framing?.sender?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        isOperation = Self.isOperation(item.ref)
+        let framedSender = item.framing?.sender?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        sender = isOperation ? (framedSender ?? "Albatross") : framedSender
         let fallbackSubject = item.ref.kind == "thread" ? "(no subject)" : "Untitled"
         subject = entity?.title.nilIfBlank ?? item.ref.label?.nilIfBlank ?? fallbackSubject
         line = item.framing?.reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         age = item.framing?.age?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         let arranged = BriefRowActions.arrange(item.actions, fallback: Self.fallbackOpen(for: item.ref))
-        let known = (item.actions ?? []).contains { BriefActionPolicy.known.contains($0.action) }
+        let known = (item.actions ?? []).contains {
+            BriefActionPolicy.known.contains($0.action) && !BriefActionPolicy.isSteering($0.action)
+        }
         action = known ? arranged.tap?.label.nilIfBlank : nil
         trailingActions = arranged.trailing.map(\.label)
+        steeringActions = BriefActionPolicy.steering(item.actions).map(\.label)
         self.completed = completed ?? entity?.completed ?? false
+    }
+
+    /// A `derived` ref whose id is `operation:<id>`.
+    static func isOperation(_ ref: BriefSourceRef) -> Bool {
+        ref.kind == "derived" && ref.id.hasPrefix("operation:")
     }
 
     // The tap when the item carries no known action.
@@ -370,6 +413,7 @@ struct BriefMailRowCopy: Equatable {
         if let line { parts.append(line) }
         if let action { parts.append("action \(action)") }
         for trailing in trailingActions { parts.append("action \(trailing)") }
+        for choice in steeringActions { parts.append("action \(choice)") }
         return parts.joined(separator: ", ")
     }
 
@@ -442,12 +486,12 @@ struct BriefLaneSection: View {
                             item: item,
                             entity: entities[item.ref.key],
                             completed: completedRefs[item.ref.key],
-                            showsAvatar: lane.showsAvatar,
+                            showsAvatar: lane.showsAvatar(for: item),
                             onAction: onAction
                         )
                     }
                     if index < visible.count - 1 {
-                        Divider().padding(.leading, lane.showsAvatar ? 44 : 0)
+                        Divider().padding(.leading, lane.showsAvatar(for: item) ? 44 : 0)
                     }
                 }
                 .modifier(BriefRise(shown: risenEdition == editionKey, index: index, reduceMotion: reduceMotion))
@@ -519,8 +563,13 @@ struct BriefMailRow: View {
         let arrangement = arrangement
         return HStack(alignment: .top, spacing: 12) {
             if drawsAvatar {
-                InitialsAvatar(name: copy.avatarName, seed: copy.avatarName, size: 32)
-                    .padding(.top, 2)
+                if copy.isOperation {
+                    BriefOperationMark()
+                        .padding(.top, 2)
+                } else {
+                    InitialsAvatar(name: copy.avatarName, seed: copy.avatarName, size: 32)
+                        .padding(.top, 2)
+                }
             }
             VStack(alignment: .leading, spacing: 6) {
                 if let tap = arrangement.tap {
@@ -533,14 +582,20 @@ struct BriefMailRow: View {
                 } else {
                     textBlock(copy)
                 }
-                if stacksAction, !arrangement.trailing.isEmpty {
-                    actionWords(arrangement.trailing)
+                if stacksAction, !arrangement.trailing.isEmpty || !steering.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        actionWords(arrangement.trailing)
+                        steeringMenu
+                    }
                 }
             }
-            if !stacksAction, !arrangement.trailing.isEmpty {
+            if !stacksAction, !arrangement.trailing.isEmpty || !steering.isEmpty {
                 Spacer(minLength: 12)
-                actionWords(arrangement.trailing)
-                    .padding(.top, 2)
+                HStack(alignment: .firstTextBaseline, spacing: 14) {
+                    actionWords(arrangement.trailing)
+                    steeringMenu
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.vertical, 10)
@@ -548,8 +603,21 @@ struct BriefMailRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(copy.accessibilityLabel)
         .accessibilityActions {
-            ForEach(Array(arrangement.trailing.enumerated()), id: \.offset) { _, action in
+            ForEach(Array((arrangement.trailing + steering).enumerated()), id: \.offset) { _, action in
                 Button(action.label) { Task { await onAction(action, item.ref) } }
+            }
+        }
+    }
+
+    private var steering: [BriefDocumentAction] {
+        entity?.gone == true ? [] : BriefActionPolicy.steering(item.actions)
+    }
+
+    @ViewBuilder private var steeringMenu: some View {
+        let steering = steering
+        if !steering.isEmpty {
+            BriefSteeringMenu(actions: steering) { action in
+                await onAction(action, item.ref)
             }
         }
     }
@@ -827,5 +895,48 @@ struct BriefPlaceholderBars: View {
                 .frame(width: proxy.size.width * width, height: 12)
         }
         .frame(height: 12)
+    }
+}
+
+// The steering choices of one item: "Not for me", "Less from this sender",
+// "Keep showing" (FEATURES item 8). The trigger is an icon with a spoken
+// label; the choices are text.
+struct BriefSteeringMenu: View {
+    let actions: [BriefDocumentAction]
+    let onRun: (BriefDocumentAction) async -> Void
+
+    var body: some View {
+        Menu {
+            Section("In future briefs") {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                    Button(action.label) { Task { await onRun(action) } }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 28, minHeight: 28)
+                .contentShape(Rectangle())
+        }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel("Tune this item in the brief")
+    }
+}
+
+// The mark a look-back row carries where a mail row carries its avatar: a
+// check in the second accent, as on the web.
+struct BriefOperationMark: View {
+    @Environment(AppEnvironment.self) private var environment
+
+    var body: some View {
+        Image(systemName: "checkmark")
+            .font(.caption.weight(.bold))
+            .foregroundStyle(environment.theme.accent2Color)
+            .frame(width: 32, height: 32)
+            .background(Circle().fill(environment.theme.accent2Color.opacity(0.14)))
+            .accessibilityHidden(true)
     }
 }

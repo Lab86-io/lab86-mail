@@ -64,6 +64,12 @@ final class ProductStore {
     // Mail list actions not settled yet, by idempotency key, with what
     // undoes their change on screen after a final failure.
     private var pendingMailCommands: [String: PendingMailCommand] = [:]
+    // What puts each confirmed change of the current undo notice back on
+    // screen, by operation id (round 2, FEATURES item 10).
+    private var mailUndoRollBacks: [String: @MainActor () -> Void] = [:]
+    private var undoNoticeExpiry: Task<Void, Never>?
+    /// How long an undo notice stays. Activity keeps the Undo after that.
+    var undoNoticeLifetime: Duration = .seconds(10)
     private var cacheOwner: String?
     private var liveMailTask: Task<Void, Never>?
     private var mailStateOverrides: [String: MailStateOverride] = [:]
@@ -130,6 +136,10 @@ final class ProductStore {
     // The id of the newest edition the server returned. Set on every
     // `get_latest_daily_report`; `selectDailyReport` leaves it alone.
     var latestDailyReportID: String?
+    // The sources behind the shown edition, with their last sync and any
+    // that must reconnect (round 2, FEATURES item 18). The last good read
+    // stays when a refresh fails.
+    var briefSources: BriefSourceHealth?
 
     // True while the shown edition is the newest one (or no newer edition is
     // known yet). Inactive-row hiding stays on in that state and turns off
@@ -688,6 +698,17 @@ final class ProductStore {
             await persistCache()
         } catch {
             briefError = error.localizedDescription
+        }
+        await refreshBriefSources()
+    }
+
+    /// Reads the source health line for the shown edition. A failure keeps
+    /// the last good line; the masthead never blanks on a slow read.
+    func refreshBriefSources() async {
+        do {
+            briefSources = try await BriefSettingsClient(tools: tools).sources(reportID: dailyReport?.id)
+        } catch {
+            // The line is a read-only aid. The brief itself reports errors.
         }
     }
 
@@ -1955,6 +1976,7 @@ final class ProductStore {
     func reconcileMailCommands(_ commands: [PendingCommandSnapshot]) async {
         var changed = false
         var failures: [PendingMailCommand] = []
+        var undoable: [(operationID: String, pending: PendingMailCommand)] = []
         for command in commands {
             let key = command.idempotencyKey
             switch MailCommandPhase(command) {
@@ -1967,7 +1989,11 @@ final class ProductStore {
                 )
                 changed = true
             case .confirmed:
-                guard pendingMailCommands.removeValue(forKey: key) != nil else { continue }
+                guard let pending = pendingMailCommands.removeValue(forKey: key) else { continue }
+                // A change the server recorded gets an Undo.
+                if let operationID = command.operationID?.nilIfBlank {
+                    undoable.append((operationID, pending))
+                }
                 changed = true
             case .failed(let message):
                 guard let pending = pendingMailCommands.removeValue(forKey: key) else { continue }
@@ -1978,6 +2004,19 @@ final class ProductStore {
         }
         // Newest first, so two changes to one thread undo in the right order.
         for failure in failures.reversed() { failure.rollBack() }
+        if !undoable.isEmpty {
+            mailUndoRollBacks = Dictionary(
+                undoable.map { ($0.operationID, $0.pending.rollBack) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let operationIDs = undoable.map(\.operationID)
+            showUndoNotice(UndoableOperationNotice(
+                id: operationIDs[0],
+                summary: MailUndoCopy.summary(for: undoable.map(\.pending.command)),
+                operationIDs: operationIDs,
+                kind: .mail
+            ))
+        }
         guard changed else { return }
         await persistCache()
         await syncMailIndex()
@@ -2161,10 +2200,11 @@ final class ProductStore {
 
     func correctCategory(_ thread: MailThreadSummary, to correction: MailCategoryCorrection) async -> Bool {
         do {
-            _ = try await tools.invoke(
+            let result = try await tools.invoke(
                 "apply_smart_correction",
                 arguments: correction.arguments(accountID: thread.accountID, threadID: thread.id)
             )
+            captureUndoNotice(result, summary: "Smart rule saved", kind: .mail)
             await refreshMail()
             return true
         } catch {
@@ -2285,15 +2325,48 @@ final class ProductStore {
         sendAt: Date? = nil,
         undoSeconds: Int = 0
     ) async throws -> ComposeSubmission {
-        var fields = [
-            "mode": mode,
-            "account": accountID,
-            "to": to,
-            "cc": cc,
-            "bcc": bcc,
-            "subject": subject,
-            "body": body,
-        ]
+        try await sendCompose(
+            mode: mode,
+            accountID: accountID,
+            threadID: threadID,
+            messageID: messageID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            attachments: attachments,
+            sendAt: sendAt,
+            undoSeconds: undoSeconds,
+            includeSignature: true
+        )
+    }
+
+    func sendCompose(
+        mode: String,
+        accountID: String,
+        threadID: String?,
+        messageID: String?,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        attachments: [ComposeAttachment],
+        sendAt: Date?,
+        undoSeconds: Int,
+        includeSignature: Bool
+    ) async throws -> ComposeSubmission {
+        var fields = Self.composeFields(
+            mode: mode,
+            accountID: accountID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            includeSignature: includeSignature
+        )
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
         if let sendAt { fields["sendAt"] = String(Int(sendAt.timeIntervalSince1970 * 1_000)) }
@@ -2318,6 +2391,31 @@ final class ProductStore {
             await refreshMail()
         }
         return submission
+    }
+
+    /// The text fields of `POST /api/compose`. The mailbox signature goes on
+    /// by default; `signature=0` leaves it off for this one message.
+    static func composeFields(
+        mode: String,
+        accountID: String,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        includeSignature: Bool
+    ) -> [String: String] {
+        var fields = [
+            "mode": mode,
+            "account": accountID,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "subject": subject,
+            "body": body,
+        ]
+        if !includeSignature { fields["signature"] = "0" }
+        return fields
     }
 
     func saveDraft(
@@ -2584,24 +2682,77 @@ final class ProductStore {
         }
     }
 
+    /// Takes back every operation of the shown notice, newest first. "Undone"
+    /// reads only after the server confirms each inverse ran.
     func undoLatestOperation() async {
         guard let notice = undoNotice else { return }
+        undoNoticeExpiry?.cancel()
+        undoNoticeExpiry = nil
         do {
-            _ = try await tools.invoke(
-                "undo_operation",
-                arguments: ["operationId": .string(notice.id)]
-            )
-            undoNotice = nil
-            await refreshToday()
-            await refreshWork()
+            for operationID in notice.operationIDs.reversed() {
+                _ = try await tools.invoke(
+                    "undo_operation",
+                    arguments: ["operationId": .string(operationID)]
+                )
+            }
+            if undoNotice?.id == notice.id { undoNotice = nil }
+            switch notice.kind {
+            case .mail:
+                // The rows come back at once; the server copy follows.
+                for operationID in notice.operationIDs.reversed() {
+                    mailUndoRollBacks.removeValue(forKey: operationID)?()
+                }
+                PlatformAccessibility.announce("Undone")
+                await refreshMail()
+            case .general:
+                await refreshToday()
+                await refreshWork()
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            if undoNotice?.id == notice.id { undoNotice = nil }
+            switch notice.kind {
+            case .mail: recordMail(error)
+            case .general: errorMessage = error.localizedDescription
+            }
         }
     }
 
-    private func captureUndoNotice(_ result: JSONValue, summary: String) {
+    /// Shows an undo notice and takes it down after `undoNoticeLifetime`,
+    /// unless a newer notice replaced it first.
+    func showUndoNotice(_ notice: UndoableOperationNotice) {
+        undoNotice = notice
+        undoNoticeExpiry?.cancel()
+        let lifetime = undoNoticeLifetime
+        undoNoticeExpiry = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled, let self, self.undoNotice?.id == notice.id else { return }
+            self.undoNotice = nil
+        }
+    }
+
+    /// A mail change a tool recorded outside the list actions, such as a
+    /// block: one notice whose Undo takes back every operation.
+    func noteMailOperations(_ operationIDs: [String?], summary: String) {
+        let ids = operationIDs.compactMap { $0?.nilIfBlank }
+        guard let first = ids.first else { return }
+        mailUndoRollBacks = [:]
+        showUndoNotice(UndoableOperationNotice(id: first, summary: summary, operationIDs: ids, kind: .mail))
+    }
+
+    func dismissUndoNotice() {
+        undoNoticeExpiry?.cancel()
+        undoNoticeExpiry = nil
+        undoNotice = nil
+    }
+
+    private func captureUndoNotice(
+        _ result: JSONValue,
+        summary: String,
+        kind: UndoableOperationNotice.Kind = .general
+    ) {
         if let operationID = result["operationId"]?.stringValue, !operationID.isEmpty {
-            undoNotice = UndoableOperationNotice(id: operationID, summary: summary)
+            if kind == .mail { mailUndoRollBacks = [:] }
+            showUndoNotice(UndoableOperationNotice(id: operationID, summary: summary, kind: kind))
         }
     }
 
@@ -3052,6 +3203,7 @@ final class ProductStore {
         dailyBrief = nil
         dailyReport = nil
         latestDailyReportID = nil
+        briefSources = nil
         areaDetails = [:]
         workDetails = [:]
         allWork = []
@@ -3083,7 +3235,8 @@ final class ProductStore {
         snoozedDidLoad = false
         snoozedError = nil
         lastRefresh = nil
-        undoNotice = nil
+        dismissUndoNotice()
+        mailUndoRollBacks = [:]
     }
 
     private func record(_ error: Error) {

@@ -11,12 +11,15 @@ final class FakeMailCommandQueue: MailCommandQueueing {
         var status: OutboxCommandStatus
         var retryable: Bool
         var message: String?
+        var operationID: String? = nil
     }
 
     private(set) var entries: [Entry] = []
     /// The state a flush gives every command that still waits.
     var flushResult: (status: OutboxCommandStatus, retryable: Bool, message: String?) = (.applied, false, nil)
     var enqueueError: (any Error)?
+    /// The operation the server records for an applied command, if any.
+    var operationIDFor: ((DurableMobileCommand) -> String?)?
 
     var sentCommands: [DurableMobileCommand] { entries.map(\.command) }
 
@@ -40,6 +43,7 @@ final class FakeMailCommandQueue: MailCommandQueueing {
             entries[index].status = status
             entries[index].retryable = retryable
             entries[index].message = message
+            if status == .applied { entries[index].operationID = operationIDFor?(entries[index].command) }
         }
         return snapshots()
     }
@@ -61,7 +65,8 @@ final class FakeMailCommandQueue: MailCommandQueueing {
             nextAttemptAt: nil,
             lastErrorCode: nil,
             lastErrorMessage: entry.message,
-            lastErrorRetryable: entry.retryable
+            lastErrorRetryable: entry.retryable,
+            operationID: entry.operationID
         )
     }
 }

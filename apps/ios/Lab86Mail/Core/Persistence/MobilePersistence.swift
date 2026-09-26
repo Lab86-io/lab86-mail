@@ -244,6 +244,9 @@ struct PendingCommandSnapshot: Equatable, Sendable {
     let lastErrorCode: String?
     let lastErrorMessage: String?
     let lastErrorRetryable: Bool
+    // The operation the server recorded for an applied command, when the
+    // change has an Undo (round 2, FEATURES item 10).
+    var operationID: String? = nil
 }
 
 @Model

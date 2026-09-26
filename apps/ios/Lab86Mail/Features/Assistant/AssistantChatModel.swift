@@ -863,7 +863,7 @@ final class AssistantChatModel {
         switch row.state {
         case .running:
             part["state"] = .string(row.input == nil ? "input-streaming" : "input-available")
-        case .done, .needsInput:
+        case .done, .needsInput, .paused:
             part["state"] = .string("output-available")
             part["output"] = row.output ?? .null
         case .failed:

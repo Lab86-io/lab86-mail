@@ -10,8 +10,7 @@ struct MailView: View {
     @State private var mailboxScope = MailboxScope.inbox
     @State private var selectedThreadKeys: Set<String> = []
     @State private var editMode: EditMode = .inactive
-    @State private var recentlyRemoved: [MailThreadSummary] = []
-    @State private var bulkActionLabel: String?
+    @State private var showsSenderCleanup = false
     @State private var triageVerdicts: [BulkTriageVerdict] = []
     @State private var categoryInfoThread: MailThreadSummary?
     @State private var isBulkTriaging = false
@@ -116,11 +115,6 @@ struct MailView: View {
         .background(environment.theme.paperColor)
         .environment(\.editMode, $editMode)
         .contentMargins(.top, 0, for: .scrollContent)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let bulkActionLabel, !recentlyRemoved.isEmpty, !editMode.isEditing {
-                undoBanner(label: bulkActionLabel)
-            }
-        }
         .navigationTitle("Mail")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -195,6 +189,9 @@ struct MailView: View {
                                 Label(mailbox.title, systemImage: mailbox.symbol).tag(mailbox)
                             }
                         }
+                    }
+                    Section {
+                        Button("Sender cleanup") { showsSenderCleanup = true }
                     }
                 } label: {
                     Label(scopeTitle, systemImage: "line.3.horizontal.decrease.circle")
@@ -291,6 +288,7 @@ struct MailView: View {
             }
             await environment.mailIdentity.resolve(entries: entries)
         }
+        .sheet(isPresented: $showsSenderCleanup) { SenderCleanupView() }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { correction in
                 Task {
@@ -753,33 +751,18 @@ struct MailView: View {
         filteredThreads.filter { selectedThreadKeys.contains(threadKey($0)) }
     }
 
-    private func undoBanner(label: String) -> some View {
-        HStack {
-            Text("\(label) \(recentlyRemoved.count) thread\(recentlyRemoved.count == 1 ? "" : "s")")
-                .font(.subheadline)
-            Spacer()
-            Button("Undo") {
-                let threads = recentlyRemoved
-                recentlyRemoved = []
-                bulkActionLabel = nil
-                Task { await environment.store.bulkRestore(threads) }
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(12)
-        .background(.regularMaterial)
-    }
-
+    // The Undo for a bulk removal is the shell's undo notice: it takes back
+    // the operations the server recorded, so Activity reads them as undone
+    // too (round 2, FEATURES item 10).
     private func performBulkRemoval(
         label: String,
         operation: @escaping @MainActor ([MailThreadSummary]) async -> Void
     ) {
         let threads = selectedThreads
         guard !threads.isEmpty else { return }
-        recentlyRemoved = threads
-        bulkActionLabel = label
         selectedThreadKeys.removeAll()
         editMode = .inactive
+        PlatformAccessibility.announce(label)
         Task { await operation(threads) }
     }
 

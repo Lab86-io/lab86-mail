@@ -274,7 +274,8 @@ actor CommandOutbox {
             nextAttemptAt: record.nextAttemptAt,
             lastErrorCode: record.lastErrorCode,
             lastErrorMessage: record.lastErrorMessage,
-            lastErrorRetryable: record.lastErrorRetryable
+            lastErrorRetryable: record.lastErrorRetryable,
+            operationID: record.operationID
         )
     }
 }

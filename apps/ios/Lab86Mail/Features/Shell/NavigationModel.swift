@@ -42,6 +42,12 @@ enum PrimaryTab: String, Hashable, CaseIterable, Identifiable, Sendable {
     // outcomes live under Albatrosses. Tasks remains routable for old links but
     // is no longer a competing primary board.
     static let sourceList: [PrimaryTab] = [.today, .mail, .work, .calendar, .files]
+
+    /// The sidebar rows. Files shows only when Settings, Advanced turns it on
+    /// (round 2, FEATURES item 17); a link to a document still opens it.
+    static func sourceList(showsFiles: Bool) -> [PrimaryTab] {
+        showsFiles ? sourceList : sourceList.filter { $0 != .files }
+    }
 }
 
 struct ThreadRoute: Identifiable, Hashable, Sendable {
