@@ -2235,7 +2235,9 @@ function CreateCardDialog({
       setDue(r.dueAt ? toLocalInputValue(r.dueAt) : '');
       setNlText('');
       if (r.model === 'local') {
-        toast.message('Used your text as the title — enable AI in settings for date/priority parsing.');
+        toast.message(
+          'Used your text as the title. Set up a model in Settings, Intelligence, to read dates and priority.',
+        );
       }
     } catch (err: any) {
       toast.error(err?.message || 'Could not parse that');

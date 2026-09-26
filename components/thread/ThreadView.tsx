@@ -716,7 +716,7 @@ function SummaryCard({
             className="text-[10px] text-[var(--color-text-faint)]"
             title="Model that generated this summary"
           >
-            {model || 'AI'}
+            {model || 'Model'}
           </span>
           <button
             type="button"

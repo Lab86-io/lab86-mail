@@ -19,7 +19,7 @@ export const SHORTCUTS: [string[], string][] = [
   [['g', 'i'], 'Go to Inbox'],
   [['g', 'u'], 'Go to Unread'],
   [['g', 's'], 'Go to Sent'],
-  [['⌘', 'K'], 'AI command bar'],
+  [['⌘', 'K'], 'Open the assistant'],
   [['⌘/Ctrl', 'P'], 'Search and switch pages, even while editing'],
   [['?'], 'This sheet'],
 ];

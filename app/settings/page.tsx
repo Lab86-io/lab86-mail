@@ -98,7 +98,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
     <AiSection
       heading={
         <SectionHeading
-          title="AI"
+          title="Intelligence"
           blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
         />
       }
@@ -1438,7 +1438,7 @@ function AccountSection() {
       <SettingsCard tone="danger">
         <SettingsRow
           label="Delete everything"
-          description="Mail grants, the search index, AI settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          description="Mail grants, the search index, model settings, usage records, and your Lab86 account. Gone for good, with no export first."
           control={
             <AlertDialog
               onOpenChange={(open) => {
