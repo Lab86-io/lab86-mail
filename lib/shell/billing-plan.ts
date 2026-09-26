@@ -1,7 +1,9 @@
+import { FREE_PLAN_NAME, formatUsd, PAID_PLANS, trialState } from '../hosted/plans';
+
 /**
  * The billing line in Settings, Intelligence. The settings API returns the
  * user's plan; a paid plan shows the plan and Manage, never Upgrade and the
- * price list.
+ * price list. Names and price formats come from lib/hosted/plans.ts.
  */
 export type BillingPlan = 'free' | 'byok' | 'pro' | 'admin';
 
@@ -10,6 +12,9 @@ export type BillingSummaryInput = {
   usageStatus?: string | null;
   subscriptionsDisabled?: boolean;
   paidPlan?: { monthlyUsd?: number; annualUsd?: number; byokMonthlyUsd?: number; byokAnnualUsd?: number };
+  /** Set while the app-level Pro trial gives the plan. */
+  trialEndsAt?: number | null;
+  now?: number;
 };
 
 export type BillingSummary = {
@@ -20,8 +25,8 @@ export type BillingSummary = {
 };
 
 const PLAN_LABELS: Record<string, string> = {
-  byok: 'Your own key',
-  pro: 'Pro',
+  byok: PAID_PLANS.byok.name,
+  pro: PAID_PLANS.pro.name,
   admin: 'Admin',
 };
 
@@ -36,6 +41,17 @@ export function billingSummary(input: BillingSummaryInput): BillingSummary {
       showUpgrade: false,
       showManage: false,
     };
+  // A trial is Pro with no subscription behind it: offer Upgrade, not Manage.
+  const trial = plan === 'pro' ? trialState(input.trialEndsAt, input.now ?? Date.now()) : null;
+  if (trial?.active) {
+    const days = trial.daysLeft === 1 ? '1 day' : `${trial.daysLeft} days`;
+    return {
+      line: `Plan: ${PAID_PLANS.pro.name} trial, ${days} left. No card is on file. After the trial, your account moves to ${FREE_PLAN_NAME}.`,
+      planLabel: `${PAID_PLANS.pro.name} trial`,
+      showUpgrade: true,
+      showManage: false,
+    };
+  }
   const p = input.paidPlan;
   const pricesPresent =
     typeof p?.monthlyUsd === 'number' &&
@@ -56,10 +72,10 @@ export function billingSummary(input: BillingSummaryInput): BillingSummary {
       showManage: plan !== 'admin',
     };
   const priceLine = pricesPresent
-    ? `Plan: Free. Pro (hosted models) is $${p?.monthlyUsd}/mo or $${p?.annualUsd}/yr. Your own key is $${p?.byokMonthlyUsd}/mo or $${p?.byokAnnualUsd}/yr.`
-    : 'Plan: Free. Upgrade for hosted models, or bring your own key for less.';
+    ? `Plan: ${FREE_PLAN_NAME}. ${PAID_PLANS.pro.name} (hosted models) is ${formatUsd(p?.monthlyUsd ?? 0)}/mo or ${formatUsd(p?.annualUsd ?? 0)}/yr. ${PAID_PLANS.byok.name} is ${formatUsd(p?.byokMonthlyUsd ?? 0)}/mo or ${formatUsd(p?.byokAnnualUsd ?? 0)}/yr.`
+    : `Plan: ${FREE_PLAN_NAME}. Upgrade for hosted models, or bring your own key for less.`;
   return {
-    line: usageLine ? `Plan: Free. ${usageLine}` : priceLine,
+    line: usageLine ? `Plan: ${FREE_PLAN_NAME}. ${usageLine}` : priceLine,
     planLabel,
     showUpgrade: true,
     showManage: true,

@@ -31,6 +31,7 @@ export const generateDailyReportTool = defineTool({
   description:
     'Generate and store an in-app Daily Report from recent mail, tracked threads, and calendar context.',
   category: 'ai',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     kind: ReportKindSchema.default('manual'),
@@ -176,6 +177,7 @@ export const dismissDailyReportTaskTool = defineTool({
   description:
     'Remove a task card from future Daily Brief task sections without completing or deleting the underlying task.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     cardId: z.string().min(1),
@@ -209,6 +211,7 @@ export const dismissDailyReportThreadTool = defineTool({
   description:
     'Remove or resolve a conversation from Daily Brief email sections until that thread receives newer mail.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     account: z.string().min(1),
@@ -244,6 +247,7 @@ export const restoreDailyReportTaskTool = defineTool({
   name: 'restore_daily_report_task',
   description: 'Undo removal of a task from future Daily Brief task sections.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ cardId: z.string().min(1) }),
   output: z.object({ ok: z.boolean() }),
@@ -257,6 +261,7 @@ export const restoreDailyReportThreadTool = defineTool({
   name: 'restore_daily_report_thread',
   description: 'Undo removal or resolution of a conversation from Daily Brief sections.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     account: z.string().min(1),

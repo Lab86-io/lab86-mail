@@ -24,6 +24,7 @@ import {
   isUserOpenRouterKeyRequired,
 } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { PAID_PLANS, planPriceLine } from '@/lib/hosted/plans';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
@@ -41,7 +42,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
-  const entitlement = await getAiBillingEntitlement();
+  const entitlement = await getAiBillingEntitlement({ snapshot: state.entitlement ?? null });
   const requireOpenRouter = isUserOpenRouterKeyRequired();
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
@@ -79,6 +80,7 @@ export async function GET() {
       plan: entitlement.plan,
       status: entitlement.status,
       source: entitlement.source,
+      trialEndsAt: entitlement.trialEndsAt ?? null,
     },
     lab86AiDisabled: isLab86AiDisabled(),
     requiresUserOpenRouterKey: requireOpenRouter,
@@ -258,7 +260,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
         return NextResponse.json(
           {
             ok: false,
-            error: `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from the pricing page.`,
+            error: `Using your own API key needs the ${PAID_PLANS.byok.name} plan (${planPriceLine('byok')}) or ${PAID_PLANS.pro.name}. Upgrade from the pricing page.`,
           },
           { status: 402 },
         );
@@ -268,7 +270,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
     if (isUserOpenRouterKeyRequired()) {
       if (mode !== 'byok' || provider !== 'openrouter') {
         return NextResponse.json(
-          { ok: false, error: 'OpenRouter BYOK is required while Lab86 AI subscriptions are disabled.' },
+          { ok: false, error: 'Add your own OpenRouter key: hosted-model subscriptions are paused.' },
           { status: 400 },
         );
       }

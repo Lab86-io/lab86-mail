@@ -8,6 +8,7 @@ export const updateTrackedThreadTool = defineTool({
   name: 'update_tracked_thread',
   description: 'Update a locally tracked conversation.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     id: z.string(),
@@ -30,6 +31,7 @@ export const resolveTrackedThread = defineTool({
   name: 'resolve_tracked_thread',
   description: 'Mark a tracked local conversation resolved.',
   category: 'mail',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ id: z.string(), reason: z.string().optional() }),
   output: z.object({ tracked: z.any() }),

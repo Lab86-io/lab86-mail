@@ -140,6 +140,7 @@ export const mcpCreateTask = defineTool({
   description:
     'Create a Lab86 task from a connected-tool item (a GitHub issue/PR, Bitbucket PR, Jira ticket, or Slack message). Pass the item identifiers from mcp_search/mcp_list_items. The card carries a provenance link back to the source, and when the source later closes/merges/resolves the task auto-completes. Defaults to the user’s default board, first column.',
   category: 'mcp',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     connectionId: z.string(),

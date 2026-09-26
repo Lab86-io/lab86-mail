@@ -171,7 +171,7 @@ describe('server-enforced approval for tools that reach another person', () => {
   test('the gate covers invitations and attendee notices, and skips private writes', () => {
     const lifted = liftToolsForAgent('batch', 'UTC');
     for (const name of APPROVAL_GATED_TOOLS) expect(typeof lifted[name].needsApproval).toBe('function');
-    for (const name of ['calendar_rsvp_event', 'tasks_create_card', 'save_draft'])
+    for (const name of ['archive_thread', 'tasks_create_card', 'save_draft'])
       expect(lifted[name].needsApproval).toBeUndefined();
     const needs = (name: string, input: unknown) => lifted[name].needsApproval(input, {});
     const event = { account: 'a', title: 'Review', startIso: '2031-01-02T10:00', endIso: '2031-01-02T11:00' };
@@ -193,6 +193,10 @@ describe('server-enforced approval for tools that reach another person', () => {
       true,
     );
     expect(toolNeedsApproval('archive_thread', {})).toBe(false);
+    // An answer to an invitation reaches the organizer, so it asks too.
+    expect(needs('calendar_rsvp_event', { account: 'a', calendarId: 'c', eventId: 'e', status: 'yes' })).toBe(
+      true,
+    );
   });
 
   test('each gated call has a plain approval card', () => {

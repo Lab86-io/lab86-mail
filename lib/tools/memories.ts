@@ -19,6 +19,7 @@ export const remember = defineTool({
   description:
     'Store a note about a sender or recipient, used to personalize drafts/triage. By default the note is added to the notes already saved for that email. Use mode "replace" only to rewrite the whole note, and pass the complete new text.',
   category: 'memory',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     email: z.string(),
@@ -51,6 +52,7 @@ export const forget = defineTool({
   name: 'forget',
   description: 'Delete all stored notes for an email.',
   category: 'memory',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ email: z.string() }),
   output: z.object({ ok: z.boolean() }),

@@ -6,6 +6,7 @@ import { completeWorkStep } from '@/lib/albatross/step-execution';
 import { type StepVerification, stepNeedsCheck } from '@/lib/albatross/step-verification';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { isStandingOrderPaused } from '@/lib/hosted/standing-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,7 @@ interface StepWatchDependencies {
   completeWorkStep: typeof completeWorkStep;
   evidenceSatisfies: typeof evidenceSatisfies;
   reportError: typeof console.error;
+  watchesPaused: (userId: string) => Promise<boolean>;
 }
 
 const defaults: StepWatchDependencies = {
@@ -33,6 +35,7 @@ const defaults: StepWatchDependencies = {
   completeWorkStep,
   evidenceSatisfies,
   reportError: console.error,
+  watchesPaused: (userId) => isStandingOrderPaused(userId, 'watches'),
 };
 
 interface WatchableStep {
@@ -72,6 +75,8 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
     if (!userId || !workId) {
       return NextResponse.json({ ok: false, error: 'userId and workId are required.' }, { status: 400 });
     }
+    // Settings, Standing orders: paused watches read and check off nothing.
+    if (await deps.watchesPaused(userId)) return NextResponse.json({ ok: true, skipped: 'paused' });
     try {
       const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
         userId,

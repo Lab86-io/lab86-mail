@@ -71,6 +71,7 @@ export const documentCreate = defineTool({
   description:
     'Create an editable Albatross document, spreadsheet, or presentation. For researched decks, provide presentation with the finished slide content: it composes through review of every slide and bounded copy/layout repair. Prefer the version 2 brief with audience, purpose, tone, palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate), fontPair (serif, sans, literary, humanist, grotesk, mono), imagery and slide roles: cover, statement, image-left, image-right, metrics, chart, table, process, comparison, list, quote, close. Chart slides take typed categories/series; table slides take headers/rows/source and compose editable cells. Call presentation_plan with gathered evidence first, execute its calculation and visual tool steps, then create the deck. Legacy briefs remain supported. imageUploadIds supplies up to eight owned chat images; artwork auto fills open version 2 image slots with credited public-domain paintings, while artwork none excludes decorative paintings without excluding uploaded images or data. Combine supplied images, artwork and chart/table slides as the content needs; no imagery-category selection is required. Use instructions and sourceContext when content still needs generating. Omit both to create a blank file. The result opens from Files and can be exported or published to Google. This creates a private draft, never sends or shares it.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z
     .object({
@@ -287,6 +288,7 @@ export const documentSuggestChanges = defineTool({
   description:
     'Create a reviewable AI suggestion for an existing Albatross file. It appears in the editor’s suggestion rail and does not change the file until the user applies it.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1),
@@ -344,6 +346,7 @@ export const documentApplyInstruction = defineTool({
   description:
     'Apply an explicitly requested AI edit to an existing Albatross file as a new immutable revision. Use document_suggest_changes when the user asked to review first.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1),
@@ -404,6 +407,7 @@ export const documentReviewSlides = defineTool({
   description:
     'Render and visually inspect every slide of an existing presentation using the selected vision model. Repair layout, contrast and orientation without changing content or chart data, then inspect the repaired slides again. Use after document_edit or to resume a saved draft whose visualReview status is needs_review. Saves repairs with revision conflict protection; never recreates the presentation.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ documentId: z.string().min(1) }),
   output: z.object({
@@ -453,6 +457,7 @@ export const documentPublishGoogle = defineTool({
   description:
     'Publish an Albatross document as a native Google Doc, Sheet, or Slides file, or sync a later revision. Engine-backed Odoo workbooks cannot be published or synced this way because that would discard formatting and workbook features; use the spreadsheet editor’s Excel download instead.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1),
@@ -512,6 +517,7 @@ export const documentEdit = defineTool({
   description:
     'Precisely edit document blocks, presentation slides/elements, or the full Odoo spreadsheet workbook using IDs and revision from document_get. For a presentation, deck_restyle changes the look without touching content: palette (editorial, signal, grove, lagoon, dusk, rose, sand, slate, or six custom hex colors), fontPair (serif, sans, literary, humanist, grotesk, mono), scope theme (colors and fonts) or theme-and-layout (every slide recomposed through the compositions; facts, chart data, notes, slide order and locked elements stay), and imagery paintings (credited public-domain paintings on the cover, statement, image, quote and close slides that have no image) or none (paintings removed; the user’s own images stay). When the user explicitly asks to restyle, retheme or change the look, send deck_restyle with mode apply so it saves directly. Element coordinates are percentages 0–100, width/height at least 1. Use spreadsheet_capabilities to read exact command payloads, then spreadsheet_command operations for real charts/graphs, styled tables, pivots, formatting, validation, images, and all workbook features; cell_update is also supported. No second AI generation is needed. Review mode creates a proposal; apply saves explicitly requested edits directly through the Odoo engine. Edits are atomic and cannot overwrite a newer revision. Files stay private; this does not publish, share, or send them.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     documentId: z.string().min(1).max(200),

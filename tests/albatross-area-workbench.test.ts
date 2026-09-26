@@ -26,7 +26,9 @@ describe('the Area detail workbench', () => {
 describe('Today is the Brief', () => {
   test('mounts the full report without the dashboard wrapper', () => {
     const today = read('components/report/Today.tsx');
-    expect(today).toContain('return <DailyReport />');
+    // The quiet trial note (last days of a trial) is the only thing above the Brief.
+    expect(today).toContain('<DailyReport />');
+    expect(today).not.toMatch(/<(?!DailyReport|TrialDaysLeftNote|div)[A-Z]/);
     expect(today).not.toContain('TodaySurface');
     expect(today).not.toContain('embedded');
   });

@@ -128,6 +128,7 @@ export const googleFileImport = defineTool({
   description:
     'Import a Google Doc, Sheet, or Slides file returned by cloud_file_search into the revisioned Albatross editor. Existing imports are reused. This does not publish or share the file.',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     connectionId: z.string().min(1).max(500),

@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { api, convexMutation, convexQuery } from './convex';
 import { aiCreditDefaults, isClerkConfigured, isConvexConfigured } from './env';
+import { TRIAL_DAYS } from './plans';
 
 export type AiBillingPlan = 'free' | 'byok' | 'pro' | 'admin';
 
@@ -11,6 +12,8 @@ export interface AiBillingEntitlement {
   // 'clerk' is a live read of the signed-in session. 'snapshot' is the stored
   // copy that background work (brief jobs, Jev, narrative) reads by userId.
   source: 'clerk' | 'snapshot';
+  /** Set while the app-level trial, not a subscription, gives this Pro plan. */
+  trialEndsAt?: number;
 }
 
 /** The stored per-user entitlement row (`aiEntitlements`), as read by background work. */
@@ -19,6 +22,15 @@ export interface StoredEntitlementSnapshot {
   status?: string | null;
   monthlyCredits?: number | null;
   updatedAt?: number | null;
+  /** The one Pro trial this user gets. Set once; never cleared. */
+  trialStartedAt?: number | null;
+  trialEndsAt?: number | null;
+}
+
+export interface TrialGrant {
+  granted: boolean;
+  trialStartedAt: number | null;
+  trialEndsAt: number | null;
 }
 
 // Each signed-in request that resolves billing refreshes the stored snapshot.
@@ -50,10 +62,19 @@ const billingDefaults = {
     await convexMutation(api.ai.upsertEntitlement, {
       userId,
       plan: entitlement.plan,
-      status: 'active',
+      status: entitlement.trialEndsAt ? 'trialing' : 'active',
       source: 'clerk',
       monthlyCredits: entitlement.monthlyCredits,
     });
+  },
+  // Idempotent on the server: a user who already had a trial gets the same
+  // dates back, and a user who had Pro before gets none.
+  grantTrial: async (
+    userId: string,
+    input: { days: number; monthlyCredits: number },
+  ): Promise<TrialGrant> => {
+    if (!isConvexConfigured()) return { granted: false, trialStartedAt: null, trialEndsAt: null };
+    return convexMutation<TrialGrant>((api as any).ai.grantTrial, { userId, ...input });
   },
   now: () => Date.now(),
 };
@@ -95,7 +116,8 @@ export async function getAiBillingEntitlement(
   const has = authObject?.has;
   const target = options.userId || null;
   if (sessionUserId && typeof has === 'function' && (!target || target === sessionUserId)) {
-    const entitlement = await entitlementFromClerk(has, defaults);
+    let entitlement = await entitlementFromClerk(has, defaults);
+    if (entitlement.plan === 'free') entitlement = await withTrial(sessionUserId, entitlement, options, d);
     await rememberEntitlement(sessionUserId, entitlement, d);
     return entitlement;
   }
@@ -107,6 +129,54 @@ export async function getAiBillingEntitlement(
     if (stored) return stored;
   }
   return freeEntitlement(defaults.freeMonthlyCredits);
+}
+
+/**
+ * A user whose subscription is Free gets Pro while the one app-level trial
+ * runs. The first signed-in request of a user who never had a trial (and
+ * never had Pro) grants it: new accounts and existing Free users alike.
+ */
+async function withTrial(
+  userId: string,
+  free: AiBillingEntitlement,
+  options: { snapshot?: StoredEntitlementSnapshot | null },
+  d: BillingDependencies,
+): Promise<AiBillingEntitlement> {
+  const defaults = aiCreditDefaults();
+  const snapshot =
+    options.snapshot !== undefined ? options.snapshot : await d.loadSnapshot(userId).catch(() => undefined);
+  // An unreadable row proves nothing: never grant blind.
+  if (snapshot === undefined) return free;
+  let endsAt = finite(snapshot?.trialEndsAt);
+  if (!finite(snapshot?.trialStartedAt) && trialEligible(snapshot)) {
+    const grant = await d
+      .grantTrial(userId, { days: TRIAL_DAYS, monthlyCredits: defaults.proMonthlyCredits })
+      .catch((err) => {
+        console.warn('[billing] could not grant the trial:', err instanceof Error ? err.name : err);
+        return null;
+      });
+    endsAt = finite(grant?.trialEndsAt);
+  }
+  if (endsAt === null || endsAt <= d.now()) return free;
+  return {
+    plan: 'pro',
+    status: 'active',
+    monthlyCredits: defaults.proMonthlyCredits,
+    source: 'clerk',
+    trialEndsAt: endsAt,
+  };
+}
+
+/** A user who had Pro or admin before does not get a trial. */
+export function trialEligible(snapshot: StoredEntitlementSnapshot | null | undefined): boolean {
+  if (!snapshot) return true;
+  if (finite(snapshot.trialStartedAt) !== null) return false;
+  return snapshot.plan !== 'pro' && snapshot.plan !== 'admin';
+}
+
+function finite(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** A stored snapshot as an entitlement, or null when it proves nothing. */
@@ -121,6 +191,11 @@ export function entitlementFromSnapshot(
   if (snapshot.status !== 'active' && snapshot.status !== 'trialing') return null;
   const updatedAt = Number(snapshot.updatedAt);
   if (Number.isFinite(updatedAt) && now - updatedAt > ENTITLEMENT_SNAPSHOT_MAX_AGE_MS) return null;
+  // A trial proves Pro only until it ends; after that the user is Free until a
+  // signed-in request stores the next plan.
+  const trialEndsAt = finite(snapshot.trialEndsAt);
+  const trialing = snapshot.status === 'trialing' && trialEndsAt !== null;
+  if (trialing && trialEndsAt <= now) return null;
   const credits = Number(snapshot.monthlyCredits);
   return {
     plan,
@@ -133,6 +208,7 @@ export function entitlementFromSnapshot(
           ? 0
           : defaults.proMonthlyCredits,
     source: 'snapshot',
+    ...(trialing ? { trialEndsAt } : {}),
   };
 }
 
@@ -141,7 +217,9 @@ async function rememberEntitlement(
   entitlement: AiBillingEntitlement,
   deps: Pick<BillingDependencies, 'persist' | 'now'>,
 ) {
-  const key = `${entitlement.plan}:${entitlement.monthlyCredits}`;
+  // The status is part of the key: paying during a trial must store 'active'
+  // at once, or background work would read a lapsed trial as Free.
+  const key = `${entitlement.plan}:${entitlement.monthlyCredits}:${entitlement.trialEndsAt ?? 'paid'}`;
   const now = deps.now();
   const previous = lastWritten.get(userId);
   if (previous && previous.key === key && now - previous.at < SNAPSHOT_REFRESH_MS) return;

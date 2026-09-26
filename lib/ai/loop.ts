@@ -7,13 +7,14 @@ import {
   streamText,
 } from 'ai';
 import { z } from 'zod';
+import { pausedAssistantRisks } from '../hosted/standing-orders';
 import { narrativePrompt } from '../narrative/service';
 import { withDeadline } from '../shared/deadline';
 import { listMemories } from '../store/memories';
 import { TOOLS } from '../tools';
 import { documentCreate } from '../tools/documents';
-import { invokeTool } from '../tools/registry';
-import { APPROVAL_GATED_TOOLS, approvalSummary, toolNeedsApproval } from './approval';
+import { invokeTool, toolRisk } from '../tools/registry';
+import { APPROVAL_RISKS, approvalConditionMet, approvalSummary, type ToolRisk } from './approval';
 import { getAiRequestContext, runWithAiRequestContext } from './context';
 import { executeCheckpointedTool, toolExecutionKey } from './execution';
 import {
@@ -310,6 +311,18 @@ export interface AgentToolOptions {
   scopeGroups?: readonly string[];
   /** The client that renders this chat. Native clients get no web-only UI tools. */
   clientPlatform?: ClientPlatform;
+  /** Risk classes the user paused in Settings, Standing orders. Those calls change nothing. */
+  pausedRisks?: ReadonlySet<ToolRisk>;
+}
+
+/** What a call in a paused risk class returns. The model reads it; nothing ran. */
+export function pausedToolResult(name: string, risk: ToolRisk) {
+  return {
+    ok: false,
+    status: 'paused_by_user',
+    risk,
+    message: `The user paused this kind of action in Settings, Standing orders, so ${name} did not run and nothing changed. Tell the user what you would have done, and do not try another tool to do the same thing.`,
+  };
 }
 
 export function liftToolsForAgent(
@@ -324,15 +337,18 @@ export function liftToolsForAgent(
   for (const [name, t] of Object.entries(TOOLS)) {
     if (!AGENT_TOOL_NAMES.has(name)) continue;
     if (clientPlatform !== 'web' && isWebOnlyTool(name)) continue;
+    const risk = toolRisk(t);
+    const paused = options.pausedRisks?.has(risk) ?? false;
     lifted[name] = aiTool({
       description: t.description,
-      // Calls that reach another person wait for the user's approval. The SDK
-      // runs execute only after an approved response for this exact call.
-      // Malformed input skips the gate so the model gets the field errors first.
-      ...(APPROVAL_GATED_TOOLS.has(name)
+      // Calls that reach another person or cannot be undone wait for the
+      // user's approval. The SDK runs execute only after an approved response
+      // for this exact call. Malformed input skips the gate so the model gets
+      // the field errors first. A paused class never asks: it runs nothing.
+      ...(APPROVAL_RISKS.has(risk) && !paused
         ? {
             needsApproval: (input: unknown) =>
-              t.input.safeParse(input ?? {}).success && toolNeedsApproval(name, input),
+              t.input.safeParse(input ?? {}).success && approvalConditionMet(name, input),
           }
         : {}),
       // Keep legacy briefs readable by the registry, but offer the agent one
@@ -343,6 +359,7 @@ export function liftToolsForAgent(
           : t.input,
       ),
       execute: async (args: unknown, options?: { abortSignal?: AbortSignal }) => {
+        if (paused) return pausedToolResult(name, risk);
         const context = getAiRequestContext();
         if (presentationSession && name === 'document_create' && (args as any)?.kind === 'deck') {
           const stage = nextPresentationCheckpoint(presentationSession);
@@ -1045,9 +1062,12 @@ export async function runAgent({
   // records its operation under it, forming a single undoable change-set.
   const operationBatchId = runId;
   const timezone = userTimezone || 'UTC';
+  // The user's standing orders decide which risk classes the assistant may use.
+  const pausedRisks = userId ? await pausedAssistantRisks(userId) : undefined;
   const tools = liftToolsForAgent(operationBatchId, timezone, presentationSession, {
     scopeGroups: toolGroups,
     clientPlatform,
+    pausedRisks,
   });
 
   let resolveSteps: (steps: any[]) => void = () => undefined;

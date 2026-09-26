@@ -82,6 +82,7 @@ export const narrativeRecordChange = defineTool({
   description:
     'Link a meaningful interpretation to exact observed/user-reported evidence ids. Cannot declare your own suggestions or unverified actions as facts. Corrections to source observations belong to the user-facing memory editor.',
   category: 'memory',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ text: z.string().min(1).max(4000), sourceIds: z.array(z.string()).min(1).max(12) }),
   output: z.any(),

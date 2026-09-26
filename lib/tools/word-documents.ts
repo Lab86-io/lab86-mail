@@ -10,6 +10,7 @@ function owner(userId?: string | null) {
 export const wordDocumentCreate = defineTool({
   name: 'word_document_create',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   description:
     'Create a full Word DOCX document that opens in the integrated word processor with pages, tables, images, headers, footers, comments and review tools. Supply ordered edits to create real content and styling. Optionally copy an existing lightweight Albatross document using sourceDocumentId and its expectedRevision; the source is retained. Never publishes or shares.',
@@ -54,6 +55,7 @@ export const wordDocumentGet = defineTool({
 export const wordDocumentEdit = defineTool({
   name: 'word_document_edit',
   category: 'documents',
+  risk: 'write_self',
   mutating: true,
   description:
     'Edit a saved Word DOCX as an immutable revision: insert paragraphs/headings, tables and PNG/JPEG images; add comments; set headers/footers; replace text across formatted runs; change font/size/color/highlight, paragraph alignment/spacing/page breaks, and page size/orientation/margins. Unrelated package content is preserved. Read word_document_get first. Paragraph indexes are zero-based and apply to the document after each preceding operation. Omitted after appends to the body. format_text formats entire selected paragraphs; page_setup affects the final section. An open connected Collabora editor is automatically saved, paused, and reopened. If autosaving changes the revision, read word_document_get again before retrying; never reuse stale paragraph indexes. Unresponsive editors and concurrent changes fail safely. All edits succeed together or none are saved.',

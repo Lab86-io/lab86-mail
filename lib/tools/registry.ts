@@ -1,6 +1,9 @@
 import { z } from 'zod';
+import type { ToolRisk } from '../ai/approval';
 import { runWithAiRequestContext } from '../ai/context';
 import { writeAudit } from '../store/audit';
+
+export type { ToolRisk } from '../ai/approval';
 
 export interface ToolContext {
   agent: 'user' | 'ai' | 'codex';
@@ -41,6 +44,13 @@ export interface ToolDefinition<
     | 'documents'
     | 'meta';
   mutating: boolean;
+  /**
+   * What a call can touch: `read` (nothing), `write_self` (the user's own data,
+   * shown in Activity with Undo), `reach_person` (another person sees it), or
+   * `destructive` (it cannot be undone). Every mutating tool declares one; the
+   * agent loop asks the user first for `reach_person` and `destructive`.
+   */
+  risk?: ToolRisk;
   input: TArgs;
   output: TOut;
   handler: (args: z.infer<TArgs>, ctx: ToolContext) => Promise<z.infer<TOut>>;
@@ -53,6 +63,11 @@ export function defineTool<TArgs extends z.ZodTypeAny, TOut extends z.ZodTypeAny
 }
 
 export type AnyTool = ToolDefinition<any, any>;
+
+/** The risk class of a tool. A tool that declares none is `read` or, if it mutates, `write_self`. */
+export function toolRisk(tool: Pick<AnyTool, 'mutating' | 'risk'>): ToolRisk {
+  return tool.risk ?? (tool.mutating ? 'write_self' : 'read');
+}
 
 function validationIssues(issues: z.core.$ZodIssue[]): z.core.$ZodIssue[] {
   return issues.flatMap((issue) => {

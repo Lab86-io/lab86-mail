@@ -395,6 +395,7 @@ export const albatrossCaptureWork = defineTool({
   description:
     'Create Albatross Work when the user explicitly asks to create an Albatross or to hold, keep, track, or remember an outcome as work, including a response to a brief recommendation. Reuse matching existing Work; never treat a recommendation alone as permission. Returns the Work items with their shape and horizon.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     text: z.string().trim().min(1).max(20_000),
@@ -477,6 +478,7 @@ export const albatrossListAdd = defineTool({
   description:
     'Add one item to a list-shaped Albatross Work ("add Blade Runner to the movie list"). Give workId, or workTitle in the user\'s words; the tool resolves the list by title. Returns the item and the full list.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z
     .object({
@@ -520,6 +522,7 @@ export const albatrossMetricLog = defineTool({
   description:
     'Log one value for a practice-shaped Albatross Work ("log 182.4 for the weight goal"). Give workId, or workTitle in the user\'s words. Returns the entry, the metric, and the review line data.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z
     .object({
@@ -587,6 +590,7 @@ export const albatrossCompleteWork = defineTool({
   description:
     'Complete an existing Albatross when the user explicitly says its outcome is done. Saves their statement and closes it immediately. No research, evidence attachments, or replanning required. Does not complete merely related work.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ workId: z.string().min(1), claim: z.string().min(1).max(2_000) }),
   output: z.object({ ok: z.boolean(), workId: z.string(), state: z.literal('done'), summary: z.string() }),
@@ -609,6 +613,7 @@ export const albatrossRecordProgress = defineTool({
   description:
     "Persist the user's authoritative partial progress on an existing Albatross. When they have done everything they can and are waiting on an email, supply waitingForReply using the sent email's accountId and threadId: this saves the report AND pauses work until a relevant incoming reply reactivates it. Do not replan waiting work. Optional evidence and question answers must not prevent saving the user's report. For a completed outcome use albatross_complete_work.",
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -742,6 +747,7 @@ export const albatrossReplanWork = defineTool({
   description:
     'Regenerate the latest plan for the SAME Albatross Work after progress/evidence has been recorded. Creates a versioned plan revision and returns a compact before/after summary with the new current step.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -977,6 +983,7 @@ export const albatrossSplitWork = defineTool({
   description:
     'Split one Albatross Work that bundles several independent outcomes into sibling Works. Call without items to get a proposal to show the user. Call again with the confirmed items to commit: children are created, the parent is released with provenance, and the children are planned.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     workId: z.string().min(1),
@@ -1043,6 +1050,7 @@ export const albatrossApplyIntentPlan = defineTool({
   description:
     'Apply an Albatross intent plan through real safe tools. Creates tasks/calendar holds/drafts/projects in one operation batch and queues human-facing actions for approval.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     intentId: z.string(),
@@ -1316,6 +1324,7 @@ export const albatrossApproveAction = defineTool({
   description:
     'Approve one Albatross approval card and execute its allowlisted human-facing tool. editedArgs can override the stored args before execution.',
   category: 'tasks',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     approvalId: z.string(),
@@ -1376,6 +1385,7 @@ export const albatrossRejectAction = defineTool({
   name: 'albatross_reject_action',
   description: 'Reject an Albatross approval card. The originating plan remains unresolved/rejected.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ approvalId: z.string(), reason: z.string().optional() }),
   output: z.object({ ok: z.boolean() }),
@@ -1395,6 +1405,7 @@ export const albatrossCreateProject = defineTool({
   name: 'albatross_create_project',
   description: 'Create or update an Albatross project/epic without creating task cards by itself.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     externalId: z.string().optional(),
@@ -1455,6 +1466,7 @@ export const albatrossUpdateProject = defineTool({
   name: 'albatross_update_project',
   description: 'Change an Albatross project state after explicit user review.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string(),
@@ -1493,6 +1505,7 @@ export const albatrossCreateRoutine = defineTool({
   description:
     'Create a durable recurring routine inside an Albatross Project/Epic. Use this after the user declares a recurring personal or professional commitment, such as daily weight-loss actions, an evening food check-in, a weekly client review, or weekday launch work. A routine can materialize tasks, questions, or both in the user’s local timezone. It never enables notifications silently; the living assistant asks once for notification consent after the first check-in.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string(),
@@ -1590,6 +1603,7 @@ export const albatrossSetRoutineConsent = defineTool({
   description:
     'Enable, pause, or decline a routine only after the user explicitly agrees. Notification delivery is a separate explicit choice and defaults off.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     routineId: z.string(),
@@ -1622,6 +1636,7 @@ export const albatrossRunRoutineNow = defineTool({
   description:
     'Materialize today’s task/check-in for an enabled routine now. The stable local-date run key prevents duplicate tasks or questions.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ routineId: z.string() }),
   output: z.object({ ok: z.boolean() }),
@@ -1655,6 +1670,7 @@ export const albatrossCreateSprint = defineTool({
   name: 'albatross_create_sprint',
   description: 'Create an Albatross sprint, optionally scoped to a project.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     projectId: z.string().optional(),

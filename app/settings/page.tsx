@@ -18,8 +18,11 @@ import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
+import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
+import { useFilesSurface, useSetFilesSurface } from '@/components/settings/surfaces';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -80,12 +83,13 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
+  orders: () => <StandingOrdersSection />,
   ai: () => (
     <AiSection
       heading={
         <SectionHeading
           title="Intelligence"
-          blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
+          blurb="Summaries, triage, drafts, and the daily brief. Use the hosted models in Pro, or bring your own key."
         />
       }
     />
@@ -102,14 +106,30 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
 function AdvancedSection() {
   const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
   const setBoardEnabled = useClientStore((s) => s.setBoardSurfaceEnabled);
+  const filesEnabled = useFilesSurface();
+  const setFiles = useSetFilesSurface();
+  const extras = [filesEnabled ? 'Files' : null, boardEnabled ? 'Board' : null].filter(Boolean);
   return (
     <section>
       <SectionHeading
         title="Advanced"
         blurb="Optional surfaces. Albatross does not need any of these to work."
-        aside={boardEnabled ? 'Board on' : 'Nothing extra on'}
+        aside={extras.length ? `${extras.join(' and ')} on` : 'Nothing extra on'}
       />
       <SettingsCard>
+        <SettingsRow
+          id="files-surface"
+          label="Show Files"
+          description="Files and the document editors in the rail. Documents made for an Albatross stay on its Work page either way, and links to a document still open it."
+          control={
+            <Switch
+              id="files-surface"
+              checked={filesEnabled}
+              disabled={setFiles.isPending}
+              onCheckedChange={(on) => setFiles.mutate(on)}
+            />
+          }
+        />
         <SettingsRow
           id="board-surface"
           label="Show the board"
@@ -1424,11 +1444,16 @@ function AccountSection() {
         />
       </SettingsCard>
 
+      <SettingsGroupTitle>Your data</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow label="Export my data" description={EXPORT_DESCRIPTION} control={<ExportDataButton />} />
+      </SettingsCard>
+
       <SettingsGroupTitle>Delete</SettingsGroupTitle>
       <SettingsCard tone="danger">
         <SettingsRow
           label="Delete everything"
-          description="Mail grants, the search index, model settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          description="Mail grants, the search index, model settings, usage records, and your Albatross account. Gone for good. Export your data first if you want a copy."
           control={
             <AlertDialog
               onOpenChange={(open) => {
@@ -1451,10 +1476,11 @@ function AccountSection() {
                   <AlertDialogTitle>Delete your Albatross account?</AlertDialogTitle>
                   <AlertDialogDescription>
                     This removes every mailbox grant, the search index, your settings, and usage records from
-                    Lab86. It cannot be undone. Type{' '}
+                    Albatross. It cannot be undone. Type{' '}
                     <span className="font-mono font-medium text-[var(--color-text)]">delete</span> to confirm.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                <ExportBeforeDelete />
                 <Input
                   value={confirmText}
                   onChange={(event) => setConfirmText(event.target.value)}

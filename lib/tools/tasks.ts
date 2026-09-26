@@ -200,6 +200,7 @@ export const tasksCreateBoard = defineTool({
   name: 'tasks_create_board',
   description: 'Create a new Kanban board, optionally with custom column names.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     title: z.string().min(1),
@@ -230,6 +231,7 @@ export const tasksCreateCard = defineTool({
   description:
     'Create a card on a board. Omit boardId for the default board; column defaults to the first column (use column:"Today" etc.). dueIso sets a due date (naive timestamps are the user’s timezone). assignees are board-member emails. Pass source when the task came from an email or calendar event so the card carries a provenance link.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     boardId: z.string().optional(),
@@ -277,6 +279,7 @@ export const tasksUpdateCard = defineTool({
   description:
     'Update a card’s fields (title, description, labels, priority, due date, completed, source provenance). Pass dueIso:null to clear the due date. completed:true marks done and automatically moves the card to the Done column when that column exists; do not call tasks_move_card afterward unless the returned card.columnName is not the desired column.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     cardId: z.string(),
@@ -331,6 +334,7 @@ export const tasksMoveCard = defineTool({
   description:
     'Move or reorder a card on its board. Use beforeOrder/afterOrder from adjacent cards to preserve a direct-manipulation drop position. If both are omitted, the card is appended.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     cardId: z.string(),
@@ -389,6 +393,7 @@ export const tasksDeleteCard = defineTool({
   name: 'tasks_delete_card',
   description: 'Delete a card. Undoable — undo recreates it with the same content.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ cardId: z.string() }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -414,6 +419,7 @@ export const tasksCreateColumn = defineTool({
   name: 'tasks_create_column',
   description: 'Add a column to a board (omit boardId for the default board).',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ boardId: z.string().optional(), name: z.string().min(1) }),
   output: z.object({ ok: z.boolean(), columnId: z.string(), operationId: z.string() }),
@@ -441,6 +447,7 @@ export const tasksRenameColumn = defineTool({
   name: 'tasks_rename_column',
   description: 'Rename a column (find it by current name; omit boardId for the default board).',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ boardId: z.string().optional(), column: z.string().min(1), name: z.string().min(1) }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -467,6 +474,7 @@ export const tasksReorderColumn = defineTool({
   name: 'tasks_reorder_column',
   description: 'Persist the order of a board column after direct manipulation.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ boardId: z.string().optional(), column: z.string().min(1), order: z.number() }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -498,6 +506,7 @@ export const tasksDeleteColumn = defineTool({
   description:
     'Delete a column AND its cards (find it by name; omit boardId for the default board). Not undoable — confirm with the user when cards would be lost.',
   category: 'tasks',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ boardId: z.string().optional(), column: z.string().min(1) }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -520,6 +529,7 @@ export const tasksRenameBoard = defineTool({
   name: 'tasks_rename_board',
   description: 'Rename a board.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ boardId: z.string(), title: z.string().min(1) }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -544,6 +554,7 @@ export const tasksDeleteBoard = defineTool({
   description:
     'Delete a whole board with its columns and cards. Not undoable — always confirm with the user first.',
   category: 'tasks',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ boardId: z.string() }),
   output: z.object({ ok: z.boolean(), operationId: z.string() }),
@@ -566,6 +577,7 @@ export const tasksSetPublicLink = defineTool({
   name: 'tasks_set_public_link',
   description: 'Enable or disable a board’s public read-only link.',
   category: 'tasks',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({ boardId: z.string(), enabled: z.boolean() }),
   output: z.object({ ok: z.boolean(), publicToken: z.string().nullable() }),
@@ -586,6 +598,7 @@ export const tasksInviteMember = defineTool({
   name: 'tasks_invite_member',
   description: 'Invite a member or read-only viewer to a board.',
   category: 'tasks',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     boardId: z.string(),
@@ -604,6 +617,7 @@ export const tasksRemoveMember = defineTool({
   name: 'tasks_remove_member',
   description: 'Remove a collaborator from a board.',
   category: 'tasks',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({ boardId: z.string(), memberId: z.string() }),
   output: z.object({ ok: z.boolean() }),
@@ -618,6 +632,7 @@ export const tasksAddComment = defineTool({
   name: 'tasks_add_comment',
   description: 'Add a comment to a card on the user’s behalf.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ cardId: z.string(), body: z.string().min(1) }),
   output: z.object({ ok: z.boolean() }),
@@ -633,6 +648,7 @@ export const tasksAttachLink = defineTool({
   description:
     'Attach a link to a card. The url is forgiving — "example.com" or "https://example.com" both work.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ cardId: z.string(), name: z.string().optional(), url: z.string().min(1) }),
   output: z.object({ ok: z.boolean(), url: z.string(), operationId: z.string() }),
@@ -663,6 +679,7 @@ export const tasksAttachFile = defineTool({
   description:
     'Attach a file to a card as an uploaded file (not just a link). Provide a chatUploadId from the current assistant turn, OR a web url, OR an email attachment (account + messageId + attachmentId). Use this when the user says "save/attach this file to the card".',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     cardId: z.string(),
@@ -737,6 +754,7 @@ export const tasksAttachCalendarEventLink = defineTool({
   description:
     'Attach a provider link for a calendar event to a task card and, by default, set that event as the card provenance source. Use this when the user wants a task to reference a calendar event and you have the eventId/account, or after calendar_list_events finds the event.',
   category: 'tasks',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     cardId: z.string(),

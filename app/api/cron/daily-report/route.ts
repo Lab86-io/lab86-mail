@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { isStagingRuntime } from '@/lib/hosted/controls';
+import { isStandingOrderPaused } from '@/lib/hosted/standing-orders';
 import { enqueueBriefJob } from '@/lib/mail/brief-jobs';
 
 export {
@@ -11,8 +12,14 @@ export {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-const defaults = { isInternalCronRequest, isStagingRuntime, enqueue: enqueueBriefJob };
-export function createDailyReportPost(deps = defaults) {
+const defaults = {
+  isInternalCronRequest,
+  isStagingRuntime,
+  enqueue: enqueueBriefJob,
+  briefPaused: (userId: string) => isStandingOrderPaused(userId, 'brief'),
+};
+export function createDailyReportPost(overrides: Partial<typeof defaults> = {}) {
+  const deps = { ...defaults, ...overrides };
   return async function post(req: NextRequest) {
     if (!deps.isInternalCronRequest(req))
       return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
@@ -22,6 +29,9 @@ export function createDailyReportPost(deps = defaults) {
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
     if (!userId) return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
     const kind = body?.kind === 'morning' ? 'morning' : 'manual';
+    // Settings, Standing orders: a paused Brief gets no scheduled edition.
+    if (kind === 'morning' && (await deps.briefPaused(userId)))
+      return NextResponse.json({ ok: true, skipped: true, reason: 'paused' });
     try {
       const job = await deps.enqueue({
         userId,
