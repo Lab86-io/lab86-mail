@@ -444,4 +444,99 @@ describe('document Convex transactions', () => {
       role: 'primary',
     });
   });
+
+  test('autosaves share one revision row per window (DOC-4)', async () => {
+    const t = newHarness();
+    await createDocument(t, 'memo');
+    const base = { internalSecret: SECRET, userId: USER, documentId: 'memo' };
+    const save = (expectedRevision: number, text: string, reason = 'inline_edit') =>
+      t.mutation(api.documents.update, {
+        ...base,
+        expectedRevision,
+        model: { kind: 'doc', version: 1, blocks: [{ id: 'b1', type: 'paragraph', text }] },
+        reason,
+      });
+    for (let revision = 1; revision <= 4; revision += 1) {
+      expect(await save(revision, `draft ${revision}`)).toMatchObject({ ok: true });
+    }
+    const revisions = () => t.query(api.documents.listRevisions, { ...base });
+    let rows = await revisions();
+    // The create row stays; the four autosaves are one row at revision 5.
+    expect(rows.map((row) => row.revision)).toEqual([5, 1]);
+    expect(rows[0].model.blocks[0].text).toBe('draft 4');
+
+    // A save that is not an autosave starts a new row, and so does a new window.
+    await save(5, 'named', 'edit');
+    await t.run(async (ctx) => {
+      const latest = (await ctx.db.query('documentRevisions').collect()).find((row) => row.revision === 6);
+      if (latest) await ctx.db.patch(latest._id, { createdAt: Date.now() - 20 * 60_000 });
+    });
+    await save(6, 'after edit');
+    const autosave = (await revisions())[0];
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('documentRevisions').collect()).find(
+        (r) => r.revision === autosave.revision,
+      );
+      if (row)
+        await ctx.db.patch(row._id, { createdAt: Date.now() - 20 * 60_000, windowStartedAt: undefined });
+    });
+    await save(7, 'next window');
+    rows = await revisions();
+    expect(rows.map((row) => row.revision)).toEqual([8, 7, 6, 5, 1]);
+  });
+
+  test('the list can leave models out, and archive purges history (DOC-4)', async () => {
+    const t = newHarness();
+    await createDocument(t, 'keep');
+    await createDocument(t, 'gone');
+    const base = { internalSecret: SECRET, userId: USER };
+    const summaries = await t.query(api.documents.list, { ...base, metadataOnly: true });
+    expect(summaries.map((row: any) => row.documentId).sort()).toEqual(['gone', 'keep']);
+    expect(summaries.every((row: any) => !('model' in row))).toBe(true);
+    const full = await t.query(api.documents.list, { ...base });
+    expect(full.every((row: any) => row.model?.kind === 'doc')).toBe(true);
+
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['xlsx bytes'])));
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query('documents').collect()).find((doc) => doc.documentId === 'gone');
+      if (!row) return;
+      await ctx.db.patch(row._id, {
+        importSource: {
+          format: 'xlsx',
+          filename: 'a.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          size: 10,
+          sha256: 'x',
+          storageId,
+          warnings: [],
+          importedAt: 1,
+          revision: 1,
+        },
+      });
+      for (let revision = 2; revision <= 60; revision += 1) {
+        await ctx.db.insert('documentRevisions', {
+          userId: USER,
+          documentId: 'gone',
+          revision,
+          title: 'gone',
+          model: {},
+          reason: 'edit',
+          actor: 'user',
+          createdAt: revision,
+        });
+      }
+    });
+    await t.mutation(api.documents.archive, { ...base, documentId: 'gone' });
+    for (let round = 0; round < 3; round += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await t.finishInProgressScheduledFunctions();
+    }
+    const left = await t.run(async (ctx) => ({
+      revisions: (await ctx.db.query('documentRevisions').collect()).map((row) => row.documentId),
+      blob: Boolean(await ctx.db.system.get(storageId)),
+      importSource: (await ctx.db.query('documents').collect()).find((doc) => doc.documentId === 'gone')
+        ?.importSource,
+    }));
+    expect(left).toEqual({ revisions: ['keep'], blob: false, importSource: undefined });
+  });
 });

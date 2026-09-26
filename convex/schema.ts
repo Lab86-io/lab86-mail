@@ -2062,6 +2062,8 @@ export default defineSchema({
     reason: v.string(),
     actor: v.union(v.literal('user'), v.literal('ai'), v.literal('system')),
     createdAt: v.number(),
+    // Autosave rows are merged per time window; this is the first save in it.
+    windowStartedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_user_document_revision', ['userId', 'documentId', 'revision']),
