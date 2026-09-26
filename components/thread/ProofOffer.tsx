@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { dismissProofMatches, withoutDismissedProofMatches } from '@/lib/shell/proof-dismissals';
+import {
+  dismissProofMatches,
+  moveDeviceProofDismissalsOnce,
+  withoutDismissedProofMatches,
+} from '@/lib/shell/proof-dismissals';
 import { cn } from '@/lib/utils';
 
 /** One candidate returned by /api/albatross/proof-matches. */
@@ -138,7 +142,10 @@ export function ProofOffer({
     setDismissed(false);
     setPicking(false);
     if (!subject.trim() && !snippet?.trim()) return;
-    void loadProofMatches({ subject, snippet, accountId, providerThreadId: threadId })
+    // Device dismissals from an earlier version reach the server first, so
+    // the server can leave those pairs out.
+    void moveDeviceProofDismissalsOnce()
+      .then(() => loadProofMatches({ subject, snippet, accountId, providerThreadId: threadId }))
       .then((candidates) => {
         if (!cancelled) setMatches(withoutDismissedProofMatches(accountId, threadId, candidates));
       })
@@ -214,7 +221,7 @@ export function ProofOffer({
             size="xs"
             variant="ghost"
             onClick={() => {
-              dismissProofMatches(
+              void dismissProofMatches(
                 accountId,
                 threadId,
                 matches.map((match) => match.workId),
