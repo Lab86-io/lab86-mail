@@ -87,7 +87,10 @@ struct AssistantShapeActions: View {
         Button(action.label, role: action.kind == "delete_event" ? .destructive : nil) {
             error = nil
             switch action {
-            case .deleteEvent, .rsvpEvent, .snoozeThread, .rememberSender:
+            case .rememberSender(let email):
+                pending = action
+                Task { await prefillSavedNote(email) }
+            case .deleteEvent, .rsvpEvent, .snoozeThread:
                 pending = action
             default: start(action)
             }
@@ -108,6 +111,9 @@ struct AssistantShapeActions: View {
             case .rememberSender(let email):
                 TextField("Note about \(email)", text: $notes, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
+                Text("Saving replaces the saved note for this sender.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             case .rsvpEvent:
                 Text("Send your response to the organizer?").font(.caption)
                 Picker("Response", selection: $rsvp) {
@@ -232,6 +238,18 @@ struct AssistantShapeActions: View {
         case .unknown: throw BackendError.invalidResponse
         }
         return "Opened"
+    }
+
+    // AI-2: the field starts with the note already saved, so a save edits
+    // it instead of silently replacing it with a short new line.
+    @MainActor private func prefillSavedNote(_ email: String) async {
+        let result = try? await environment.tools.invoke("recall", arguments: ["email": .string(email)])
+        guard notes.isEmpty, let saved = Self.savedNote(from: result) else { return }
+        notes = saved
+    }
+
+    static func savedNote(from result: JSONValue?) -> String? {
+        result?["memory"]?["notes"]?.stringValue?.nilIfBlank
     }
 
     private func invoke(_ name: String, _ arguments: [String: JSONValue]) async throws {

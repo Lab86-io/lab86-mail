@@ -178,6 +178,10 @@ final class AssistantChatModel {
     private var uploadContext = ""
     private var currentApprovalContinuationID: String?
     private var lastFailedApprovalID: String?
+    // True while the current turn resumes the last user message (Continue or
+    // Retry). The server then reuses that message's run, so its step dedupe
+    // keeps completed actions from running again (AI-1).
+    private(set) var resumesLastTurn = false
     /// Wall clock for row and reasoning timestamps. Tests pin it.
     var clock: @MainActor () -> Date = { Date() }
 
@@ -224,6 +228,7 @@ final class AssistantChatModel {
         lastFailedUserText = nil
         lastFailedApprovalID = nil
         currentApprovalContinuationID = nil
+        resumesLastTurn = false
         canContinue = false
         messages.append(AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text))
         let replyID = appendAssistantReply()
@@ -237,14 +242,31 @@ final class AssistantChatModel {
         errorMessage = nil
         if let approvalID = lastFailedApprovalID {
             beginApprovalContinuation(approvalID: approvalID)
-        } else if let text = lastFailedUserText {
-            beginSend(text)
+        } else if lastFailedUserText != nil {
+            // The failed user message is still the last one. Send it again
+            // as a continuation; a second copy would start a new run.
+            beginContinuation()
         }
     }
 
     func continueResponse() {
         guard !isStreaming, !isUploading else { return }
-        beginSend("Continue from where you stopped. Do not repeat completed work.")
+        beginContinuation()
+    }
+
+    /// Resumes the turn of the last user message without adding a new one.
+    private func beginContinuation() {
+        guard messages.contains(where: { $0.role == .user }) else { return }
+        errorMessage = nil
+        lastFailedUserText = nil
+        lastFailedApprovalID = nil
+        currentApprovalContinuationID = nil
+        resumesLastTurn = true
+        canContinue = false
+        let replyID = appendAssistantReply()
+        streamTask = Task { [weak self] in
+            await self?.streamReply(into: replyID)
+        }
     }
 
     func answerApproval(_ approvalID: String, approved: Bool) {
@@ -282,6 +304,7 @@ final class AssistantChatModel {
         errorMessage = nil
         lastFailedUserText = nil
         lastFailedApprovalID = nil
+        resumesLastTurn = false
         currentApprovalContinuationID = approvalID
         canContinue = false
         let replyID = appendAssistantReply()
@@ -537,9 +560,11 @@ final class AssistantChatModel {
                 )
             }
             if let card { ingestDraft(card) }
-        case "tool-output-error":
+        case "tool-output-error", "tool-input-error":
+            // An input error means the model sent arguments the tool refused;
+            // its text is the real reason, not "Did not finish" (NAT-11).
             guard let callID = event["toolCallId"]?.stringValue else { return }
-            let name = toolNamesByCallID[callID] ?? "tool"
+            let name = event["toolName"]?.stringValue ?? toolNamesByCallID[callID] ?? "tool"
             let errorText = event["errorText"]?.stringValue?.nilIfBlank ?? "The step failed."
             if let partIndex = rowIndex(in: index, callID: callID),
                case .toolRow(var row) = messages[index].parts[partIndex] {
@@ -634,11 +659,23 @@ final class AssistantChatModel {
         }
     }
 
-    private func requestBody() throws -> JSONValue {
+    /// The platform this client names to the agent, so the server can use
+    /// the native tool set and prompt (AI-11).
+    static var clientPlatform: String {
+        #if os(macOS)
+        "macos"
+        #else
+        "ios"
+        #endif
+    }
+
+    func requestBody() throws -> JSONValue {
         var body: [String: JSONValue] = [
             "messages": transcriptJSON(),
             "timezone": .string(TimeZone.current.identifier),
+            "clientPlatform": .string(Self.clientPlatform),
         ]
+        if resumesLastTurn { body["continuation"] = .bool(true) }
         let scopeLine: String?
         switch scope.kind {
         case .global:
