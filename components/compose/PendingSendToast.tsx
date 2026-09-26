@@ -1,6 +1,6 @@
 'use client';
 
-import { Loader2, Send, Undo2 } from 'lucide-react';
+import { Send, Undo2 } from 'lucide-react';
 import type { DurablePendingSend } from './PendingSendProvider';
 
 export function PendingSendToast({
@@ -99,12 +99,7 @@ export function PendingSendToast({
           onClick={onUndo}
           className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-3 text-[12px] font-medium text-[var(--color-text)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-60"
         >
-          {cancelling ? (
-            <Loader2 className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />
-          ) : (
-            <Undo2 className="size-3.5" aria-hidden="true" />
-          )}
-          Undo send
+          {cancelling ? 'Undoing…' : 'Undo send'}
         </button>
       ) : recoverable ? (
         <button

@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock,
   Pencil as EditIcon,
-  Eye,
   Forward as ForwardIcon,
   Reply as ReplyIcon,
   X,
@@ -631,18 +630,10 @@ export function InlineComposer({
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          <TabButton
-            active={tab === 'write'}
-            onClick={() => setTab('write')}
-            icon={<EditIcon className="h-3 w-3" />}
-          >
+          <TabButton active={tab === 'write'} onClick={() => setTab('write')}>
             Write
           </TabButton>
-          <TabButton
-            active={tab === 'preview'}
-            onClick={() => setTab('preview')}
-            icon={<Eye className="h-3 w-3" />}
-          >
+          <TabButton active={tab === 'preview'} onClick={() => setTab('preview')}>
             Preview
           </TabButton>
           {onClose ? (
@@ -949,12 +940,10 @@ function RecipientField({
 function TabButton({
   active,
   onClick,
-  icon,
   children,
 }: {
   active: boolean;
   onClick: () => void;
-  icon: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -968,7 +957,6 @@ function TabButton({
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]',
       )}
     >
-      {icon}
       {children}
     </button>
   );

@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, Settings2, SquarePen } from 'lucide-react';
+import { ChevronDown, SquarePen } from 'lucide-react';
 import { useState } from 'react';
 import { ScheduledSends } from '@/components/inbox/ScheduledSends';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
@@ -217,8 +217,7 @@ export function MailNavView({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onSettings} className="gap-2 text-[12.5px]">
-            <Settings2 className="size-3.5" aria-hidden />
+          <DropdownMenuItem onSelect={onSettings} className="text-[12.5px]">
             Category settings
           </DropdownMenuItem>
         </DropdownMenuContent>

@@ -8,7 +8,7 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   type UIMessage,
 } from 'ai';
-import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
+import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, X } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import {
   createContext,
@@ -953,7 +953,6 @@ export function AssistantChat({
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={startNewChat} disabled={busy}>
-                <Plus className="size-3.5" />
                 Start a new chat
               </DropdownMenuItem>
             </DropdownMenuContent>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, CornerDownLeft, Loader2, Mail, Moon, Pencil, Sun, X } from 'lucide-react';
+import { ArrowUpRight, CornerDownLeft, Loader2, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -505,7 +505,6 @@ function SearchContent({
                   })
                 }
               >
-                <Pencil className="size-4" />
                 Compose new message
               </CommandItem>
             ) : null}
@@ -517,7 +516,6 @@ function SearchContent({
                   onClose();
                 }}
               >
-                <Moon className="size-4" />
                 Dark theme
               </CommandItem>
             ) : null}
@@ -529,7 +527,6 @@ function SearchContent({
                   onClose();
                 }}
               >
-                <Sun className="size-4" />
                 Light theme
               </CommandItem>
             ) : null}
@@ -553,7 +550,6 @@ function SearchContent({
                     })
                   }
                 >
-                  <Mail className="size-4" />
                   <span className="capitalize">{label}</span>
                 </CommandItem>
               ))}

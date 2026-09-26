@@ -25,21 +25,7 @@
 // Plans have no standalone destination; projects/places are area components.
 
 import { useConvexAuth, useQuery_experimental as useConvexQuery, useMutation, useQuery } from 'convex/react';
-import {
-  Archive,
-  ArrowRight,
-  CheckSquare,
-  ChevronDown,
-  CircleDot,
-  FolderInput,
-  Inbox,
-  MessageSquareText,
-  MoreHorizontal,
-  RefreshCw,
-  Search,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { ArrowRight, ChevronDown, Inbox, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react';
 import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { groupWork, type WorkListItem } from '@/components/albatross/AlbatrossesSurface';
@@ -382,7 +368,6 @@ function AreaWorkButton({ onOpen, compact = false }: { onOpen: () => void; compa
         compact && 'px-2 py-0.5 text-[10.5px]',
       )}
     >
-      <CircleDot className="size-3" aria-hidden />
       Albatrosses
     </button>
   );
@@ -716,13 +701,15 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
                 <button
                   type="button"
                   onClick={() => void refreshArtifact()}
+                  aria-label="Refresh"
                   className="inline-flex items-center gap-1 rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55"
                 >
+                  {/* Icon when narrow, the word when wide: never an icon before text. */}
                   <RefreshCw
-                    className={cn('size-3', artifactRefreshing && 'motion-safe:animate-spin')}
+                    className={cn('size-3 md:hidden', artifactRefreshing && 'motion-safe:animate-spin')}
                     aria-hidden
                   />
-                  <span className="hidden md:inline">Refresh</span>
+                  <span className="hidden md:inline">{artifactRefreshing ? 'Refreshing…' : 'Refresh'}</span>
                 </button>
                 <a
                   href="/settings?tab=areas"
@@ -1119,7 +1106,6 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
                   onClick={() => setSelectedKeys((current) => [...new Set([...current, ...visibleKeys])])}
                   className="ml-2 flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                 >
-                  <CheckSquare className="size-3" />
                   Select visible
                 </button>
               ) : null}
@@ -1132,7 +1118,6 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
                     type="button"
                     className="flex items-center gap-1 rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] shadow-[var(--shadow-control)] hover:bg-[var(--color-accent-hover)]"
                   >
-                    <FolderInput className="size-3" />
                     Move to Area
                   </button>
                 }
@@ -1143,7 +1128,6 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
                 onClick={() => void mutateMail(selectedVisibleKeys, 'archive_thread')}
                 className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
               >
-                <Archive className="size-3" />
                 Archive
               </button>
               <button
@@ -1152,7 +1136,6 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
                 onClick={() => void mutateMail(selectedVisibleKeys, 'trash_thread')}
                 className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] disabled:cursor-wait disabled:opacity-45"
               >
-                <Trash2 className="size-3" />
                 Trash
               </button>
               <button
@@ -1714,9 +1697,14 @@ function AreaArtifactCanvas({
             disabled={updating}
             className="inline-flex items-center gap-1 rounded-ui px-2.5 py-1 text-[11.5px] font-medium hover:bg-[var(--color-hover-soft)] disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/45"
             title="Compose a fresh Area edition"
+            aria-label="Refresh"
           >
-            <RefreshCw className={cn('size-3', updating && 'motion-safe:animate-spin')} aria-hidden />
-            <span className="hidden md:inline">Refresh</span>
+            {/* Icon when narrow, the word when wide: never an icon before text. */}
+            <RefreshCw
+              className={cn('size-3 md:hidden', updating && 'motion-safe:animate-spin')}
+              aria-hidden
+            />
+            <span className="hidden md:inline">{updating ? 'Refreshing…' : 'Refresh'}</span>
           </button>
           <a
             href="/settings?tab=areas"
@@ -1785,7 +1773,6 @@ function AreaArtifactUnavailable({
         {error ? <p className="mt-2 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
           <Button type="button" size="sm" onClick={onRefresh} disabled={refreshing}>
-            <RefreshCw className={cn('size-3.5', refreshing && 'motion-safe:animate-spin')} aria-hidden />
             {refreshing ? 'Composing…' : failed ? 'Try again' : 'Compose artifact'}
           </Button>
           {failed ? (
@@ -1867,9 +1854,8 @@ function BriefLead({
             <button
               type="button"
               onClick={onDiscuss}
-              className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline"
+              className="text-[12px] font-medium text-[var(--color-accent)] underline-offset-2 hover:underline"
             >
-              <MessageSquareText className="size-3.5" aria-hidden />
               Ask about this area
             </button>
             {home.area.primaryDomain ? (
@@ -2684,7 +2670,6 @@ function RefreshBriefButton({ areaId, canGenerate }: { areaId: string; canGenera
         requestFailed ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-muted)]',
       )}
     >
-      <RefreshCw className={cn('size-3', busy && 'motion-safe:animate-spin')} aria-hidden />
       {label}
     </Button>
   );

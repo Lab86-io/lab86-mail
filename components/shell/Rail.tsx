@@ -10,7 +10,6 @@ import {
 import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ProviderLogo } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
 import {
@@ -582,7 +581,10 @@ export function AccountScopePopover({
           aria-label={`Choose mailboxes: ${label}`}
           className="corner-smooth relative flex h-9 shrink-0 items-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-xs text-[var(--color-text-muted)] outline-none transition-colors hover:bg-[var(--color-control-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
-          <RowIcon icon={UsersIcon} size={15} />
+          {/* Icon when narrow, the word when wide: never an icon before text. */}
+          <span className="inline-flex lg:hidden">
+            <RowIcon icon={UsersIcon} size={15} />
+          </span>
           <span className="hidden lg:inline">{label}</span>
           {!allSelected ? (
             <span className="absolute right-0.5 top-0.5 grid size-3 place-items-center rounded-full bg-[var(--color-accent)] text-[7px] font-semibold leading-none text-[var(--color-accent-foreground)]">
@@ -607,7 +609,6 @@ export function AccountScopePopover({
           }}
           className="gap-2 text-[12.5px]"
         >
-          <RowIcon icon={UsersIcon} size={14} />
           All accounts
           {allSelected ? <span className="ml-auto text-[var(--color-accent)]">✓</span> : null}
         </DropdownMenuItem>
@@ -620,7 +621,6 @@ export function AccountScopePopover({
             onSelect={(event) => event.preventDefault()}
             className="gap-2 text-[12.5px]"
           >
-            <ProviderLogo provider={mailbox.provider} className="size-3.5 shrink-0" />
             <span className="min-w-0 flex-1">
               <span className="block truncate">{mailbox.displayName || mailbox.email}</span>
               <span className="block truncate text-[10.5px] leading-tight text-[var(--color-text-faint)]">

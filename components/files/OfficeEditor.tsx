@@ -296,7 +296,6 @@ export function OfficeEditor({ documentId, onClose }: { documentId: string; onCl
           </div>
           {collabora ? (
             <Button size="sm" disabled={!ready || saving || aiBusy} onClick={() => void save()}>
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
               {saving ? 'Saving…' : file.data?.google ? 'Save to Google' : 'Save'}
             </Button>
           ) : null}

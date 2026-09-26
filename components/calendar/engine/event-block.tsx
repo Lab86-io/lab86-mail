@@ -188,11 +188,12 @@ export function EventBlock({ event, className }: IProps) {
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               title="Join video call"
+              aria-label="Join video call"
               className="absolute right-1 top-1 z-10 inline-flex shrink-0 items-center gap-0.5 rounded border border-current/30 bg-current/15 px-1 py-px text-[10px] font-medium leading-none hover:bg-current/25"
               style={joinColor ? { color: joinColor } : undefined}
             >
-              <Video className="size-2.5" />
-              {showTime ? <span>Join</span> : null}
+              {/* The word when the block has room, the icon alone when it does not. */}
+              {showTime ? <span>Join</span> : <Video className="size-2.5" />}
             </a>
           ) : null}
         </div>

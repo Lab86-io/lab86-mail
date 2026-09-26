@@ -1,6 +1,5 @@
 'use client';
 
-import { Check, Loader2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -87,10 +86,10 @@ function BriefActionControl({
       size={compact ? 'xs' : 'sm'}
       variant={variant}
       disabled={pending}
+      aria-busy={pending || undefined}
       onClick={tier === 'review' ? undefined : run}
     >
-      {pending ? <Loader2 className="animate-spin" /> : null}
-      {action.label}
+      {pending ? 'Working…' : action.label}
     </Button>
   );
 
@@ -144,9 +143,14 @@ export function BriefReviewPopover({
           <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="button" size="sm" disabled={pending} onClick={() => void onConfirm()}>
-            {pending ? <Loader2 className="animate-spin" /> : <Check />}
-            {copy.confirm}
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            aria-busy={pending || undefined}
+            onClick={() => void onConfirm()}
+          >
+            {pending ? 'Working…' : copy.confirm}
           </Button>
         </div>
       </PopoverContent>

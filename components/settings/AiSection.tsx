@@ -5,7 +5,7 @@
 // pickers and the retired-model notice can be tested on their own.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, KeyRound, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { Ring } from '@/components/loading-ui/ring';
@@ -212,14 +212,12 @@ export function AiSection({ heading }: { heading: ReactNode }) {
               disabled={requireOpenRouter}
               title="Hosted models"
               description="Included with Pro. Curated models, no setup, with a monthly budget."
-              icon={<Brain className="size-4" />}
               onClick={() => setAiMode('lab86')}
             />
             <ModeCard
               active={aiMode === 'byok'}
               title="My own API key"
               description="Bring an OpenRouter, OpenAI, or Anthropic key. You pay your provider directly."
-              icon={<KeyRound className="size-4" />}
               onClick={() => setAiMode('byok')}
             />
           </div>
@@ -378,14 +376,12 @@ function ModeCard({
   disabled,
   title,
   description,
-  icon,
   onClick,
 }: {
   active: boolean;
   disabled?: boolean;
   title: string;
   description: string;
-  icon: ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -400,9 +396,6 @@ function ModeCard({
       }`}
     >
       <div className="flex items-center gap-2">
-        <span className={active ? 'text-[var(--color-accent)]' : 'text-[var(--color-text-muted)]'}>
-          {icon}
-        </span>
         <span className="text-[13.5px] font-semibold">{title}</span>
         {active ? (
           <Badge className="ml-auto bg-[var(--color-accent)] text-[10px] text-[var(--color-accent-foreground)]">

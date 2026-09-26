@@ -12,7 +12,6 @@ import {
   GitPullRequest,
   Mail,
   MessageSquare,
-  Play,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -320,7 +319,6 @@ export function WorkspaceThreadCard({
               className="text-xs"
               onClick={() => openWorkspaceWork(thread.work!.id, !!open && thread.work!.guided)}
             >
-              <Play aria-hidden size={12} />
               {open && thread.work.guided ? 'Open guided work' : 'Open work'}
             </Button>
           ) : (
