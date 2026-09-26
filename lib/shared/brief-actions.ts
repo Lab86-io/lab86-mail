@@ -10,6 +10,9 @@ export const BRIEF_ACTION_TIERS = {
     'archive_thread',
     'steer_item',
     'undo_operation',
+    // The weekly review's Defer (FEATURES item 9): a task due date or a snooze.
+    'defer_task',
+    'defer_thread',
   ],
   review: [
     'rsvp_event',

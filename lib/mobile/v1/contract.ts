@@ -17,6 +17,12 @@ export const MobileDomainSchema = z.enum([
 
 export type MobileDomain = z.infer<typeof MobileDomainSchema>;
 
+// The Daily Brief edition kinds a client must decode (FEATURES item 9). The
+// scheduler writes `morning` and, on Sunday, `weekly`; the user writes
+// `manual`; `evening` exists only on editions stored in June 2026.
+export const BriefEditionKindSchema = z.enum(['morning', 'manual', 'weekly', 'evening']);
+export type BriefEditionKindV1 = z.infer<typeof BriefEditionKindSchema>;
+
 export const ProviderSchema = z.enum(['google', 'microsoft', 'icloud', 'imap']);
 
 export const ProviderCapabilitySetSchema = z
@@ -1001,6 +1007,7 @@ export const MobileContractV1 = {
     AssistantEvent: AssistantEventSchema,
     AssistantRouteRequest: AssistantRouteRequestSchema,
     AssistantRouteVerdict: AssistantRouteVerdictSchema,
+    BriefEditionKind: BriefEditionKindSchema,
     CommandReceipt: CommandReceiptSchema,
     MailAttachment: MailAttachmentSchema,
     MailMessage: MailMessageSchema,

@@ -5,6 +5,7 @@ import { runWithAiRequestContext } from '../ai/context';
 import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
 import { type BriefEditionBudget, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
+import { generateWeeklyReview } from '../brief/weekly';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { refreshNarrative } from '../narrative/service';
 import type { BriefEditionKind, DailyReport } from '../shared/types';
@@ -86,6 +87,7 @@ const defaults = {
   query: convexQuery,
   telemetry: recordEditionTelemetry,
   daily: generateAgentReport,
+  weekly: generateWeeklyReview,
   area: generateAreaLivingBrief,
   narrative: refreshNarrative,
   readDaily: getDailyReport,
@@ -152,7 +154,16 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
             if (await deps.noAccess(userId, 'daily_brief_layout')) return;
           }
           let report: DailyReport;
-          if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated') report = saved;
+          if (job.edition === 'weekly') {
+            // The weekly review (FEATURES item 9) is deterministic: one pass,
+            // published as final, then announced.
+            const meter = new BriefEditionMeter({ prior: saved?.budget });
+            report = await runWithBriefMeter(meter, () =>
+              deps.weekly({ userId, reportId: job.reportId, now: job.createdAt }),
+            );
+            await deps.telemetry(userId, job, meter.record(false));
+          } else if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated')
+            report = saved;
           else {
             // The edition budget (FEATURES item 5) runs across attempts: the
             // meter starts from the time and cost the saved edition used.
@@ -181,6 +192,7 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
           }
           // A spent budget is final: the edition publishes what exists.
           if (
+            job.edition !== 'weekly' &&
             report.editorial?.mode !== 'generated' &&
             !finalAttempt &&
             !recordedNoAccess(report, startedAt) &&

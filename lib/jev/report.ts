@@ -1,5 +1,6 @@
 import { composeEditorialDocument, defaultEditorialPlan, editorialModules } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import { composeWeeklyReviewDocument } from '../brief/weekly-document';
 import { composeBudgetBriefDocument } from '../mail/brief-budget-document';
 import { assignBriefLane, budgetForTier, selectBriefItems } from '../mail/brief-score';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
@@ -362,13 +363,18 @@ export function projectBriefMail(
   report.document?.regions.forEach((region) => {
     collectAreas(region.tree);
   });
-  const letter = composeBudgetBriefDocument({
-    report: next,
-    timezone: report.document?.timezone,
-    prose: { ...next.prose!, lines },
-    areas,
-  });
+  // A weekly review keeps its own layout; its counts follow the live items.
+  const letter =
+    report.kind === 'weekly'
+      ? composeWeeklyReviewDocument(next, report.document?.timezone)
+      : composeBudgetBriefDocument({
+          report: next,
+          timezone: report.document?.timezone,
+          prose: { ...next.prose!, lines },
+          areas,
+        });
   next.document = letter;
+  if (report.kind === 'weekly') next.narrative = letter.summary;
   if (report.editorial) {
     const modules = editorialModules(next, letter);
     try {

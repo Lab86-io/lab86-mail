@@ -18,7 +18,7 @@ import type { DailyReportCalendarItem, DailyReportItem } from '../shared/types';
 /** The reading measure of the letter, in CSS pixels. */
 export const BRIEF_LETTER_MEASURE_PX = 620;
 
-export type BriefLetterKind = 'daily' | 'area';
+export type BriefLetterKind = 'daily' | 'area' | 'weekly';
 
 // Region ids of each letter layout, in render order (brief round 2026-09-22
 // added yesterday, waiting, tasks, connected, week, and mail).
@@ -36,6 +36,9 @@ export const DAILY_LETTER_REGION_IDS = [
   'areas',
 ] as const;
 export const AREA_LETTER_REGION_IDS = ['lede', 'pulse', 'ask', 'week', 'mail', 'open-work'] as const;
+// The weekly review (FEATURES item 9; lib/brief/weekly-document.ts).
+export const WEEKLY_LETTER_REGION_IDS = ['lede', 'done', 'open', 'waiting', 'next-week'] as const;
+export const WEEKLY_REVIEW_LETTER_TITLE = 'The Weekly Review';
 export const DAILY_LETTER_LANE_IDS: readonly BriefLane[] = ['answer', 'today', 'know'];
 
 const DAILY_LETTER_EVENT_LIMIT = 4;
@@ -52,7 +55,7 @@ function isLedeHero(region: BriefRegion | undefined): boolean {
  * region ids of one letter layout.
  */
 export function briefLetterKind(
-  document: Pick<BriefDocumentV2, 'regions' | 'layout'>,
+  document: Pick<BriefDocumentV2, 'regions' | 'layout'> & Partial<Pick<BriefDocumentV2, 'title'>>,
 ): BriefLetterKind | null {
   if (document.layout === 'editorial') return null;
   const regions = document.regions;
@@ -60,8 +63,12 @@ export function briefLetterKind(
   const ids = regions.map((region) => region.id);
   if (new Set(ids).size !== ids.length) return null;
   const within = (allowed: readonly string[]) => ids.every((id) => allowed.includes(id));
+  // The weekly review names itself, so a review with only the shared lede
+  // and waiting regions still reads as a review.
+  if (document.title === WEEKLY_REVIEW_LETTER_TITLE && within(WEEKLY_LETTER_REGION_IDS)) return 'weekly';
   if (within(DAILY_LETTER_REGION_IDS)) return 'daily';
   if (within(AREA_LETTER_REGION_IDS)) return 'area';
+  if (within(WEEKLY_LETTER_REGION_IDS)) return 'weekly';
   return null;
 }
 

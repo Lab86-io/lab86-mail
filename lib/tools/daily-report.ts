@@ -31,7 +31,8 @@ import {
 } from '../store/daily-reports';
 import { defineTool } from './registry';
 
-const ReportKindSchema = z.enum(['morning', 'manual']);
+// 'weekly' writes the weekly review on demand (FEATURES item 9).
+const ReportKindSchema = z.enum(['morning', 'manual', 'weekly']);
 
 export const generateDailyReportTool = defineTool({
   name: 'generate_daily_report',

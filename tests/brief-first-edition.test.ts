@@ -175,6 +175,8 @@ describe('the deterministic first edition', () => {
           now: Date.parse('2026-06-10T15:00:00.000Z'),
           scope: 'first',
           noModel: true,
+          // Other files read the latest local edition; this one is not stored.
+          silent: true,
         }),
       );
       expect(hasAi).not.toHaveBeenCalled();

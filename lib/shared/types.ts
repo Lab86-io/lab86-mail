@@ -1,6 +1,7 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { BriefEditionBudget } from '../brief/budget';
 import type { EditorialPlan } from '../brief/editorial';
+import type { WeeklyReviewSection } from '../brief/weekly-document';
 import type { JevAssessment, JevBriefDigest } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
@@ -654,6 +655,8 @@ export interface DailyReport {
     mcp?: DailyReportMcpItem[];
     albatross?: AlbatrossDailyReportContext;
     since?: DailyReportSinceLastEdition;
+    // The weekly review edition (FEATURES item 9; lib/brief/weekly.ts).
+    weekly?: WeeklyReviewSection;
     noiseSummary?: string;
   };
   stats: {

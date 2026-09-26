@@ -874,6 +874,10 @@
         "required": ["route", "confidence"],
         "additionalProperties": false
       },
+      "BriefEditionKind": {
+        "type": "string",
+        "enum": ["morning", "manual", "weekly", "evening"]
+      },
       "CommandReceipt": {
         "type": "object",
         "properties": {

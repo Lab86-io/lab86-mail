@@ -434,6 +434,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
       ...(Array.isArray(sections.overflow) ? { overflow: items(sections.overflow) } : {}),
       ...(Array.isArray(sections.waiting) ? { waiting: items(sections.waiting) } : {}),
       ...(sections.since ? { since: sections.since } : {}),
+      ...(sections.weekly ? { weekly: sections.weekly } : {}),
       tasks,
       calendar,
       mcp,

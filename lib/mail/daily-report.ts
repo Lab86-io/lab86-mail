@@ -1468,7 +1468,7 @@ export function dedupeSimilarTasks(tasks: DailyReportTaskItem[]): DailyReportTas
   return result;
 }
 
-async function loadTaskContext(
+export async function loadTaskContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportTaskItem[]> {
@@ -1560,7 +1560,7 @@ function startOfLocalDay(at: number, tz: string): number {
   }
 }
 
-async function loadCalendarContext(
+export async function loadCalendarContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportCalendarItem[]> {

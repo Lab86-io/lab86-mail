@@ -41,6 +41,9 @@ const LANE_TITLES: Record<string, string> = {
   today: 'Today',
   know: 'Know',
   since: 'What Albatross did',
+  done: 'Done this week',
+  open: 'Still open',
+  'next-week': 'Next week',
   waiting: 'Waiting on',
   tasks: 'Tasks this week',
   connected: 'Connected tools',
@@ -74,13 +77,15 @@ export function BriefLetter({
 }) {
   const footer = kind === 'daily' ? noiseFooterCopy(noiseCount) : null;
   const empty = kind === 'daily' && briefLetterHasNoRows(document);
+  // The weekly review reads in the same wide layout as the daily letter.
+  const wide = kind === 'daily' || kind === 'weekly';
   let rowIndex = 0;
 
   return (
     <div
       data-brief-letter={kind}
-      className={cn('mx-auto w-full', kind === 'daily' && 'daily-brief-layout')}
-      style={kind === 'daily' ? undefined : ({ maxWidth: BRIEF_LETTER_MEASURE_PX } satisfies CSSProperties)}
+      className={cn('mx-auto w-full', wide && 'daily-brief-layout')}
+      style={wide ? undefined : ({ maxWidth: BRIEF_LETTER_MEASURE_PX } satisfies CSSProperties)}
     >
       <div data-brief-column="narrative" className="min-w-0">
         {document.regions.map((region) => {

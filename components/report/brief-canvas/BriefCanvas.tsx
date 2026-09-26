@@ -440,6 +440,7 @@ export function BriefCanvas({
           generatedAt={document.generatedAt}
           timezone={document.timezone}
           frameId={mastheadFrame}
+          title={letterKind === 'weekly' ? document.title : undefined}
         />
       ) : null}
       {belowMasthead}
@@ -447,7 +448,11 @@ export function BriefCanvas({
         <header
           className={cn(
             'mx-auto mb-7 border-b border-[var(--color-border)] pb-5',
-            letterKind === 'daily' ? 'w-full' : letterKind ? 'max-w-[620px]' : 'max-w-[1760px]',
+            letterKind === 'daily' || letterKind === 'weekly'
+              ? 'w-full'
+              : letterKind
+                ? 'max-w-[620px]'
+                : 'max-w-[1760px]',
           )}
         >
           {notice ? (
@@ -777,6 +782,23 @@ export async function executeBriefAction(
       });
     case 'undo_operation':
       return callTool('undo_operation', { operationId: required(payload, 'operationId') });
+    case 'defer_task': {
+      const dueIso = briefEventIso(payload.dueAt);
+      if (!dueIso) throw new Error('The brief omitted dueAt.');
+      return callTool<{ operationId: string }>('tasks_update_card', {
+        cardId: required(payload, 'cardId'),
+        dueIso,
+      });
+    }
+    case 'defer_thread': {
+      const until = Number(payload.until);
+      if (!Number.isFinite(until) || until <= Date.now()) throw new Error('The brief omitted a future time.');
+      return callTool('snooze_thread', {
+        account: required(payload, 'account'),
+        threadId: required(payload, 'threadId'),
+        untilTs: until,
+      });
+    }
     case 'draft_reply':
       return;
     default:
@@ -787,9 +809,15 @@ export async function executeBriefAction(
 /** True when the action takes its item out of the live edition. Exported for tests. */
 export function briefActionHidesItem(action: string, payload: BriefActionPayload) {
   if (action === 'steer_item') return payload.mode !== 'keep_showing';
-  return ['dismiss_task', 'resolve_thread', 'dismiss_thread', 'archive_thread', 'undo_operation'].includes(
-    action,
-  );
+  return [
+    'dismiss_task',
+    'resolve_thread',
+    'dismiss_thread',
+    'archive_thread',
+    'undo_operation',
+    'defer_task',
+    'defer_thread',
+  ].includes(action);
 }
 
 export const BRIEF_UNDO_FAILED_COPY = 'Undo did not finish. The item is still changed.';
@@ -845,7 +873,13 @@ async function undoBriefAction(action: string, payload: BriefActionPayload) {
       });
       return;
     case 'steer_item':
+    case 'defer_task':
       return callTool('undo_operation', { operationId: required(payload, 'operationId') });
+    case 'defer_thread':
+      return callTool('unsnooze_thread', {
+        account: required(payload, 'account'),
+        threadId: required(payload, 'threadId'),
+      });
   }
 }
 
