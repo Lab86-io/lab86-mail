@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { nextRoutineRunAt } from '../lib/albatross/routines';
+import { truncateText } from '../lib/shared/text';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
@@ -50,7 +51,7 @@ export const overview = query({
         if (!reply && !step) continue;
         watches.push({
           workId: String(row._id),
-          title: row.title || row.rawText.slice(0, 120),
+          title: row.title || truncateText(row.rawText, 120),
           kind: reply ? ('reply' as const) : ('step' as const),
           waitingOn: reply ? (row.replyWatch?.senderEmails ?? []).slice(0, 3) : [],
         });

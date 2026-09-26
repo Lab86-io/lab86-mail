@@ -2020,7 +2020,7 @@ export const holdMailPush = mutation({
         accountId: args.accountId,
         threadId: args.threadId,
         messageId: args.messageId,
-        sender: args.sender?.slice(0, 180),
+        sender: truncateText(args.sender, 180),
         heldAt: ts,
       },
       updatedAt: ts,

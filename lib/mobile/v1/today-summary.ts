@@ -3,6 +3,7 @@ import { briefSourceHealth, loadBriefSourceRows } from '@/lib/brief/source-healt
 import { api, convexQuery } from '@/lib/hosted/convex';
 import type { DailyReport, DailyReportItem } from '@/lib/shared/types';
 import { getLatestDailyReport } from '@/lib/store/daily-reports';
+import { truncateText } from '../../shared/text';
 import { BriefEditionKindSchema, type TodaySummary, TodaySummarySchema } from './contract';
 
 // The Today summary for widgets (FEATURES item 19). One read of the latest
@@ -62,7 +63,9 @@ export function buildTodaySummary(input: {
   const nextMove =
     threadMove(sections?.answer?.[0]) ??
     threadMove(sections?.today?.[0]) ??
-    (task ? { title: task.title.slice(0, 500), refKind: 'task' as const, refID: task.cardId } : undefined);
+    (task
+      ? { title: truncateText(task.title, 500), refKind: 'task' as const, refID: task.cardId }
+      : undefined);
   const meeting = input.events
     .filter((event) => !event.allDay && event.endAt > now && event.providerEventId && event.title)
     .sort((a, b) => a.startAt - b.startAt)[0];

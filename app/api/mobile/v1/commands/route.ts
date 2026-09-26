@@ -13,6 +13,7 @@ import {
 } from '@/lib/mobile/v1/http';
 import { commandReceiptFromRow } from '@/lib/mobile/v1/receipt';
 import { enforceUserRateLimit } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,7 +111,7 @@ export function createMobileCommandPost(deps: MobileCommandDependencies = defaul
           claimToken,
           status: 'failed',
           errorCode: mapped.code.slice(0, 100),
-          errorMessage: mapped.message.slice(0, 1_000),
+          errorMessage: truncateText(mapped.message, 1_000),
           errorRetryable: mapped.retryable && attempts < MAX_EXECUTION_ATTEMPTS,
         });
         return mobileJSON(commandReceiptFromRow(failed), undefined, requestID);

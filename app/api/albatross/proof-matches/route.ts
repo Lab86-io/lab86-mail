@@ -9,6 +9,7 @@ import {
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 import { dismissedProofWorkIds } from '@/lib/store/proof-dismissals';
 
 export const runtime = 'nodejs';
@@ -57,8 +58,8 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         windowMs: 60_000,
       });
       const body = await req.json().catch(() => ({}));
-      const subject = typeof body.subject === 'string' ? body.subject.slice(0, 500) : '';
-      const snippet = typeof body.snippet === 'string' ? body.snippet.slice(0, 2_000) : '';
+      const subject = typeof body.subject === 'string' ? truncateText(body.subject, 500) : '';
+      const snippet = typeof body.snippet === 'string' ? truncateText(body.snippet, 2_000) : '';
       const accountId = typeof body.accountId === 'string' ? body.accountId.slice(0, 200) : '';
       const providerThreadId =
         typeof body.providerThreadId === 'string' ? body.providerThreadId.slice(0, 300) : '';

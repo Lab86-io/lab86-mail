@@ -128,7 +128,7 @@ function errorForLog(err: any) {
     message: err?.message,
     statusCode: err?.statusCode,
     isRetryable: err?.isRetryable,
-    responseBody: typeof err?.responseBody === 'string' ? err.responseBody.slice(0, 500) : undefined,
+    responseBody: typeof err?.responseBody === 'string' ? truncateText(err.responseBody, 500) : undefined,
   };
 }
 
@@ -312,3 +312,4 @@ export async function POST(req: NextRequest) {
 }
 
 import { presentationSessionFromMessages } from '@/lib/documents/presentation-choices';
+import { truncateText } from '@/lib/shared/text';

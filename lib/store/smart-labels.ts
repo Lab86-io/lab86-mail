@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { generateTextForCurrentUser } from '../ai/gateway';
 import { DEVOPS_LABEL_ID, SMART_GMAIL_LABEL_PREFIX } from '../mail/smart-categories';
+import { truncateText } from '../shared/text';
 import type { SmartLabelDefinition } from '../shared/types';
 import { kvCreateIfAbsent, kvDelete, kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 import { listSmartRules, setSmartRuleEnabled } from './smart-rules';
@@ -154,7 +155,7 @@ async function pickLabelIcon(name: string, description: string): Promise<string>
     const result = await generateTextForCurrentUser({
       feature: 'smart_label_icon',
       speed: 'fast',
-      prompt: `Pick the single best icon name for an email label called "${name}" (${description.slice(0, 200)}). Answer with EXACTLY one name from this list and nothing else: ${SMART_LABEL_ICONS.join(', ')}`,
+      prompt: `Pick the single best icon name for an email label called "${name}" (${truncateText(description, 200)}). Answer with EXACTLY one name from this list and nothing else: ${SMART_LABEL_ICONS.join(', ')}`,
     });
     const picked = (result.text || '')
       .trim()

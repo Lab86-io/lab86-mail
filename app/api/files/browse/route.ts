@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { browseCloudFiles, CloudFileProviderError } from '@/lib/files/browse';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,7 @@ export function cloudFileBrowseErrorResponse(error: unknown) {
     return NextResponse.json(
       {
         ok: false,
-        error: error.message.slice(0, 300),
+        error: truncateText(error.message, 300),
         code: error.code,
         reconnect: error.code === 'RECONNECT_REQUIRED',
         retryable: error.code === 'RATE_LIMITED' || error.code === 'UNAVAILABLE',
@@ -27,7 +28,7 @@ export function cloudFileBrowseErrorResponse(error: unknown) {
     return NextResponse.json({ ok: false, error: message, code: 'RECONNECT_REQUIRED' }, { status: 409 });
   }
   return NextResponse.json(
-    { ok: false, error: message.slice(0, 200) },
+    { ok: false, error: truncateText(message, 200) },
     { status: /not found/iu.test(message) ? 404 : 502 },
   );
 }

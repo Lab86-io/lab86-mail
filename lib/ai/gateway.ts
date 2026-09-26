@@ -15,6 +15,7 @@ import {
 } from '../classifier/catalog';
 import { loadSelectedClassifier } from '../classifier/selection';
 import { PAID_PLANS, planPriceLine } from '../hosted/plans';
+import { truncateText } from '../shared/text';
 import {
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
@@ -702,7 +703,7 @@ function summarizeAiError(err: any) {
     message: err?.message,
     statusCode: err?.statusCode,
     isRetryable: err?.isRetryable,
-    responseBody: typeof err?.responseBody === 'string' ? err.responseBody.slice(0, 240) : undefined,
+    responseBody: typeof err?.responseBody === 'string' ? truncateText(err.responseBody, 240) : undefined,
   };
 }
 

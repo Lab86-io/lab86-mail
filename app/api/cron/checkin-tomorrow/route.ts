@@ -8,6 +8,7 @@ import {
 import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -98,7 +99,7 @@ export function createCheckinTomorrowPost(overrides: Partial<TomorrowDependencie
           externalId,
           rawText: item.rawText,
           source: 'text',
-          title: item.title.slice(0, 180),
+          title: truncateText(item.title, 180),
           replaceRawText: true,
           returnMetadata: true,
         });

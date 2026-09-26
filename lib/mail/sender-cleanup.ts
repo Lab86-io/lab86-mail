@@ -1,4 +1,5 @@
 import { emailFromHeader, shortFrom } from '../shared/format';
+import { truncateText } from '../shared/text';
 
 // Sender cleanup (FEATURES item 13). The list ranks the senders whose mail the
 // user does not read or that the classifier filed as Noise, promotion, or
@@ -25,7 +26,7 @@ export function keptMessageHeaders(headers: unknown): Record<string, string> | u
     const key = name.toLowerCase();
     if (!(KEPT_MESSAGE_HEADERS as readonly string[]).includes(key)) continue;
     if (typeof value !== 'string' || !value.trim()) continue;
-    kept[key] = value.trim().slice(0, 1000);
+    kept[key] = truncateText(value.trim(), 1000);
   }
   return Object.keys(kept).length ? kept : undefined;
 }

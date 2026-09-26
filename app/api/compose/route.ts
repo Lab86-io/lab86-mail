@@ -14,6 +14,7 @@ import {
 import { enqueueOutbox } from '@/lib/send/outbox';
 import { sanitizeFilename } from '@/lib/shared/files';
 import { DEFAULT_UNDO_SEND_SECONDS, normalizeUndoSendSeconds } from '@/lib/shared/sending';
+import { truncateText } from '@/lib/shared/text';
 import type { Message } from '@/lib/shared/types';
 import { writeAudit } from '@/lib/store/audit';
 import { upsertMessage as upsertMessageRecord } from '@/lib/store/messages';
@@ -327,7 +328,7 @@ async function cacheSentMessage(account: string, sent: Message) {
     subject: sent.subject || '(no subject)',
     fromAddress: sent.from,
     lastDate: sent.date,
-    snippet: sent.snippet || sent.textBody?.slice(0, 240) || '',
+    snippet: sent.snippet || truncateText(sent.textBody, 240) || '',
     labels: sent.labels || [],
     unread: false,
   }).catch(() => undefined);

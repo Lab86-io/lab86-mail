@@ -5,6 +5,7 @@ import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import type { JevCorrection } from '../jev/contract';
 import { emailFromHeader } from '../shared/format';
+import { truncateText } from '../shared/text';
 import { dismissDailyReportThread, restoreDailyReportThread } from '../store/daily-report-dismissals';
 
 // Per-item steering (FEATURES item 8). Each Brief item offers "Not for me",
@@ -76,7 +77,7 @@ export function briefSteeringCorrection(
 
 function quoted(subject: string | undefined) {
   const text = String(subject || '').trim();
-  return text ? `“${text.slice(0, 120)}”` : 'this conversation';
+  return text ? `“${truncateText(text, 120)}”` : 'this conversation';
 }
 
 export function briefSteeringSummary(input: SteerBriefItemInput, sender: string | null) {

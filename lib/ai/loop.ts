@@ -45,14 +45,15 @@ import { agentToolTimeoutMs, withToolTimeout } from './tool-timeout';
 
 /** Search text only, never attachment bytes or opaque tool/image payloads. */
 export function narrativeQueryFromContent(content: ModelMessage['content'] | undefined): string {
-  return (
+  return truncateText(
     typeof content === 'string'
       ? content
       : (content || [])
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
-          .join(' ')
-  ).slice(0, 240);
+          .join(' '),
+    240,
+  );
 }
 
 export async function boundedAgentNarrativeContext(
@@ -70,14 +71,16 @@ export async function boundedAgentNarrativeContext(
 
 /** Short follow-ups retain their recent subject without admitting attachment bytes. */
 export function narrativeQueryFromMessages(messages: ModelMessage[]): string {
-  return messages
-    .filter((message) => message.role === 'user')
-    .slice(-3)
-    .reverse()
-    .map((message) => narrativeQueryFromContent(message.content))
-    .filter(Boolean)
-    .join(' ')
-    .slice(0, 240);
+  return truncateText(
+    messages
+      .filter((message) => message.role === 'user')
+      .slice(-3)
+      .reverse()
+      .map((message) => narrativeQueryFromContent(message.content))
+      .filter(Boolean)
+      .join(' '),
+    240,
+  );
 }
 
 export const AGENT_TOOL_NAMES = new Set([
@@ -1190,3 +1193,4 @@ import {
   presentationChoiceSchemaForSession,
 } from '@/lib/documents/presentation-choices';
 import { presentationAuthoringV2Schema } from '@/lib/documents/presentation-design';
+import { truncateText } from '../shared/text';

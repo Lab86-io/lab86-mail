@@ -3,6 +3,7 @@ import { type InverseOp, recordOperation, registerUndoExecutor } from '../ai/ope
 import { api, convexMutation } from '../hosted/convex';
 import { convexInternalSecret, isConvexConfigured } from '../hosted/env';
 import { revertNylasMessageFolders, revertNylasThreadFolders } from '../nylas/provider';
+import { truncateText } from '../shared/text';
 import type { Thread } from '../shared/types';
 import { setSmartRuleEnabled } from '../store/smart-rules';
 import { unsnoozeThread } from '../store/snooze';
@@ -73,7 +74,7 @@ export async function recordMailOperation(
     userId: input.userId,
     tool: input.tool,
     surface: 'mail',
-    summary: input.summary.slice(0, 240),
+    summary: truncateText(input.summary, 240),
     reason: input.reason?.trim() ? input.reason.trim().slice(0, 300) : undefined,
     target: input.target,
     inverse: input.inverse,

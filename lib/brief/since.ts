@@ -1,5 +1,6 @@
 import { api, convexQuery } from '../hosted/convex';
 import type { BriefDocumentV2, BriefNode, BriefRegion } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 import type { DailyReport, DailyReportSinceLastEdition } from '../shared/types';
 
 // "Since yesterday" (FEATURES item 7). The Brief opens with what Albatross
@@ -66,19 +67,19 @@ export function sinceRegion(
         ref: {
           kind: 'derived' as const,
           id: operationRefId(action.operationId!),
-          label: action.summary.slice(0, 480),
+          label: truncateText(action.summary, 480),
         },
         framing: {
           lane: SINCE_REGION_ID,
           sender: `${SURFACE_LABELS[action.surface] ?? 'Albatross'} · ${whenLabel(action.createdAt, timezone)}`,
-          ...(action.reason ? { reason: action.reason.slice(0, 480) } : {}),
+          ...(action.reason ? { reason: truncateText(action.reason, 480) } : {}),
         },
         actions: action.undoable
           ? [
               {
                 action: 'undo_operation',
                 label: 'Undo',
-                payload: { operationId: action.operationId, summary: action.summary.slice(0, 200) },
+                payload: { operationId: action.operationId, summary: truncateText(action.summary, 200) },
                 style: 'quiet' as const,
               },
             ]

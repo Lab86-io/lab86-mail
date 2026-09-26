@@ -7,6 +7,7 @@ import { type StepVerification, stepNeedsCheck } from '@/lib/albatross/step-veri
 import { isInternalCronRequest } from '@/lib/cron-auth';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { isStandingOrderPaused } from '@/lib/hosted/standing-orders';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -140,9 +141,9 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
           await deps.convexMutation(api.albatrossWorkV2.attachProof, {
             userId,
             workId,
-            claim: `${step.title}: ${verdict.reason || 'confirmed by mail'}`.slice(0, 400),
-            title: String(candidate.thread.subject || 'Mail confirmation').slice(0, 300),
-            summary: String(candidate.thread.snippet || '').slice(0, 600) || undefined,
+            claim: truncateText(`${step.title}: ${verdict.reason || 'confirmed by mail'}`, 400),
+            title: truncateText(String(candidate.thread.subject || 'Mail confirmation'), 300),
+            summary: truncateText(String(candidate.thread.snippet || ''), 600) || undefined,
             sourceKind: 'mail_thread',
             // listRecentCorpusThreads returns the provider thread id as `_id`
             // and the account as `account` (WRK-2).

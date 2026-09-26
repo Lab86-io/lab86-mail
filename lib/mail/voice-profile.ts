@@ -1,5 +1,6 @@
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { api, convexQuery } from '../hosted/convex';
+import { safeSlice } from '../shared/text';
 import { kvGet, kvUpsert } from '../store/kv';
 
 // Voice profile (FEATURES item 16). Albatross reads up to 50 recent sent
@@ -133,11 +134,11 @@ export function analyzeSentMail(samples: SentSample[]) {
 const LEARN_SYSTEM = `You describe how one person writes email, from samples of their sent mail.
 Return only a JSON object: {"greeting": string, "signOff": string, "length": "short"|"medium"|"long", "tone": string}.
 - greeting: their usual opening line with {name} for the recipient's name, for example "Hi {name},". Empty when they usually start without one.
-- signOff: their usual closing lines, for example "Best,\\nJakob". Empty when they usually end without one.
+- signOff: their usual closing lines, for example "Best,\\nAnn". Empty when they usually end without one.
 - tone: at most 25 words on how they write: formality, warmth, sentence length, punctuation, and habits (for example lower-case openers). Describe style only. Do not quote private content, names of other people, or facts from the mail.`;
 
 function clip(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return text.length > max ? `${safeSlice(text, 0, max - 1)}…` : text;
 }
 
 /** Parses the model reply. Anything unusable falls back to the analysis. */

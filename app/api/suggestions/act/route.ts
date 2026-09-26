@@ -6,6 +6,7 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { isUsableTimezone } from '@/lib/mail/brief-timezone';
 import { requireNylas } from '@/lib/nylas/client';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import { truncateText } from '@/lib/shared/text';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,11 +63,11 @@ export function safeSuggestedEvent(
   const description = String(event.description || '').trim();
   const location = String(event.location || '').trim();
   return {
-    title: title.slice(0, 300),
+    title: truncateText(title, 300),
     startAt,
     endAt,
     allDay: event.allDay === true,
-    description: description.slice(0, 10_000) || undefined,
+    description: truncateText(description, 10_000) || undefined,
     location: location.slice(0, 500) || undefined,
     ...(typeof event.timezone === 'string' && event.timezone ? { timezone: event.timezone } : {}),
   };
