@@ -200,6 +200,7 @@ struct TodayView: View {
             await store.refreshToday()
             await store.refreshExecution()
             await reloadNarrative()
+            await environment.refreshTodayWidget()
         }
         .task(id: "today-execution-poll") {
             while !Task.isCancelled {

@@ -252,6 +252,16 @@ final class AppEnvironment {
         return drained
     }
 
+    /// Reads the Today summary and hands it to the widget (round 2, FEATURES
+    /// item 19). A failed read keeps the widget's last good snapshot.
+    func refreshTodayWidget() async {
+        #if os(iOS)
+        guard sessionStore.ownerID != nil, let mobileClient else { return }
+        guard let snapshot = try? await mobileClient.fetchTodaySummary() else { return }
+        TodayWidgetBridge.publish(snapshot)
+        #endif
+    }
+
     func refreshAccounts(ownerID: String) async -> Bool {
         let accountStore = accountStore
         return await syncCoordinator.run(ownerID: ownerID, domain: MobileDomain.accounts.rawValue) {

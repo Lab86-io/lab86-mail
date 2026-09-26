@@ -186,6 +186,7 @@ struct SettingsView: View {
                     await environment.assistantDrafts.clear(ownerID: ownerID)
                     environment.accountStore.clear()
                     environment.trust.clear()
+                    TodayWidgetBridge.clear()
                     try? await environment.notificationResponseOutbox.purge()
                     if let ownerID {
                         clearActivityLocalState(ownerID: ownerID)
@@ -280,6 +281,7 @@ private struct AccountDeletionView: View {
             await environment.assistantDrafts.clear(ownerID: ownerID)
             environment.accountStore.clear()
             environment.trust.clear()
+            TodayWidgetBridge.clear()
             try? await environment.notificationResponseOutbox.purge()
             if let ownerID {
                 clearActivityLocalState(ownerID: ownerID)

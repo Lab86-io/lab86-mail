@@ -35,6 +35,7 @@ struct AppShellView: View {
                     true
                 }
                 await environment.store.bootstrap(cacheOwner: ownerID)
+                await environment.refreshTodayWidget()
                 return outboxSucceeded && accountsSucceeded && environment.store.errorMessage == nil
             }
             let ownerID = environment.sessionStore.ownerID
@@ -43,6 +44,7 @@ struct AppShellView: View {
                 _ = await environment.refreshAccounts(ownerID: ownerID)
             }
             await environment.store.bootstrap(cacheOwner: ownerID)
+            await environment.refreshTodayWidget()
             await environment.notifications.refreshAuthorizationStatus()
             await environment.notifications.retryPendingTextResponses()
             environment.navigation.consumeAppIntentRequests()
