@@ -64,9 +64,14 @@ test('reads and writes preserve the exact private owner, document and revision s
     convexMutation: mutation as any,
     randomUUID: () => '11111111-1111-1111-1111-111111111111',
   });
-  expect(await listOfficeFiles('owner')).toEqual({ userId: 'owner' });
-  expect(await getOfficeFile('owner', 'doc', 2)).toEqual({ userId: 'owner', documentId: 'doc', revision: 2 });
-  expect(await getOfficeSession('owner', 'doc', 'session')).toEqual({
+  // The fake Convex client echoes the arguments it receives.
+  expect(await listOfficeFiles('owner')).toEqual<unknown>({ userId: 'owner' });
+  expect(await getOfficeFile('owner', 'doc', 2)).toEqual<unknown>({
+    userId: 'owner',
+    documentId: 'doc',
+    revision: 2,
+  });
+  expect(await getOfficeSession('owner', 'doc', 'session')).toEqual<unknown>({
     userId: 'owner',
     documentId: 'doc',
     sessionId: 'session',
@@ -90,7 +95,7 @@ test('reads and writes preserve the exact private owner, document and revision s
     size: 4,
     sha256: 'next-hash',
   };
-  expect(await saveOfficeVersion(input)).toEqual(input);
+  expect(await saveOfficeVersion(input)).toEqual<unknown>(input);
 });
 
 test('binary upload is bounded, nonredirecting and requires an explicit storage identity', async () => {

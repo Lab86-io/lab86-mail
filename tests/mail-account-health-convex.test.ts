@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api } from '../convex/_generated/api';
 import { nextWebhookAttemptAt, WEBHOOK_MAX_ATTEMPTS } from '../convex/mailCorpus';
 import schema from '../convex/schema';
@@ -21,7 +21,7 @@ afterAll(() => {
   else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
 });
 
-const connect = (t: ReturnType<typeof convexTest>, grantId = 'grant_1') =>
+const connect = (t: TestConvex<typeof schema>, grantId = 'grant_1') =>
   t.mutation((api as any).accounts.upsertConnectedAccount, {
     internalSecret: SECRET,
     userId: 'user_1',

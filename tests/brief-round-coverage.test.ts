@@ -392,8 +392,8 @@ test('a thread the reader put away stays out of the edition until newer mail arr
       now: NOW,
       accounts: [ACCOUNT],
       insights: [
-        insight('put-away', { lane: 'answer', needsReply: true, replyOwed: true }),
-        insight('came-back', { lane: 'answer', needsReply: true, replyOwed: true }),
+        insight('put-away', { lane: 'reply_owed', needsReply: true, replyOwed: true }),
+        insight('came-back', { lane: 'reply_owed', needsReply: true, replyOwed: true }),
       ],
       tracked: [],
       lastDateByKey: new Map([

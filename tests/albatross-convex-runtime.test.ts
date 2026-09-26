@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
@@ -415,7 +415,7 @@ describe('Artifact links', () => {
   // Candidate links come from the classifier and the reindex in production.
   // Seed one directly so the status test starts from that state.
   async function insertCandidateLink(
-    t: ReturnType<typeof convexTest>,
+    t: TestConvex<typeof schema>,
     link: {
       userId: string;
       areaId: any;

@@ -509,7 +509,7 @@ describe('interrupted deck execution', () => {
       width: 80,
       height: 2,
       fill: '#000000',
-    });
+    } as never);
     base.slides = Array.from({ length: 6 }, (_, i) => ({
       ...structuredClone(base.slides[0]),
       id: `slide-${i}`,
@@ -530,7 +530,7 @@ describe('interrupted deck execution', () => {
     expect(() =>
       prepareDocumentEdits(base, [{ op: 'element_upsert', slideId: 'slide-0', element: invalid }]),
     ).toThrow();
-    expect(base.slides[0].background).not.toBe('#111827');
+    expect((base.slides[0] as { background?: string }).background).not.toBe('#111827');
   });
 
   test('lost acknowledgement preserves the atomic revision and prevents replay', async () => {

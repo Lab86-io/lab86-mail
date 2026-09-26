@@ -166,6 +166,7 @@ describe('evidence-led presentation planning', () => {
     expect(result.ok).toBe(false);
     expect(result.readyToBuild).toBe(false);
     expect(result.plan).toBeUndefined();
+    if (!('recovery' in result)) throw new Error('Expected a recovery.');
     expect(result.recovery?.pendingSlideNumbers).toEqual([5]);
     expect(result.recovery?.completedSlides.map((slide) => slide.slideNumber)).toEqual([
       1, 2, 3, 4, 6, 7, 8, 9,
@@ -191,6 +192,7 @@ describe('evidence-led presentation planning', () => {
     );
     expect(sectionSignal?.aborted).toBe(true);
     expect(result.ok).toBe(false);
+    if (!('recovery' in result)) throw new Error('Expected a recovery.');
     expect(result.recovery?.completedSlides).toHaveLength(2);
     expect(result.recovery?.pendingSlideNumbers).toEqual([3, 4, 5, 6, 7, 8, 9]);
   });

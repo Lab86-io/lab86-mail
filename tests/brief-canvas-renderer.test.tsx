@@ -491,7 +491,9 @@ describe('BriefCanvas SBAR handoff rows', () => {
       entities: new Map(),
       hiddenRefs: new Set(),
       completedRefs: new Map(),
-      onAction: (action, payload, sourceRef) => actionCalls.push({ action, payload, sourceRef }),
+      onAction: (action, payload, sourceRef) => {
+        actionCalls.push({ action, payload, sourceRef });
+      },
       onCanvasAction: () => {},
     };
     let renderer!: ReactTestRenderer;

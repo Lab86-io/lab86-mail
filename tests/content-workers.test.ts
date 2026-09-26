@@ -86,12 +86,18 @@ test('embedding parsing restores provider order, records usage and rejects malfo
       'owner',
       ['a'],
       undefined,
-      async () => Response.json({ data: [{ index: 0, embedding: [1] }] }),
+      (async () => Response.json({ data: [{ index: 0, embedding: [1] }] })) as unknown as typeof fetch,
       deps,
     ),
   ).rejects.toThrow('Invalid');
   await expect(
-    embedContent('owner', ['a'], undefined, async () => new Response('', { status: 503 }), deps),
+    embedContent(
+      'owner',
+      ['a'],
+      undefined,
+      (async () => new Response('', { status: 503 })) as unknown as typeof fetch,
+      deps,
+    ),
   ).rejects.toThrow('unavailable');
 });
 

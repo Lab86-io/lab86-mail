@@ -124,13 +124,16 @@ test('a stale legacy model verdict never outranks the current verdict', () => {
   expect(threadPrimaryCategory({ llmCategory: { primary: 'orders' } } as any)).toBeNull();
 });
 
+// Older corpus rows still carry the retired classifier field; it must not count.
+const legacyCategory = (primary: string) => ({ llmCategory: { primary } });
+
 test('shared Jev and explicit user rules outrank legacy proof categories', () => {
   expect(
     threadPrimaryCategory({
       latestMessageId: 'm1',
       jev: assessment(),
       smartCategory: { primary: 'main' },
-      llmCategory: { primary: 'noise' },
+      ...legacyCategory('noise'),
     }),
   ).toBe('main');
   expect(
@@ -138,13 +141,13 @@ test('shared Jev and explicit user rules outrank legacy proof categories', () =>
       latestMessageId: 'm1',
       jev: assessment({ purpose: 'promotion', obligations: [] }),
       smartCategory: { primary: 'noise' },
-      llmCategory: { primary: 'main' },
+      ...legacyCategory('main'),
     }),
   ).toBe('noise');
   expect(
     threadPrimaryCategory({
       smartCategory: { model: 'user_rule', primary: 'noise' },
-      llmCategory: { primary: 'main' },
+      ...legacyCategory('main'),
     }),
   ).toBe('noise');
 });

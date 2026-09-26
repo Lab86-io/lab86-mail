@@ -105,13 +105,13 @@ describe('Xcode Cloud build discovery', () => {
     delete process.env.XCODE_CLOUD_TEMPLATE_WORKFLOW_ID;
     delete process.env.XCODE_CLOUD_WORKFLOW_ID;
     delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
-    globalThis.fetch = async (input) => {
+    globalThis.fetch = (async (input) => {
       const path = new URL(String(input)).pathname;
       if (path === '/v1/apps/app/ciProduct') {
         return Response.json({ data: { id: 'product' } });
       }
       return Response.json({ data: [], links: { next: null } });
-    };
+    }) as typeof fetch;
 
     try {
       await expect(main()).rejects.toThrow('no template workflow is configured');
@@ -169,7 +169,7 @@ describe('Xcode Cloud build discovery', () => {
     delete process.env.XCODE_CLOUD_EXPECTED_XCODE_VERSION;
     delete process.env.GITHUB_OUTPUT;
 
-    globalThis.fetch = async (input, init) => {
+    globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
@@ -191,7 +191,7 @@ describe('Xcode Cloud build discovery', () => {
         });
       }
       return new Response('not found', { status: 404 });
-    };
+    }) as typeof fetch;
 
     try {
       await main();
@@ -739,7 +739,7 @@ describe('Xcode Cloud build discovery', () => {
       },
     };
 
-    globalThis.fetch = async (input, init) => {
+    globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
@@ -784,7 +784,7 @@ describe('Xcode Cloud build discovery', () => {
         return new Response('not found', { status: 404 });
       }
       return Response.json(response);
-    };
+    }) as typeof fetch;
 
     try {
       await main();
@@ -799,7 +799,7 @@ describe('Xcode Cloud build discovery', () => {
     const createWorkflow = requests.find(
       ({ path, method }) => path === '/v1/ciWorkflows' && method === 'POST',
     );
-    expect(createWorkflow?.body.data.attributes.actions[0].buildDistributionAudience).toBe(
+    expect((createWorkflow?.body as any).data.attributes.actions[0].buildDistributionAudience).toBe(
       'APP_STORE_ELIGIBLE',
     );
     expect(requests.at(-1)?.body).toEqual(createBuildRunPayload('production-workflow', 'main-ref'));
@@ -839,7 +839,7 @@ describe('Xcode Cloud build discovery', () => {
     delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
     delete process.env.GITHUB_OUTPUT;
 
-    globalThis.fetch = async (input, init) => {
+    globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
@@ -891,7 +891,7 @@ describe('Xcode Cloud build discovery', () => {
         return Response.json({ data: { id: 'build-run', attributes: { number: 84 } } });
       }
       return new Response('not found', { status: 404 });
-    };
+    }) as typeof fetch;
 
     try {
       await main();
@@ -946,7 +946,7 @@ describe('Xcode Cloud build discovery', () => {
     delete process.env.XCODE_CLOUD_BRANCH_REF_ID;
     delete process.env.GITHUB_OUTPUT;
 
-    globalThis.fetch = async (input, init) => {
+    globalThis.fetch = (async (input, init) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
@@ -998,7 +998,7 @@ describe('Xcode Cloud build discovery', () => {
         return Response.json({ data: { id: 'build-run', attributes: { number: 83 } } });
       }
       return new Response('not found', { status: 404 });
-    };
+    }) as typeof fetch;
 
     try {
       await main();
@@ -1052,7 +1052,7 @@ describe('Xcode Cloud build discovery', () => {
       '/v1/ciProducts/product/workflows?limit=200',
       '/v1/ciProducts/product/workflows?limit=200&cursor=next',
     ]);
-    expect(results.map(({ id }) => id)).toEqual(['first', 'second']);
+    expect(results.map(({ id }: { id: string }) => id)).toEqual(['first', 'second']);
   });
 
   test('waits for a newly pinned immutable tag to reach Xcode Cloud', async () => {
@@ -1082,7 +1082,7 @@ describe('Xcode Cloud build discovery', () => {
       {
         attempts: 3,
         delayMilliseconds: 25,
-        sleep: async (milliseconds) => {
+        sleep: async (milliseconds: number) => {
           delays.push(milliseconds);
         },
       },

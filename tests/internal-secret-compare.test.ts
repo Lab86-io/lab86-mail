@@ -57,7 +57,7 @@ describe('corpus routes check the internal secret', () => {
         { 'x-lab86-internal-secret': 'internal-secret-valuE' },
         { authorization: 'Bearer internal-secret' },
       ]) {
-        const response = await post(request(name, headers));
+        const response = await post(request(name, headers as Record<string, string>));
         expect(response.status).toBe(401);
         expect(await response.json()).toEqual({ ok: false, error: 'Unauthorized.' });
       }
@@ -77,7 +77,7 @@ describe('corpus routes check the internal secret', () => {
       for (const headers of [
         { 'x-lab86-internal-secret': 'internal-secret-value' },
         { authorization: 'Bearer internal-secret-value' },
-      ]) {
+      ] as Record<string, string>[]) {
         // Past the gate, the body check answers 400 (userId without accountId).
         const response = await post(request(name, headers));
         expect(response.status).toBe(400);

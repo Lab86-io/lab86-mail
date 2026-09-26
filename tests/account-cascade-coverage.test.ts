@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import {
   ACCOUNT_BULK_TABLES,
@@ -72,7 +72,7 @@ describe('account deletion removes narrative and content rows', () => {
     else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
   });
 
-  async function seed(t: ReturnType<typeof convexTest>, userId: string) {
+  async function seed(t: TestConvex<typeof schema>, userId: string) {
     await t.run(async (ctx) => {
       const ts = 1_700_000_000_000;
       await ctx.db.insert('narrativeSettings', {

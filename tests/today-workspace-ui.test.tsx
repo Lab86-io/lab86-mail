@@ -44,10 +44,10 @@ describe('Today working surface', () => {
     const original = globalThis.fetch;
     try {
       for (const data of [{}, { asOf: 1, weather: {} }, { asOf: 1, weather: { current: null } }]) {
-        globalThis.fetch = (async () => Response.json(data)) as typeof fetch;
+        globalThis.fetch = (async () => Response.json(data)) as unknown as typeof fetch;
         await expect(weatherRequest()).rejects.toThrow('Weather unavailable');
       }
-      globalThis.fetch = (async () => new Response('<html>proxy</html>')) as typeof fetch;
+      globalThis.fetch = (async () => new Response('<html>proxy</html>')) as unknown as typeof fetch;
       await expect(weatherRequest()).rejects.toThrow('Weather unavailable');
       const data = {
         asOf: 1,
@@ -58,9 +58,9 @@ describe('Today working surface', () => {
           daily: [{ precipChance: 20 }],
         },
       };
-      globalThis.fetch = (async () => Response.json(data)) as typeof fetch;
-      expect(await weatherRequest()).toEqual(data);
-      globalThis.fetch = (async () => Response.json({ asOf: 1, weather: null })) as typeof fetch;
+      globalThis.fetch = (async () => Response.json(data)) as unknown as typeof fetch;
+      expect(await weatherRequest()).toEqual<unknown>(data);
+      globalThis.fetch = (async () => Response.json({ asOf: 1, weather: null })) as unknown as typeof fetch;
       expect(await weatherRequest()).toEqual({ asOf: 1, weather: null });
     } finally {
       globalThis.fetch = original;
@@ -77,15 +77,16 @@ describe('Today working surface', () => {
     const original = globalThis.fetch;
     try {
       for (const status of [502, 200]) {
-        globalThis.fetch = (async () => new Response('<html>proxy error</html>', { status })) as typeof fetch;
+        globalThis.fetch = (async () =>
+          new Response('<html>proxy error</html>', { status })) as unknown as typeof fetch;
         await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow(
           'Could not update Today. Please try again.',
         );
       }
       globalThis.fetch = (async () =>
-        Response.json({ error: 'Context changed.' }, { status: 409 })) as typeof fetch;
+        Response.json({ error: 'Context changed.' }, { status: 409 })) as unknown as typeof fetch;
       await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow('Context changed.');
-      globalThis.fetch = (async () => Response.json({})) as typeof fetch;
+      globalThis.fetch = (async () => Response.json({})) as unknown as typeof fetch;
       await expect(workspaceRequest({ action: 'generate', at: 1 })).rejects.toThrow(
         'Could not update Today. Please try again.',
       );

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 
 const modules = {
@@ -40,7 +41,12 @@ async function capture(
   text = 'Tomorrow I want to ship the launch',
   messageId = 'm1',
 ) {
-  return t.mutation(f.captureTurn, { ...args, messageId, text, topics: ['work:launch'] });
+  return (await t.mutation(f.captureTurn, {
+    ...args,
+    messageId,
+    text,
+    topics: ['work:launch'],
+  })) as Id<'narrativeEntries'>;
 }
 describe('shared narrative runtime', () => {
   test('cloud file changes are opt-in, source-linked, and revoked on deletion or disconnection', async () => {

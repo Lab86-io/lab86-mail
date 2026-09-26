@@ -24,7 +24,7 @@ function dependencies() {
       authorizationUrl: 'https://provider.example.test/authorize',
       persisted: { state: 'state-1', verifier: 'verifier-1' },
     })) as any,
-    saveOAuthState: mock(async () => ({ ok: true })),
+    saveOAuthState: mock(async (..._args: unknown[]) => ({ ok: true })),
     encryptSecret: (value: string) => `encrypted:${value}`,
     randomState: () => 'state-1',
     now: () => 1_000,

@@ -60,7 +60,7 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
           { id: 'anthropic/claude-haiku-4.5' },
         ],
       }),
-    )) as typeof fetch;
+    )) as unknown as typeof fetch;
   const { resolveAiRuntime } = await import('../lib/ai/gateway');
   describe('actual runtime state resolution', () => {
     test('a direct OpenAI key uses native defaults when hosted defaults are GLM', async () => {

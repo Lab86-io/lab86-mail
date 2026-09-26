@@ -367,7 +367,10 @@ describe('resolveToolShape', () => {
       expect(result.kind).toBe('events');
       expect(result.title).toBe('Which “Standup” event?');
       expect(result.activity.done).toBe('Several events match. Waiting for your choice');
-      expect(result.items.map((row: any) => row.eventId)).toEqual(['e1', 'e2']);
+      expect((result as { items: Array<{ eventId: string }> }).items.map((row) => row.eventId)).toEqual([
+        'e1',
+        'e2',
+      ]);
     }
   });
 

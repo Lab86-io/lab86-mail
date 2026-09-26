@@ -288,7 +288,9 @@ describe('the route prediction', () => {
     await act(async () => renderer.update(renderProbe('')));
     expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: true });
     await act(async () => renderer.update(renderProbe('Keep this thought')));
-    await act(async () => jest.advanceTimersByTime(1_000));
+    await act(async () => {
+      jest.advanceTimersByTime(1_000);
+    });
     expect(probeState(renderer)).toMatchObject({ route: 'hold', locked: true, empty: false });
     expect(requests).toEqual([]);
     await act(async () => renderer.update(renderProbe('')));

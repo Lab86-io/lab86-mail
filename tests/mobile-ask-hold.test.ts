@@ -111,10 +111,10 @@ describe('work.captureFromChat command', () => {
 
   test('the OpenAPI document lists the command, the sync change, and the route path', () => {
     const document = mobileOpenAPIV1();
-    expect(document.components.schemas.MobileCommand.discriminator.mapping['work.captureFromChat']).toBe(
-      '#/components/schemas/WorkCaptureFromChatCommand',
-    );
-    expect(document.components.schemas.SyncChange.discriminator.mapping.workCaptured).toBe(
+    expect(
+      (document.components.schemas.MobileCommand as any).discriminator.mapping['work.captureFromChat'],
+    ).toBe('#/components/schemas/WorkCaptureFromChatCommand');
+    expect((document.components.schemas.SyncChange as any).discriminator.mapping.workCaptured).toBe(
       '#/components/schemas/WorkCapturedSyncChange',
     );
     expect(document.paths['/api/mobile/v1/assistant/route'].post.operationId).toBe('postAssistantRoute');

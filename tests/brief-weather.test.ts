@@ -10,6 +10,7 @@ import {
 } from '../lib/mail/brief-weather';
 import type { DailyReport, DailyReportCalendarItem } from '../lib/shared/types';
 import type { BriefWeather } from '../lib/weather/open-meteo';
+import { testEnv } from './tools/env';
 import { withToolContext } from './tools/harness';
 
 function reportFixture(overrides: Partial<DailyReport> = {}): DailyReport {
@@ -184,12 +185,12 @@ describe('brief weather gathering', () => {
           label: 'Rochester, New York',
           timezone: 'America/New_York',
         },
-        weatherEnvironment: {
+        weatherEnvironment: testEnv({
           WEATHERKIT_KEY_ID: 'test-key',
           WEATHERKIT_TEAM_ID: 'test-team',
           WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
           WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
-        },
+        }),
         weatherKitFetch: async () => ({
           ok: true,
           status: 200,
@@ -311,12 +312,12 @@ describe('brief weather gathering', () => {
           label: 'Rochester, New York',
           timezone: 'America/New_York',
         },
-        weatherEnvironment: {
+        weatherEnvironment: testEnv({
           WEATHERKIT_KEY_ID: 'test-key',
           WEATHERKIT_TEAM_ID: 'test-team',
           WEATHERKIT_SERVICE_ID: 'io.lab86.mail.test',
           WEATHERKIT_PRIVATE_KEY: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
-        },
+        }),
         weatherKitFetch: async () => {
           throw new Error('WeatherKit unavailable');
         },

@@ -64,7 +64,7 @@ describe('live Jev demonstration', () => {
   test('auth and strict bounded input validation run before any paid request', async () => {
     const deps = dependencies({
       requireCurrentUser: async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       },
     });
     expect((await createJevDemoRoute(deps)(request())).status).toBe(401);

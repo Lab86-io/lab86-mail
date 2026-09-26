@@ -81,22 +81,25 @@ describe('Jev typed transport', () => {
     const request = { apiKey: 'test-only', state: {}, questions: buildMailQuestions(mailInput()) };
     await expect(evaluateClassifier({ ...request, apiKey: '' })).rejects.toThrow('not_configured');
     await expect(
-      evaluateClassifier(request, (async () => new Response('secret body', { status: 429 })) as typeof fetch),
+      evaluateClassifier(
+        request,
+        (async () => new Response('secret body', { status: 429 })) as unknown as typeof fetch,
+      ),
     ).rejects.toThrow('provider');
     await expect(
-      evaluateClassifier(request, (async () => new Response('not json')) as typeof fetch),
+      evaluateClassifier(request, (async () => new Response('not json')) as unknown as typeof fetch),
     ).rejects.toThrow('invalid_response');
     await expect(
       evaluateClassifier(request, (async () => {
         throw new Error('private network data');
-      }) as typeof fetch),
+      }) as unknown as typeof fetch),
     ).rejects.toThrow('provider');
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
     await expect(
       evaluateClassifier({ ...request, signal: controller.signal }, (async () => {
         throw new Error('aborted');
-      }) as typeof fetch),
+      }) as unknown as typeof fetch),
     ).rejects.toThrow('cancelled');
     const abortingFetch = (async (_url: unknown, init: RequestInit) =>
       new Promise((_resolve, reject) => {

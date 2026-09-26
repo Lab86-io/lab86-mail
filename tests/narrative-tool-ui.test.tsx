@@ -41,7 +41,7 @@ describe('narrative drafting interaction', () => {
       { context: { coverage: 'test', evidence: [] }, points: [null], questions: [], mode: 'generated' },
       { context: { coverage: {}, evidence: [] }, points: [], questions: [], mode: 'empty' },
     ]) {
-      globalThis.fetch = (async () => Response.json(payload)) as typeof fetch;
+      globalThis.fetch = (async () => Response.json(payload)) as unknown as typeof fetch;
       await act(async () => {
         view = create(<NarrativeMeetingPrep accountId="a" calendarId="c" eventId="e" />);
       });
@@ -52,7 +52,7 @@ describe('narrative drafting interaction', () => {
   });
   test('non-JSON proxy failures show safe draft and meeting messages', async () => {
     globalThis.fetch = (async () =>
-      new Response('<html>proxy details</html>', { status: 503 })) as typeof fetch;
+      new Response('<html>proxy details</html>', { status: 503 })) as unknown as typeof fetch;
     await act(async () => {
       view = create(<NarrativeDraftAssistant {...props} />);
     });
@@ -133,7 +133,7 @@ describe('narrative drafting interaction', () => {
     globalThis.fetch = (async () =>
       fail
         ? Response.json({ error: 'Context changed' }, { status: 409 })
-        : Response.json(emptyNarrativeContext('search'))) as typeof fetch;
+        : Response.json(emptyNarrativeContext('search'))) as unknown as typeof fetch;
     await act(async () => {
       view = create(<NarrativeDraftAssistant {...props} />);
     });
@@ -213,7 +213,7 @@ describe('meeting prep interaction', () => {
       points: [],
       questions: [],
     });
-    globalThis.fetch = (async () => response) as typeof fetch;
+    globalThis.fetch = (async () => response) as unknown as typeof fetch;
     await act(async () => {
       view = create(<NarrativeMeetingPrep {...selector} />);
     });

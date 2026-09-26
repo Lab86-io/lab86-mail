@@ -273,7 +273,7 @@ describe('the export route', () => {
   test('it asks for sign-in, limits repeats, and reports a failure', async () => {
     const signedOut = createAccountExportGet({
       requireCurrentUser: async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       },
     });
     expect((await signedOut()).status).toBe(401);

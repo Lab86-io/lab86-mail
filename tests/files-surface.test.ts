@@ -82,7 +82,7 @@ describe('Files behind Settings, Advanced', () => {
     const { AuthRequiredError } = await import('../lib/auth/current-user');
     const signedOut = createSurfacesRoute({
       requireCurrentUser: async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       },
     });
     expect((await signedOut.GET()).status).toBe(401);

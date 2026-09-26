@@ -7,15 +7,16 @@ import {
   weatherKitConfiguration,
   weatherKitProviderToken,
 } from '../lib/weather/weatherkit';
+import { testEnv } from './tools/env';
 
 const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const pem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-const environment = {
+const environment = testEnv({
   WEATHERKIT_KEY_ID: '2QQ6GFX97Y',
   WEATHERKIT_TEAM_ID: '5JZV7V6Y4Z',
   WEATHERKIT_SERVICE_ID: 'io.lab86.mail',
   WEATHERKIT_PRIVATE_KEY: pem,
-} as NodeJS.ProcessEnv;
+});
 
 const place = {
   name: 'Rochester',

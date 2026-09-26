@@ -36,7 +36,7 @@ test('search sources preserve successful envelopes and cancellation', async () =
     init?.signal?.throwIfAborted();
     return Response.json({ ok: true, documents: [] });
   }) as typeof fetch;
-  expect(await readSearchSource('/api/documents?limit=200', controller.signal)).toEqual({
+  expect(await readSearchSource<unknown>('/api/documents?limit=200', controller.signal)).toEqual({
     ok: true,
     documents: [],
   });
@@ -47,7 +47,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 function response(body: string, status = 200) {
-  globalThis.fetch = (async () => new Response(body, { status })) as typeof fetch;
+  globalThis.fetch = (async () => new Response(body, { status })) as unknown as typeof fetch;
 }
 test('tool requests forward cancellation, custom headers and timezone', async () => {
   const controller = new AbortController();
@@ -58,7 +58,7 @@ test('tool requests forward cancellation, custom headers and timezone', async ()
     return new Response(JSON.stringify({ ok: true, result: { items: [] } }));
   }) as typeof fetch;
   expect(
-    await callTool('search_threads', { query: 'plan' }, { 'x-custom': 'value' }, controller.signal),
+    await callTool<unknown>('search_threads', { query: 'plan' }, { 'x-custom': 'value' }, controller.signal),
   ).toEqual({ items: [] });
   expect(init?.signal).toBe(controller.signal);
   expect(init?.body).toBe('{"query":"plan"}');
@@ -70,7 +70,7 @@ test('tool requests remain backwards compatible without a signal', async () => {
     expect(options).not.toHaveProperty('signal');
     return new Response('{"result":true}');
   }) as typeof fetch;
-  expect(await callTool('list_accounts')).toBe(true);
+  expect(await callTool<unknown>('list_accounts')).toBe(true);
 });
 test('tool errors are intentional and never expose an HTML error page', async () => {
   response('{"ok":false,"error":"Unavailable"}');
@@ -107,13 +107,15 @@ test('a tool result that reports ok:false is an error unless the caller opts out
   response('{"ok":true,"result":{"ok":false,"needsDisambiguation":true,"candidates":[{"id":"a"}]}}');
   await expect(callTool('calendar_update_event')).rejects.toThrow('More than one item matches');
   response('{"ok":true,"result":{"ok":false,"needsDisambiguation":true,"candidates":[{"id":"a"}]}}');
-  expect(await callTool('calendar_update_event', {}, {}, undefined, { acceptFailedResult: true })).toEqual({
+  expect(
+    await callTool<unknown>('calendar_update_event', {}, {}, undefined, { acceptFailedResult: true }),
+  ).toEqual({
     ok: false,
     needsDisambiguation: true,
     candidates: [{ id: 'a' }],
   });
   response('{"ok":true,"result":{"ok":true,"marked":2}}');
-  expect(await callTool('mark_thread_read')).toEqual({ ok: true, marked: 2 });
+  expect(await callTool<unknown>('mark_thread_read')).toEqual({ ok: true, marked: 2 });
 });
 test('failed tool results name the most specific failure field', () => {
   expect(failedResultMessage('x', { ok: false, summary: ' Nothing changed. ' })).toBe('Nothing changed.');

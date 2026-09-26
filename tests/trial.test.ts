@@ -191,7 +191,7 @@ describe('what the user sees', () => {
     const { AuthRequiredError } = await import('../lib/auth/current-user');
     const signedOut = createBillingPlanGet({
       requireCurrentUser: async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       },
     });
     expect((await signedOut()).status).toBe(401);
@@ -244,7 +244,7 @@ describe('Convex trial grant', () => {
       days: 14,
       monthlyCredits: 500,
     });
-    expect(again).toEqual({
+    expect(again).toEqual<unknown>({
       granted: false,
       trialStartedAt: first.trialStartedAt,
       trialEndsAt: first.trialEndsAt,
@@ -261,7 +261,7 @@ describe('Convex trial grant', () => {
       monthlyCredits: 0,
     });
     const after = await t.query(api.ai.getRuntimeState, { internalSecret: SECRET, userId: 'u1' });
-    expect(after.entitlement?.trialStartedAt).toBe(first.trialStartedAt);
+    expect(after.entitlement?.trialStartedAt).toBe<unknown>(first.trialStartedAt);
   });
 
   test('a former Pro user gets none, and a Free row is upgraded in place', async () => {

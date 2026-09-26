@@ -188,7 +188,6 @@ describe('briefLetterFromReport', () => {
               startAt: Date.parse('2026-09-03T14:00:00Z'),
               endAt: Date.parse('2026-09-03T14:30:00Z'),
               location: 'Room 2',
-              scope: 'week',
             },
             {
               account: 'jakob@example.com',
@@ -196,7 +195,6 @@ describe('briefLetterFromReport', () => {
               title: 'Tomorrow',
               startAt: Date.parse('2026-09-04T14:00:00Z'),
               endAt: Date.parse('2026-09-04T14:30:00Z'),
-              scope: 'week',
             },
           ],
           albatross: {

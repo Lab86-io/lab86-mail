@@ -31,7 +31,7 @@ test('reader shows the newest edition even while it is generating or has a fallb
       loaded.push(id);
       return id === newest._id ? newest : completed;
     }) as any,
-    query: (async (_fn, args) => {
+    query: (async (_fn: unknown, args: any) => {
       reads.push(args);
       return {
         page: [newest, completed].slice(0, args.limit),
@@ -74,7 +74,7 @@ test('a saved Brief succeeds despite synchronous owner or asynchronous attention
           },
         } as any,
       ),
-    ).toBe(value);
+    ).toBe<unknown>(value);
     expect(saved).toEqual([value]);
   }
 });
@@ -83,7 +83,7 @@ test('hosted latest asks for exactly one edition in the current user context', a
   const calls: any[] = [];
   setDailyReportReaderForTest({
     configured: () => true,
-    query: (async (_fn, args) => {
+    query: (async (_fn: unknown, args: any) => {
       calls.push(args);
       return {
         page: args.edition === 'manual' ? [] : [report(10)],
@@ -106,7 +106,7 @@ test('hosted full history consumes bounded pages and stops at the requested coun
   const calls: any[] = [];
   setDailyReportReaderForTest({
     configured: () => true,
-    query: (async (_fn, args) => {
+    query: (async (_fn: unknown, args: any) => {
       calls.push(args);
       const start = args.cursor ? Number(args.cursor) : 0;
       return {
@@ -131,12 +131,12 @@ test('summary history stops on exhaustion and requests no artifact bodies', asyn
   const calls: any[] = [];
   setDailyReportReaderForTest({
     configured: () => true,
-    query: (async (_fn, args) => {
+    query: (async (_fn: unknown, args: any) => {
       calls.push(args);
       return { page: [report(2)], isDone: true, continueCursor: '' };
     }) as any,
   });
-  await context(async () => expect(await listDailyReportSummaries(30)).toEqual([report(2)]));
+  await context(async () => expect(await listDailyReportSummaries(30)).toEqual<unknown>([report(2)]));
   expect(calls).toEqual([
     { userId: 'reader', edition: undefined, cursor: null, limit: 8, summaryOnly: true },
   ]);
@@ -149,7 +149,7 @@ test('latest edition reflects current scoped Jev facts while full history remain
   setDailyReportReaderForTest({
     configured: () => true,
     loadPolicy: async () => policy,
-    query: (async (_fn, args) => {
+    query: (async (_fn: unknown, args: any) => {
       calls.push(args);
       return args.threads
         ? [thread({ jev: assessment({ sourceRevision: 'resolved', obligations: [] }) })]

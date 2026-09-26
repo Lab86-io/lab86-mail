@@ -23,7 +23,7 @@ test('all chart renderers and the date adapter are pinned and distributed with l
       createHash('sha256')
         .update(await readFile(`${base}/${path}`))
         .digest('hex'),
-    ).toBe(hash);
+    ).toBe(hash as string);
 });
 
 test('vendored runtime and corresponding source match the pinned manifest and installed package', async () => {
@@ -38,7 +38,7 @@ test('vendored runtime and corresponding source match the pinned manifest and in
       createHash('sha256')
         .update(await readFile(`${base}/${path}`))
         .digest('hex'),
-    ).toBe(digest);
+    ).toBe(digest as string);
   }
   const runtime = await readFile(`${base}/dist/o_spreadsheet.esm.js`, 'utf8');
   expect(runtime).toContain(`from "/vendor/owl/${ODOO_OWL_VERSION}/dist/owl.es.js"`);

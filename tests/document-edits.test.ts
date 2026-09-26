@@ -106,7 +106,7 @@ describe('deterministic document edits', () => {
       ok: true as const,
       document: { ...existing, model: input.model, currentRevision: 5 },
     }));
-    const suggest = mock(async () => ({ ok: true, suggestionId: 'proposal' }));
+    const suggest = mock(async (..._args: unknown[]) => ({ ok: true, suggestionId: 'proposal' as never }));
     __setDocumentToolDepsForTest({
       getDocument: async () => ({ ...existing, suggestions: [] }),
       updateDocument: update,
@@ -246,7 +246,7 @@ describe('deterministic document edits', () => {
     ]);
     if (result.kind !== 'deck') throw new Error('Wrong kind');
     expect(result.activeSlideId).toBe('two');
-    expect(result.slides[0].elements[0].text).toBe('Hello');
+    expect((result.slides[0].elements[0] as { text?: string }).text).toBe('Hello');
     expect(result.slides[0].notes).toBe('Presenter notes');
     expect(source.slides).toEqual([original]);
     expect(() => prepareDocumentEdits(result, [{ op: 'slide_remove', slideId: 'two' }])).toThrow(
@@ -334,7 +334,7 @@ describe('deterministic document edits', () => {
   test('legacy cells retain formatting while replacing values and formulas', () => {
     const source = createDefaultDocumentModel('sheet', 'test');
     if (source.kind !== 'sheet') throw new Error('Wrong kind');
-    source.sheets[0].cells.A1 = { formula: '1+1', format: 'currency' };
+    (source.sheets[0].cells as Record<string, unknown>).A1 = { formula: '1+1', format: 'currency' };
     const result = prepareDocumentEdits(source, [
       { op: 'cell_update', sheetId: source.sheets[0].id, cell: 'A1', content: 'Actual' },
     ]);
@@ -360,7 +360,7 @@ describe('document editing through the agent AI SDK toolset', () => {
     const generation = mock(async () => {
       throw new Error('Must not generate');
     });
-    const get = mock(async () => ({ ...record(), suggestions: [] }));
+    const get = mock(async (..._args: unknown[]) => ({ ...record(), suggestions: [] }));
     __setDocumentToolDepsForTest({
       getDocument: get,
       updateDocument: update,
@@ -395,7 +395,7 @@ describe('document editing through the agent AI SDK toolset', () => {
     expect(generation).not.toHaveBeenCalled();
   });
   test('review defaults to a revision-bound suggestion and does not write contents', async () => {
-    const save = mock(async () => ({ ok: true, suggestionId: 'proposal' }));
+    const save = mock(async (..._args: unknown[]) => ({ ok: true, suggestionId: 'proposal' as never }));
     const update = mock(async () => {
       throw new Error('Must not update');
     });
@@ -438,7 +438,7 @@ describe('document editing through the agent AI SDK toolset', () => {
     }));
     __setDocumentToolDepsForTest({
       getDocument: async () => ({ ...record(engine()), suggestions: [] }),
-      createDocumentSuggestion: async () => ({ ok: true, suggestionId: 'cells' }),
+      createDocumentSuggestion: async () => ({ ok: true, suggestionId: 'cells' as never }),
       updateDocument: update,
     });
     const result = await documentEdit.handler(
@@ -461,7 +461,7 @@ describe('document editing through the agent AI SDK toolset', () => {
     await expect(documentEdit.handler(args(), toolContext())).rejects.toThrow('not found');
     __setDocumentToolDepsForTest({
       getDocument: async () => ({ ...record(), suggestions: [] }),
-      createDocumentSuggestion: async () => ({ ok: false, suggestionId: 'none' }),
+      createDocumentSuggestion: async () => ({ ok: false, suggestionId: 'none' as never }),
     });
     await expect(documentEdit.handler({ ...args(), mode: 'review' }, toolContext())).rejects.toThrow(
       'could not be saved',

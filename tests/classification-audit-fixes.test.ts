@@ -477,7 +477,7 @@ describe('CLS-2 the Needs reply badge counts what the list shows', () => {
     expect(counts.needs_reply).toEqual({ unread: 2, attention: true });
     const scoped = await t.run((ctx) => computeCategoryUnreadCounts(ctx, USER, ['acct']));
     expect(scoped.needs_reply).toEqual({ unread: 1, attention: true });
-    const list = await t.run((ctx) =>
+    const list: unknown[] = await t.run((ctx) =>
       (ctx as any).db
         .query('mailCorpusThreads')
         .withIndex('by_user_jev_reply', (q: any) => q.eq('userId', USER).eq('jevNeedsReply', true))

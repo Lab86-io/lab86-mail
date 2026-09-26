@@ -142,7 +142,8 @@ describe('loadOpenRouterModelOptions', () => {
 
   test('the fast list keeps only fast-shaped ids plus the pinned default', async () => {
     const result = await withFetch(
-      (async () => new Response(JSON.stringify({ data: catalog }), { status: 200 })) as typeof fetch,
+      (async () =>
+        new Response(JSON.stringify({ data: catalog }), { status: 200 })) as unknown as typeof fetch,
       () => loadOpenRouterModelOptions(),
     );
 
@@ -155,7 +156,7 @@ describe('loadOpenRouterModelOptions', () => {
 
   test('an empty catalog degrades to the full curated lists while staying live', async () => {
     const result = await withFetch(
-      (async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch,
+      (async () => new Response(JSON.stringify({}), { status: 200 })) as unknown as typeof fetch,
       () => loadOpenRouterModelOptions(),
     );
 
@@ -168,7 +169,7 @@ describe('loadOpenRouterModelOptions', () => {
 
   test('a non-OK catalog response falls back to the curated options', async () => {
     const result = await withFetch(
-      (async () => new Response('upstream error', { status: 500 })) as typeof fetch,
+      (async () => new Response('upstream error', { status: 500 })) as unknown as typeof fetch,
       () => loadOpenRouterModelOptions(),
     );
 
@@ -183,7 +184,7 @@ describe('loadOpenRouterModelOptions', () => {
     const result = await withFetch(
       (async () => {
         throw new Error('network unreachable');
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
       () => loadOpenRouterModelOptions(),
     );
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
@@ -10,7 +10,7 @@ const modules = {
 
 const userId = 'routine_user';
 
-async function seed(t: ReturnType<typeof convexTest>) {
+async function seed(t: TestConvex<typeof schema>) {
   return t.run(async (ctx) => {
     const projectId = await ctx.db.insert('albatrossProjects', {
       userId,

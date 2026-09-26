@@ -180,7 +180,9 @@ describe('tool groups', () => {
     const json = JSON.stringify(schema.jsonSchema);
     expect(json).toContain('attendees');
     expect(json).not.toContain('pattern');
-    expect(stripPatterns({ a: { pattern: '(?=x)', type: 'string' }, b: [{ pattern: 'y' }] })).toEqual({
+    expect(
+      stripPatterns({ a: { pattern: '(?=x)', type: 'string' }, b: [{ pattern: 'y' }] }),
+    ).toEqual<unknown>({
       a: { type: 'string' },
       b: [{}],
     });

@@ -140,7 +140,7 @@ describe('incoming Area mail', () => {
     expect(after.mail).toHaveLength(30);
     const refreshed = await runtime.run((ctx) => ctx.db.get(linkId));
     expect(refreshed?.updatedAt).toBeGreaterThan(confirmed!.updatedAt);
-    expect({ ...refreshed, updatedAt: confirmed!.updatedAt }).toEqual(confirmed);
+    expect({ ...refreshed, updatedAt: confirmed!.updatedAt }).toEqual<unknown>(confirmed);
     const thread = await runtime.run((ctx) =>
       ctx.db
         .query('mailCorpusThreads')
@@ -508,7 +508,7 @@ describe('corpus reads', () => {
         _creationTime: unknown;
       };
       await ctx.db.insert('mailCorpusMessages', {
-        ...(copy as never),
+        ...(copy as any),
         userId: 'intruder',
         providerMessageId: 'intruder_msg',
       });

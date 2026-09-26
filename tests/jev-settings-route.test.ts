@@ -72,7 +72,7 @@ describe('Jev settings HTTP contract', () => {
     const routes = createJevSettingsRoutes(
       deps({
         requireCurrentUser: async () => {
-          throw new AuthRequiredError();
+          throw new AuthRequiredError('Sign in required.');
         },
       }),
     );

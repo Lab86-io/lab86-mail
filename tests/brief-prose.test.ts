@@ -94,8 +94,8 @@ describe('day table', () => {
     weekday,
   }) => {
     const days = briefWeekDays(Date.parse(now), TZ);
-    expect(days.map((day) => day.dayKey)).toEqual(keys);
-    expect(days.map((day) => localDayKey(day.startAt, TZ))).toEqual(keys);
+    expect(days.map((day) => day.dayKey)).toEqual([...keys]);
+    expect(days.map((day) => localDayKey(day.startAt, TZ))).toEqual([...keys]);
     expect(days[1]).toMatchObject({ weekday, isTomorrow: true });
     const byDay = eventsByDay([event('tomorrow', 'Review', nextEvent)], days, TZ);
     expect(byDay.get(keys[1])?.map((item) => item.eventId)).toEqual(['tomorrow']);

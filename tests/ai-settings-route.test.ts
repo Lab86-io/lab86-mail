@@ -116,7 +116,7 @@ describe('AI settings persistence', () => {
           {},
           {
             requireCurrentUser: async () => {
-              throw new AuthRequiredError();
+              throw new AuthRequiredError('Sign in required.');
             },
           },
         )

@@ -293,7 +293,7 @@ describe('cloud file Convex lifecycle', () => {
         userId: USER,
         completionToken: 'native-completion',
       }),
-    ).toEqual({
+    ).toEqual<unknown>({
       provider: 'google_drive',
       authorizationCodeEncrypted: 'encrypted-code',
     });

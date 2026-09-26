@@ -4,6 +4,7 @@ import {
   isDeckV2AuthoringEnabledOnClient,
   isThemedOfficeChromeEnabled,
 } from '../lib/documents/editor-flags';
+import { setProcessEnv } from './tools/env';
 
 const keys = [
   'OFFICE_THEMED_CHROME',
@@ -17,12 +18,11 @@ const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 describe('editor rollout flags', () => {
   afterEach(() => {
     for (const key of keys) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
+      setProcessEnv(key, saved[key]);
     }
   });
   test('default on in staging and off elsewhere, with explicit values always winning', () => {
-    process.env.NODE_ENV = 'production';
+    setProcessEnv('NODE_ENV', 'production');
     delete process.env.RAILWAY_ENVIRONMENT_NAME;
     delete process.env.OFFICE_THEMED_CHROME;
     delete process.env.DECK_V2_AUTHORING;
@@ -39,9 +39,9 @@ describe('editor rollout flags', () => {
   });
   test('the client flag follows the public variable, else development', () => {
     delete process.env.NEXT_PUBLIC_DECK_V2_AUTHORING;
-    process.env.NODE_ENV = 'development';
+    setProcessEnv('NODE_ENV', 'development');
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(true);
-    process.env.NODE_ENV = 'production';
+    setProcessEnv('NODE_ENV', 'production');
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(false);
     process.env.NEXT_PUBLIC_DECK_V2_AUTHORING = 'yes';
     expect(isDeckV2AuthoringEnabledOnClient()).toBe(true);

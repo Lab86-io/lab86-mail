@@ -52,12 +52,12 @@ beforeEach(() => {
   __setAreaToolDepsForTest({
     api: apiMock as any,
     now: () => NOW,
-    prepareAreaDiscoveryContext: async () => ({
+    prepareAreaDiscoveryContext: (async () => ({
       sources: ['mail', 'github'],
       discoveries: [{ areaId: 'area_1', artifactId: 'artifact_1' }],
       pendingCandidates: [{ linkId: 'link_1' }],
       pendingFacts: [{ factId: 'fact_1' }],
-    }),
+    })) as any,
     convexMutation: (async (fn: any, args: any) => {
       mutationCalls.push({ fn, args });
       if (fn === apiMock.albatross.createArea) return 'area_new';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
@@ -18,12 +18,12 @@ function makeHarness() {
   return { t, owner };
 }
 
-async function seedUser(t: ReturnType<typeof convexTest>, clerkUserId: string, email: string) {
+async function seedUser(t: TestConvex<typeof schema>, clerkUserId: string, email: string) {
   const ts = Date.now();
   await t.run((ctx) => ctx.db.insert('users', { clerkUserId, email, createdAt: ts, updatedAt: ts }));
 }
 
-async function boardColumns(t: ReturnType<typeof convexTest>, boardId: Id<'boards'>) {
+async function boardColumns(t: TestConvex<typeof schema>, boardId: Id<'boards'>) {
   const columns = await t.run((ctx) =>
     ctx.db
       .query('boardColumns')
@@ -834,10 +834,10 @@ describe('boards Convex runtime', () => {
 });
 
 describe('card attachment storage (TSK-2)', () => {
-  async function store(t: ReturnType<typeof convexTest>, bytes: number, type: string) {
+  async function store(t: TestConvex<typeof schema>, bytes: number, type: string) {
     return t.run((ctx) => ctx.storage.store(new Blob([new Uint8Array(bytes)], { type })));
   }
-  async function blobExists(t: ReturnType<typeof convexTest>, id: Id<'_storage'>) {
+  async function blobExists(t: TestConvex<typeof schema>, id: Id<'_storage'>) {
     return Boolean(await t.run((ctx) => ctx.db.system.get(id)));
   }
 

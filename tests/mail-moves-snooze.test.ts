@@ -74,7 +74,7 @@ describe('provider-aware moves (MUT-2)', () => {
 const snoozeDeps = () => ({
   query: mock(async (): Promise<any> => []),
   mutate: mock(async (): Promise<any> => ({})),
-  moveThread: mock(async (): Promise<any> => ({ ok: true })),
+  moveThread: mock(async (_args?: unknown): Promise<any> => ({ ok: true })),
   updateThread: mock(async (): Promise<any> => ({ ok: true })),
 });
 

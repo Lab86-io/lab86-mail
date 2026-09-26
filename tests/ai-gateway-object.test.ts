@@ -52,7 +52,7 @@ describe('structured AI gateway', () => {
     expect(agentProviderOptions({ provider: 'openai' } as any)?.openai).not.toHaveProperty('promptCacheKey');
     expect(agentProviderOptions({ provider: 'openrouter' } as any, 'agent:owner')).toEqual({
       openai: {
-        reasoningEffort: process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low',
+        reasoningEffort: (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT || 'low') as 'low',
         parallelToolCalls: true,
       },
     });

@@ -41,7 +41,7 @@ describe('mail counts preserve unknown results', () => {
   });
 
   test('unknown accounts are rejected and valid zero counts stay zero', async () => {
-    const query = mock(async () => ({ count: 0, approximate: false }));
+    const query = mock(async (..._args: unknown[]) => ({ count: 0, approximate: false }));
     __setCorpusCountDepsForTest({
       isConvexConfigured: () => true,
       listNylasAccounts: (async () => [{ accountId: 'owned' }]) as any,
@@ -84,7 +84,7 @@ describe('meeting and email research coverage', () => {
 
   test('mail-only research does not query or substitute connected sources', async () => {
     const connected = mock(async () => [meeting]);
-    const mailSearch = mock(async () => ({ items: [mail] }));
+    const mailSearch = mock(async (..._args: unknown[]) => ({ items: [mail] }));
     __setCorpusSearchDepsForTest({
       listNylasAccounts: (async () => [{ accountId: 'mail-1' }, { accountId: 'mail-2' }]) as any,
       searchNylasThreads: mailSearch as any,

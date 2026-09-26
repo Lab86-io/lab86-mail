@@ -280,12 +280,12 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(document.openapi).toBe('3.1.0');
     expect(document.paths['/api/mobile/v1/commands'].post.operationId).toBe('postMobileCommand');
     expect(document.components.schemas.MobileCommand).toBeDefined();
-    expect(document.components.schemas.MobileCommand.discriminator.propertyName).toBe('kind');
+    expect((document.components.schemas.MobileCommand as any).discriminator.propertyName).toBe('kind');
     expect(document.components.schemas.MobileCommand.oneOf).toContainEqual({
       $ref: '#/components/schemas/TaskSetCompletedCommand',
     });
-    expect(document.components.schemas.SyncChange.discriminator.propertyName).toBe('entityKind');
-    expect(document.components.schemas.SyncEnvelope.properties.items.items).toEqual({
+    expect((document.components.schemas.SyncChange as any).discriminator.propertyName).toBe('entityKind');
+    expect((document.components.schemas.SyncEnvelope as any).properties.items.items).toEqual({
       $ref: '#/components/schemas/SyncChange',
     });
     expect(checkedIn).toEqual(document);

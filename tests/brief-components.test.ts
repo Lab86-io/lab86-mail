@@ -123,7 +123,7 @@ test('every Tool UI family is discoverable, validates against its real schema, c
     .filter((d) => d.isDirectory() && d.name !== 'shared')
     .map((d) => d.name)
     .sort();
-  expect(briefComponentNames.filter((n) => n !== 'editorial-text').sort()).toEqual(families);
+  expect(briefComponentNames.filter((n) => n !== 'editorial-text').sort()).toEqual<string[]>(families);
   expect(Object.keys(briefComponentRenderers).sort()).toEqual([...briefComponentNames].sort());
   const { letter, modules, plan } = editorialFixture();
   for (const name of briefComponentNames) {

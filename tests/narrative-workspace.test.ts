@@ -145,7 +145,7 @@ describe('Today workspace composition and trust boundary', () => {
       work: { title: 'Launch Atlas', workState: 'active', shape: 'list' },
       execution: { currentStep: { title: 'Review QA' } },
     };
-    const query = spyOn(hosted, 'convexQuery').mockImplementation(async (fn, args) => {
+    const query = spyOn(hosted, 'convexQuery').mockImplementation(async (fn: any, args: any) => {
       expect(args.userId).toBe('owner');
       if (getFunctionName(fn) === 'narrative:brief') return { enabled: true, entry: { _id: 'brief' } };
       expect(getFunctionName(fn)).toBe('albatrossWorkV2:workDetail');

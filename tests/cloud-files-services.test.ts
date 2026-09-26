@@ -240,7 +240,7 @@ describe('cloud file connection service', () => {
   });
 
   test('returns live access and refreshes near-expiry OneDrive credentials', async () => {
-    const mutation = mock(async () => ({ ok: true }));
+    const mutation = mock(async (..._args: unknown[]) => ({ ok: true }));
     const rows = [
       null,
       {
@@ -318,7 +318,7 @@ describe('cloud file connection service', () => {
     const fetchMock = mock(async () =>
       Response.json({ access_token: 'fresh-access', refresh_token: 'fresh-refresh', expires_in: 60 }),
     );
-    const mutation = mock(async () => ({ ok: true }));
+    const mutation = mock(async (..._args: unknown[]) => ({ ok: true }));
     __setCloudFileConnectionDepsForTest({
       convexMutation: mutation as any,
       convexQuery: (async () => row) as any,
@@ -417,7 +417,7 @@ describe('cloud file connection service', () => {
         scopes: [],
       },
     ]);
-    const mutation = mock(async () => undefined);
+    const mutation = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileConnectionDepsForTest({
       convexMutation: mutation as any,
       convexQuery: query as any,
@@ -462,7 +462,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
   });
 
   test('a failed revoke still disconnects; OneDrive has no revoke call', async () => {
-    const mutation = mock(async () => undefined);
+    const mutation = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileConnectionDepsForTest({
       convexQuery: (async () => stored('google_drive')) as any,
       convexMutation: mutation as any,
@@ -483,7 +483,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
   });
 
   test('a missing folder is recorded without asking for a reconnect', async () => {
-    const accessed = mock(async () => undefined);
+    const accessed = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileBrowseDepsForTest({
       getCloudFileAccess: (async () => ({
         connection: stored('google_drive').connection,
@@ -497,7 +497,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
     ).rejects.toThrow('no longer exists');
     expect((accessed.mock.calls[0] as any[])[3]).toEqual({ reconnect: false });
 
-    const mutation = mock(async () => undefined);
+    const mutation = mock(async (..._args: unknown[]) => undefined);
     __setCloudFileConnectionDepsForTest({ convexMutation: mutation as any });
     await markCloudFileConnectionAccess('user-1', 'conn-1', 'expired', { reconnect: true });
     expect((mutation.mock.calls[0] as any[])[1]).toMatchObject({ error: 'expired', reconnect: true });
@@ -506,7 +506,7 @@ describe('cloud file disconnect and error state (CAL-10, DOC-2)', () => {
 
 describe('cloud file browsing service', () => {
   test('builds bounded Google search, isolates credential arguments, and records success', async () => {
-    const accessed = mock(async () => undefined);
+    const accessed = mock(async (..._args: unknown[]) => undefined);
     const fetchMock = mock(async (url: string | URL | Request) => {
       const parsed = new URL(String(url));
       expect(parsed.hostname).toBe('www.googleapis.com');
@@ -550,7 +550,7 @@ describe('cloud file browsing service', () => {
   });
 
   test('uses safe OneDrive cursors and marks provider failures', async () => {
-    const accessed = mock(async () => undefined);
+    const accessed = mock(async (..._args: unknown[]) => undefined);
     const fetchMock = mock(async (url: string | URL | Request) => {
       expect(String(url)).toContain('/drive/items/folder-1/children');
       return Response.json({ error: 'expired' }, { status: 401 });

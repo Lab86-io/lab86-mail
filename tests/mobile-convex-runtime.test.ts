@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
@@ -14,7 +14,7 @@ type MobileDomain = 'mail' | 'tasks' | 'calendar';
 // and the stale-revision check still read them. Seed one the way the old
 // writer did: advance the domain head, then store the tombstone.
 async function seedTombstone(
-  t: ReturnType<typeof convexTest>,
+  t: TestConvex<typeof schema>,
   input: { userId: string; domain: MobileDomain; entityKind: string; entityId: string },
 ) {
   return t.run(async (ctx) => {

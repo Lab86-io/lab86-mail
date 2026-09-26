@@ -41,7 +41,7 @@ beforeEach(() => {
     },
     secretFingerprint: () => 'fingerprint1234',
     maskFingerprint: () => '...1234',
-    refreshMcpOAuth: async ({ persisted }) => ({
+    refreshMcpOAuth: async ({ persisted }: any) => ({
       ...persisted,
       clientInformation: persisted.clientInformation,
       tokens: {
@@ -115,7 +115,7 @@ describe('MCP OAuth token reads', () => {
       credentials: { accessTokenEncrypted: 'encrypted:access_1', expiresAt: NOW + 120_000 },
     };
 
-    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual<unknown>({
       row: granolaRow,
       token: 'access_1',
     });
@@ -133,7 +133,7 @@ describe('MCP OAuth token reads', () => {
       },
     };
 
-    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual({
+    expect(await getConnectionToken('user_1', 'granola_conn')).toEqual<unknown>({
       row: granolaRow,
       token: 'access_refreshed',
     });
@@ -170,7 +170,7 @@ describe('MCP OAuth token reads', () => {
       }) as any,
       encryptSecret: (value: string) => `encrypted:${value}`,
       decryptSecret: (value: string) => value.slice('encrypted:'.length),
-      refreshMcpOAuth: async ({ persisted }) => {
+      refreshMcpOAuth: async ({ persisted }: any) => {
         refreshCalls += 1;
         await gate;
         return {
@@ -253,7 +253,7 @@ describe('MCP OAuth token reads', () => {
       }) as any,
       encryptSecret: (value: string) => `encrypted:${value}`,
       decryptSecret: (value: string) => value.slice('encrypted:'.length),
-      refreshMcpOAuth: async ({ persisted }) => ({
+      refreshMcpOAuth: async ({ persisted }: any) => ({
         ...persisted,
         clientInformation: persisted.clientInformation,
         tokens: {
@@ -271,7 +271,7 @@ describe('MCP OAuth token reads', () => {
 
 test('lists, disconnects, and updates connection toggles through Convex', async () => {
   queryResult = [granolaRow];
-  expect(await listUserConnections('user_1')).toEqual([granolaRow]);
+  expect(await listUserConnections('user_1')).toEqual<unknown>([granolaRow]);
   await disconnectConnection('user_1', 'granola_conn');
   await setConnectionToggles('user_1', 'granola_conn', { includeInBrief: false });
 

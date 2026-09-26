@@ -32,7 +32,7 @@ describe('chat work log', () => {
     const first = segments[0];
     if (first.kind !== 'work-log') throw new Error('Expected work log');
     expect(first.rows.map((row) => row.toolCallId)).toEqual(['a', 'b']);
-    expect(first.rows[0].shape).toEqual(shape);
+    expect(first.rows[0].shape).toEqual<unknown>(shape);
     expect(segments[1].kind).toBe('part');
     expect(parts[0]).not.toHaveProperty('shape');
   });

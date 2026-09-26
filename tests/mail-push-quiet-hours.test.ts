@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createMailDigestPost } from '../app/api/cron/mail-digest/route';
 import { createMailPushSettingsRoute } from '../app/api/mail/push-settings/route';
 import { hourLabel } from '../components/settings/MailAlertsSettings';
 import { api, internal } from '../convex/_generated/api';
+import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 import { runLlmClassificationSweep } from '../lib/mail/llm-classify';
 import { detectUrgentMailAndCodes, type UrgentScanMessage } from '../lib/mail/urgent-detectors';
@@ -390,7 +391,7 @@ describe('Convex mail push holds and digests', () => {
   const f = (api as any).albatrossNotifications;
   const auth = { internalSecret: SECRET, userId: 'push_user' };
 
-  async function queueMail(t: ReturnType<typeof convexTest>, messageId: string, sender: string) {
+  async function queueMail(t: TestConvex<typeof schema>, messageId: string, sender: string) {
     const { notificationId } = await t.mutation(f.queueMailNotification, {
       ...auth,
       accountId: 'acct',
@@ -487,7 +488,7 @@ describe('Convex mail push holds and digests', () => {
       deepLink: '/mail',
       status: 'delivered',
     });
-    const cleared = await t.run((ctx) => ctx.db.get(first));
+    const cleared = await t.run((ctx) => ctx.db.get(first as Id<'albatrossNotifications'>));
     expect(cleared?.pushHeldUntil).toBeUndefined();
     expect(cleared?.pushHold?.digestId).toBe(claim.notificationId);
 

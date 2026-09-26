@@ -39,7 +39,7 @@ test('Word creation authenticates, bounds input, validates content, and preserve
     ...auth,
     create,
     requireCurrentUser: async () => {
-      throw new AuthRequiredError();
+      throw new AuthRequiredError('Sign in required.');
     },
   });
   expect((await unauthorized(request({ title: 'Report' }))).status).toBe(401);
@@ -56,7 +56,7 @@ test('Word creation authenticates, bounds input, validates content, and preserve
 });
 
 test('editor coordination binds an unexpired capability to the owner, document, and actual session', async () => {
-  const mutation = mock(async () => ({ ok: true }));
+  const mutation = mock(async (..._args: unknown[]) => ({ ok: true }));
   const post = createWordEditingPost({
     ...auth,
     requireOffice: () => ({ secret: 'secret' }) as any,

@@ -121,7 +121,7 @@ describe('live museum search', () => {
     expect(results.find((c) => c.provider === 'cleveland')!.imageUrl).toContain('_print');
     expect(results.find((c) => c.provider === 'aic')!.imageUrl).toContain('/iiif/2/img5/full/1686,/');
     expect(results.every((c) => isAllowedArtworkImage(c.imageUrl))).toBe(true);
-    const failing = (async () => new Response('down', { status: 503 })) as typeof fetch;
+    const failing = (async () => new Response('down', { status: 503 })) as unknown as typeof fetch;
     expect(await searchArtLive('harbor', { fetch: failing })).toEqual([]);
   });
   test('searchArtworks merges pool first and live second without duplicates', async () => {

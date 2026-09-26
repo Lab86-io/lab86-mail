@@ -72,7 +72,8 @@ test('correction editor uses the latest entry and preserves typing during refetc
 
 test('proxy HTML errors have an actionable narrative message', async () => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  globalThis.fetch = (async () => new Response('<html>proxy failed</html>', { status: 502 })) as typeof fetch;
+  globalThis.fetch = (async () =>
+    new Response('<html>proxy failed</html>', { status: 502 })) as unknown as typeof fetch;
   await act(async () => {
     view = create(wrap(<NarrativeSettings />));
   });

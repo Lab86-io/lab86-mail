@@ -81,7 +81,7 @@ describe('color helpers', () => {
   });
   test('categoricalColor picks from TABLEAU10', () => {
     const color = categoricalColor('grant_123');
-    expect(TABLEAU10).toContain(color);
+    expect(TABLEAU10).toContain<unknown>(color);
     expect(categoricalColor('grant_123')).toBe(color);
   });
 });

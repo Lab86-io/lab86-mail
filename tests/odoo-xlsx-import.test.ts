@@ -42,7 +42,7 @@ function harness() {
 }
 function request(bytes: Uint8Array, snapshot: any = model, name = 'Plan.xlsx') {
   const form = new FormData();
-  form.set('file', new File([bytes], name));
+  form.set('file', new File([bytes as Uint8Array<ArrayBuffer>], name));
   form.set('model', JSON.stringify(snapshot));
   return new NextRequest('https://app.invalid/api/documents/import', { method: 'POST', body: form });
 }

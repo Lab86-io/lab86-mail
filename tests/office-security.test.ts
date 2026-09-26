@@ -17,6 +17,7 @@ import {
   verifyOfficeToken,
 } from '../lib/documents/office-security';
 import { RateLimitError } from '../lib/rate-limit';
+import { testEnv } from './tools/env';
 
 const secret = 'office-test-secret-at-least-32-characters';
 describe('Office pilot security boundary', () => {
@@ -44,7 +45,7 @@ describe('Office pilot security boundary', () => {
       OFFICE_APP_ORIGIN: 'https://mail.example.test',
       NODE_ENV: 'production',
     } as NodeJS.ProcessEnv;
-    expect(officeConfiguration({})).toBeNull();
+    expect(officeConfiguration(testEnv({}))).toBeNull();
     expect(officeConfiguration({ ...env, OFFICE_LICENSE_ACCEPTED: 'false' })).toBeNull();
     expect(officeConfiguration({ ...env, OFFICE_JWT_SECRET: 'weak' })).toBeNull();
     expect(officeConfiguration(env)?.server).toBe('https://office.example.test');

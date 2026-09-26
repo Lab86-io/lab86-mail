@@ -909,7 +909,7 @@ describe('sending mail', () => {
         json: { request_id: 'req_d', data: { message: 'cancelled' } },
       }));
 
-      expect(await listNylasScheduledMessages({ userId: 'user_1', account: 'acct_1' })).toEqual([
+      expect(await listNylasScheduledMessages({ userId: 'user_1', account: 'acct_1' })).toEqual<unknown>([
         { scheduleId: 'sched_1' },
       ]);
       const status = (scheduleId: string) =>

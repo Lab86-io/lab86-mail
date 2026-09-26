@@ -61,7 +61,8 @@ const fixture = (): DeckModelV2 => ({
           width: 46,
           height: 100,
         },
-        { id: 'old-rule', type: 'line', x: 6, y: 33, width: 35, height: 0 },
+        // A legacy rule with no stroke.
+        { id: 'old-rule', type: 'line', x: 6, y: 33, width: 35, height: 0 } as never,
       ],
     },
   ],
@@ -347,7 +348,7 @@ test('image collisions cannot hide behind decorative flags and readable copy is 
       below: [0, 0, 100, 46],
     };
     const [x, y, width, height] = positions[direction as keyof typeof positions];
-    const image: DeckElementV2 = {
+    const image = {
       id: 'image',
       type: 'image',
       src: '/owned.png',
@@ -357,7 +358,7 @@ test('image collisions cannot hide behind decorative flags and readable copy is 
       height,
       decorative: true,
       overlapAllowed: true,
-    };
+    } as DeckElementV2;
     model.slides[0].elements = [text, image];
     expect(checkDeck(model).issues.some((issue) => issue.message.includes('covers'))).toBe(true);
     expect(repairDeck(model, 0).report.ok).toBe(false);
@@ -391,17 +392,23 @@ test('additional image compositions reserve text space and auto layout responds 
     body: 'A new chapter begins with a clear decision.',
     kicker: 'A change in direction',
     items: [],
-    image: { asset: { assetId: 'a', src: '/owned.png', aspect: 2.5 } },
+    image: { alt: 'Owned image', asset: { assetId: 'a', src: '/owned.png', aspect: 2.5 } },
   };
   expect(imageLayoutFor(content)).toBe('image-top');
   expect(imageLayoutFor({ ...content, body: 'long '.repeat(50) })).toBe('image-right');
   expect(imageLayoutFor({ ...content, image: undefined })).toBe('image-right');
-  expect(imageLayoutFor({ ...content, image: { asset: { ...content.image!.asset!, aspect: 1.5 } } })).toBe(
-    'image-bottom',
-  );
-  expect(imageLayoutFor({ ...content, image: { asset: { ...content.image!.asset!, aspect: 0.7 } } })).toBe(
-    'image-left',
-  );
+  expect(
+    imageLayoutFor({
+      ...content,
+      image: { ...content.image!, asset: { ...content.image!.asset!, aspect: 1.5 } },
+    }),
+  ).toBe('image-bottom');
+  expect(
+    imageLayoutFor({
+      ...content,
+      image: { ...content.image!, asset: { ...content.image!.asset!, aspect: 0.7 } },
+    }),
+  ).toBe('image-left');
   for (const palette of PALETTE_NAMES)
     for (const role of ['image-top', 'image-bottom', 'image-auto'] as const) {
       const theme = buildDeckTheme(palette, 'serif');

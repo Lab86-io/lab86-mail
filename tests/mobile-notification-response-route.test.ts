@@ -29,7 +29,7 @@ function dependencies() {
       entityId: 'checkin_1',
       deepLink: '/?checkin=checkin_1&prompt=tomorrow',
     })),
-    mutate: mock(async () => ({ status: 'open' })),
+    mutate: mock(async (..._args: unknown[]) => ({ status: 'open' })),
   };
 }
 

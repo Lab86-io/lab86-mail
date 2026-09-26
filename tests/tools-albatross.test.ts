@@ -1174,7 +1174,7 @@ test('a failed optional attachment returns saved progress and an attachment warn
       return convexMutationMock(fn, args);
     }) as any,
   });
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'monro',
     claim: 'Appointment booked',
     evidence: [{ sourceKind: 'mail_thread', sourceId: 'mail:account:thread', title: 'Booking' }],
@@ -1191,7 +1191,7 @@ test('a reply watch is saved through chat and waiting Work cannot be replanned',
     threadId: 'jolie-thread',
     requirement: 'Advice about the LLC',
   };
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'I sent Jolie an email; waiting on her reply.',
     waitingForReply,
@@ -1210,7 +1210,7 @@ test('a reply watch is saved through chat and waiting Work cannot be replanned',
 
 test('a missing mail account cannot prevent saving the authoritative progress report', async () => {
   workDetailFixture = { work: { _id: 'llc', workState: 'active' } };
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'Email sent',
     evidence: [{ sourceKind: 'mail_thread', sourceId: 'thread-with-no-account', title: 'Sent email' }],
@@ -1232,7 +1232,7 @@ test('a failed question or post-save refresh returns saved progress without a mi
       throw new Error('Refresh unavailable');
     }) as any,
   });
-  const result = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
+  const result: any = await runTool((args, ctx) => invokeTool(albatross.albatrossRecordProgress, args, ctx), {
     workId: 'llc',
     claim: 'Email sent',
     questionAnswers: [{ questionId: 'stale', answer: 'Yes' }],

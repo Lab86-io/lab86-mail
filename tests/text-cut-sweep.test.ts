@@ -93,7 +93,11 @@ describe('text cuts keep emoji whole at their limits', () => {
         args.items.map((_: unknown, i: number) => `w${i}`),
       );
       const result = await captureWork(
-        { rawText: 'Plan the trip', reviewedItems: [{ title: across(180), rawText: 'Plan the trip' }] },
+        {
+          rawText: 'Plan the trip',
+          source: 'text',
+          reviewedItems: [{ title: across(180), rawText: 'Plan the trip' }],
+        },
         { userId: 'user_capture', email: 'owner@example.com', name: 'Owner', source: 'clerk' },
       );
       expect(result).toMatchObject({ status: 'split', workIds: ['w0'] });

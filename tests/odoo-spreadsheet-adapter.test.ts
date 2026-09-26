@@ -228,6 +228,7 @@ test('grid migration preserves format-only cells and literal strings that resemb
   const data = workbookDataFromGrid(h.loaded.engine, {
     kind: 'sheet',
     version: 1,
+    activeSheetId: 'typed',
     sheets: [
       {
         id: 'typed',
@@ -480,7 +481,7 @@ test('XLSX import validates bytes, skips images, passes actual XML to engine and
     'xl/worksheets/sheet1.xml': '<worksheet/>',
     'xl/media/image1.png': 'synthetic image',
   });
-  const result = await importXlsxWorkbook(h.loaded, new Blob([bytes]));
+  const result = await importXlsxWorkbook(h.loaded, new Blob([bytes as Uint8Array<ArrayBuffer>]));
   expect(result.bytes).toEqual(bytes);
   expect(result.workbook).toEqual(initialWorkbook());
   expect(result.skipped).toEqual(['xl/media/image1.png']);
@@ -503,7 +504,12 @@ test('XLSX import failures never leak temporary warning interception or invoke e
   await expect(
     importXlsxWorkbook(
       h.loaded,
-      new Blob([await xlsxArchive({}, 'application/vnd.ms-excel.sheet.macroEnabled.main+xml')]),
+      new Blob([
+        (await xlsxArchive(
+          {},
+          'application/vnd.ms-excel.sheet.macroEnabled.main+xml',
+        )) as Uint8Array<ArrayBuffer>,
+      ]),
     ),
   ).rejects.toThrow();
   expect(h.load).not.toHaveBeenCalled();
@@ -512,9 +518,9 @@ test('XLSX import failures never leak temporary warning interception or invoke e
     console.warn('Partial parse');
     throw new Error('Engine rejected workbook');
   });
-  await expect(importXlsxWorkbook(h.loaded, new Blob([await xlsxArchive()]))).rejects.toThrow(
-    'Engine rejected workbook',
-  );
+  await expect(
+    importXlsxWorkbook(h.loaded, new Blob([(await xlsxArchive()) as Uint8Array<ArrayBuffer>])),
+  ).rejects.toThrow('Engine rejected workbook');
   expect(console.warn).toBe(originalWarn);
 });
 

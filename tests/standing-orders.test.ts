@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider';
 import { MockLanguageModelV3 } from 'ai/test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createDailyReportPost } from '../app/api/cron/daily-report/route';
 import { createStepWatchPost } from '../app/api/cron/step-watch/route';
@@ -605,7 +605,7 @@ describe('Convex standing orders', () => {
     if (previous === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
     else process.env.LAB86_CONVEX_INTERNAL_SECRET = previous;
   });
-  let t: ReturnType<typeof convexTest>;
+  let t: TestConvex<typeof schema>;
   beforeEach(() => {
     t = convexTest(schema, {
       '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),

@@ -191,7 +191,7 @@ test('component API requires authentication, rate limits, preserves user scope, 
   expect((await post({ value: 'x'.repeat(30001) })).status).toBe(413);
   const unauthorized = createBriefComponentRoutes({
     user: async () => {
-      throw new AuthRequiredError();
+      throw new AuthRequiredError('Sign in required.');
     },
     store: briefComponentStore,
     rate: async () => {},

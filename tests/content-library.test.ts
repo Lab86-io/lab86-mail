@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 import { safeDeltaUrl } from '../lib/content/cloud-sync';
 import {
@@ -79,7 +80,7 @@ function source(version = '1', userId = 'owner') {
     partial: false,
   };
 }
-async function seed(t: ReturnType<typeof convexTest>, userId = 'owner') {
+async function seed(t: TestConvex<typeof schema>, userId = 'owner') {
   await t.run((ctx) =>
     ctx.db.insert('cloudFileConnections', {
       userId,
@@ -95,7 +96,7 @@ async function seed(t: ReturnType<typeof convexTest>, userId = 'owner') {
   await t.mutation(content.upsert, { ...scope, userId, items: [source('1', userId)] });
   return (await t.mutation(content.claimItems, { ...scope, userId }))[0];
 }
-async function classify(t: ReturnType<typeof convexTest>, row: any) {
+async function classify(t: TestConvex<typeof schema>, row: any) {
   return t.mutation(content.completeItem, {
     ...scope,
     id: row._id,
@@ -120,7 +121,7 @@ function draft(id: string, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-async function prepare(t: ReturnType<typeof convexTest>, row: any, overrides: Record<string, unknown> = {}) {
+async function prepare(t: TestConvex<typeof schema>, row: any, overrides: Record<string, unknown> = {}) {
   await classify(t, row);
   const claim = await t.mutation(preparations.claim, scope);
   expect(claim).toBeTruthy();
@@ -218,9 +219,9 @@ describe('content library and durable Brief preparations', () => {
       operation: 'adopt',
     });
     expect(repeated.workId).toBe(adopted.workId);
-    const work = await t.run((ctx) => ctx.db.get(adopted.workId));
-    expect(work.shape).toBe('project');
-    expect(work.rawText).toContain('Approval is still needed');
+    const work = await t.run((ctx) => ctx.db.get(adopted.workId as Id<'albatrossIntents'>));
+    expect(work?.shape).toBe('project');
+    expect(work?.rawText).toContain('Approval is still needed');
     const docs = await t.run((ctx) => ctx.db.query('documents').collect());
     expect(docs).toHaveLength(1);
     expect(docs[0].model.blocks[0].text).toBe('My edited plan');
@@ -471,16 +472,16 @@ test('list adoption creates list items and attached research without an executio
     revision: current.revision,
     operation: 'adopt',
   });
-  const work = await t.run((ctx) => ctx.db.get(adopted.workId));
-  expect(work.shape).toBe('list');
-  expect(work.listItems).toHaveLength(2);
-  expect(work.latestPlanId).toBeUndefined();
+  const work = await t.run((ctx) => ctx.db.get(adopted.workId as Id<'albatrossIntents'>));
+  expect(work?.shape).toBe('list');
+  expect(work?.listItems).toHaveLength(2);
+  expect(work?.latestPlanId).toBeUndefined();
   expect(await t.run((ctx) => ctx.db.query('albatrossIntentPlans').collect())).toEqual([]);
   expect(await t.run((ctx) => ctx.db.query('albatrossEvidence').collect())).toHaveLength(2);
 });
 
 test('completed or removed related work retires its preparation without recreating it as new work', async () => {
-  for (const closed of ['done', 'archived', 'released', 'deleted']) {
+  for (const closed of ['done', 'archived', 'released', 'deleted'] as const) {
     const t = convexTest(schema, modules);
     const row = await seed(t);
     const proposal = await prepare(t, row);
@@ -517,7 +518,9 @@ test('completed or removed related work retires its preparation without recreati
       }),
     ).toBe(false);
     expect(await t.mutation(preparations.claim, scope)).toBeNull();
-    expect((await t.run((ctx) => ctx.db.get(proposal._id)))?.status).toBe('resolved');
+    expect((await t.run((ctx) => ctx.db.get(proposal._id as Id<'briefPreparations'>)))?.status).toBe(
+      'resolved',
+    );
     expect(await t.run((ctx) => ctx.db.query('briefPreparations').collect())).toHaveLength(1);
   }
 });

@@ -564,7 +564,7 @@ test('aborting a caller stops polling without cancelling the persisted generatio
 
 test('delivery acknowledges before the writer runs and enforces internal authentication', async () => {
   const callbacks: Array<() => Promise<void>> = [];
-  const run = mock(async () => {});
+  const run = mock(async (..._args: unknown[]) => {});
   const deps = { authorized: () => true, after: (callback: any) => callbacks.push(callback), run };
   const request = (body: unknown) =>
     new NextRequest('https://test/api/cron/brief-job', { method: 'POST', body: JSON.stringify(body) });

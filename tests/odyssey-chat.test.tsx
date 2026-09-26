@@ -97,7 +97,9 @@ describe('Odyssey chat integration', () => {
           </ChatContainer>,
           {
             createNodeMock: (element) =>
-              element.props.className?.includes('overflow-y-auto') ? viewport : {},
+              (element.props as { className?: string }).className?.includes('overflow-y-auto')
+                ? viewport
+                : {},
           },
         );
       });

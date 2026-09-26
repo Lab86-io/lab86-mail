@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
@@ -24,7 +24,7 @@ afterAll(() => {
 const ref = (api as any).jev;
 const scope = { internalSecret: secret, userId: 'owner' };
 async function seed(
-  t: ReturnType<typeof convexTest>,
+  t: TestConvex<typeof schema>,
   account = 'a',
   userId = 'owner',
   id = 't',
@@ -73,10 +73,10 @@ async function seed(
     ],
   });
 }
-async function claim(t: ReturnType<typeof convexTest>) {
+async function claim(t: TestConvex<typeof schema>) {
   return t.mutation(ref.claimPending, { ...scope, limit: 12 });
 }
-async function save(t: ReturnType<typeof convexTest>, input: any, patch: any = {}) {
+async function save(t: TestConvex<typeof schema>, input: any, patch: any = {}) {
   return t.mutation(ref.storeAssessments, {
     ...scope,
     items: [
@@ -92,7 +92,7 @@ async function save(t: ReturnType<typeof convexTest>, input: any, patch: any = {
     ],
   });
 }
-async function row(t: ReturnType<typeof convexTest>, account = 'a', id = 't') {
+async function row(t: TestConvex<typeof schema>, account = 'a', id = 't') {
   return t.run((ctx) =>
     ctx.db
       .query('mailCorpusThreads')

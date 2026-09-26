@@ -15,9 +15,9 @@ import { createDefaultDocumentModel } from '../lib/documents/model';
 const input = { userId: 'owner', connectionId: 'connection', fileId: 'google-file' };
 const token = (version: string, extra = {}) =>
   JSON.stringify({ ...input, version, etag: `etag-${version}`, ...extra });
-let bytes: Uint8Array;
+let bytes: Buffer<ArrayBuffer>;
 beforeAll(async () => {
-  bytes = new Uint8Array(
+  bytes = Buffer.from(
     (
       await exportDocument({
         documentId: 'fixture',
@@ -30,7 +30,7 @@ beforeAll(async () => {
         updatedAt: 1,
       })
     ).bytes,
-  );
+  ) as Buffer<ArrayBuffer>;
 });
 afterEach(() => __setGoogleOfficeDepsForTest());
 const file = (overrides: any = {}) =>
@@ -67,6 +67,7 @@ function setup(overrides: Parameters<typeof __setGoogleOfficeDepsForTest>[0] = {
       session: token('2'),
       fileId: input.fileId,
       webUrl: 'https://docs.google.com/document/d/google-file/edit',
+      providerVersion: '2',
     }),
     ...overrides,
   });

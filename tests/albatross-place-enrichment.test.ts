@@ -71,13 +71,13 @@ describe('enrichPlace orchestration', () => {
         if (overrides.fetchFails) throw new Error('fetch failed');
         return { content: `# Joe's Coffee\nHours: Mon-Fri 7-6\nOrder online at /order` };
       },
-      convexMutation: async (_fn: any, args: any) => {
+      convexMutation: (async (_fn: any, args: any) => {
         calls.mutations.push(args);
         return `fact_${calls.mutations.length}`;
-      },
-      generateTextForCurrentUser: async () => ({
+      }) as any,
+      generateTextForCurrentUser: (async () => ({
         text: overrides.extractText ?? JSON.stringify(goodProfile),
-      }),
+      })) as any,
     });
     return calls;
   }

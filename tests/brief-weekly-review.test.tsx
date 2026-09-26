@@ -298,11 +298,11 @@ describe('the weekly review job and delivery', () => {
       query: (async () => null) as any,
       telemetry: mock(async () => {}),
       daily: mock(async () => ({})),
-      weekly: mock(async () => ({ _id: 'weekly-1', kind: 'weekly', generatedAt: SUNDAY })),
+      weekly: mock(async (..._args: unknown[]) => ({ _id: 'weekly-1', kind: 'weekly', generatedAt: SUNDAY })),
       area: mock(async () => ({})),
       narrative: mock(async () => ({})),
       readDaily: mock(async () => null),
-      notify: mock(async () => {}),
+      notify: mock(async (..._args: unknown[]) => {}),
       noAccess: mock(async () => false),
       now: () => 100,
     };

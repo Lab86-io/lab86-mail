@@ -153,7 +153,7 @@ describe('Together choice protocol', () => {
     await expect(
       evaluateClassifier(
         { apiKey: 'k', model: TEV1, state: {}, questions: { reply: questions.reply } },
-        (async () => togetherReply('A', null)) as typeof fetch,
+        (async () => togetherReply('A', null)) as unknown as typeof fetch,
       ),
     ).rejects.toThrow('invalid_response');
   });
@@ -162,11 +162,11 @@ describe('Together choice protocol', () => {
     const one = { reply: questions.reply };
     await expect(
       evaluateClassifier({ apiKey: 'k', model: TEV1, state: {}, questions: one }, (async () =>
-        togetherReply('Z', { Z: 1 })) as typeof fetch),
+        togetherReply('Z', { Z: 1 })) as unknown as typeof fetch),
     ).rejects.toThrow('invalid_response');
     await expect(
       evaluateClassifier({ apiKey: 'k', model: TEV1, state: {}, questions: one }, (async () =>
-        togetherReply('A', { A: 1 }, { model: 'other/model' })) as typeof fetch),
+        togetherReply('A', { A: 1 }, { model: 'other/model' })) as unknown as typeof fetch),
     ).rejects.toThrow('invalid_response');
     const wide = {
       q: {
@@ -180,7 +180,7 @@ describe('Together choice protocol', () => {
       evaluateClassifier({ apiKey: 'k', model: TEV1, state: {}, questions: wide }, (async () => {
         called = true;
         return togetherReply('A', { A: 1 });
-      }) as typeof fetch),
+      }) as unknown as typeof fetch),
     ).rejects.toThrow('unsupported');
     expect(called).toBe(false);
   });

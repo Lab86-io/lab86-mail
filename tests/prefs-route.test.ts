@@ -58,7 +58,7 @@ describe('/api/prefs pinned models', () => {
   test('a signed-out request gets 401', async () => {
     const route = createPrefsRoute({
       requireCurrentUser: mock(async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       }) as any,
     });
     expect((await route.GET()).status).toBe(401);

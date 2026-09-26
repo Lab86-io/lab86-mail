@@ -17,7 +17,7 @@ const request = (headers: Record<string, string> = {}) =>
 describe('healthz', () => {
   test('a public caller gets only the status', async () => {
     for (const headers of [{}, { 'x-lab86-internal-secret': 'wrong-secret!' }]) {
-      const response = await GET(request(headers));
+      const response = await GET(request(headers as Record<string, string>));
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
     }

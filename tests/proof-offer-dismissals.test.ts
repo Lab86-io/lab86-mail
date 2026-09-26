@@ -191,7 +191,7 @@ describe('Not related on the server', () => {
     const { AuthRequiredError } = await import('../lib/auth/current-user');
     const signedOut = createProofDismissalsPost({
       requireCurrentUser: mock(async () => {
-        throw new AuthRequiredError();
+        throw new AuthRequiredError('Sign in required.');
       }) as any,
     });
     expect((await signedOut(post({ dismissals: [] }))).status).toBe(401);

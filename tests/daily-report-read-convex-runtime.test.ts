@@ -97,12 +97,15 @@ describe('bounded brief reads', () => {
     const ids: string[] = [];
     let done = false;
     while (!done) {
-      const result = await t.query(api.userData.dailyReportPage, {
-        ...args,
-        cursor,
-        limit: 1000,
-        summaryOnly: true,
-      });
+      const result: { page: any[]; continueCursor: string; isDone: boolean } = await t.query(
+        api.userData.dailyReportPage,
+        {
+          ...args,
+          cursor,
+          limit: 1000,
+          summaryOnly: true,
+        },
+      );
       expect(result.page.length).toBeLessThanOrEqual(8);
       expect(JSON.stringify(result.page).length).toBeLessThan(2000);
       expect(result.page.every((r) => !('html' in r))).toBe(true);

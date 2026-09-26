@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
@@ -27,7 +27,7 @@ async function seeded() {
   return t;
 }
 
-async function drain(t: ReturnType<typeof convexTest>) {
+async function drain(t: TestConvex<typeof schema>) {
   for (let i = 0; i < 100; i++) {
     await new Promise((resolve) => setTimeout(resolve, 1));
     await t.finishInProgressScheduledFunctions();

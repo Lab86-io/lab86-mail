@@ -173,7 +173,7 @@ test('Word tools are registered and authenticated before invoking document servi
   for (const tool of [wordDocumentCreate, wordDocumentGet, wordDocumentEdit]) {
     expect(TOOLS[tool.name]).toBe(tool);
     expect(AGENT_TOOL_NAMES.has(tool.name)).toBe(true);
-    expect(TOOL_GROUPS.documents_more.tools).toContain(tool.name);
+    expect(TOOL_GROUPS.documents_more.tools).toContain<unknown>(tool.name);
     await expect(tool.handler({} as never, { agent: 'user', userId: null } as any)).rejects.toThrow(
       'Not authenticated',
     );

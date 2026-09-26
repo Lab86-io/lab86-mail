@@ -18,7 +18,7 @@ import {
 } from '../lib/tools/documents';
 import { __setCloudFileToolDepsForTest, cloudFileSearch, googleFileImport } from '../lib/tools/files';
 import { poolArtworks } from './fixtures/presentation-briefs';
-import { passingLayoutDesign, passingVisualReview } from './fixtures/visual-review';
+import { passingVisualReview } from './fixtures/visual-review';
 import { runTool, toolContext } from './tools/harness';
 
 function record(overrides: Partial<AlbatrossDocumentRecord> = {}): AlbatrossDocumentRecord {
@@ -52,7 +52,6 @@ describe('document tools', () => {
     __setDocumentToolDepsForTest({
       getDocument: (async () => deck) as any,
       reviewDeckVisuals: passingVisualReview,
-      designPresentationLayouts: passingLayoutDesign,
       updateDocument: save as any,
     });
     const result = await runTool(documentReviewSlides.handler, { documentId: deck.documentId });
@@ -177,7 +176,7 @@ describe('document tools', () => {
   });
 
   test('creates a grounded private file, records undo, and optionally publishes it', async () => {
-    const proposal = mock(async () => ({
+    const proposal = mock(async (..._args: unknown[]) => ({
       title: 'Generated memo',
       summary: 'Drafted from source material',
       model: createDefaultDocumentModel('doc', 'generated'),
@@ -188,7 +187,7 @@ describe('document tools', () => {
         model: input.model,
       }),
     );
-    const recordOperation = mock(async () => 'operation-1');
+    const recordOperation = mock(async (..._args: unknown[]) => 'operation-1');
     const publish = mock(async () => ({
       connectionId: 'google-1',
       fileId: 'file-1',
@@ -239,7 +238,7 @@ describe('document tools', () => {
     const create = mock(async (input: any) =>
       record({ kind: 'sheet', title: input.title, model: createDefaultDocumentModel('sheet') }),
     );
-    const proposal = mock(async () => {
+    const proposal = mock(async (..._args: unknown[]) => {
       throw new Error('must not generate');
     });
     const publish = mock(async () => {
@@ -352,7 +351,7 @@ describe('document tools', () => {
 
   test('creates reviewable suggestions and applies explicit instructions as revisions', async () => {
     const current = { ...record(), suggestions: [] };
-    const proposal = mock(async () => ({
+    const proposal = mock(async (..._args: unknown[]) => ({
       title: 'Revised memo',
       summary: 'Made the recommendation clearer',
       model: {
@@ -361,7 +360,7 @@ describe('document tools', () => {
         blocks: [{ id: 'p', type: 'paragraph' as const, text: 'Choose Acme.' }],
       },
     }));
-    const update = mock(async () => ({
+    const update = mock(async (..._args: unknown[]) => ({
       ok: true as const,
       document: record({ title: 'Revised memo', currentRevision: 3 }),
     }));
@@ -463,7 +462,7 @@ describe('document tools', () => {
       assets: [{ assetId: 'asset-1', src: 'https://owned/asset-1', alt: 'Harbor photo', aspect: 1.5 }],
       notes: ['brief.pdf is not an image and was skipped.'],
     }));
-    const proposal = mock(async () => ({
+    const proposal = mock(async (..._args: unknown[]) => ({
       title: 'Harbor Works',
       summary: 'Six slides. Added 2 public-domain paintings with credits.',
       model: referenceDeck('editorial'),
@@ -523,7 +522,7 @@ describe('document tools', () => {
   test('deck_restyle with imagery paintings resolves artwork first; failures become a note', async () => {
     const current = record({ kind: 'deck', model: referenceDeck('editorial') });
     const artworks = poolArtworks(2).map(compositionArtwork);
-    const resolve = mock(async () => ({
+    const resolve = mock(async (..._args: unknown[]) => ({
       artworks: { statement: artworks[0], close: artworks[1] },
       imagery: { mode: 'paintings' as const, subject: 'valley' },
       notes: [],
@@ -638,7 +637,7 @@ describe('document tools', () => {
 
 describe('cloud file tools', () => {
   test('exposes single-connection continuation without skipping a truncated provider page', async () => {
-    const browse = mock(async () => ({ items: [], nextCursor: 'next-page' }));
+    const browse = mock(async (..._args: unknown[]) => ({ items: [], nextCursor: 'next-page' }));
     __setCloudFileToolDepsForTest({
       listCloudFileConnections: (async () => [{ connectionId: 'drive', provider: 'google_drive' }]) as any,
       browseCloudFiles: browse as any,

@@ -18,32 +18,39 @@ import { editorialFixture } from './fixtures/editorial';
 import { assessment, NOW, policy, report, thread } from './fixtures/jev';
 import { withToolContext } from './tools/harness';
 
+type ToolOutcome = { ok: boolean };
+
 test('final reading order is independent of creation and repair order and cannot omit or repeat regions', async () => {
   const { edition, letter, plan } = editorialFixture();
   const session = createDailyEditorialSession(edition, letter);
   const options = { toolCallId: 'reading-order', messages: [] };
   const regions = structuredClone(plan.regions);
-  expect((await session.tools.place_regions.execute!({ regions: [...regions].reverse() }, options)).ok).toBe(
-    true,
-  );
+  expect(
+    (
+      (await session.tools.place_regions.execute!(
+        { regions: [...regions].reverse() },
+        options,
+      )) as ToolOutcome
+    ).ok,
+  ).toBe(true);
   const order = regions.map((region) => region.id);
   for (const invalid of [order.slice(1), [...order.slice(1), order[1]], [...order.slice(1), 'invented']]) {
     expect(
       (
-        await session.tools.finalize_brief.execute!(
+        (await session.tools.finalize_brief.execute!(
           { title: 'Today', summary: 'Review', regionOrder: invalid },
           options,
-        )
+        )) as ToolOutcome
       ).ok,
     ).toBe(false);
     expect(session.result()).toBeNull();
   }
   expect(
     (
-      await session.tools.finalize_brief.execute!(
+      (await session.tools.finalize_brief.execute!(
         { title: 'Today', summary: 'Review', regionOrder: order },
         options,
-      )
+      )) as ToolOutcome
     ).ok,
   ).toBe(true);
   expect(session.result()?.plan.regions.map((region) => region.id)).toEqual(order);
@@ -174,7 +181,8 @@ test('stored composition survives migration and live updates; new mail appears o
 test('invalid stored plans are ignored without breaking older editions', () => {
   const { edition } = editorialFixture();
   expect(
-    migrateDailyReport({ ...edition, editorial: { plan: { version: 99 } } }, NOW).editorial,
+    // A stored plan from an unknown version.
+    migrateDailyReport({ ...edition, editorial: { plan: { version: 99 } } as never }, NOW).editorial,
   ).toBeUndefined();
   expect(migrateDailyReport(report(), NOW).editorial).toBeUndefined();
 });

@@ -11,7 +11,10 @@ import {
   parseDocumentModel,
 } from '../lib/documents/model';
 
-function record(kind: DocumentKind, model = createDefaultDocumentModel(kind)): AlbatrossDocumentRecord {
+function record(
+  kind: DocumentKind,
+  model: AlbatrossDocumentRecord['model'] = createDefaultDocumentModel(kind),
+): AlbatrossDocumentRecord {
   return {
     documentId: `document_${kind}`,
     kind,

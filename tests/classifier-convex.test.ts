@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { convexTest } from 'convex-test';
+import { convexTest, type TestConvex } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 
@@ -20,7 +20,7 @@ afterAll(() => {
 const ref = (api as any).classifier;
 const DAY = 86_400_000;
 
-async function seedThread(t: ReturnType<typeof convexTest>, id: string, lastDate: number, extra: any = {}) {
+async function seedThread(t: TestConvex<typeof schema>, id: string, lastDate: number, extra: any = {}) {
   await t.run(async (ctx) => {
     await ctx.db.insert('mailCorpusThreads', {
       userId: 'owner',

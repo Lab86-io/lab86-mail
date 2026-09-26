@@ -294,6 +294,21 @@ describe('Brief Document v2 generators', () => {
     );
   });
 
+  test('budget composition keeps an item whose messages cannot load', async () => {
+    const composed = await withToolContext(() =>
+      composeBudgetBrief(reportFixture(), null, {
+        loadMessages: async () => {
+          throw new Error('Mail is unavailable');
+        },
+        generate: null,
+        loadWeather: async () => null,
+      }),
+    );
+    expect(composed.prose.model).toBe('local');
+    expect(composed.prose.lede).toContain('Maya is waiting on a reply about Launch date.');
+    expect(composed.document.regions.map((region) => region.id)).toContain('answer');
+  });
+
   test('budget composition falls back to the plain letter when the model reply is not JSON', async () => {
     const composed = await withToolContext(() =>
       composeBudgetBrief(reportFixture(), null, {
@@ -344,6 +359,7 @@ describe('Brief Document v2 generators', () => {
       sinceLastBrief: '',
     });
     expect(parseAreaPulse('no json here', fallback)).toBeNull();
+    expect(parseAreaPulse('{ lastChange: unquoted }', fallback)).toBeNull();
   });
 
   test('area pulse document and HTML render from the pulse alone', () => {
