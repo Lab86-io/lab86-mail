@@ -103,7 +103,7 @@ async function classify(t: ReturnType<typeof convexTest>, row: any) {
     vectors: [Array(1536).fill(0.01)],
   });
 }
-function draft(id: string) {
+function draft(id: string, overrides: Record<string, unknown> = {}) {
   return {
     title: 'Prepare launch',
     shape: 'project',
@@ -115,9 +115,10 @@ function draft(id: string) {
     steps: ['Collect approval', 'Schedule launch'],
     files: [{ name: 'launch-plan.md', content: '# Launch plan\nObtain signed approval.' }],
     evidence: [{ sourceId: id, quote: 'The release requires signed approval.' }],
+    ...overrides,
   };
 }
-async function prepare(t: ReturnType<typeof convexTest>, row: any) {
+async function prepare(t: ReturnType<typeof convexTest>, row: any, overrides: Record<string, unknown> = {}) {
   await classify(t, row);
   const claim = await t.mutation(preparations.claim, scope);
   expect(claim).toBeTruthy();
@@ -127,7 +128,7 @@ async function prepare(t: ReturnType<typeof convexTest>, row: any) {
     lease: claim.lease,
     revision: claim.revision,
     seedVersion: row.version,
-    draft: draft(row._id),
+    draft: draft(row._id, overrides),
     sources: [{ id: row._id, version: row.version }],
   });
   return (await t.query(preparations.list, scope))[0];
@@ -222,6 +223,44 @@ describe('content library and durable Brief preparations', () => {
     expect(docs).toHaveLength(1);
     expect(docs[0].model.blocks[0].text).toBe('My edited plan');
     expect(await t.query(preparations.list, scope)).toEqual([]);
+  });
+  test('adopting a preparation with open questions asks them as pending Work questions', async () => {
+    const t = convexTest(schema, modules);
+    const sourceRow = await seed(t);
+    const item = await prepare(t, sourceRow, {
+      questions: ['Who signs the approval?', 'Which launch date holds?'],
+    });
+    const adopted = await t.mutation(preparations.update, {
+      ...scope,
+      id: item._id,
+      revision: item.revision,
+      operation: 'adopt',
+    });
+    const work = await t.run((ctx) => ctx.db.get(adopted.workId));
+    expect(work).toMatchObject({ status: 'needs_answers', agentState: 'needs_input' });
+    const questions = await t.run((ctx) => ctx.db.query('albatrossWorkQuestions').collect());
+    expect(
+      questions.map((question) => ({
+        workId: question.workId,
+        legacyQuestionId: question.legacyQuestionId,
+        prompt: question.prompt,
+        status: question.status,
+      })),
+    ).toEqual([
+      {
+        workId: adopted.workId,
+        legacyQuestionId: 'prepared_0',
+        prompt: 'Who signs the approval?',
+        status: 'pending',
+      },
+      {
+        workId: adopted.workId,
+        legacyQuestionId: 'prepared_1',
+        prompt: 'Which launch date holds?',
+        status: 'pending',
+      },
+    ]);
+    expect(new Set(questions.map((question) => question.dedupeKey)).size).toBe(2);
   });
   test('dismissed suggestions do not reappear; stale model writes and fabricated citations are rejected', async () => {
     const t = convexTest(schema, modules);

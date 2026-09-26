@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { questionDedupeKey } from '../lib/albatross/question-dedupe';
 import { SHAPE_POLICY } from '../lib/albatross/shape-policy';
 import { preparedDraftSchema, sourceLink, validatePreparedEvidence } from '../lib/content/contract';
 import { briefAttention } from '../lib/jev/brief';
@@ -451,6 +452,24 @@ export const update = mutation({
         updatedAt: ts,
         lastUserTouchAt: ts,
       });
+      // Open questions reach the user as Work questions, the rows that chat,
+      // the Brief, and notifications read. The Work v2 migration used to add
+      // them in its 15-minute scan; adoption now writes them directly.
+      for (const [i, prompt] of draft.questions.entries()) {
+        await ctx.db.insert('albatrossWorkQuestions', {
+          userId: args.userId,
+          workId,
+          dedupeKey: questionDedupeKey({ workId: String(workId), kind: 'clarification', prompt }),
+          legacyQuestionId: `prepared_${i}`,
+          kind: 'clarification',
+          prompt,
+          reason: 'Asked when this Work was prepared from the Brief.',
+          status: 'pending',
+          sourceRefs: [],
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
       const planId =
         SHAPE_POLICY[draft.shape].plans === 'no'
           ? undefined

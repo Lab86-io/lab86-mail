@@ -781,9 +781,6 @@ export const conductorTick = internalAction({
       console.error('[work-conductor cron] missing LAB86_MAIL_PUBLIC_URL or internal secret');
       return;
     }
-    // Backfill the first legacy page before relying on the workState index;
-    // the mutation schedules the remaining pages until the migration is done.
-    await ctx.runMutation(internal.albatrossWorkV2.migrateLegacyBatch, { limit: 100 });
     const candidates = await ctx.runQuery(internal.albatrossIntents.conductorCandidates, {});
     const claimed: Array<{ userId: string; workId: Id<'albatrossIntents'> }> = [];
     for (const candidate of candidates) {

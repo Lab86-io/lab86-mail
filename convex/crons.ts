@@ -129,13 +129,6 @@ crons.daily(
 // deploys, and DST transitions.
 crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.tick, {});
 
-// Additive Work-v2 migration is idempotent and paginates through legacy
-// intents. Re-igniting it twice daily also catches rows written by an older
-// client during the compatibility window.
-crons.interval('albatross Work v2 migration', { hours: 12 }, internal.albatrossWorkV2.migrateLegacyBatch, {
-  limit: 100,
-});
-
 // Poll each user's connected tool servers/APIs every 20 minutes
 // so brief/search items stay current. Cast: the generated `internal` type only
 // gains `mcpSync` after codegen on deploy.
