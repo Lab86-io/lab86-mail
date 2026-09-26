@@ -1600,7 +1600,7 @@ function QuickFixMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-        <DropdownMenuItem onSelect={() => onApplyLabels()}>Apply smart labels</DropdownMenuItem>
+        <DropdownMenuItem onSelectAfterClose={onApplyLabels}>Apply smart labels</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Fix classification</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => onCorrect('never_main')}>Never Main</DropdownMenuItem>

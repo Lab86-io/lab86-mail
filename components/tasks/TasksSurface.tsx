@@ -857,48 +857,51 @@ function ColumnMenu({
   cardCount: number;
   columnName: string;
 }) {
+  // The confirmation is a sibling of the menu, not inside it. It opens after
+  // the menu has closed, so the two never hold the page lock at once.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-          title="Column actions"
-        >
-          <MoreHorizontal className="size-3.5" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem onSelect={onRename} className="text-[12.5px]">
-          Rename
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <DropdownMenuItem
-              onSelect={(event) => event.preventDefault()}
-              className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
-            >
-              Delete column
-            </DropdownMenuItem>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete “{columnName}”?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {cardCount
-                  ? `Its ${cardCount} card${cardCount === 1 ? '' : 's'} will be deleted with it.`
-                  : 'The column is empty.'}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="grid size-5 place-items-center rounded text-[var(--color-text-faint)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            title="Column actions"
+          >
+            <MoreHorizontal className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelectAfterClose={onRename} className="text-[12.5px]">
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelectAfterClose={() => setConfirmDelete(true)}
+            className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+          >
+            Delete column
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{columnName}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cardCount
+                ? `Its ${cardCount} card${cardCount === 1 ? '' : 's'} will be deleted with it.`
+                : 'The column is empty.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={onDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 

@@ -564,7 +564,10 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem className="text-[12.5px]" onSelect={() => setUnsubscribeOpen(true)}>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  onSelectAfterClose={() => setUnsubscribeOpen(true)}
+                >
                   Unsubscribe…
                 </DropdownMenuItem>
                 <DropdownMenuItem

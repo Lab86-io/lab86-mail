@@ -49,7 +49,7 @@ export function FileLocationPicker({
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onManage}>Add a drive</DropdownMenuItem>
+        <DropdownMenuItem onSelectAfterClose={onManage}>Add a drive</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

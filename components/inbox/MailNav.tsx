@@ -193,7 +193,10 @@ export function MailNavView({
             <ChevronDown className="size-3 shrink-0" aria-hidden />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="max-h-[70vh] w-56 overflow-y-auto">
+        {/* The menu takes the height the window has below the trigger and
+            scrolls past that, so the last item is always reachable. A fixed
+            share of the window cut off Category settings at 900px. */}
+        <DropdownMenuContent align="end" collisionPadding={8} className="w-56">
           <DropdownMenuLabel>Views</DropdownMenuLabel>
           {extras.map((category) => (
             <DropdownMenuItem
@@ -229,13 +232,17 @@ export function MailNavView({
           ))}
           {onList
             ? MAIL_LISTS.map((list) => (
-                <DropdownMenuItem key={list.id} onSelect={() => onList(list.id)} className="text-[12.5px]">
+                <DropdownMenuItem
+                  key={list.id}
+                  onSelectAfterClose={() => onList(list.id)}
+                  className="text-[12.5px]"
+                >
                   {list.label}
                 </DropdownMenuItem>
               ))
             : null}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onSettings} className="text-[12.5px]">
+          <DropdownMenuItem onSelectAfterClose={onSettings} className="text-[12.5px]">
             Category settings
           </DropdownMenuItem>
         </DropdownMenuContent>

@@ -6,8 +6,28 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+/*
+ * A menu item that opens a dialog or a sheet uses `onSelectAfterClose`, not
+ * `onSelect`. A modal menu and a dialog each set `pointer-events: none` on the
+ * body and lock scroll while they are open. The menu and the dialog load
+ * different copies of Radix's layer module, so neither knows about the other.
+ * If the dialog opens while the menu still closes, the dialog keeps the menu's
+ * "none" as the value to restore, and after both close the page takes no
+ * clicks until a reload. The menu calls `onCloseAutoFocus` after its content
+ * is gone and its lock is released. The deferred action runs from there, after
+ * focus is back on the trigger, so the dialog opens on a clean body and
+ * returns focus to the trigger when it closes.
+ */
+type AfterCloseAction = { current: (() => void) | null };
+const AfterCloseContext = React.createContext<AfterCloseAction | null>(null);
+
 function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+  const afterClose = React.useRef<(() => void) | null>(null);
+  return (
+    <AfterCloseContext.Provider value={afterClose}>
+      <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+    </AfterCloseContext.Provider>
+  );
 }
 
 function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
@@ -21,13 +41,25 @@ function DropdownMenuTrigger({ ...props }: React.ComponentProps<typeof DropdownM
 function DropdownMenuContent({
   className,
   sideOffset = 4,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const afterClose = React.useContext(AfterCloseContext);
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          const action = afterClose?.current;
+          if (!action || !afterClose) return;
+          afterClose.current = null;
+          // Not prevented: the menu moves focus back to its trigger right after
+          // this handler. The action waits for that, so the dialog records the
+          // trigger as the place to return focus to.
+          queueMicrotask(action);
+        }}
         className={cn(
           'corner-smooth z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-[var(--radius-control)] border bg-popover p-1 text-popover-foreground shadow-[var(--shadow-pop)] data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className,
@@ -46,16 +78,27 @@ function DropdownMenuItem({
   className,
   inset,
   variant = 'default',
+  onSelect,
+  onSelectAfterClose,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Item> & {
   inset?: boolean;
   variant?: 'default' | 'destructive';
+  /** Runs after the menu has closed. Use it to open a dialog or a sheet. */
+  onSelectAfterClose?: () => void;
 }) {
+  const afterClose = React.useContext(AfterCloseContext);
   return (
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
       data-inset={inset}
       data-variant={variant}
+      onSelect={(event) => {
+        onSelect?.(event);
+        if (!onSelectAfterClose || event.defaultPrevented) return;
+        if (afterClose) afterClose.current = onSelectAfterClose;
+        else onSelectAfterClose();
+      }}
       className={cn(
         "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive!",
         className,
