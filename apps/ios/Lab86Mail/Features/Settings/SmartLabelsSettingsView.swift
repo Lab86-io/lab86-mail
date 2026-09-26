@@ -244,6 +244,9 @@ struct SmartLabelsSettingsView: View {
                     sidebarVisible: row["sidebarVisible"]?.boolValue != false
                 )
             }
+            // A saved, toggled, or deleted label shows in the sidebar now,
+            // not after the next mail refresh.
+            environment.store.mailLabels = MailLabelSummary.sidebarLabels(from: result)
         } catch {
             errorMessage = error.localizedDescription
         }
