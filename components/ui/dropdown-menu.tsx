@@ -15,8 +15,8 @@ import { cn } from '@/lib/utils';
  * "none" as the value to restore, and after both close the page takes no
  * clicks until a reload. The menu calls `onCloseAutoFocus` after its content
  * is gone and its lock is released. The deferred action runs from there, after
- * focus is back on the trigger, so the dialog opens on a clean body and
- * returns focus to the trigger when it closes.
+ * the menu has put focus back on its trigger, so the dialog opens on a clean
+ * body and then takes focus without a second move pulling it out.
  */
 type AfterCloseAction = { current: (() => void) | null };
 const AfterCloseContext = React.createContext<AfterCloseAction | null>(null);
@@ -56,8 +56,8 @@ function DropdownMenuContent({
           if (!action || !afterClose) return;
           afterClose.current = null;
           // Not prevented: the menu moves focus back to its trigger right after
-          // this handler. The action waits for that, so the dialog records the
-          // trigger as the place to return focus to.
+          // this handler. The action waits for that, so the dialog it opens
+          // takes focus last.
           queueMicrotask(action);
         }}
         className={cn(
