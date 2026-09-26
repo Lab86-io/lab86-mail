@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
+import { internalMutation, mutation, query } from './_generated/server';
 import { recordDocumentEffect } from './agentExecution';
 import { now, requireInternalSecret } from './lib';
 
@@ -106,6 +107,8 @@ export const list = query({
     userId: v.string(),
     kind: v.optional(kindValidator),
     limit: v.optional(v.number()),
+    // Summaries without the model, for callers that show only names.
+    metadataOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -117,9 +120,22 @@ export const list = query({
     const visible = args.kind
       ? base.filter((q) => q.and(q.eq(q.field('archivedAt'), undefined), q.eq(q.field('kind'), args.kind)))
       : base.filter((q) => q.eq(q.field('archivedAt'), undefined));
-    return visible.take(limit);
+    // Each row holds a full model, so the read is bounded by bytes as well as
+    // rows; a list of large files stops early instead of failing (DOC-4).
+    const page = await visible.paginate({
+      cursor: null,
+      numItems: limit,
+      maximumBytesRead: LIST_MAX_BYTES_READ,
+    });
+    if (!args.metadataOnly) return page.page;
+    return page.page.map(({ model: _model, ...summary }) => summary);
   },
 });
+
+const LIST_MAX_BYTES_READ = 6_000_000;
+// Autosaves from one editing session share one revision row per window.
+export const AUTOSAVE_REVISION_WINDOW_MS = 10 * 60_000;
+const AUTOSAVE_REASONS = new Set(['inline_edit', 'autosave']);
 
 export const get = query({
   args: {
@@ -329,16 +345,42 @@ export const update = mutation({
       currentRevision: revision,
       updatedAt: ts,
     });
-    await ctx.db.insert('documentRevisions', {
-      userId: args.userId,
-      documentId: args.documentId,
-      revision,
-      title,
-      model,
-      reason: args.reason || 'edit',
-      actor: args.actor || 'user',
-      createdAt: ts,
-    });
+    const reason = args.reason || 'edit';
+    const actor = args.actor || 'user';
+    // Autosave runs after each short pause. Rather than one full copy per
+    // pause, the latest autosave row of the same window takes the new state;
+    // the row before the window keeps the earlier state for restore.
+    const latest =
+      actor === 'user' && AUTOSAVE_REASONS.has(reason)
+        ? await ctx.db
+            .query('documentRevisions')
+            .withIndex('by_user_document_revision', (q) =>
+              q.eq('userId', args.userId).eq('documentId', args.documentId),
+            )
+            .order('desc')
+            .first()
+        : null;
+    const windowStartedAt = latest ? (latest.windowStartedAt ?? latest.createdAt) : ts;
+    if (
+      latest &&
+      latest.revision === document.currentRevision &&
+      latest.actor === 'user' &&
+      AUTOSAVE_REASONS.has(latest.reason) &&
+      ts - windowStartedAt < AUTOSAVE_REVISION_WINDOW_MS
+    ) {
+      await ctx.db.patch(latest._id, { revision, title, model, reason, createdAt: ts, windowStartedAt });
+    } else {
+      await ctx.db.insert('documentRevisions', {
+        userId: args.userId,
+        documentId: args.documentId,
+        revision,
+        title,
+        model,
+        reason,
+        actor,
+        createdAt: ts,
+      });
+    }
     return {
       ok: true,
       document: { ...document, title, model, sourceRefs, currentRevision: revision, updatedAt: ts },
@@ -357,7 +399,45 @@ export const archive = mutation({
     const document = await ownedDocument(ctx, args.userId, args.documentId);
     if (!document) return { ok: false };
     await ctx.db.patch(document._id, { archivedAt: now(), updatedAt: now() });
+    // Archive is final: nothing reads an archived file's history, import
+    // bytes, or suggestions again, so their storage goes (DOC-4).
+    await ctx.scheduler.runAfter(0, internal.documents.purgeArchivedDocument, {
+      userId: args.userId,
+      documentId: args.documentId,
+    });
     return { ok: true };
+  },
+});
+
+const PURGE_BATCH_SIZE = 50;
+
+export const purgeArchivedDocument = internalMutation({
+  args: { userId: v.string(), documentId: v.string() },
+  handler: async (ctx, args) => {
+    const document = await ownedDocument(ctx, args.userId, args.documentId);
+    if (!document?.archivedAt) return { done: true, deleted: 0 };
+    const revisions = await ctx.db
+      .query('documentRevisions')
+      .withIndex('by_user_document_revision', (q) =>
+        q.eq('userId', args.userId).eq('documentId', args.documentId),
+      )
+      .take(PURGE_BATCH_SIZE);
+    const suggestions = await ctx.db
+      .query('documentSuggestions')
+      .withIndex('by_user_document', (q) => q.eq('userId', args.userId).eq('documentId', args.documentId))
+      .take(PURGE_BATCH_SIZE);
+    for (const row of [...revisions, ...suggestions]) await ctx.db.delete(row._id);
+    if (revisions.length === PURGE_BATCH_SIZE || suggestions.length === PURGE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.documents.purgeArchivedDocument, args);
+      return { done: false, deleted: revisions.length + suggestions.length };
+    }
+    if (document.importSource) {
+      if (await ctx.db.system.get(document.importSource.storageId)) {
+        await ctx.storage.delete(document.importSource.storageId);
+      }
+      await ctx.db.patch(document._id, { importSource: undefined });
+    }
+    return { done: true, deleted: revisions.length + suggestions.length };
   },
 });
 

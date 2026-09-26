@@ -13,17 +13,12 @@ import { CalendarYearView } from '@/components/calendar/engine/calendar-year-vie
 export function CalendarBody() {
   const { view, events } = useCalendar();
 
-  const singleDayEvents = events.filter((event) => {
-    const startDate = parseISO(event.startDate);
-    const endDate = parseISO(event.endDate);
-    return isSameDay(startDate, endDate);
-  });
-
-  const multiDayEvents = events.filter((event) => {
-    const startDate = parseISO(event.startDate);
-    const endDate = parseISO(event.endDate);
-    return !isSameDay(startDate, endDate);
-  });
+  // All-day events always ride the day row, even a one-day event that starts
+  // and ends on the same local date; they never go into the hour grid.
+  const isSpanRow = (event: (typeof events)[number]) =>
+    Boolean(event.allDay) || !isSameDay(parseISO(event.startDate), parseISO(event.endDate));
+  const singleDayEvents = events.filter((event) => !isSpanRow(event));
+  const multiDayEvents = events.filter(isSpanRow);
 
   return (
     <div className="@container/calendar-view relative flex min-h-0 w-full flex-1 flex-col overflow-hidden">

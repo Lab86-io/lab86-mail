@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getCloudFileAccess } from '@/lib/files/connections';
-import { googleFileEditability } from './google-fidelity';
+import { googleDocBlockType, googleFileEditability } from './google-fidelity';
 import {
   type AlbatrossDocumentModel,
   type DeckElement,
@@ -84,13 +84,19 @@ function importGoogleDoc(payload: any): AlbatrossDocumentModel {
         .replace(/\n$/u, '');
       const namedStyle = String(paragraph?.paragraphStyle?.namedStyleType || '');
       const heading = /^HEADING_([123])$/u.exec(namedStyle);
+      // The writer's own shapes (numbered lists, quotes) read back as the same
+      // block type; anything else falls back to a preview projection.
+      const exact = googleDocBlockType(paragraph, payload?.lists);
       return {
         id: `google-paragraph-${index + 1}-${randomUUID().slice(0, 8)}`,
-        type: heading
-          ? ('heading' as const)
-          : paragraph.bullet
-            ? ('bullet' as const)
-            : ('paragraph' as const),
+        type:
+          exact && exact !== 'paragraph'
+            ? exact
+            : heading
+              ? ('heading' as const)
+              : paragraph.bullet
+                ? ('bullet' as const)
+                : ('paragraph' as const),
         text,
         ...(heading ? { level: Number(heading[1]) as 1 | 2 | 3 } : {}),
       };

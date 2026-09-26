@@ -46,3 +46,18 @@ export function googleModelWriteLimitation(model: unknown): string | null {
   }
   return null;
 }
+
+export const LINKED_GOOGLE_FILE_SYNC_LIMITATION =
+  'Sync is unavailable for this file because it is linked to a Google original that Albatross cannot write back without loss. Import the latest Google changes, or open the original in Google to edit it.';
+
+/**
+ * A spreadsheet or deck linked to an existing Google file can be imported but
+ * never written back: the provider writer refuses it (DOC-3). Only documents
+ * sync to their Google original.
+ */
+export function googleLinkedFileSyncLimitation(
+  kind: string | undefined,
+  google: { fileId?: string } | null | undefined,
+): string | null {
+  return google?.fileId && kind !== 'doc' ? LINKED_GOOGLE_FILE_SYNC_LIMITATION : null;
+}

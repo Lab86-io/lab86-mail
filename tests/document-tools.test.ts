@@ -311,7 +311,7 @@ describe('document tools', () => {
     );
     __setDocumentToolDepsForTest({
       getDocument: get as any,
-      listDocuments: (async () => listed) as any,
+      listDocumentSummaries: (async () => listed) as any,
       publishDocumentToGoogle: (async () => ({
         connectionId: 'google-1',
         fileId: 'file-1',

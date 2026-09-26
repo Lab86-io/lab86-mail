@@ -5,6 +5,11 @@ import {
   openGoogleOfficeFile,
   saveGoogleOfficeFile,
 } from '../lib/documents/google-office';
+import {
+  __setGoogleWorkingCopyDepsForTest,
+  googleWorkingCopyExpired,
+  renewGoogleWorkingCopy,
+} from '../lib/documents/google-working-copy';
 import { createDefaultDocumentModel } from '../lib/documents/model';
 
 const input = { userId: 'owner', connectionId: 'connection', fileId: 'google-file' };
@@ -274,4 +279,91 @@ test('a durable pending save is reconciled on the next open or save without repe
   await expect(saveGoogleOfficeFile('owner', 'stable-copy', 'receipt')).rejects.toThrow(
     'saved revision is preserved',
   );
+});
+
+describe('expired Google working copies (OFF-2)', () => {
+  test('save renews an expired session first, then writes with the renewed one', async () => {
+    const calls: any[] = [];
+    let wrote: any = null;
+    setup({
+      googleWorkingCopyExpired: () => true,
+      renewGoogleWorkingCopy: async () => token('1', { renewed: true }),
+      convexMutation: (async (_ref: unknown, args: any) => {
+        calls.push(args);
+        return { ok: true };
+      }) as any,
+      saveGoogleWorkingCopy: async (args) => {
+        wrote = args;
+        return { session: token('2'), fileId: input.fileId, providerVersion: '2', webUrl: undefined };
+      },
+    });
+    expect(await saveGoogleOfficeFile('owner', 'stable-copy', 'receipt')).toMatchObject({ ok: true });
+    expect(JSON.parse(wrote.session).renewed).toBe(true);
+    expect(calls[0]).toMatchObject({ expectedSession: token('1'), syncedRevision: 1 });
+    expect(JSON.parse(calls[0].session).renewed).toBe(true);
+    expect(JSON.parse(calls[1].expectedSession).renewed).toBe(true);
+  });
+
+  test('a renewal that loses the race reports a conflict and writes nothing', async () => {
+    let wrote = false;
+    setup({
+      googleWorkingCopyExpired: () => true,
+      renewGoogleWorkingCopy: async () => token('1', { renewed: true }),
+      convexMutation: (async () => ({ ok: false })) as any,
+      saveGoogleWorkingCopy: async () => {
+        wrote = true;
+        return { session: token('2'), fileId: input.fileId, providerVersion: '2', webUrl: undefined };
+      },
+    });
+    await expect(saveGoogleOfficeFile('owner', 'stable-copy', 'receipt')).rejects.toThrow('Reopen it');
+    expect(wrote).toBe(false);
+  });
+
+  test('the renew helper extends only an unchanged original', async () => {
+    const session = (extra = {}) =>
+      JSON.stringify({
+        ...input,
+        mimeType: 'application/vnd.google-apps.document',
+        etag: 'etag-1',
+        version: '1',
+        expiresAt: Date.now() - 1,
+        ...extra,
+      });
+    let remote = { etag: 'etag-1', version: 1 };
+    __setGoogleWorkingCopyDepsForTest({
+      decryptSecret: (value: string) => value,
+      encryptSecret: (value: string) => value,
+      getCloudFileAccess: (async () => ({
+        connection: { provider: 'google_drive' },
+        accessToken: 't',
+      })) as any,
+      fetch: (async () =>
+        Response.json({
+          id: input.fileId,
+          title: 'Doc',
+          mimeType: 'application/vnd.google-apps.document',
+          editable: true,
+          ...remote,
+        })) as any,
+    });
+    try {
+      expect(googleWorkingCopyExpired(session())).toBe(true);
+      expect(googleWorkingCopyExpired(session({ expiresAt: Date.now() + 60_000 }))).toBe(false);
+      expect(googleWorkingCopyExpired('not json')).toBe(false);
+      const renewed = JSON.parse(await renewGoogleWorkingCopy({ userId: 'owner', session: session() }));
+      expect(renewed.expiresAt).toBeGreaterThan(Date.now() + 6 * 86400_000);
+      await expect(renewGoogleWorkingCopy({ userId: 'other', session: session() })).rejects.toThrow(
+        'another user',
+      );
+      await expect(renewGoogleWorkingCopy({ userId: 'owner', session: 'garbage' })).rejects.toThrow(
+        'Download a working copy',
+      );
+      remote = { etag: 'etag-2', version: 2 };
+      await expect(renewGoogleWorkingCopy({ userId: 'owner', session: session() })).rejects.toThrow(
+        'original changed',
+      );
+    } finally {
+      __setGoogleWorkingCopyDepsForTest();
+    }
+  });
 });

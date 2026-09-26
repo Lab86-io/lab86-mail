@@ -1,5 +1,6 @@
 import { describeProvider } from '../ai/client';
 import { generateTextForCurrentUser } from '../ai/gateway';
+import { allDayDateKey } from '../calendar/all-day';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { stripEmoji } from '../shared/format';
 import { parseIsoInTimezone } from '../shared/timezones';
@@ -152,7 +153,8 @@ export function eventsByDay(
 ): Map<string, DailyReportCalendarItem[]> {
   const byDay = new Map<string, DailyReportCalendarItem[]>(days.map((day) => [day.dayKey, []]));
   for (const event of [...calendar].sort((a, b) => a.startAt - b.startAt)) {
-    const key = localDayKey(event.startAt, timeZone);
+    // A stored all-day date is UTC midnight; its day is the UTC date (CAL-3).
+    const key = event.allDay ? allDayDateKey(event.startAt) : localDayKey(event.startAt, timeZone);
     byDay.get(key)?.push(event);
   }
   return byDay;

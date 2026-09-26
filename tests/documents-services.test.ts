@@ -29,6 +29,7 @@ import {
   findDocumentByGoogleFile,
   getDocument,
   linkGoogleDocument,
+  listDocumentSummaries,
   listDocuments,
   resolveDocumentSuggestion,
   updateDocument,
@@ -261,6 +262,8 @@ describe('document persistence service', () => {
     await expect(listDocuments({ userId: 'user-1', kind: 'doc', limit: 5 })).resolves.toEqual([
       documentRecord('doc'),
     ]);
+    await listDocumentSummaries({ userId: 'user-1', limit: 5 });
+    expect((query.mock.calls.at(-1) as any[])[1]).toEqual({ userId: 'user-1', limit: 5, metadataOnly: true });
   });
 
   test('reads suggestions, provider links, updates, archives, and resolves suggestions', async () => {

@@ -113,6 +113,7 @@ export const salvageContext = defineTool({
     now: z.string(),
     timezone: z.string(),
     events: z.array(z.any()),
+    eventsTruncated: z.boolean(),
     tasks: z.array(z.any()),
     intents: z.array(z.any()),
     projects: z.array(z.any()),
@@ -122,8 +123,8 @@ export const salvageContext = defineTool({
     const timezone = args.timezone || ctx.userTimezone || 'UTC';
     const nowMs = deps.now();
     const endOfDay = endOfTodayMs(nowMs, timezone);
-    const [eventRows, cardRows, intentRows, projectRows] = await Promise.all([
-      deps.convexQuery<any[]>((deps.api as any).calendarData.listEvents, {
+    const [eventPage, cardRows, intentRows, projectRows] = await Promise.all([
+      deps.convexQuery<{ events: any[]; truncated: boolean }>((deps.api as any).calendarData.listEventsPage, {
         userId,
         startAt: nowMs,
         endAt: endOfDay,
@@ -147,10 +148,12 @@ export const salvageContext = defineTool({
     return {
       now: new Date(nowMs).toISOString(),
       timezone,
-      events: (eventRows || [])
+      events: (eventPage?.events || [])
         .filter((row) => row.status !== 'cancelled')
         .slice(0, EVENT_CAP)
         .map(compactEvent),
+      // True when the calendar read hit its cap, so the event list is partial.
+      eventsTruncated: Boolean(eventPage?.truncated) || (eventPage?.events?.length ?? 0) > EVENT_CAP,
       tasks: (cardRows || [])
         .filter((card) => !card.completedAt)
         .sort((a, b) => (a.dueAt ?? 0) - (b.dueAt ?? 0))

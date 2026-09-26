@@ -84,6 +84,14 @@ export async function listDocuments(input: { userId: string; kind?: DocumentKind
   return rows.map((row) => ({ ...row, model: parseDocumentModel(row.model, row.kind) }));
 }
 
+/** Names, kinds, and revisions only: the models never leave Convex. */
+export async function listDocumentSummaries(input: { userId: string; kind?: DocumentKind; limit?: number }) {
+  return dependencies.convexQuery<Array<Omit<AlbatrossDocumentRecord, 'model'>>>(documentsApi.list, {
+    ...input,
+    metadataOnly: true,
+  });
+}
+
 export async function getDocument(userId: string, documentId: string) {
   const row = await dependencies.convexQuery<DocumentWithSuggestions | null>(documentsApi.get, {
     userId,

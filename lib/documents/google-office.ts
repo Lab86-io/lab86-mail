@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { decryptSecret } from '@/lib/security/crypto';
-import { downloadGoogleWorkingCopy, saveGoogleWorkingCopy } from './google-working-copy';
+import {
+  downloadGoogleWorkingCopy,
+  googleWorkingCopyExpired,
+  renewGoogleWorkingCopy,
+  saveGoogleWorkingCopy,
+} from './google-working-copy';
 import { OfficeError, readOfficeResponse, validateOfficeArchive } from './office-security';
 import { createOfficeFile, getOfficeFile, type OfficeFile, storeOfficeBytes } from './office-service';
 
@@ -11,6 +16,8 @@ const defaults = {
   decryptSecret,
   downloadGoogleWorkingCopy,
   saveGoogleWorkingCopy,
+  googleWorkingCopyExpired,
+  renewGoogleWorkingCopy,
   createOfficeFile,
   getOfficeFile,
   storeOfficeBytes,
@@ -172,16 +179,33 @@ export async function saveGoogleOfficeFile(userId: string, documentId: string, s
     redirect: 'error',
   });
   const bytes = await readOfficeResponse(response);
+  // The session expires after seven days. When Google still has the version
+  // the copy came from, renew it first; otherwise Save to Google would fail
+  // for good (OFF-2).
+  let workingSession = file.google.session;
+  if (deps.googleWorkingCopyExpired(workingSession)) {
+    const renewed = await deps.renewGoogleWorkingCopy({ userId, session: workingSession });
+    const kept = await deps.convexMutation<{ ok: boolean }>(office.linkGoogle, {
+      userId,
+      documentId,
+      expectedSession: workingSession,
+      session: renewed,
+      syncedRevision: file.google.syncedRevision,
+      providerVersion: version(renewed).version,
+    });
+    if (!kept.ok) throw new OfficeError('The working copy changed. Reopen it before saving again.', 409);
+    workingSession = renewed;
+  }
   const result = await deps.saveGoogleWorkingCopy({
     userId,
-    session: file.google.session,
+    session: workingSession,
     bytes,
     extension: file.extension,
   });
   const linked = await deps.convexMutation<{ ok: boolean }>(office.linkGoogle, {
     userId,
     documentId,
-    expectedSession: file.google.session,
+    expectedSession: workingSession,
     session: result.session,
     syncedRevision: file.currentRevision,
     providerVersion: version(result.session).version,

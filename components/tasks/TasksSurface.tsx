@@ -84,6 +84,37 @@ import { ProjectsLens } from './ProjectsLens';
 
 const boardsApi = (api as any).boards;
 
+// Matches ATTACHMENT_MAX_BYTES in convex/boards.ts. The server check is the
+// real limit; this one only saves a long upload that would be refused.
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+// Uploads one file to Convex storage and has the server check it. A refused
+// file is deleted on the server and its reason is thrown here.
+async function uploadCardFile(
+  file: File,
+  target: { cardId: string } | { boardId: string },
+  generateUploadUrl: (args: any) => Promise<unknown>,
+  verifyUpload: (args: any) => Promise<any>,
+) {
+  if (file.size > ATTACHMENT_MAX_BYTES) throw new Error(`${file.name} is larger than 25 MB.`);
+  const uploadUrl = await generateUploadUrl(target);
+  const response = await fetch(uploadUrl as string, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (!response.ok) throw new Error(`Upload failed (${response.status})`);
+  const { storageId } = (await response.json()) as { storageId: string };
+  const checked = await verifyUpload({ ...target, storageId, contentType: file.type || undefined });
+  if (!checked?.ok) throw new Error(checked?.error || `${file.name} cannot be attached.`);
+  return {
+    name: file.name,
+    storageId,
+    contentType: checked.contentType ?? (file.type || undefined),
+    size: checked.size ?? (file.size || undefined),
+  };
+}
+
 interface CardAttachment {
   name: string;
   url?: string;
@@ -1522,6 +1553,7 @@ function CardPanel({
   const deleteCard = useConvexMutation(boardsApi.deleteCard);
   const addComment = useConvexMutation(boardsApi.addComment);
   const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
+  const verifyUpload = useConvexMutation(boardsApi.verifyAttachmentUpload);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const setThreadAccount = useClientStore((s) => s.setThreadAccount);
@@ -1637,20 +1669,9 @@ function CardPanel({
     setUploading(true);
     try {
       for (const file of files) {
-        const uploadUrl = await generateUploadUrl({ cardId: card.cardId });
-        const response = await fetch(uploadUrl as string, {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
-        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-        const { storageId } = (await response.json()) as { storageId: string };
-        await addAttachment({
-          name: file.name,
-          storageId,
-          contentType: file.type || undefined,
-          size: file.size || undefined,
-        });
+        await addAttachment(
+          await uploadCardFile(file, { cardId: card.cardId }, generateUploadUrl, verifyUpload),
+        );
       }
       toast.success(files.length > 1 ? `Uploaded ${files.length} files` : `Uploaded ${files[0]?.name}`);
     } catch (err: any) {
@@ -2200,6 +2221,7 @@ function CreateCardDialog({
   }) => void;
 }) {
   const generateUploadUrl = useConvexMutation(boardsApi.generateAttachmentUploadUrl);
+  const verifyUpload = useConvexMutation(boardsApi.verifyAttachmentUpload);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [labels, setLabels] = useState('');
@@ -2248,23 +2270,8 @@ function CreateCardDialog({
     setUploading(true);
     try {
       for (const file of files) {
-        const uploadUrl = await generateUploadUrl({ boardId });
-        const response = await fetch(uploadUrl as string, {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
-        if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-        const { storageId } = (await response.json()) as { storageId: string };
-        setAttachments((prev) => [
-          ...prev,
-          {
-            name: file.name,
-            storageId,
-            contentType: file.type || undefined,
-            size: file.size || undefined,
-          },
-        ]);
+        const attachment = await uploadCardFile(file, { boardId }, generateUploadUrl, verifyUpload);
+        setAttachments((prev) => [...prev, attachment]);
       }
     } catch (err: any) {
       toast.error(err?.message || 'Upload failed');

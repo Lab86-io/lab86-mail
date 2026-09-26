@@ -7,7 +7,7 @@ import { runTool } from './tools/harness';
 // "today" window computed on the user's wall clock.
 
 const apiMock = {
-  calendarData: { listEvents: 'calendarData.listEvents' },
+  calendarData: { listEventsPage: 'calendarData.listEventsPage' },
   boards: { listDueCards: 'boards.listDueCards' },
   albatrossIntents: { listIntents: 'albatrossIntents.listIntents' },
   albatrossWork: { listProjects: 'albatrossWork.listProjects' },
@@ -37,6 +37,7 @@ function eventRow(overrides: Record<string, unknown> = {}) {
 
 let fixtures: {
   events: any[];
+  truncated?: boolean;
   cards: any[];
   intents: any[];
   projects: any[];
@@ -44,7 +45,8 @@ let fixtures: {
 
 async function convexQueryMock(fn: string, args: any) {
   queryCalls.push({ fn, args });
-  if (fn === apiMock.calendarData.listEvents) return fixtures.events;
+  if (fn === apiMock.calendarData.listEventsPage)
+    return { events: fixtures.events, truncated: fixtures.truncated };
   if (fn === apiMock.boards.listDueCards) return fixtures.cards;
   if (fn === apiMock.albatrossIntents.listIntents) return fixtures.intents;
   if (fn === apiMock.albatrossWork.listProjects) return fixtures.projects;
@@ -122,12 +124,13 @@ describe('salvage_context', () => {
     expect(result.timezone).toBe('America/New_York');
 
     // Calendar window: from now to end of today in the user's timezone.
-    const eventsCall = queryCalls.find((call) => call.fn === apiMock.calendarData.listEvents);
+    const eventsCall = queryCalls.find((call) => call.fn === apiMock.calendarData.listEventsPage);
     expect(eventsCall?.args.startAt).toBe(NOW_MS);
     expect(new Date(eventsCall?.args.endAt).toISOString()).toBe('2026-07-04T03:59:59.000Z');
 
     // Cancelled events drop; the survivor is compact with ISO times.
     expect(result.events).toHaveLength(1);
+    expect(result.eventsTruncated).toBe(false);
     expect(result.events[0]).toMatchObject({
       eventId: 'evt_1',
       title: 'Dentist',
@@ -162,7 +165,7 @@ describe('salvage_context', () => {
   test('explicit timezone argument overrides the requesting user timezone', async () => {
     const result = await runTool(salvage.salvageContext.handler, { timezone: 'UTC' });
     expect(result.timezone).toBe('UTC');
-    const eventsCall = queryCalls.find((call) => call.fn === apiMock.calendarData.listEvents);
+    const eventsCall = queryCalls.find((call) => call.fn === apiMock.calendarData.listEventsPage);
     expect(new Date(eventsCall?.args.endAt).toISOString()).toBe('2026-07-03T23:59:59.000Z');
   });
 
@@ -179,6 +182,13 @@ describe('salvage_context', () => {
     expect(result.projects).toEqual([]);
     expect(result.tasks[0]).toMatchObject({ cardId: 'card_legacy', overdue: false });
     expect(result.tasks[0].dueIso).toBeUndefined();
+  });
+
+  test('reports a partial calendar when the window read hits its cap (CAL-1)', async () => {
+    fixtures.truncated = true;
+    const result = await runTool(salvage.salvageContext.handler, {});
+    expect(result.eventsTruncated).toBe(true);
+    expect(result.events).toHaveLength(1);
   });
 
   test('requires an authenticated user', async () => {

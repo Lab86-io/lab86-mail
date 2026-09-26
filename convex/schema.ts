@@ -1918,6 +1918,9 @@ export default defineSchema({
     scopes: v.array(v.string()),
     lastAccessedAt: v.optional(v.number()),
     error: v.optional(v.string()),
+    // The last provider error that does not need a reconnect (a missing
+    // folder, a rate limit). It never changes `status`.
+    lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2102,6 +2105,8 @@ export default defineSchema({
     reason: v.string(),
     actor: v.union(v.literal('user'), v.literal('ai'), v.literal('system')),
     createdAt: v.number(),
+    // Autosave rows are merged per time window; this is the first save in it.
+    windowStartedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     .index('by_user_document_revision', ['userId', 'documentId', 'revision']),
@@ -2231,6 +2236,7 @@ export default defineSchema({
     .index('by_user_source_intent', ['userId', 'source.intentId'])
     .index('by_board', ['boardId'])
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
+    .index('by_board_due', ['boardId', 'dueAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])

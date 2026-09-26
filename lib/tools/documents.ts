@@ -23,7 +23,7 @@ import {
   createDocument,
   createDocumentSuggestion,
   getDocument,
-  listDocuments,
+  listDocumentSummaries,
   updateDocument,
 } from '@/lib/documents/service';
 import { spreadsheetCapabilities, spreadsheetCommandNames } from '@/lib/documents/spreadsheet-commands';
@@ -53,7 +53,7 @@ const defaultDependencies = {
   composeDocumentPresentation,
   generateDocumentProposal,
   getDocument,
-  listDocuments,
+  listDocumentSummaries,
   publishDocumentToGoogle,
   recordOperation,
   reviewDeckVisuals,
@@ -233,7 +233,7 @@ export const documentList = defineTool({
     ),
   }),
   async handler(args, ctx) {
-    const documents = await dependencies.listDocuments({
+    const documents = await dependencies.listDocumentSummaries({
       userId: requireUserId(ctx.userId),
       kind: args.kind,
       limit: args.limit,

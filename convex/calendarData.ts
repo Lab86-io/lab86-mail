@@ -497,6 +497,23 @@ export const listEvents = query({
   },
 });
 
+// The same window read as listEvents, plus a `truncated` flag when the cap cut
+// rows off. Tools use it so that a partial list is never shown as complete.
+export const listEventsPage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    startAt: v.number(),
+    endAt: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const page = await queryEventsInWindowPage(ctx, args.userId, args.startAt, args.endAt, args.limit);
+    return { events: page.rows, truncated: page.sourceTruncated };
+  },
+});
+
 // Today needs the day's real events, live, without waiting on a generated
 // brief. The internal-secret listEvents above is for the server's sync paths;
 // this is the signed-in user reading their own day.
@@ -1066,24 +1083,7 @@ async function queryEventsInWindowPage(
   limit?: number,
   includeCancelled = false,
 ) {
-  const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
-  // Events overlapping [startAt, endAt): rows starting inside the window plus
-  // rows that started earlier but end inside it. Multi-day spans are bounded
-  // (longest realistic events are weeks), so the lookback is 62 days.
-  const lookback = 62 * 24 * 60 * 60 * 1000;
-  const candidates = await ctx.db
-    .query('calendarEvents')
-    .withIndex('by_user_start', (q) =>
-      q
-        .eq('userId', userId)
-        .gte('startAt', startAt - lookback)
-        .lt('startAt', endAt),
-    )
-    .take(cap);
-  return {
-    rows: candidates.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled')),
-    sourceTruncated: candidates.length >= cap,
-  };
+  return windowPage(ctx, 'calendarEvents', userId, startAt, endAt, limit, includeCancelled);
 }
 
 async function queryLegacyEventsInWindow(
@@ -1105,20 +1105,51 @@ async function queryLegacyEventsInWindowPage(
   limit?: number,
   includeCancelled = false,
 ) {
+  return windowPage(ctx, 'calendarEventCorpus', userId, startAt, endAt, limit, includeCancelled);
+}
+
+// Multi-day spans are bounded (the longest realistic events are weeks), so a
+// row that started more than this long before the window cannot overlap it.
+const SPAN_LOOKBACK_MS = 62 * 24 * 60 * 60 * 1000;
+
+// Events overlapping [startAt, endAt), read as two separate index ranges so
+// that old history can never use up the cap. The spanning read returns only
+// rows that are still running at the window start (the filter runs before
+// take), and the window read starts exactly at startAt. `sourceTruncated` is
+// true when the cap cut rows off, so callers can say the list is partial.
+async function windowPage(
+  ctx: QueryCtx,
+  table: 'calendarEvents' | 'calendarEventCorpus',
+  userId: string,
+  startAt: number,
+  endAt: number,
+  limit?: number,
+  includeCancelled = false,
+) {
   const cap = Math.min(Math.max(limit ?? 2000, 1), 5000);
-  const lookback = 62 * 24 * 60 * 60 * 1000;
-  const candidates = await ctx.db
-    .query('calendarEventCorpus')
+  const keep = (q: any) =>
+    includeCancelled
+      ? q.gt(q.field('endAt'), startAt)
+      : q.and(q.gt(q.field('endAt'), startAt), q.neq(q.field('status'), 'cancelled'));
+  const spanning = await ctx.db
+    .query(table)
     .withIndex('by_user_start', (q) =>
       q
         .eq('userId', userId)
-        .gte('startAt', startAt - lookback)
-        .lt('startAt', endAt),
+        .gte('startAt', startAt - SPAN_LOOKBACK_MS)
+        .lt('startAt', startAt),
     )
-    .take(cap);
+    .filter(keep)
+    .take(cap + 1);
+  const inWindow = await ctx.db
+    .query(table)
+    .withIndex('by_user_start', (q) => q.eq('userId', userId).gte('startAt', startAt).lt('startAt', endAt))
+    .filter(keep)
+    .take(cap + 1);
+  const rows = [...spanning, ...inWindow];
   return {
-    rows: candidates.filter((row) => row.endAt > startAt && (includeCancelled || row.status !== 'cancelled')),
-    sourceTruncated: candidates.length >= cap,
+    rows: rows.slice(0, cap),
+    sourceTruncated: rows.length > cap,
   };
 }
 

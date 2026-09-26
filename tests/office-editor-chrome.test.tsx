@@ -290,6 +290,45 @@ if (process.env.OFFICE_EDITOR_CHROME_DOM_TEST !== '1') {
       expect(events.filter((event) => event === 'albatross')).toHaveLength(1);
     });
 
+    test('a save that may skip an unchanged document resolves without a new revision (OFF-1)', async () => {
+      let handle: any = null;
+      const fetched: string[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        fetched.push(String(input));
+        return Response.json({ document: { lastWopiSave: { id: 'never' } } });
+      }) as typeof fetch;
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      roots.push(root);
+      act(() => {
+        root.render(
+          <CollaboraFrame
+            ref={(value) => {
+              handle = value;
+            }}
+            session={session(false)}
+            onReady={() => {}}
+            onModified={() => {}}
+            onError={() => {}}
+          />,
+        );
+      });
+      await until(frameElement, 'frame mounted');
+      await editorSends('App_LoadingStatus', { Status: 'Frame_Ready' });
+      let result: unknown = 'pending';
+      const saving = handle.save({ skipIfUnmodified: true }).then((value: unknown) => {
+        result = value;
+      });
+      const request = posted.find((message) => message.MessageId === 'Action_Save');
+      expect(request?.Values).toMatchObject({ DontSaveIfUnmodified: true, Notify: true });
+      await editorSends('Action_Save_Resp', { success: true, result: 'unmodified' });
+      await act(async () => saving);
+      expect(result).toBeNull();
+      // No confirmation poll: nothing was uploaded.
+      expect(fetched).toEqual([]);
+    });
+
     test('with the chrome disabled the URL and the post-load traffic are unchanged', async () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
