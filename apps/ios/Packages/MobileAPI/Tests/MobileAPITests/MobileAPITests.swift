@@ -287,3 +287,34 @@ private actor RequestRecorder {
         headers = request.headerFields
     }
 }
+
+@Test
+func theClientReadsServerDatesWithOrWithoutFractionalSeconds() throws {
+    let transcoder = LenientISO8601DateTranscoder()
+    let withMilliseconds = try transcoder.decode("2026-09-26T12:30:00.000Z")
+    let plain = try transcoder.decode("2026-09-26T12:30:00Z")
+    #expect(withMilliseconds == plain)
+    #expect(withMilliseconds.timeIntervalSince1970 == 1_790_425_800)
+    #expect(try transcoder.encode(plain) == "2026-09-26T12:30:00Z")
+    #expect(throws: DecodingError.self) { try transcoder.decode("yesterday") }
+}
+
+@Test
+func theTodaySummaryDecodesWithServerDates() throws {
+    let transcoder = LenientISO8601DateTranscoder()
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .custom { decoder in
+        try transcoder.decode(try decoder.singleValueContainer().decode(String.self))
+    }
+    let summary = try decoder.decode(
+        Components.Schemas.TodaySummary.self,
+        from: Data(
+            #"{"version":1,"reportID":"r1","kind":"weekly","generatedAt":"2026-09-26T11:00:00.000Z","leadLine":"Two replies are owed.","nextMove":{"title":"Venue count","detail":"She asked by Friday.","refKind":"thread","refID":"t1","accountID":"a1"},"nextMeeting":{"eventID":"e1","title":"Standup","startAt":"2026-09-26T13:00:00.000Z","endAt":"2026-09-26T13:30:00.000Z"},"sourcesNeedingAttention":1,"serverTime":"2026-09-26T12:00:00.000Z"}"#.utf8
+        )
+    )
+    #expect(summary.reportID == "r1")
+    #expect(summary.kind?.rawValue == "weekly")
+    #expect(summary.nextMove?.refKind.rawValue == "thread")
+    #expect(summary.nextMeeting?.title == "Standup")
+    #expect(summary.sourcesNeedingAttention == 1)
+}

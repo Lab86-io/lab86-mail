@@ -44,6 +44,38 @@ public struct MobileAPIAuthenticationMiddleware: ClientMiddleware {
     private static let requestIDHeader = HTTPField.Name("x-request-id")!
 }
 
+/// Reads RFC 3339 dates with or without fractional seconds. The server writes
+/// `Date.toISOString()`, which always carries milliseconds (`.000Z`), and the
+/// runtime's default transcoder refuses them. Dates this client sends keep
+/// the plain form the server has always accepted.
+public struct LenientISO8601DateTranscoder: DateTranscoder, @unchecked Sendable {
+    private let lock = NSLock()
+    private let fractional: ISO8601DateFormatter
+    private let plain: ISO8601DateFormatter
+
+    public init() {
+        fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+    }
+
+    public func encode(_ date: Date) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return plain.string(from: date)
+    }
+
+    public func decode(_ dateString: String) throws -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        if let date = fractional.date(from: dateString) ?? plain.date(from: dateString) { return date }
+        throw DecodingError.dataCorrupted(
+            .init(codingPath: [], debugDescription: "Expected an ISO 8601 date, found \(dateString).")
+        )
+    }
+}
+
 public enum MobileAPIClientFactory {
     public static func make(
         serverURL: URL,
@@ -52,6 +84,7 @@ public enum MobileAPIClientFactory {
     ) -> Client {
         Client(
             serverURL: serverURL,
+            configuration: Configuration(dateTranscoder: LenientISO8601DateTranscoder()),
             transport: URLSessionTransport(configuration: .init(session: session)),
             middlewares: [MobileAPIAuthenticationMiddleware(tokenProvider: tokenProvider)]
         )
