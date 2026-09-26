@@ -55,10 +55,17 @@ function report(overrides: Partial<DailyReport> = {}): DailyReport {
 
 describe('daily report tools attach deterministic edition art', () => {
   test('get_latest_daily_report attaches art matching getDailyArt(generatedAt)', async () => {
+    // Other files seed morning editions for the default test user, and the
+    // run order differs between local runs and CI, so this read runs as its
+    // own user: the latest edition must be the one seeded here.
+    const artUser = { userId: 'tool_art_latest_user' };
     const seeded = report();
-    await withToolContext(() => saveDailyReport(seeded));
+    await withToolContext(() => saveDailyReport(seeded), artUser);
 
-    const result = await runTool(getLatestDailyReportTool.handler, { kind: 'morning' });
+    const result = await withToolContext(
+      () => getLatestDailyReportTool.handler({ kind: 'morning' }, toolContext(artUser)),
+      artUser,
+    );
     expect(result.report).not.toBeNull();
     expect((result.report as any).art).toEqual(getDailyArt(seeded.generatedAt));
     // services already existed on DailyReport — must pass through untouched.
