@@ -19,6 +19,7 @@ import {
   repairBriefDocument,
 } from '@/lib/shared/brief-document';
 import { withDeadline } from '@/lib/shared/deadline';
+import { truncateText } from '@/lib/shared/text';
 import { calendarSearchEvents, calendarSuggestTimes } from '@/lib/tools/calendar';
 import { corpusSearch } from '@/lib/tools/corpus';
 import { cloudFileSearch } from '@/lib/tools/files';
@@ -226,14 +227,14 @@ export const planGenerationSchema = z.object({
 export type PlanGeneration = z.infer<typeof planGenerationSchema>;
 
 function uniqueProofId(preferred: string | undefined, index: number, used: Set<string>) {
-  const base = (preferred?.trim() || `proof-${index + 1}`).slice(0, 120) || `proof-${index + 1}`;
+  const base = truncateText(preferred?.trim() || `proof-${index + 1}`, 120) || `proof-${index + 1}`;
   if (!used.has(base)) {
     used.add(base);
     return base;
   }
   for (let suffix = 2; ; suffix += 1) {
     const marker = `-${suffix}`;
-    const candidate = `${base.slice(0, 120 - marker.length)}${marker}`;
+    const candidate = `${truncateText(base, 120 - marker.length)}${marker}`;
     if (!used.has(candidate)) {
       used.add(candidate);
       return candidate;
@@ -414,7 +415,7 @@ export function attachNarrativeResearchRefs(result: any, refs: PlanContextRef[])
         refId,
         kind: 'narrative',
         id: row._id,
-        label: String(row.title || 'Narrative evidence').slice(0, 180),
+        label: truncateText(String(row.title || 'Narrative evidence'), 180),
         url: `/narrative?id=${encodeURIComponent(row._id)}`,
       });
     return { observationId: row._id, refId };
@@ -529,7 +530,9 @@ async function buildContextPack(userId: string, rawText: string, areaId?: string
     .map((row) => row?.doc)
     .filter((memory) => memory && typeof memory.notes === 'string' && memory.notes.trim())
     .slice(0, 40)
-    .map((memory) => `- ${memory.email ? `${memory.email}: ` : ''}${String(memory.notes).slice(0, 300)}`);
+    .map(
+      (memory) => `- ${memory.email ? `${memory.email}: ` : ''}${truncateText(String(memory.notes), 300)}`,
+    );
   if (memoryLines.length) {
     lines.push('## Notes about people and preferences (user memory)');
     lines.push(...memoryLines);
@@ -597,7 +600,7 @@ async function buildContextPack(userId: string, rawText: string, areaId?: string
   }
 
   const search = await deps
-    .invokeTool(corpusSearch, { query: rawText.slice(0, 200), max: 8 }, { agent: 'ai', userId })
+    .invokeTool(corpusSearch, { query: truncateText(rawText, 200), max: 8 }, { agent: 'ai', userId })
     .catch(() => null);
   const items: any[] = (search as any)?.items || [];
   if (items.length) {
@@ -611,7 +614,7 @@ async function buildContextPack(userId: string, rawText: string, areaId?: string
         refId,
         kind,
         id,
-        label: String(item.subject || item.title || '').slice(0, 140) || undefined,
+        label: truncateText(String(item.subject || item.title || ''), 140) || undefined,
         accountId: item.account ? String(item.account) : undefined,
         url: item.url ? String(item.url) : undefined,
       });
@@ -619,7 +622,7 @@ async function buildContextPack(userId: string, rawText: string, areaId?: string
       lines.push(
         packLine(
           refs[refs.length - 1],
-          `${item.subject || item.title || 'Untitled'}${item.from ? ` — from ${item.from}` : ''}${date ? ` — ${date}` : ''}${item.snippet ? ` — ${String(item.snippet).slice(0, 160)}` : ''}`,
+          `${item.subject || item.title || 'Untitled'}${item.from ? ` — from ${item.from}` : ''}${date ? ` — ${date}` : ''}${item.snippet ? ` — ${truncateText(String(item.snippet), 160)}` : ''}`,
         ),
       );
     });
@@ -657,7 +660,10 @@ function researchIdentity(toolName: string, row: any, index: number) {
 }
 
 function researchLabel(row: any) {
-  return String(row?.subject || row?.title || row?.name || row?.summary || 'Research result').slice(0, 180);
+  return truncateText(
+    String(row?.subject || row?.title || row?.name || row?.summary || 'Research result'),
+    180,
+  );
 }
 
 export function attachResearchRefs(toolName: string, result: any, refs: PlanContextRef[], input: any) {
@@ -667,7 +673,7 @@ export function attachResearchRefs(toolName: string, result: any, refs: PlanCont
     const existing = refs.find((ref) => ref.kind === 'manual' && ref.id === id);
     const refId = existing?.refId || `ref${refs.length + 1}`;
     if (!existing) refs.push({ refId, kind: 'manual', id, label: input?.url, url: input?.url });
-    return { ...result, content: String(result.content || '').slice(0, 24_000), refId };
+    return { ...result, content: truncateText(String(result.content || ''), 24_000), refId };
   }
   const arrayKey = ['items', 'files', 'events', 'results'].find((key) => Array.isArray(result[key]));
   if (!arrayKey) return result;
@@ -949,7 +955,7 @@ async function detectLocalQuery(input: GenerateIntentPlanInput, rawText: string)
         userId: input.userId,
         system:
           'Does this thought involve visiting, calling, or buying from a nearby business or venue? Respond with ONE JSON object: {"query": string|null} using a short category grounded only in the user\'s thought, or null when nothing local is involved.',
-        prompt: rawText.slice(0, 500),
+        prompt: truncateText(rawText, 500),
       }),
       30_000,
       'Local-query pre-pass',
@@ -959,7 +965,7 @@ async function detectLocalQuery(input: GenerateIntentPlanInput, rawText: string)
     if (start === -1 || end <= start) return null;
     const parsed = JSON.parse(text.slice(start, end + 1));
     const query = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
-    return query && query.toLowerCase() !== 'null' ? query.slice(0, 80) : null;
+    return query && query.toLowerCase() !== 'null' ? truncateText(query, 80) : null;
   } catch {
     return null;
   }
@@ -986,7 +992,7 @@ async function nearbyEvidence(
   if (!results.length) return { block: '', place };
   const lines = results.map(
     (result, index) =>
-      `${index + 1}. ${result.title || 'Untitled'} — ${result.url}${result.snippet ? `\n   ${String(result.snippet).slice(0, 240)}` : ''}`,
+      `${index + 1}. ${result.title || 'Untitled'} — ${result.url}${result.snippet ? `\n   ${truncateText(String(result.snippet), 240)}` : ''}`,
   );
   return {
     block: `\n## Nearby places (web search for "${query}" near ${place} — build question options ONLY from these)\n${lines.join('\n')}`,
@@ -1064,7 +1070,10 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
           input.userId,
           {
             purpose: 'work',
-            query: [intent.rawText.slice(0, narrativeAnswers ? 160 : 240), narrativeAnswers.slice(0, 79)]
+            query: [
+              truncateText(intent.rawText, narrativeAnswers ? 160 : 240),
+              truncateText(narrativeAnswers, 79),
+            ]
               .filter(Boolean)
               .join(' '),
             topics: [`work:${input.intentId}`, ...(areaTopic ? [`area:${areaTopic}`] : [])],

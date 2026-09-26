@@ -6,6 +6,7 @@
 // receives the same decision.
 
 import { z } from 'zod';
+import { truncateText } from '../shared/text';
 import { parseIsoInTimezone } from '../shared/timezones';
 
 export type HorizonKind = 'now' | 'later' | 'someday';
@@ -375,11 +376,11 @@ export function parseHorizonHint(text: string, nowMs: number, timezone?: string 
     const endsSentence = phrase.length === rest.replace(/[.!?]\s*$/, '').trim().length;
     if (preposition === 'not before' || preposition === 'not until') {
       if (phrase) {
-        result = { kind: 'later', label: `${preposition} ${phrase.slice(0, 80)}` };
+        result = { kind: 'later', label: `${preposition} ${truncateText(phrase, 80)}` };
         break;
       }
     } else if (preposition === 'after' && words.length >= 1 && words.length <= 3 && endsSentence) {
-      result = { kind: 'later', label: `after ${phrase.slice(0, 80)}` };
+      result = { kind: 'later', label: `after ${truncateText(phrase, 80)}` };
       break;
     }
     sleepPattern.lastIndex = sleep.index! + preposition.length;

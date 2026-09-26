@@ -4,6 +4,7 @@ import {
   type BriefRegion,
   parseBriefDocument,
 } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 
 /**
  * The frontier: a plan document grows section by section until it needs an
@@ -36,7 +37,7 @@ export interface FrontierStep {
   title: string;
 }
 
-const clamp = (value: string, max: number) => value.trim().slice(0, max);
+const clamp = (value: string, max: number) => truncateText(value.trim(), max);
 
 function optionDescription(option: FrontierQuestionOption): string | undefined {
   const parts = [option.detail, option.address, option.hoursText].filter((part): part is string =>

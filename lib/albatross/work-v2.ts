@@ -4,6 +4,7 @@ import { HORIZON_KINDS, parseHorizonHint, type WorkHorizon } from '@/lib/albatro
 import type { MetricLike } from '@/lib/albatross/practice-review';
 import { parseListHint, parseMetricHint } from '@/lib/albatross/shape-hints';
 import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
+import { truncateText } from '@/lib/shared/text';
 import { parseIsoInTimezone } from '@/lib/shared/timezones';
 
 // The splitter's read of the horizon. Dates arrive as ISO strings because a
@@ -191,9 +192,7 @@ export interface CheckinPreferenceLike {
 }
 
 export function preserveCaptureText(value: string, max = 20_000) {
-  return String(value || '')
-    .replace(/^\s+|\s+$/g, '')
-    .slice(0, max);
+  return truncateText(String(value || '').replace(/^\s+|\s+$/g, ''), max);
 }
 
 export function parseWorkSplit(raw: string, original: string): WorkSplit {
@@ -237,7 +236,7 @@ export function titleFromWorkText(text: string) {
     preserveCaptureText(text)
       .split(/\n|[.!?](?:\s|$)/)[0]
       ?.trim() || 'Untitled work';
-  return line.length > 96 ? `${line.slice(0, 95).trimEnd()}…` : line;
+  return line.length > 96 ? `${truncateText(line, 95).trimEnd()}…` : line;
 }
 
 function normalizedActionIdentity(action: PlannedActionLike) {
@@ -382,7 +381,7 @@ export function fallbackEmailIsDue(input: {
 export function captureFallbackItem(rawText: string, areaId?: string) {
   const primaryAreaId = String(areaId || '').trim() || undefined;
   return {
-    title: rawText.slice(0, 180),
+    title: truncateText(rawText, 180),
     rawText,
     relatedAreaIds: [],
     ...(primaryAreaId ? { primaryAreaId } : {}),

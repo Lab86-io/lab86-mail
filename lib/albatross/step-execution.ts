@@ -1,4 +1,5 @@
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { truncateText } from '../shared/text';
 
 interface StepExecutionDependencies {
   convexMutation: typeof convexMutation;
@@ -67,7 +68,7 @@ export async function completeWorkStep(
       workId: input.workId,
       stepKey,
       source: input.source || 'user',
-      ...(input.note?.trim() ? { note: input.note.trim().slice(0, 2_000) } : {}),
+      ...(input.note?.trim() ? { note: truncateText(input.note.trim(), 2_000) } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

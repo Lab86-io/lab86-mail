@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import type { AreaFactLite } from './area-classifier';
 import { matchAreaContext } from './area-matching';
 
@@ -78,7 +79,7 @@ function sourceRef(artifact: ClassifiableAreaArtifact) {
   return {
     kind: artifact.artifactKind,
     id: artifact.artifactId,
-    label: `${artifact.source}: ${artifact.title}`.slice(0, 200),
+    label: truncateText(`${artifact.source}: ${artifact.title}`, 200),
     ...(artifact.accountId ? { accountId: artifact.accountId } : {}),
   };
 }
@@ -123,7 +124,7 @@ function artifactsPrompt(artifacts: ClassifiableAreaArtifact[]) {
   return artifacts
     .map(
       (artifact) =>
-        `- candidateId=${candidateId(artifact)} | source=${artifact.source} | title=${artifact.title.slice(0, 180)}${artifact.rejectedAreaIds?.length ? ` | doNotAssignAreaIds=${artifact.rejectedAreaIds.join(',')}` : ''} | context=${artifact.text.replace(/\s+/gu, ' ').slice(0, 700)}`,
+        `- candidateId=${candidateId(artifact)} | source=${artifact.source} | title=${truncateText(artifact.title, 180)}${artifact.rejectedAreaIds?.length ? ` | doNotAssignAreaIds=${artifact.rejectedAreaIds.join(',')}` : ''} | context=${truncateText(artifact.text.replace(/\s+/gu, ' '), 700)}`,
     )
     .join('\n');
 }

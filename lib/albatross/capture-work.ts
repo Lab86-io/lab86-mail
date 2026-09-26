@@ -9,6 +9,7 @@ import {
 } from '@/lib/albatross/work-v2';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 export interface CaptureWorkInput {
   rawText: string;
@@ -71,13 +72,8 @@ export async function captureWork(
   try {
     if (input.reviewedItems?.length) {
       const items = input.reviewedItems.slice(0, 20).map((item) => ({
-        title:
-          String(item.title || '')
-            .trim()
-            .slice(0, 180) || 'Work',
-        rawText: String(item.rawText || '')
-          .trim()
-          .slice(0, 20_000),
+        title: truncateText(String(item.title || '').trim(), 180) || 'Work',
+        rawText: truncateText(String(item.rawText || '').trim(), 20_000),
         primaryAreaId: input.areaId || undefined,
         relatedAreaIds: [],
         horizon: parseHorizonHint(item.rawText, dependencies.now(), timezone) ?? undefined,

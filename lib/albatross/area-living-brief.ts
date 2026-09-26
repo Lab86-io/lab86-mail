@@ -8,6 +8,7 @@ import { briefSourceCoverage } from '../mail/brief-source-refresh';
 import { resolveBriefTimezone } from '../mail/brief-timezone';
 import { narrativePrompt, prepareBriefContext } from '../narrative/service';
 import { type BriefDocumentV2, type BriefRegion, parseBriefDocument } from '../shared/brief-document';
+import { truncateText } from '../shared/text';
 import { injectAreaArtifactFontContract } from './area-artifact-fonts';
 import { dailyIntentBudget, intentAppliesToScope } from './daily-intent';
 
@@ -66,7 +67,7 @@ function iso(value: unknown) {
 }
 
 function clean(value: unknown, max: number) {
-  return typeof value === 'string' ? value.trim().slice(0, max) : null;
+  return typeof value === 'string' ? truncateText(value.trim(), max) : null;
 }
 
 /**
@@ -421,7 +422,7 @@ Rules:
 - Plain English. Sentence case. No bullet lists, no headings, no emoji, no exclamation marks, no ALL-CAPS words. Preserve relevant product names and technical terms from the sources.`;
 
 function firstString(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+  return typeof value === 'string' ? truncateText(value.trim(), max) : '';
 }
 
 // A pulse from the context alone. Used when no model is available and as the
