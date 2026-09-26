@@ -90,10 +90,13 @@ if (process.env.ALBATROSS_MENU_DIALOG_DOM_TEST !== '1') {
   // `:modal` and `:popover-open`. jsdom's selector engine recurses without end
   // on those, and nothing in jsdom is ever in the top layer.
   const nativeMatches = dom.window.Element.prototype.matches;
-  dom.window.Element.prototype.matches = function (this: Element, selector: string) {
-    if (selector === ':modal' || selector === ':popover-open') return false;
-    return nativeMatches.call(this, selector);
-  };
+  Object.defineProperty(dom.window.Element.prototype, 'matches', {
+    configurable: true,
+    value(this: Element, selector: string) {
+      if (selector === ':modal' || selector === ':popover-open') return false;
+      return nativeMatches.call(this, selector);
+    },
+  });
 
   const { act, useState } = await import('react');
   const { createRoot } = await import('react-dom/client');
