@@ -29,12 +29,17 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || 'https://mail.lab86.io').replace(/
 const CALLBACK_URI = `${PUBLIC_URL}/api/nylas/callback`;
 const WEBHOOK_URI = `${PUBLIC_URL}/api/nylas/webhook`;
 
-// The corpus webhook handler is generic; subscribe to message lifecycle (for
-// incremental sync) and grant lifecycle (for disconnect/expiry cleanup).
+// The corpus webhook handler is generic. Subscribe to message lifecycle (for
+// incremental sync, including deletes), event lifecycle (the primary calendar
+// sync path; the 15-minute resync is the safety net), and grant lifecycle.
+// message.opened is left out: nothing reads it, and it adds 429 pressure.
 const WEBHOOK_TRIGGERS = [
   'message.created',
   'message.updated',
-  'message.opened',
+  'message.deleted',
+  'event.created',
+  'event.updated',
+  'event.deleted',
   'grant.created',
   'grant.updated',
   'grant.deleted',
