@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -94,11 +95,7 @@ export const rename = mutation({
     requireInternalSecret(args.internalSecret);
     const document = await owned(ctx, args.userId, args.documentId);
     if (!document) return { ok: false };
-    const title =
-      args.title
-        .trim()
-        .slice(0, 490)
-        .replace(/\.(docx|xlsx|pptx)$/i, '') || 'Untitled';
+    const title = truncateText(args.title.trim(), 490).replace(/\.(docx|xlsx|pptx)$/i, '') || 'Untitled';
     await ctx.db.patch(document._id, { title: `${title}.${document.extension}`, updatedAt: now() });
     return { ok: true };
   },

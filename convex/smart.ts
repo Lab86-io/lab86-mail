@@ -18,6 +18,7 @@ import {
   smartIndexKey,
   smartRuleMatches,
 } from '../lib/mail/smart-categories';
+import { truncateText } from '../lib/shared/text';
 import type { SmartRule } from '../lib/shared/types';
 import { internal } from './_generated/api';
 import { internalMutation, mutation } from './_generated/server';
@@ -57,7 +58,7 @@ function headerValue(headers: unknown, name: string) {
   if (!headers || typeof headers !== 'object') return undefined;
   for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
     if (key.toLowerCase() === name && typeof value === 'string' && value.trim())
-      return value.trim().slice(0, 500);
+      return truncateText(value.trim(), 500);
   }
   return undefined;
 }

@@ -1,3 +1,5 @@
+import { truncateText } from '../lib/shared/text';
+
 export type AreaStatus = 'active' | 'archived';
 export type AreaFactStatus = 'candidate' | 'verified' | 'rejected' | 'superseded';
 export type AreaArtifactLinkStatus = 'candidate' | 'verified' | 'rejected';
@@ -49,7 +51,7 @@ export function normalizeText(value: string, fallback = ''): string {
 }
 
 function boundedText(value: string, max: number, fallback = ''): string {
-  return normalizeText(value, fallback).slice(0, max);
+  return truncateText(normalizeText(value, fallback), max);
 }
 
 function optionalBoundedText(value: string | undefined, max: number): string | undefined {

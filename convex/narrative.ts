@@ -16,6 +16,7 @@ import {
   selectBriefEvidence,
 } from '../lib/narrative/core';
 import { type Observation, observationsForRow } from '../lib/narrative/observations';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
@@ -826,7 +827,7 @@ export const record = mutation({
       key,
       level: 'thread' as const,
       source: 'derived',
-      title: text.slice(0, 120),
+      title: truncateText(text, 120),
       text,
       sourceIds: args.sourceIds,
       sourceVersions: Object.fromEntries(sources.map((s) => [s._id, s.sourceVersion || ''])),
@@ -883,7 +884,7 @@ export const captureTurn = mutation({
       key,
       level: 'observation',
       source: 'chat',
-      title: text.slice(0, 100),
+      title: truncateText(text, 100),
       text: `You said: ${text}`,
       sourceIds: [],
       topics: args.topics.slice(0, 8),
@@ -1373,7 +1374,7 @@ export const finish = mutation({
       await ctx.db.patch(run._id, {
         status: args.error ? 'partial' : 'ready',
         endedAt: Date.now(),
-        error: args.error?.slice(0, 400),
+        error: truncateText(args.error, 400),
         model: args.model,
         inputTokens: args.inputTokens,
         outputTokens: args.outputTokens,
@@ -1384,7 +1385,7 @@ export const finish = mutation({
         lease: undefined,
         leaseUntil: undefined,
         lastRunAt: Date.now(),
-        lastError: args.error?.slice(0, 400),
+        lastError: truncateText(args.error, 400),
       });
   },
 });

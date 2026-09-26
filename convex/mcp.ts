@@ -5,6 +5,7 @@ import { areaMcpArtifactId, mcpAreaTargetDecision } from '../lib/albatross/area-
 import { evidenceWeight, githubEvidenceKind } from '../lib/albatross/evidence-index';
 import { detachedMcpSource } from '../lib/mcp/disconnect';
 import { mcpSyncStateFields } from '../lib/mcp/sync-state';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -668,7 +669,7 @@ export const upsertItems = mutation({
               {
                 kind: args.server === 'github' ? `github_${item.kind}` : 'mcpItem',
                 id: item.externalId.slice(0, 500),
-                label: item.title.slice(0, 200),
+                label: truncateText(item.title, 200),
                 ...(item.url ? { url: item.url.slice(0, 1_200) } : {}),
               },
             ],

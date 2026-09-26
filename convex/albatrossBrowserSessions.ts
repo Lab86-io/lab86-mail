@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
@@ -99,7 +100,7 @@ export const setSessionStatus = mutation({
     const ts = now();
     await ctx.db.patch(row._id, {
       status: args.status,
-      statusDetail: args.statusDetail?.slice(0, 300),
+      statusDetail: truncateText(args.statusDetail, 300),
       ...(args.stepKey !== undefined ? { stepKey: args.stepKey } : {}),
       ...(args.stepIdentity !== undefined ? { stepIdentity: args.stepIdentity } : {}),
       ...(args.status === 'ended' || args.status === 'failed' ? { endedAt: ts } : {}),

@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { localDateKey } from '../lib/albatross/local-time';
 import { nextRoutineRunAt, routineIsInQuietHours, routineRunKey } from '../lib/albatross/routines';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -86,7 +87,7 @@ async function requireRoutine(
 
 function clean(value: string | undefined | null, max: number) {
   const next = String(value || '').trim();
-  return next ? next.slice(0, max) : undefined;
+  return next ? truncateText(next, max) : undefined;
 }
 
 function validateTimezone(timezone: string) {
@@ -680,7 +681,7 @@ export const recordRunFailure = internalMutation({
       .query('albatrossRoutineRuns')
       .withIndex('by_routine_runKey', (q) => q.eq('routineId', routine._id).eq('runKey', runKey))
       .unique();
-    const error = args.error.slice(0, 500) || 'Routine run failed.';
+    const error = truncateText(args.error, 500) || 'Routine run failed.';
     let runId = existing?._id;
     if (existing && existing.status !== 'completed') {
       await ctx.db.patch(existing._id, { status: 'error', error, updatedAt: ts });

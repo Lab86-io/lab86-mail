@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { assertWorkOpen } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -148,7 +149,7 @@ async function appendActivity(ctx: MutationCtx, card: any, userId: string, actio
     actorUserId: userId,
     actorEmail: await actorEmail(ctx, userId),
     action,
-    detail: detail?.slice(0, 300),
+    detail: truncateText(detail, 300),
     createdAt: now(),
   };
   const activity = [...(card.activity || []), entry].slice(-ACTIVITY_CAP);
@@ -722,7 +723,7 @@ export const addComment = mutation({
       id: `c_${now()}_${Math.floor(Math.random() * 1e6)}`,
       authorUserId: userId,
       authorEmail: await actorEmail(ctx, userId),
-      body: body.slice(0, 4000),
+      body: truncateText(body, 4000),
       createdAt: now(),
     };
     await ctx.db.patch(args.cardId, {

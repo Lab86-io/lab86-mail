@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { assertBriefJobOwner, briefJobFence } from './briefJobState';
@@ -37,7 +38,7 @@ async function resolveUserId(
 }
 
 function bounded(value: string, max: number) {
-  return value.trim().slice(0, max);
+  return truncateText(value.trim(), max);
 }
 
 export const saveAreaPulse = mutation({

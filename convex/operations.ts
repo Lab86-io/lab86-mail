@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -190,7 +191,7 @@ export const markUndoFailed = mutation({
     await ctx.db.patch(args.operationId, {
       status: 'undo_failed',
       updatedAt: now(),
-      error: args.error.slice(0, 500),
+      error: truncateText(args.error, 500),
       undoneAt: undefined,
       undoClaimToken: undefined,
       undoClaimExpiresAt: undefined,

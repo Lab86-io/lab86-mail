@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -766,10 +767,12 @@ function buildEventSearchText(event: any) {
 }
 
 function normalizeCalendarCorpusText(value: unknown, maxChars = 16_000) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxChars);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    maxChars,
+  );
 }
 
 function yearMonth(ts: unknown) {

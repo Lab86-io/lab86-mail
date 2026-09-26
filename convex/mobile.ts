@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -211,7 +212,7 @@ export const resolveBriefRefs = query({
             ? {
                 kind: 'work',
                 id: ref.id,
-                title: work.title || work.rawText.slice(0, 160) || 'Untitled work',
+                title: work.title || truncateText(work.rawText, 160) || 'Untitled work',
                 subtitle: work.rawText || undefined,
                 status: work.agentState || work.workState || work.status,
                 updatedAt: work.updatedAt,
@@ -350,7 +351,7 @@ export const queryBriefCatalog = query({
       .map((item) => ({
         kind: 'work',
         id: String(item._id),
-        title: item.title || item.rawText.slice(0, 160) || 'Untitled work',
+        title: item.title || truncateText(item.rawText, 160) || 'Untitled work',
         subtitle: item.rawText || undefined,
         status: item.agentState || item.workState || item.status,
         updatedAt: item.updatedAt,
