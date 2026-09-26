@@ -240,6 +240,29 @@ export const saveVersion = mutation({
         updatedAt: document.updatedAt,
       };
     }
+    // A save of exactly the current bytes (a forced save with no edits, from
+    // any session) is not a new revision. Counting it made the next AI edit
+    // fail on a revision that changed nothing (OFF-1).
+    if (document.currentRevision === args.expectedRevision) {
+      const current = await ctx.db
+        .query('officeVersions')
+        .withIndex('by_user_document_revision', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('documentId', args.documentId)
+            .eq('revision', document.currentRevision),
+        )
+        .first();
+      if (current && !current.recovery && current.sha256 === args.sha256) {
+        if (args.saveRequestId)
+          await ctx.db.patch(document._id, {
+            lastWopiSave: { id: args.saveRequestId, revision: current.revision },
+          });
+        await ctx.db.patch(session._id, { lastRevision: current.revision });
+        if (current.storageId !== args.storageId) await ctx.storage.delete(args.storageId);
+        return { ok: true, revision: current.revision, updatedAt: document.updatedAt };
+      }
+    }
     const latest = await ctx.db
       .query('officeVersions')
       .withIndex('by_user_document_revision', (q) =>
