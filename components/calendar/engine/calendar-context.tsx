@@ -1,14 +1,15 @@
 'use client';
 
 import type React from 'react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useLocalStorage } from '@/components/calendar/engine/hooks';
 import type { IEvent, IUser } from '@/components/calendar/engine/interfaces';
 import type { TCalendarView, TEventColor } from '@/components/calendar/engine/types';
 
 // Persistence hooks supplied by the host surface: the context updates its
 // local state optimistically, then hands the event to these to write through
-// (Nylas via tools in our case). Live-query props resync corrects any drift.
+// (Nylas via tools in our case). A hook that rejects makes the context put
+// its local state back; live-query props resync corrects any other drift.
 export interface WritableCalendarOption {
   id: string;
   name: string;
@@ -184,13 +185,29 @@ export function CalendarProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events]);
 
+  // Rolls a failed optimistic write back (UI-7). `revert` maps the CURRENT
+  // list, so a live-query refresh or another edit in between is kept.
+  const latest = useRef({ allEvents, selectedUserId, selectedColors });
+  latest.current = { allEvents, selectedUserId, selectedColors };
+  const rollbackOnFailure = (
+    write: void | Promise<void> | undefined,
+    revert: (list: IEvent[]) => IEvent[],
+  ) => {
+    void Promise.resolve(write).catch(() => {
+      const current = latest.current;
+      const next = revert(current.allEvents);
+      setAllEvents(next);
+      setFilteredEvents(applyFilters(next, current.selectedUserId, current.selectedColors));
+    });
+  };
+
   const addEvent = (event: IEvent) => {
     setAllEvents((prev) => [...prev, event]);
     // Only surface the new event if it matches the active filters.
     setFilteredEvents((prev) =>
       applyFilters([event], selectedUserId, selectedColors).length ? [...prev, event] : prev,
     );
-    void persistence?.onEventAdded?.(event);
+    rollbackOnFailure(persistence?.onEventAdded?.(event), (list) => list.filter((e) => e !== event));
   };
 
   const updateEvent = (event: IEvent) => {
@@ -206,23 +223,29 @@ export function CalendarProvider({
     // Re-derive instead of in-place mapping: the update may change fields the
     // active filters key on (calendar, color).
     setFilteredEvents(applyFilters(nextAll, selectedUserId, selectedColors));
-    void persistence?.onEventUpdated?.(updated, previous);
+    rollbackOnFailure(persistence?.onEventUpdated?.(updated, previous), (list) =>
+      previous ? list.map((e) => (e === updated ? previous : e)) : list,
+    );
   };
 
   const removeEvent = (eventId: string, options?: { deleteSeries?: boolean }) => {
     const removed = allEvents.find((e) => e.id === eventId);
-    if (options?.deleteSeries && removed) {
-      // Optimistically drop EVERY occurrence of the series, not just the clicked
-      // instance, so the grid matches what the backend will do.
-      const seriesKey = removed.masterEventId || removed.id;
-      const sameSeries = (e: IEvent) => (e.masterEventId || e.id) === seriesKey;
-      setAllEvents((prev) => prev.filter((e) => !sameSeries(e)));
-      setFilteredEvents((prev) => prev.filter((e) => !sameSeries(e)));
-    } else {
-      setAllEvents((prev) => prev.filter((e) => e.id !== eventId));
-      setFilteredEvents((prev) => prev.filter((e) => e.id !== eventId));
+    // Optimistically drop EVERY occurrence of a deleted series, not just the
+    // clicked instance, so the grid matches what the backend will do.
+    const seriesKey = removed ? removed.masterEventId || removed.id : eventId;
+    const isGone =
+      options?.deleteSeries && removed
+        ? (e: IEvent) => (e.masterEventId || e.id) === seriesKey
+        : (e: IEvent) => e.id === eventId;
+    const gone = allEvents.filter(isGone);
+    setAllEvents((prev) => prev.filter((e) => !isGone(e)));
+    setFilteredEvents((prev) => prev.filter((e) => !isGone(e)));
+    if (removed) {
+      rollbackOnFailure(persistence?.onEventRemoved?.(removed, options), (list) => {
+        const present = new Set(list.map((e) => e.id));
+        return [...list, ...gone.filter((e) => !present.has(e.id))];
+      });
     }
-    if (removed) void persistence?.onEventRemoved?.(removed, options);
   };
 
   const clearFilter = () => {

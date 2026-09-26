@@ -16,6 +16,7 @@ import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
+import { gridCreateArgs, gridEventDates, gridUpdateArgs } from '@/lib/calendar/surface-writes';
 import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
 import { useCalendarResync } from '@/lib/calendar/use-calendar-resync';
 import { useClientStore } from '@/lib/client-state';
@@ -141,8 +142,7 @@ export function CalendarSurface() {
         .filter((row) => visible.has(row.providerCalendarId))
         .map((row) => ({
           id: row.providerEventId,
-          startDate: new Date(row.startAt).toISOString(),
-          endDate: new Date(row.endAt).toISOString(),
+          ...gridEventDates(row),
           title: row.title,
           description: row.description || '',
           color: 'blue',
@@ -177,7 +177,8 @@ export function CalendarSurface() {
   );
 
   // New events land on the primary writable calendar; edits route to the
-  // event's own calendar. Failures toast and the live resync restores truth.
+  // event's own calendar. A failure toasts and rethrows, so the grid rolls its
+  // optimistic change back (UI-7).
   const defaultCalendar = useMemo(() => {
     const writable = calendars.filter(
       (cal) => !cal.readOnly && !cal.hidden && !unauthorizedAccountIDs.has(cal.accountId),
@@ -207,27 +208,16 @@ export function CalendarSurface() {
         const calendarId = event.calendarId || defaultCalendar?.providerCalendarId;
         if (!account || !calendarId) {
           toast.error('No writable calendar is synced yet.');
-          return;
+          throw new Error('No writable calendar');
         }
         try {
-          await callTool('calendar_create_event', {
-            account,
-            calendarId,
-            title: event.title,
-            startIso: event.startDate,
-            endIso: event.endDate,
-            allDay: Boolean(event.allDay),
-            description: event.description || undefined,
-            attendees: (event.participants || [])
-              .filter((p) => p.email)
-              .map((p) => ({ email: p.email as string, name: p.name })),
-            recurrence: event.recurrence,
-          });
+          await callTool('calendar_create_event', gridCreateArgs({ account, calendarId }, event));
         } catch (err: any) {
           toast.error(err?.message || 'Could not create the event.');
+          throw err;
         }
       },
-      onEventUpdated: async (event) => {
+      onEventUpdated: async (event, previous) => {
         if (event.id.startsWith('local_')) return;
         if (event.id.startsWith(TASK_EVENT_PREFIX)) {
           // Dragging a task block reschedules the card's due date.
@@ -238,22 +228,23 @@ export function CalendarSurface() {
             });
           } catch (err: any) {
             toast.error(err?.message || 'Could not reschedule the task.');
+            throw err;
           }
           return;
         }
         if (!event.accountId || !event.calendarId) return;
         try {
-          await callTool('calendar_update_event', {
-            account: event.accountId,
-            calendarId: event.calendarId,
-            eventId: event.id,
-            title: event.title,
-            startIso: event.startDate,
-            endIso: event.endDate,
-            description: event.description || undefined,
-          });
+          await callTool(
+            'calendar_update_event',
+            gridUpdateArgs(
+              { account: event.accountId, calendarId: event.calendarId, eventId: event.id },
+              event,
+              previous,
+            ),
+          );
         } catch (err: any) {
           toast.error(err?.message || 'Could not update the event.');
+          throw err;
         }
       },
       onEventRemoved: async (event, options) => {
@@ -264,6 +255,7 @@ export function CalendarSurface() {
             await updateCard({ cardId: event.id.slice(TASK_EVENT_PREFIX.length), dueAt: null });
           } catch (err: any) {
             toast.error(err?.message || 'Could not clear the due date.');
+            throw err;
           }
           return;
         }
@@ -277,6 +269,7 @@ export function CalendarSurface() {
           });
         } catch (err: any) {
           toast.error(err?.message || 'Could not delete the event.');
+          throw err;
         }
       },
     }),
