@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -30,7 +30,7 @@ type Trust = (typeof TRUST_LEVELS)[number];
 interface WorkProofDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
-  attachProof: (args: Record<string, unknown>) => Promise<string>;
+  attachProof: (args: ConvexCallArgs<typeof api.albatrossWorkV2.attachProof>) => Promise<string>;
   workDetail: (args: { userId: string; workId: string }) => Promise<any>;
   mailThread: (args: { userId: string; accountId: string; providerThreadId: string }) => Promise<any>;
 }

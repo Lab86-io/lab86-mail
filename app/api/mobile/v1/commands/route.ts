@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { mobileCommandPayloadHash } from '@/lib/mobile/v1/canonical';
 import { executeMobileCommand, mobileCommandDomain } from '@/lib/mobile/v1/command-executor';
 import { MobileCommandSchema } from '@/lib/mobile/v1/contract';
@@ -23,9 +23,9 @@ const EXECUTION_LEASE_MS = 5 * 60_000;
 interface MobileCommandDependencies {
   requireCurrentUser: typeof requireCurrentUser;
   enforceUserRateLimit: typeof enforceUserRateLimit;
-  beginCommand(args: Record<string, unknown>): Promise<any>;
-  claimCommand(args: Record<string, unknown>): Promise<any>;
-  completeCommand(args: Record<string, unknown>): Promise<any>;
+  beginCommand(args: ConvexCallArgs<typeof api.mobile.beginCommand>): Promise<any>;
+  claimCommand(args: ConvexCallArgs<typeof api.mobile.claimCommand>): Promise<any>;
+  completeCommand(args: ConvexCallArgs<typeof api.mobile.completeCommand>): Promise<any>;
   executeMobileCommand: typeof executeMobileCommand;
   randomUUID: () => string;
 }

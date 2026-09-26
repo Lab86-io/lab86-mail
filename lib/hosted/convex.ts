@@ -1,4 +1,6 @@
 import { ConvexHttpClient } from 'convex/browser';
+import type { FunctionArgs, FunctionReference } from 'convex/server';
+import type { GenericId } from 'convex/values';
 import { api } from '@/convex/_generated/api';
 import { convexInternalSecret, convexUrl, isConvexConfigured } from './env';
 
@@ -26,22 +28,48 @@ export function requireConvexClient() {
   return client;
 }
 
+type PublicFunction<Kind extends 'query' | 'mutation'> = FunctionReference<Kind, 'public'>;
+
+// Server code holds Convex ids as plain strings (route params, request bodies).
+// The function's own validators check them, so a string is accepted for an id.
+type LooseIds<T> =
+  T extends GenericId<string>
+    ? string
+    : T extends readonly (infer Item)[]
+      ? LooseIds<Item>[]
+      : T extends Record<string, unknown>
+        ? { [Key in keyof T]: LooseIds<T[Key]> }
+        : T;
+
+/** The arguments a caller passes; convexArgs adds the internal secret. */
+export type ConvexCallArgs<Fn extends FunctionReference<any, any>> = LooseIds<
+  Omit<FunctionArgs<Fn>, 'internalSecret'>
+>;
+
 export function convexArgs<T extends Record<string, unknown>>(args: T): T & { internalSecret?: string } {
   const internalSecret = convexInternalSecret();
   return internalSecret ? { ...args, internalSecret } : args;
 }
 
-export async function convexQuery<T>(
-  fn: any,
-  args: Record<string, unknown>,
+// T is the result type the caller expects. When a call leaves T out, the
+// arguments are checked against the function's validators.
+export async function convexQuery<T = unknown, Fn extends PublicFunction<'query'> = PublicFunction<'query'>>(
+  fn: Fn,
+  args: ConvexCallArgs<Fn>,
   signal?: AbortSignal,
 ): Promise<T> {
   signal?.throwIfAborted();
   // A scoped client avoids attaching one user's cancellation to the shared client.
   const scoped = signal ? createClient(signal) : requireConvexClient();
-  return (await scoped.query(fn, convexArgs(args))) as T;
+  return (await scoped.query(fn, convexArgs(args as Record<string, unknown>) as FunctionArgs<Fn>)) as T;
 }
 
-export async function convexMutation<T>(fn: any, args: Record<string, unknown>): Promise<T> {
-  return (await requireConvexClient().mutation(fn, convexArgs(args))) as T;
+export async function convexMutation<
+  T = unknown,
+  Fn extends PublicFunction<'mutation'> = PublicFunction<'mutation'>,
+>(fn: Fn, args: ConvexCallArgs<Fn>): Promise<T> {
+  return (await requireConvexClient().mutation(
+    fn,
+    convexArgs(args as Record<string, unknown>) as FunctionArgs<Fn>,
+  )) as T;
 }

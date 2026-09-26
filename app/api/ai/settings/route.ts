@@ -310,7 +310,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
       enabled: body.enabled !== false,
     });
 
-    if (apiKey) {
+    if (apiKey && provider) {
       const fingerprint = secretFingerprint(apiKey);
       await convexMutation(api.ai.upsertProviderKey, {
         userId: user.userId,
@@ -361,6 +361,6 @@ export async function DELETE(req: NextRequest) {
   if (!PROVIDERS.has(provider)) {
     return NextResponse.json({ ok: false, error: 'valid provider is required' }, { status: 400 });
   }
-  await convexMutation(api.ai.deleteProviderKey, { userId: user.userId, provider });
+  await convexMutation(api.ai.deleteProviderKey, { userId: user.userId, provider: provider as Provider });
   return NextResponse.json({ ok: true });
 }

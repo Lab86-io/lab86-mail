@@ -1,3 +1,4 @@
+import type { FunctionReference } from 'convex/server';
 import { z } from 'zod';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { transactionalEmailConfigured } from '../notifications/delivery';
@@ -35,8 +36,10 @@ export type BriefPreferencesInput = z.infer<typeof briefPreferencesInputSchema>;
 
 // Read at call time, so a test can replace the hosted client.
 const defaults = {
-  query: <T>(fn: unknown, args: Record<string, unknown>) => convexQuery<T>(fn, args),
-  mutation: <T>(fn: unknown, args: Record<string, unknown>) => convexMutation<T>(fn, args),
+  query: <T>(fn: FunctionReference<'query', 'public'>, args: Record<string, unknown>) =>
+    convexQuery<T>(fn, args),
+  mutation: <T>(fn: FunctionReference<'mutation', 'public'>, args: Record<string, unknown>) =>
+    convexMutation<T>(fn, args),
   emailConfigured: () => transactionalEmailConfigured(),
 };
 

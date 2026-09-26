@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexQuery } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexQuery } from '@/lib/hosted/convex';
 import {
   type BriefHydratedEntity,
   BriefQueryRequestSchema,
@@ -12,14 +12,7 @@ export const dynamic = 'force-dynamic';
 
 interface BriefQueryDependencies {
   currentUser: typeof requireCurrentUser;
-  query(args: {
-    userId: string;
-    name: string;
-    areaId?: string;
-    startAt: number;
-    endAt: number;
-    limit: number;
-  }): Promise<BriefHydratedEntity[]>;
+  query(args: ConvexCallArgs<typeof api.mobile.queryBriefCatalog>): Promise<BriefHydratedEntity[]>;
   now: () => Date;
 }
 

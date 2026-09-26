@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { UndoOperationInProgressError, undoOperation } from '@/lib/ai/operations';
 import { requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import {
   MobileConflictError,
   MobileNotFoundError,
@@ -19,9 +19,9 @@ const UNDO_LEASE_MS = 60_000;
 
 interface MobileCommandUndoDependencies {
   requireCurrentUser: typeof requireCurrentUser;
-  claimCommandUndo(args: Record<string, unknown>): Promise<any>;
-  completeCommandUndo(args: Record<string, unknown>): Promise<any>;
-  releaseCommandUndo(args: Record<string, unknown>): Promise<void>;
+  claimCommandUndo(args: ConvexCallArgs<typeof api.mobile.claimCommandUndo>): Promise<any>;
+  completeCommandUndo(args: ConvexCallArgs<typeof api.mobile.completeCommandUndo>): Promise<any>;
+  releaseCommandUndo(args: ConvexCallArgs<typeof api.mobile.releaseCommandUndo>): Promise<void>;
   undoOperation: typeof undoOperation;
   randomUUID: () => string;
 }

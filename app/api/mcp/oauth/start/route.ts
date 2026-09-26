@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { type NextRequest, NextResponse } from 'next/server';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { beginMcpOAuth } from '@/lib/mcp/oauth';
 import { getServerDef, type McpServerId } from '@/lib/mcp/servers';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
@@ -15,7 +15,7 @@ interface McpOAuthStartDependencies {
   enforceUserRateLimit: typeof enforceUserRateLimit;
   getServerDef: typeof getServerDef;
   beginMcpOAuth: typeof beginMcpOAuth;
-  saveOAuthState(args: Record<string, unknown>): Promise<unknown>;
+  saveOAuthState(args: ConvexCallArgs<typeof api.mcp.saveOAuthState>): Promise<unknown>;
   encryptSecret: typeof encryptSecret;
   randomState: () => string;
   now: () => number;

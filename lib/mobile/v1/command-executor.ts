@@ -3,7 +3,7 @@ import { captureWork } from '@/lib/albatross/capture-work';
 import type { WorkHorizon as StoredWorkHorizon } from '@/lib/albatross/horizon';
 import type { CurrentUser } from '@/lib/auth/current-user';
 import { startCalendarResync } from '@/lib/calendar/resync';
-import { api, convexMutation } from '@/lib/hosted/convex';
+import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { getTool } from '@/lib/tools';
 import { invokeTool } from '@/lib/tools/registry';
 import type { MobileCommand, MobileDomain, MobileSyncExecution } from './contract';
@@ -26,7 +26,7 @@ export type MobileCommandExecution = {
 
 interface MobileCommandExecutorDependencies {
   invoke: (name: string, argumentsValue: Record<string, unknown>, user: CurrentUser) => Promise<any>;
-  enqueueApproval: (input: Record<string, unknown>) => Promise<string>;
+  enqueueApproval: (input: ConvexCallArgs<typeof api.albatrossWork.enqueueApproval>) => Promise<string>;
   capture: typeof captureWork;
   captureFromChat: typeof captureFromChat;
   resyncCalendar: typeof startCalendarResync;
@@ -69,7 +69,8 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
     return convexMutation(api.albatrossWorkV2.setHorizon, input);
   },
   workShapeMutation(name, input) {
-    return convexMutation(api.albatrossWorkV2[name], input);
+    // The mutation is picked by name, so its own validators check the input.
+    return convexMutation<unknown>(api.albatrossWorkV2[name], input);
   },
 };
 

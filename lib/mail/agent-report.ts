@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { FunctionReference } from 'convex/server';
 import { contextFirstName, getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { generateTextForCurrentUser, resolveAiRuntime } from '../ai/gateway';
 import { BriefBudgetExhaustedError, currentBriefMeter } from '../brief/budget';
@@ -113,7 +114,10 @@ export function carriedDaysFor(item: Pick<DailyReportItem, 'firstSurfacedAt'>, g
 export async function loadSinceLastEditionFromConvex(
   userId: string,
   since: number,
-  query: <T>(fn: unknown, args: Record<string, unknown>) => Promise<T> = convexQuery,
+  query: <T>(
+    fn: FunctionReference<'query', 'public'>,
+    args: Record<string, unknown>,
+  ) => Promise<T> = convexQuery,
 ): Promise<DailyReportSinceLastEdition> {
   const [completions, operations] = await Promise.all([
     query<any[]>(api.albatrossWork.completionsSince, { userId, since, limit: 12 }).catch(() => [] as any[]),
