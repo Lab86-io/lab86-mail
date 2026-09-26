@@ -17,6 +17,8 @@ import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { type DurableComposeDraft, usePendingSend } from '@/components/compose/PendingSendProvider';
 import { NarrativeDraftAssistant } from '@/components/narrative/NarrativeDraftAssistant';
+import { useSavedReplies } from '@/components/settings/SavedRepliesSettings';
+import { useSignatures } from '@/components/settings/SignatureSettings';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -98,6 +100,11 @@ export function InlineComposer({
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [composerMode, setComposerMode] = useState<ComposeMode>(mode);
   const [fromAccount, setFromAccount] = useState<string>(account);
+  // The mailbox signature is added by the server when the message goes out.
+  // The composer shows it and can leave it off for this one message.
+  const [includeSignature, setIncludeSignature] = useState(true);
+  const [savedRepliesOpen, setSavedRepliesOpen] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const composerNeedsRecipients = composerMode === 'new' || composerMode === 'forward';
   const composerNeedsSubject = composerMode === 'new' || composerMode === 'forward';
   const composerNeedsReplyAnchor = composerMode === 'reply' || composerMode === 'reply_all';
@@ -199,6 +206,15 @@ export function InlineComposer({
     staleTime: 60_000,
   });
   const undoSendSeconds = prefsQuery.data?.undoSendSeconds ?? DEFAULT_UNDO_SEND_SECONDS;
+  const signaturesQuery = useSignatures();
+  const signature = activeSignature(signaturesQuery.data, fromAccount || account);
+  const savedReplies = useSavedReplies(savedRepliesOpen);
+  const insertSavedReply = (text: string) => {
+    const field = bodyRef.current;
+    setBody((current) => insertAtCursor(current, text, field?.selectionStart, field?.selectionEnd));
+    setSavedRepliesOpen(false);
+    window.requestAnimationFrame(() => field?.focus());
+  };
   const draftFingerprint = useMemo(
     () =>
       JSON.stringify({
@@ -333,6 +349,7 @@ export function InlineComposer({
       }
       if (composerNeedsSubject) fd.set('subject', subject);
       fd.set('body', body);
+      if (!includeSignature) fd.set('signature', '0');
       if (!sendAt && undoSendSeconds > 0) {
         const id = `outbox:${crypto.randomUUID()}`;
         pendingSendId.current = id;
@@ -695,6 +712,7 @@ export function InlineComposer({
       <div className="px-4 py-3">
         {tab === 'write' ? (
           <TextareaAutosize
+            ref={bodyRef}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             minRows={composerMode === 'new' ? 10 : 4}
@@ -718,6 +736,26 @@ export function InlineComposer({
           </div>
         )}
       </div>
+
+      {signature ? (
+        <div className="flex items-start gap-2 px-4 pb-2 text-[11.5px] text-[var(--color-text-faint)]">
+          {includeSignature ? (
+            <p className="min-w-0 flex-1 truncate whitespace-pre-line" title={signature.text}>
+              Signature: {signature.text.split('\n')[0]}
+              {signature.text.includes('\n') ? '…' : ''}
+            </p>
+          ) : (
+            <p className="min-w-0 flex-1">This message goes out without your signature.</p>
+          )}
+          <button
+            type="button"
+            onClick={() => setIncludeSignature((value) => !value)}
+            className="shrink-0 text-[var(--color-text-muted)] underline-offset-2 hover:text-[var(--color-text)] hover:underline"
+          >
+            {includeSignature ? 'Leave off' : 'Add it back'}
+          </button>
+        </div>
+      ) : null}
 
       <NarrativeDraftAssistant
         key={`${account}:${fromAccount}:${anchorMessageId || ''}:${composerMode}`}
@@ -753,6 +791,46 @@ export function InlineComposer({
           >
             Attach
           </button>
+          <Popover open={savedRepliesOpen} onOpenChange={setSavedRepliesOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                title="Insert a saved reply"
+              >
+                Saved replies
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="max-h-80 w-72 overflow-y-auto p-1.5">
+              {savedReplies.isLoading ? (
+                <p className="px-2 py-1.5 text-[12px] text-[var(--color-text-muted)]">Loading…</p>
+              ) : savedReplies.error ? (
+                <p className="px-2 py-1.5 text-[12px] text-[var(--color-danger)]">
+                  Saved replies could not load.
+                </p>
+              ) : savedReplies.data?.length ? (
+                savedReplies.data.map((reply) => (
+                  <button
+                    key={reply.id}
+                    type="button"
+                    onClick={() => insertSavedReply(reply.body)}
+                    className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-[var(--color-bg-muted)]"
+                  >
+                    <span className="block truncate text-[12.5px] text-[var(--color-text)]">
+                      {reply.name}
+                    </span>
+                    <span className="block truncate text-[11px] text-[var(--color-text-faint)]">
+                      {reply.body.split('\n')[0]}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <p className="px-2 py-1.5 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                  No saved replies yet. Add them in Settings, Sending.
+                </p>
+              )}
+            </PopoverContent>
+          </Popover>
           {isReply ? (
             <button
               type="button"
@@ -881,6 +959,26 @@ export function InlineComposer({
       </Dialog>
     </motion.section>
   );
+}
+
+/** The signature the server will add for this mailbox, when it is on. */
+export function activeSignature(
+  signatures: Array<{ accountId: string; email?: string; enabled: boolean; text: string }> | undefined,
+  account: string,
+) {
+  const match = (signatures || []).find(
+    (row) => row.accountId === account || (row.email && row.email.toLowerCase() === account.toLowerCase()),
+  );
+  return match?.enabled && match.text.trim() ? match : null;
+}
+
+/** Inserts text at the caret (or replaces the selection); appends when there is no caret. */
+export function insertAtCursor(current: string, text: string, start?: number | null, end?: number | null) {
+  if (typeof start !== 'number' || start < 0 || start > current.length) {
+    return current.trim() ? `${current.trimEnd()}\n\n${text}` : text;
+  }
+  const stop = typeof end === 'number' && end >= start && end <= current.length ? end : start;
+  return `${current.slice(0, start)}${text}${current.slice(stop)}`;
 }
 
 // Quick options for the schedule-send popover, computed at open time.

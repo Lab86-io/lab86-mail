@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
+import { withAccountSignature } from '@/lib/mail/signature';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import {
@@ -35,6 +36,7 @@ const defaults = {
   sendPrepared,
   cacheSentMessage,
   prepareComposeSend,
+  applySignature: withAccountSignature,
 };
 export function createComposePost(overrides: Partial<typeof defaults> = {}) {
   const deps = { ...defaults, ...overrides };
@@ -58,6 +60,9 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
     const html = (form.get('html') as string | null) || undefined;
     const threadId = (form.get('threadId') as string | null) || undefined;
     const messageId = (form.get('messageId') as string | null) || undefined;
+    // The mailbox signature goes on by default; `signature=0` leaves it off
+    // for this one message.
+    const includeSignature = String(form.get('signature') ?? '1') !== '0';
     // Undo-send window (seconds, 0–300) and optional scheduled send time (epoch ms).
     const requestedUndoSeconds = form.has('undoSeconds')
       ? normalizeUndoSendSeconds(form.get('undoSeconds'))
@@ -138,6 +143,8 @@ export function createComposePost(overrides: Partial<typeof defaults> = {}) {
           threadId,
           messageId,
           attachments,
+          includeSignature,
+          sign: deps.applySignature,
         }),
       );
 
@@ -252,6 +259,8 @@ async function prepareComposeSend({
   threadId,
   messageId,
   attachments,
+  includeSignature = true,
+  sign = withAccountSignature,
 }: {
   account: string;
   mode: string;
@@ -264,7 +273,14 @@ async function prepareComposeSend({
   threadId?: string;
   messageId?: string;
   attachments: NylasAttachment[];
+  includeSignature?: boolean;
+  sign?: typeof withAccountSignature;
 }): Promise<PreparedSend> {
+  // The signature goes below what the user wrote. For a forward that is the
+  // note above the forwarded message, so it is added before quoting.
+  const signed = await sign({ account, body, html, include: includeSignature });
+  body = signed.body;
+  html = signed.html;
   if (mode === 'reply' || mode === 'reply_all') {
     if (!messageId && !threadId) throw new Error('messageId or threadId is required for reply/reply_all');
     const anchor = await resolveSendAnchor({ account, messageId, threadId });

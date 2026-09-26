@@ -20,6 +20,8 @@ import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
+import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
+import { SignatureSettings } from '@/components/settings/SignatureSettings';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -78,7 +80,13 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   mailboxes: () => <MailboxesSection />,
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
-  sending: () => <SendingSection />,
+  sending: () => (
+    <>
+      <SendingSection />
+      <SignatureSettings />
+      <SavedRepliesSettings />
+    </>
+  ),
   notifications: () => <NotificationsSection />,
   ai: () => (
     <AiSection

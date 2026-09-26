@@ -124,6 +124,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'cancel_scheduled',
   'list_scheduled',
   'undo_send',
+  'list_saved_replies',
   'summarize_thread',
   'triage_thread',
   'draft_reply',

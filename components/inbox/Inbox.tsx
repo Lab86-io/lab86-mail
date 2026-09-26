@@ -673,7 +673,11 @@ export function Inbox() {
     runBulkMove(
       ids,
       (id) => ({ account: accountOfRow(id), threadId: threadIdOfRow(id) }),
-      (items) => callTool<BulkMoveResponse>('bulk_move_threads', { items, to }),
+      // A partial move reports ok:false with the moved rows; read it, do not throw.
+      (items) =>
+        callTool<BulkMoveResponse>('bulk_move_threads', { items, to }, {}, undefined, {
+          acceptFailedResult: true,
+        }),
     );
   const refetchSearch = () => queryClient.invalidateQueries({ queryKey: ['search'] });
 

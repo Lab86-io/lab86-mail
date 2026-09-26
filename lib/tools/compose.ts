@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { recordOperation, registerUndoExecutor } from '../ai/operations';
 import { fetchEmailAttachment, fetchWebFile } from '../attachments/fetch-store';
 import { convexInternalSecret, isConvexConfigured } from '../hosted/env';
+import { withAccountSignature } from '../mail/signature';
 import { listNylasScheduledMessages, sendNylasMessage, stopNylasScheduledMessage } from '../nylas/provider';
 import {
   buildForwardMessagePayload,
@@ -95,6 +96,12 @@ const AttachmentSource = z
   });
 type AttachmentSourceInput = z.infer<typeof AttachmentSource>;
 
+// The mailbox signature is added below the body unless this is false.
+const IncludeSignature = z
+  .boolean()
+  .optional()
+  .describe('Add the mailbox signature below the body. Default true.');
+
 const SendBase = z.object({
   account: z.string(),
   to: z.string(),
@@ -104,7 +111,18 @@ const SendBase = z.object({
   body: z.string(),
   html: z.string().optional(),
   attachments: z.array(AttachmentSource).optional(),
+  includeSignature: IncludeSignature,
 });
+
+async function signed(input: { account: string; body: string; html?: string; includeSignature?: boolean }) {
+  const result = await withAccountSignature({
+    account: input.account,
+    body: input.body,
+    html: input.html,
+    include: input.includeSignature,
+  });
+  return { body: result.body, html: result.html };
+}
 
 // Resolve attachment descriptors to Nylas CreateAttachmentRequest payloads
 // (filename + contentType + base64 content). Used by every send path so the
@@ -173,6 +191,7 @@ const ReplyInput = z.object({
   body: z.string(),
   html: z.string().optional(),
   attachments: z.array(AttachmentSource).optional(),
+  includeSignature: IncludeSignature,
 });
 
 export const sendMessage = defineTool({
@@ -182,7 +201,7 @@ export const sendMessage = defineTool({
   mutating: true,
   input: SendBase,
   output: SentOutput,
-  async handler({ account, to, cc, bcc, subject, body, html, attachments }, ctx) {
+  async handler({ account, to, cc, bcc, subject, body, html, attachments, includeSignature }, ctx) {
     const resolved = await resolveSendAttachments(ctx.userId, attachments);
     const sent = await sendWithNylas({
       userId: ctx.userId,
@@ -191,8 +210,7 @@ export const sendMessage = defineTool({
       cc,
       bcc,
       subject,
-      body,
-      html,
+      ...(await signed({ account, body, html, includeSignature })),
       attachments: resolved,
     });
     return sentResult(sent as any);
@@ -206,7 +224,10 @@ export const replyMessage = defineTool({
   mutating: true,
   input: ReplyInput,
   output: SentOutput,
-  async handler({ account, messageId, threadId, to, cc, bcc, subject, body, html, attachments }, ctx) {
+  async handler(
+    { account, messageId, threadId, to, cc, bcc, subject, body, html, attachments, includeSignature },
+    ctx,
+  ) {
     const anchor = await resolveSendAnchor({ account, messageId, threadId, userId: ctx.userId });
     const target = replyTargetFor(anchor);
     const sent = await sendWithNylas({
@@ -216,8 +237,7 @@ export const replyMessage = defineTool({
       cc,
       bcc,
       subject: subject?.trim() || target.subject,
-      body,
-      html,
+      ...(await signed({ account, body, html, includeSignature })),
       replyToMessageId: target.replyToMessageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
@@ -232,7 +252,10 @@ export const replyAllMessage = defineTool({
   mutating: true,
   input: ReplyInput,
   output: SentOutput,
-  async handler({ account, messageId, threadId, to, cc, bcc, subject, body, html, attachments }, ctx) {
+  async handler(
+    { account, messageId, threadId, to, cc, bcc, subject, body, html, attachments, includeSignature },
+    ctx,
+  ) {
     const anchor = await resolveSendAnchor({ account, messageId, threadId, userId: ctx.userId });
     const target = replyAllTargetFor(anchor, account);
     const recipients = to?.trim() || target.to;
@@ -244,8 +267,7 @@ export const replyAllMessage = defineTool({
       cc,
       bcc,
       subject: subject?.trim() || target.subject,
-      body,
-      html,
+      ...(await signed({ account, body, html, includeSignature })),
       replyToMessageId: target.replyToMessageId,
       attachments: await resolveSendAttachments(ctx.userId, attachments),
     });
@@ -268,11 +290,14 @@ export const forwardMessage = defineTool({
     body: z.string().optional(),
     html: z.string().optional(),
     attachments: z.array(AttachmentSource).optional(),
+    includeSignature: IncludeSignature,
   }),
   output: SentOutput,
-  async handler({ account, messageId, to, cc, bcc, body, html, attachments }, ctx) {
+  async handler({ account, messageId, to, cc, bcc, body, html, attachments, includeSignature }, ctx) {
     const original = await resolveSendAnchor({ account, messageId, userId: ctx.userId });
-    const quoted = buildForwardMessagePayload(original, { body, html });
+    // The signature closes the note, above the forwarded message.
+    const note = await signed({ account, body: body || '', html, includeSignature });
+    const quoted = buildForwardMessagePayload(original, note);
     const sent = await sendWithNylas({
       userId: ctx.userId,
       account,
@@ -382,7 +407,10 @@ export const scheduleSend = defineTool({
   mutating: true,
   input: SendBase.extend({ scheduledFor: z.number().describe('Epoch ms when to send') }),
   output: z.object({ ok: z.boolean(), scheduleId: z.string().optional(), messageId: z.string().optional() }),
-  async handler({ account, to, cc, bcc, subject, body, html, attachments, scheduledFor }, ctx) {
+  async handler(
+    { account, to, cc, bcc, subject, body, html, attachments, scheduledFor, includeSignature },
+    ctx,
+  ) {
     if (scheduledFor < Date.now() + 60_000) {
       throw new Error('scheduledFor must be at least a minute in the future.');
     }
@@ -393,8 +421,7 @@ export const scheduleSend = defineTool({
       cc,
       bcc,
       subject,
-      body,
-      html,
+      ...(await signed({ account, body, html, includeSignature })),
       attachments: await resolveSendAttachments(ctx.userId, attachments),
       sendAt: scheduledFor,
     });

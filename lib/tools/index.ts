@@ -138,6 +138,13 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
+import {
+  deleteSavedReplyTool,
+  listSavedRepliesTool,
+  listSignaturesTool,
+  saveSavedReplyTool,
+  setSignatureTool,
+} from './mail-templates';
 import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
@@ -246,6 +253,11 @@ const allTools: AnyTool[] = [
   scheduleSend,
   cancelScheduled,
   undoSend,
+  listSignaturesTool,
+  setSignatureTool,
+  listSavedRepliesTool,
+  saveSavedReplyTool,
+  deleteSavedReplyTool,
   summarizeThread,
   triageThread,
   draftReply,

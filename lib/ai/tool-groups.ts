@@ -107,9 +107,10 @@ export const TOOL_GROUPS = {
   },
   mail_more: {
     label:
-      'Scheduled send list and cancel, snoozed mail list, undo send, natural-language search, bulk triage, bulk archive or trash, translation, critique, action items, thread timeline',
+      "Scheduled send list and cancel, snoozed mail list, undo send, the user's saved replies, natural-language search, bulk triage, bulk archive or trash, translation, critique, action items, thread timeline",
     tools: [
       'bulk_move_threads',
+      'list_saved_replies',
       'list_scheduled',
       'cancel_scheduled',
       'list_snoozed',
