@@ -217,7 +217,7 @@ export function Rail({
   // before the Clerk token lands would error.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const areasResult = useConvexQuery({
-    query: (api as any).albatross.listAreasOverview,
+    query: api.albatross.listAreasOverview,
     args: convexAuthed ? { status: 'active' } : 'skip',
   });
   const railAreas =
@@ -236,7 +236,7 @@ export function Rail({
 
   // The Albatrosses badge. Words, never a count of everything being carried.
   const workResult = useConvexQuery({
-    query: (api as any).albatrossWorkV2.allWork,
+    query: api.albatrossWorkV2.allWork,
     args: convexAuthed ? {} : 'skip',
   });
   const workBadge = workResult.status === 'success' ? railWorkBadge((workResult.data as any[]) || []) : null;

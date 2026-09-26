@@ -272,7 +272,7 @@ export function WorkDetail({ workId }: { workId: string }) {
     isAuthenticated ? { workId: workId as Id<'albatrossIntents'> } : 'skip',
   ) as WorkDetailData | null | undefined;
   const session = useQuery(
-    (api as any).albatrossBrowserSessions.activeSessionForWork,
+    api.albatrossBrowserSessions.activeSessionForWork,
     isAuthenticated ? { workId } : 'skip',
   ) as GuidedSession | null | undefined;
   const [advancing, setAdvancing] = useState(false);

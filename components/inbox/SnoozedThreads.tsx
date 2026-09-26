@@ -23,7 +23,7 @@ export function SnoozedThreads({
   // The list query requires an identity; skip it until Convex has one.
   const { isAuthenticated } = useConvexAuth();
   const snoozed = useConvexQuery({
-    query: (api as any).mailCorpus.listSnoozedThreads,
+    query: api.mailCorpus.listSnoozedThreads,
     args: open && isAuthenticated ? {} : ('skip' as never),
   });
   // The live query drops the row when cancelSnooze runs, so no refetch here.

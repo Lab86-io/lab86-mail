@@ -31,8 +31,7 @@ crons.interval('Jev mail classification', { minutes: 5 }, internal.jev.tick, {})
 // manual generation covers the rest.)
 crons.hourly('daily report editions', { minuteUTC: 0 }, internal.dailyReports.tick, {});
 // Area living briefs refresh every 3 hours without force; unchanged areas are
-// skipped by the source-revision check. Cast: the generated `internal` type
-// only gains `areaRefreshTick` after codegen on deploy.
+// skipped by the source-revision check.
 crons.interval('area brief refresh', { hours: 3 }, internal.dailyReports.areaRefreshTick, {});
 
 // Poll each connected user's calendars for changes every 15 minutes — a
@@ -130,8 +129,7 @@ crons.daily(
 crons.interval('albatross routines', { minutes: 5 }, internal.albatrossRoutines.tick, {});
 
 // Poll each user's connected tool servers/APIs every 20 minutes
-// so brief/search items stay current. Cast: the generated `internal` type only
-// gains `mcpSync` after codegen on deploy.
+// so brief/search items stay current.
 crons.interval('mcp sync', { minutes: 20 }, internal.mcpSync.tick, {});
 crons.interval('connected content and Brief preparation', { minutes: 2 }, internal.content.tick, {});
 

@@ -49,7 +49,7 @@ export function MailNav() {
   // has authenticated, asking is an error, not an empty result.
   const { isAuthenticated } = useConvexAuth();
   const liveCounts = useConvexQuery({
-    query: (api as any).liveMail.categoryCounts,
+    query: api.liveMail.categoryCounts,
     args: isAuthenticated
       ? { accountIds: accountFilter.length ? accountFilter : undefined }
       : ('skip' as never),

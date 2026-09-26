@@ -547,7 +547,7 @@ function AreaHomeContent({ areaId, onRetry }: { areaId: string; onRetry: () => v
   // Error-tolerant read: the persisted area id can outlive the area (deleted
   // in Settings) — that must degrade honestly, not crash the surface.
   const result = useConvexQuery({
-    query: (api as any).albatross.areaHome,
+    query: api.albatross.areaHome,
     args: isAuthenticated ? { areaId: areaId as Id<'areas'> } : 'skip',
   });
   const indexStatus = useQuery(api.albatross.areaIndexStatus, isAuthenticated ? {} : 'skip') as
@@ -920,7 +920,7 @@ function AreaInbox({ home }: { home: AreaHomeData }) {
   const areas = useQuery(api.albatross.listAreasOverview, isAuthenticated ? { status: 'active' } : 'skip') as
     | AreaOverviewRow[]
     | undefined;
-  const moveThreads = useMutation((api as any).albatross.moveMailThreadsToArea);
+  const moveThreads = useMutation(api.albatross.moveMailThreadsToArea);
   const [search, setSearch] = useState('');
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [lastSelectionKey, setLastSelectionKey] = useState<string | null>(null);

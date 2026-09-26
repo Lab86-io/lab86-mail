@@ -265,7 +265,7 @@ export function Inbox() {
 
   // When account is the synthetic ALL_ACCOUNTS marker, fan out across every
   // authed mail account and merge by date. Otherwise just hit one.
-  const liveAccounts = useConvexQuery({ query: (api as any).liveMail.listAccounts, args: {} });
+  const liveAccounts = useConvexQuery({ query: api.liveMail.listAccounts, args: {} });
   const { data: fallbackAccountsData } = useQuery({
     queryKey: ['accounts'],
     queryFn: async () => callTool<AccountsResult>('list_accounts'),
@@ -326,7 +326,7 @@ export function Inbox() {
         }
       : 'skip';
   const liveInbox = useConvexQuery({
-    query: (api as any).liveMail.listThreads,
+    query: api.liveMail.listThreads,
     args: liveInboxArgs,
   });
 

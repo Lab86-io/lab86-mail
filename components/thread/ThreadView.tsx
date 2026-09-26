@@ -109,7 +109,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
   // is not in the corpus yet (brand-new account mid-backfill); the HTTP
   // fallback hydrates it once and the live query takes over.
   const liveThread = useConvexQuery({
-    query: (api as any).liveMail.getThread,
+    query: api.liveMail.getThread,
     args: account && threadId ? { account, threadId } : 'skip',
   });
   const liveData = liveThread.status === 'success' ? liveThread.data : undefined;
@@ -647,7 +647,11 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
           {canSummarizeThread ? (
             <SummaryCard
               data={summary.data?.summary || cachedSummary}
-              model={summary.data?.model || data?.summaryModel || (cachedSummary ? 'cached' : '')}
+              model={
+                summary.data?.model ||
+                (data && 'summaryModel' in data ? data.summaryModel : null) ||
+                (cachedSummary ? 'cached' : '')
+              }
               loading={!cachedSummary && summaryEnabled && summary.isLoading}
               error={summary.error ? (summary.error as Error).message : null}
               onRetry={() => {
@@ -1400,7 +1404,7 @@ function IconBtn({
 function LinkedTaskChips({ threadId }: { threadId: string }) {
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const live = useConvexQuery({
-    query: (api as any).boards.liveCardsForThread,
+    query: api.boards.liveCardsForThread,
     args: { threadId },
   });
   const cards: Array<{ cardId: string; title: string; completedAt?: number }> =

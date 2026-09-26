@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { callTool } from '@/lib/api-client';
 import { gridCreateArgs, gridEventDates, gridUpdateArgs } from '@/lib/calendar/surface-writes';
 import { isPendingEventRow, syncedAtByAccount } from '@/lib/calendar/sync-copy';
@@ -57,19 +58,19 @@ export function CalendarSurface() {
   );
 
   const liveCalendars = useConvexQuery({
-    query: (api as any).calendarData.liveCalendars,
+    query: api.calendarData.liveCalendars,
     args: {},
   });
   const liveEvents = useConvexQuery({
-    query: (api as any).calendarData.liveEvents,
+    query: api.calendarData.liveEvents,
     args: window,
   });
   // Cross-surface: due-dated cards ride the calendar as a distinct lane.
   const liveDueCards = useConvexQuery({
-    query: (api as any).boards.listDueCards,
+    query: api.boards.listDueCards,
     args: window,
   });
-  const updateCard = useConvexMutation((api as any).boards.updateCard);
+  const updateCard = useConvexMutation(api.boards.updateCard);
 
   useEffect(() => {
     const timer = globalThis.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -223,7 +224,7 @@ export function CalendarSurface() {
           // Dragging a task block reschedules the card's due date.
           try {
             await updateCard({
-              cardId: event.id.slice(TASK_EVENT_PREFIX.length),
+              cardId: event.id.slice(TASK_EVENT_PREFIX.length) as Id<'cards'>,
               dueAt: new Date(event.startDate).getTime(),
             });
           } catch (err: any) {
@@ -252,7 +253,10 @@ export function CalendarSurface() {
         if (event.id.startsWith(TASK_EVENT_PREFIX)) {
           // Removing a task block clears the due date; the card survives.
           try {
-            await updateCard({ cardId: event.id.slice(TASK_EVENT_PREFIX.length), dueAt: null });
+            await updateCard({
+              cardId: event.id.slice(TASK_EVENT_PREFIX.length) as Id<'cards'>,
+              dueAt: null,
+            });
           } catch (err: any) {
             toast.error(err?.message || 'Could not clear the due date.');
             throw err;
@@ -373,7 +377,7 @@ export function CalendarColorBar({
   colorByCalendar: Map<string, string>;
   status?: ReactNode;
 }) {
-  const setCalendarColor = useConvexMutation((api as any).calendarData.setCalendarColor);
+  const setCalendarColor = useConvexMutation(api.calendarData.setCalendarColor);
   const visible = calendars.filter((cal) => !cal.hidden);
   return (
     <div

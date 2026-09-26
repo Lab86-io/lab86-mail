@@ -72,6 +72,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Markdown } from '@/components/ui/markdown';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { taskSourceColor } from '@/lib/shared/task-colors';
@@ -79,7 +80,13 @@ import { normalizeUrl } from '@/lib/shared/url';
 import { cn } from '@/lib/utils';
 import { ProjectsLens } from './ProjectsLens';
 
-const boardsApi = (api as any).boards;
+const boardsApi = api.boards;
+
+// Board, column, and card ids reach this file as strings (routes, drag events,
+// and the HTTP fallback). They are Convex ids, and the server checks them with v.id().
+const cardRef = (id: string) => id as Id<'cards'>;
+const boardRef = (id: string) => id as Id<'boards'>;
+const columnRef = (id: string) => id as Id<'boardColumns'>;
 
 // Matches ATTACHMENT_MAX_BYTES in convex/boards.ts. The server check is the
 // real limit; this one only saves a long upload that would be refused.
@@ -101,7 +108,7 @@ async function uploadCardFile(
     body: file,
   });
   if (!response.ok) throw new Error(`Upload failed (${response.status})`);
-  const { storageId } = (await response.json()) as { storageId: string };
+  const { storageId } = (await response.json()) as { storageId: Id<'_storage'> };
   const checked = await verifyUpload({ ...target, storageId, contentType: file.type || undefined });
   if (!checked?.ok) throw new Error(checked?.error || `${file.name} cannot be attached.`);
   return {
@@ -115,7 +122,7 @@ async function uploadCardFile(
 interface CardAttachment {
   name: string;
   url?: string;
-  storageId?: string;
+  storageId?: Id<'_storage'>;
   contentType?: string;
   size?: number;
 }
@@ -443,7 +450,7 @@ function BoardView({
   openCardRequest?: OpenCardRequest | null;
 }) {
   const headerSlot = useContext(BoardHeaderActionsSlot);
-  const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId } });
+  const boardQuery = useConvexQuery({ query: boardsApi.getBoard, args: { boardId: boardRef(boardId) } });
   const fallbackBoard = useHTTPQuery({
     queryKey: ['tasks', 'board', boardId, 'http-fallback'],
     queryFn: () => callTool<{ board: BoardPayload }>('tasks_get_board', { boardId }),
@@ -524,9 +531,12 @@ function BoardView({
     const beforeOrder = beforeId ? cardsById.get(beforeId)?.order : undefined;
     const afterOrder = afterId ? cardsById.get(afterId)?.order : undefined;
     if (previous.columnId === targetColumn && beforeId === undefined && afterId === undefined) return;
-    void moveCard({ cardId, columnId: targetColumn, beforeOrder, afterOrder }).catch((err: any) =>
-      toast.error(err?.message || 'Could not move card'),
-    );
+    void moveCard({
+      cardId: cardRef(cardId),
+      columnId: columnRef(targetColumn),
+      beforeOrder,
+      afterOrder,
+    }).catch((err: any) => toast.error(err?.message || 'Could not move card'));
   };
 
   const persistColumnOrder = (nextColumns: BoardColumnItem[]) => {
@@ -537,7 +547,7 @@ function BoardView({
     void Promise.all(
       changedColumns.map((column) =>
         updateColumn({
-          columnId: column.id,
+          columnId: columnRef(column.id),
           order: (nextColumns.findIndex((item) => item.id === column.id) + 1) * 1024,
         }),
       ),
@@ -662,7 +672,7 @@ function BoardView({
                         onRename={() => setRenameColumn({ columnId: column.id, name: String(column.name) })}
                         onDelete={async () => {
                           try {
-                            await deleteColumn({ columnId: column.id });
+                            await deleteColumn({ columnId: columnRef(column.id) });
                           } catch (err: any) {
                             toast.error(err?.message || 'Could not delete column');
                           }
@@ -719,7 +729,7 @@ function BoardView({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void updateCard({
-                                    cardId: card.cardId,
+                                    cardId: cardRef(card.cardId),
                                     completedAt: done ? null : Date.now(),
                                   }).catch((err: any) =>
                                     toast.error(err?.message || 'Could not update card'),
@@ -790,8 +800,8 @@ function BoardView({
           onCreate={async (fields) => {
             try {
               await createCard({
-                boardId: board.boardId,
-                columnId: createInColumn,
+                boardId: boardRef(board.boardId),
+                columnId: columnRef(createInColumn),
                 source: { kind: 'manual' },
                 ...fields,
               });
@@ -810,7 +820,7 @@ function BoardView({
         onClose={() => setNewColumnOpen(false)}
         onSubmit={async (name) => {
           try {
-            await createColumn({ boardId: board.boardId, name });
+            await createColumn({ boardId: boardRef(board.boardId), name });
           } catch (err: any) {
             toast.error(err?.message || 'Could not add column');
           }
@@ -826,7 +836,7 @@ function BoardView({
         onSubmit={async (name) => {
           if (!renameColumn) return;
           try {
-            await updateColumn({ columnId: renameColumn.columnId, name });
+            await updateColumn({ columnId: columnRef(renameColumn.columnId), name });
           } catch (err: any) {
             toast.error(err?.message || 'Could not rename column');
           }
@@ -937,7 +947,7 @@ function ListView({
                     disabled={!canEdit}
                     onCheckedChange={(checked) => {
                       void updateCard({
-                        cardId: card.cardId,
+                        cardId: cardRef(card.cardId),
                         completedAt: checked ? Date.now() : null,
                       }).catch((err: any) => toast.error(err?.message || 'Could not update'));
                     }}
@@ -1624,7 +1634,7 @@ function CardPanel({
   const save = async () => {
     try {
       await updateCard({
-        cardId: card.cardId,
+        cardId: cardRef(card.cardId),
         title: title.trim() || card.title,
         description,
         labels: labels
@@ -1645,7 +1655,7 @@ function CardPanel({
   const addAttachment = async (attachment: CardAttachment) => {
     try {
       await updateCard({
-        cardId: card.cardId,
+        cardId: cardRef(card.cardId),
         attachments: [...persistable(card.attachments || []), attachment],
       });
     } catch (err: any) {
@@ -1655,7 +1665,7 @@ function CardPanel({
 
   const removeAttachment = (index: number) => {
     void updateCard({
-      cardId: card.cardId,
+      cardId: cardRef(card.cardId),
       attachments: persistable((card.attachments || []).filter((_, i) => i !== index)),
     }).catch((err: any) => toast.error(err?.message || 'Could not remove'));
   };
@@ -1743,7 +1753,7 @@ function CardPanel({
                 className="h-8 px-3 text-[12px]"
                 onClick={async () => {
                   try {
-                    await updateCard({ cardId: card.cardId, completedAt: done ? null : Date.now() });
+                    await updateCard({ cardId: cardRef(card.cardId), completedAt: done ? null : Date.now() });
                   } catch (err: any) {
                     toast.error(err?.message || 'Could not update card');
                   }
@@ -1775,7 +1785,7 @@ function CardPanel({
                     <AlertDialogAction
                       onClick={async () => {
                         try {
-                          await deleteCard({ cardId: card.cardId });
+                          await deleteCard({ cardId: cardRef(card.cardId) });
                           onClose();
                         } catch (err: any) {
                           toast.error(err?.message || 'Could not delete card');
@@ -1957,7 +1967,7 @@ function CardPanel({
                           if (!body || commentSubmitting) return;
                           setCommentSubmitting(true);
                           try {
-                            await addComment({ cardId: card.cardId, body });
+                            await addComment({ cardId: cardRef(card.cardId), body });
                             setCommentDraft('');
                             setComposingComment(false);
                           } catch (err: any) {
