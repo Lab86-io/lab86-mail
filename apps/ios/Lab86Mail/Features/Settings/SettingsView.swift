@@ -27,10 +27,12 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Account") {
+                Section {
                     LabeledContent("Albatross", value: "Signed in")
+                    PlanSettingsRows()
                     NavigationLink("Mailboxes") { MailboxesSettingsView() }
                     NavigationLink("Connections") { ConnectionsSettingsView() }
+                    DataExportButton()
                     Button("Sign out", role: .destructive) {
                         Task { await signOut() }
                     }
@@ -41,6 +43,10 @@ struct SettingsView: View {
                     if let signOutError {
                         Text(signOutError).font(.footnote).foregroundStyle(.red)
                     }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text(DataExport.description)
                 }
 
                 Section("Daily Brief") {
@@ -56,6 +62,14 @@ struct SettingsView: View {
                     NavigationLink("Signatures") { SignaturesSettingsView() }
                     NavigationLink("Saved replies") { SavedRepliesSettingsView() }
                     NavigationLink("How you write") { VoiceProfileSettingsView() }
+                }
+
+                Section {
+                    NavigationLink("Standing orders") { StandingOrdersView() }
+                } header: {
+                    Text("Trust")
+                } footer: {
+                    Text("Everything Albatross does on its own, with a pause switch for each.")
                 }
 
                 Section("Personalization") {
@@ -91,6 +105,14 @@ struct SettingsView: View {
                     Text("Sent mail is held this long before it actually goes out, so you can undo.")
                 }
 
+                Section {
+                    FilesSurfaceToggle()
+                } header: {
+                    Text("Advanced")
+                } footer: {
+                    Text("Files and the document editor show in the sidebar. Deliverables stay on the Work page either way.")
+                }
+
                 Section("Intelligence") {
                     Label(modelStatus, systemImage: "apple.intelligence")
                     Text("Small, private transformations prefer the phone. Large-context planning and connected-source work use Lab86’s server models.")
@@ -114,6 +136,8 @@ struct SettingsView: View {
                 await environment.notifications.loadPreferences()
                 modelStatus = await environment.modelRouter.availabilityLabel()
                 await loadUndoSend()
+                await environment.trust.refreshPlan(force: true)
+                await environment.trust.refreshSurfaces()
             }
             .sheet(isPresented: $showsAccountDeletion) {
                 AccountDeletionView {
@@ -161,6 +185,7 @@ struct SettingsView: View {
                     await environment.pendingSends.clear(ownerID: ownerID)
                     await environment.assistantDrafts.clear(ownerID: ownerID)
                     environment.accountStore.clear()
+                    environment.trust.clear()
                     try? await environment.notificationResponseOutbox.purge()
                     if let ownerID {
                         clearActivityLocalState(ownerID: ownerID)
@@ -200,6 +225,13 @@ private struct AccountDeletionView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // Keep a copy first (FEATURES item 15), before the confirmation.
+                Section {
+                    Text(DataExport.beforeDeletion)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    DataExportButton(label: "Export first")
+                }
                 Section {
                     Text("This permanently removes your Albatross account, connected-provider grants, indexed mail, calendars, tasks, Areas, Work, and settings.")
                         .foregroundStyle(.secondary)
@@ -247,6 +279,7 @@ private struct AccountDeletionView: View {
             await environment.pendingSends.clear(ownerID: ownerID)
             await environment.assistantDrafts.clear(ownerID: ownerID)
             environment.accountStore.clear()
+            environment.trust.clear()
             try? await environment.notificationResponseOutbox.purge()
             if let ownerID {
                 clearActivityLocalState(ownerID: ownerID)

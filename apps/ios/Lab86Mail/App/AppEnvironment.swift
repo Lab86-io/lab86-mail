@@ -39,6 +39,8 @@ final class AppEnvironment {
     // "Prepared for you" under the Brief: GET/POST /api/content?view=brief.
     let preparedWork: PreparedWorkClient?
     let accountStore: AccountStore
+    // The plan, the trial note, and the optional Files surface (round 2).
+    let trust: AccountTrustStore
     // The current Albatross conversation. Held here so switching destinations
     // does not discard an in-flight exchange; the sidebar plus starts a fresh
     // one. Distinct from intent capture, which stays a form.
@@ -70,6 +72,7 @@ final class AppEnvironment {
         }
         self.backend = backend
         self.tools = tools
+        trust = AccountTrustStore(backend: backend)
         documents = DocumentStore(backend: backend)
         webAuthentication = WebAuthenticationCoordinator(backend: backend)
         pendingSends = PendingSendCoordinator(backend: backend, tools: tools)

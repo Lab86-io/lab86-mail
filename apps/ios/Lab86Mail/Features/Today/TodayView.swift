@@ -86,6 +86,7 @@ struct TodayView: View {
                     }
             }
         }
+        .task { await environment.trust.refreshPlan() }
         .sheet(isPresented: $showsHistory) {
             DailyReportHistorySheet(reports: store.dailyReportHistory) { report in
                 await store.selectDailyReport(id: report.id)
@@ -301,7 +302,7 @@ struct TodayView: View {
         BriefSourceStrip(
             health: store.briefSources,
             notes: BriefEditionNotes.notes(for: store.dailyReport),
-            trialNote: nil
+            trialNote: environment.trust.plan?.trialNote
         )
     }
 
