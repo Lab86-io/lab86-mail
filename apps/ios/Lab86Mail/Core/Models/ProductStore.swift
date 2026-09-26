@@ -60,6 +60,14 @@ final class ProductStore {
     private(set) var hasMoreMail = false
     private(set) var isLoadingMoreMail = false
     private var mailNextCursor: String?
+    // One cursor per server-paged scope (a category, a label, or one
+    // account). Pages merge into `threads`, so every mutation path keeps
+    // working; the view filters by scope. A refresh clears them.
+    private var mailScopeCursors: [MailListScope: MailScopeCursor] = [:]
+    private var loadingMailScopes: Set<MailListScope> = []
+    private(set) var mailScopeGeneration = 0
+    // Enabled custom labels the user shows in the sidebar (NAT-4).
+    var mailLabels: [MailLabelSummary] = []
     var searchedThreads: [MailThreadSummary] = []
     var completedMailSearchQuery: String?
     var isSearchingMail = false
@@ -187,10 +195,14 @@ final class ProductStore {
 
     func refreshMail() async {
         mailErrorMessage = nil
+        // Every scope pages again from its first page after a refresh.
+        mailScopeCursors = [:]
+        mailScopeGeneration += 1
         do {
             let result = try await tools.invoke("list_accounts")
             let refreshedAccounts = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
             accounts = refreshedAccounts
+            await refreshMailLabels()
             // Typed paged path: one unified corpus page with a real cursor,
             // instead of 200 threads per account replayed on every refresh.
             // An empty first page on a corpus that is still backfilling falls
@@ -257,17 +269,84 @@ final class ProductStore {
                 cursor: cursor,
                 limit: 100
             )
-            let existing = Set(threads.map(mailKey))
-            let fresh = page.items
-                .filter { !existing.contains(mailKey($0)) }
-                .compactMap(applyPendingMailState)
-            threads = (threads + fresh).sorted { $0.date > $1.date }
+            mergeMailPage(page.items)
             mailNextCursor = page.nextCursor
             hasMoreMail = page.hasMore
             await persistCache()
         } catch {
             recordMail(error)
         }
+    }
+
+    func hasMoreMail(in scope: MailListScope) -> Bool {
+        scope.isUnified ? hasMoreMail : (mailScopeCursors[scope]?.hasMore ?? false)
+    }
+
+    func isLoadingMail(in scope: MailListScope) -> Bool {
+        scope.isUnified ? isLoadingMoreMail : loadingMailScopes.contains(scope)
+    }
+
+    /// Changes each time a scope's cursor moves, so a load-more row that
+    /// stays on screen asks again.
+    func mailCursorToken(in scope: MailListScope) -> String {
+        let cursor = scope.isUnified ? mailNextCursor : mailScopeCursors[scope]?.cursor
+        return "\(scope.key)|\(cursor ?? "start")|\(mailScopeGeneration)"
+    }
+
+    /// Loads the first server page of a category, label, or account scope
+    /// (NAT-2). The unified scope is the inbox itself and needs nothing.
+    func loadMailScope(_ scope: MailListScope) async {
+        guard !scope.isUnified, mailScopeCursors[scope] == nil else { return }
+        await fetchMailScopePage(scope, cursor: nil)
+    }
+
+    func loadMoreMail(in scope: MailListScope) async {
+        if scope.isUnified {
+            await loadMoreMail()
+            return
+        }
+        guard let state = mailScopeCursors[scope] else {
+            await loadMailScope(scope)
+            return
+        }
+        guard state.hasMore, let cursor = state.cursor else { return }
+        await fetchMailScopePage(scope, cursor: cursor)
+    }
+
+    private func fetchMailScopePage(_ scope: MailListScope, cursor: String?) async {
+        guard let mailPages, !loadingMailScopes.contains(scope) else { return }
+        loadingMailScopes.insert(scope)
+        defer { loadingMailScopes.remove(scope) }
+        let generation = mailScopeGeneration
+        do {
+            let page = try await mailPages.fetchMailThreads(
+                accountID: scope.accountID,
+                category: scope.category,
+                cursor: cursor,
+                limit: 100
+            )
+            // A refresh replaced the list while this page loaded.
+            guard generation == mailScopeGeneration else { return }
+            mergeMailPage(page.items)
+            mailScopeCursors[scope] = MailScopeCursor(cursor: page.nextCursor, hasMore: page.hasMore)
+            await persistCache()
+        } catch {
+            recordMail(error)
+        }
+    }
+
+    private func mergeMailPage(_ items: [MailThreadSummary]) {
+        let existing = Set(threads.map(mailKey))
+        let fresh = items
+            .filter { !existing.contains(mailKey($0)) }
+            .compactMap(applyPendingMailState)
+        guard !fresh.isEmpty else { return }
+        threads = (threads + fresh).sorted { $0.date > $1.date }
+    }
+
+    func refreshMailLabels() async {
+        guard let result = try? await tools.invoke("list_smart_labels", arguments: [:]) else { return }
+        mailLabels = MailLabelSummary.sidebarLabels(from: result)
     }
 
     func searchMail(_ rawQuery: String) async {
@@ -1818,17 +1897,11 @@ final class ProductStore {
         }
     }
 
-    func correctCategory(_ thread: MailThreadSummary, category: String) async -> Bool {
+    func correctCategory(_ thread: MailThreadSummary, to correction: MailCategoryCorrection) async -> Bool {
         do {
             _ = try await tools.invoke(
                 "apply_smart_correction",
-                arguments: [
-                    "account": .string(thread.accountID),
-                    "threadId": .string(thread.id),
-                    "action": .string("move_to"),
-                    "scope": .string("sender"),
-                    "category": .string(category),
-                ]
+                arguments: correction.arguments(accountID: thread.accountID, threadID: thread.id)
             )
             await refreshMail()
             return true
@@ -2352,9 +2425,11 @@ final class ProductStore {
                     "untilTs": .number(until.timeIntervalSince1970 * 1_000),
                 ]
             )
-            suppressedMailThreads.insert(thread.id)
-            threads.removeAll { $0.id == thread.id }
-            searchedThreads.removeAll { $0.id == thread.id }
+            // The suppression key must match `applyPendingMailState`, which
+            // reads `account:thread`; a bare thread id never matched (MUT-1).
+            suppressedMailThreads.insert(mailKey(thread))
+            threads.removeAll { mailKey($0) == mailKey(thread) }
+            searchedThreads.removeAll { mailKey($0) == mailKey(thread) }
         } catch {
             mailErrorMessage = error.localizedDescription
         }
@@ -2503,6 +2578,35 @@ final class ProductStore {
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    /// Creates an Area (or revives an archived one with the same name) and
+    /// returns its id. Shared by the iOS sidebar and the Mac source list
+    /// (NAT-9).
+    @discardableResult
+    func createArea(name: String) async -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        do {
+            let result = try await backend.post(
+                path: "/api/albatross/areas",
+                body: .object([
+                    "action": .string("create_area"),
+                    "name": .string(String(trimmed.prefix(120))),
+                ])
+            )
+            guard let areaID = result["areaId"]?.stringValue?.nilIfBlank else {
+                throw BackendError.server(
+                    status: 500,
+                    message: result["error"]?.stringValue ?? "The area could not be created."
+                )
+            }
+            await refreshWork()
+            return areaID
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 

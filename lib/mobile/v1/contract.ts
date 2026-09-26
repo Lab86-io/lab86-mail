@@ -430,6 +430,11 @@ export const MailThreadSummarySchema = z
     labels: z.array(z.string().max(240)).max(200),
     messageCount: z.number().int().nonnegative(),
     smartCategory: z.string().max(240).optional(),
+    // Secondary built-in categories (for example `orders` on a Main thread)
+    // and the custom label ids the thread carries. Clients use them to show
+    // a thread in the same category views as the web.
+    smartSecondary: z.array(z.string().max(80)).max(16).optional(),
+    smartLabels: z.array(z.string().max(240)).max(50).optional(),
   })
   .strict();
 

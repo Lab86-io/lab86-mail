@@ -11,6 +11,8 @@ import SwiftUI
 enum SidebarDestination: Hashable, Identifiable {
     case primary(PrimaryTab)
     case mail(MailCategoryScope)
+    // A custom label shown as a mail view (NAT-4).
+    case mailLabel(id: String, name: String)
     case area(id: String, name: String)
     case settings
 
@@ -18,6 +20,7 @@ enum SidebarDestination: Hashable, Identifiable {
         switch self {
         case .primary(let tab): "primary.\(tab.rawValue)"
         case .mail(let scope): "mail.\(scope.rawValue)"
+        case .mailLabel(let id, _): "label.\(id)"
         case .area(let id, _): "area.\(id)"
         case .settings: "settings"
         }
@@ -27,6 +30,7 @@ enum SidebarDestination: Hashable, Identifiable {
         switch self {
         case .primary(let tab): tab.title
         case .mail(let scope): scope.title
+        case .mailLabel(_, let name): name
         case .area(_, let name): name
         case .settings: "Settings"
         }

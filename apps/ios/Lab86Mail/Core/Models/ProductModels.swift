@@ -36,6 +36,10 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
     // Codable decodes Optionals via decodeIfPresent, so old cached snapshots
     // written before this field existed still decode.
     let senderEmail: String?
+    // Secondary built-in categories and custom label ids (audit NAT-3/NAT-4,
+    // 2026-09-26). Optional so cached snapshots written before them decode.
+    let secondaryCategories: [String]?
+    let labelIDs: [String]?
 
     // What a list row prints: the display name from a `Name <addr>` header.
     // Desktop widths expose the full header's address noise; the web rows
@@ -56,7 +60,9 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         category: String? = nil,
         categoryReason: String? = nil,
         categoryConfidence: Double? = nil,
-        senderEmail: String? = nil
+        senderEmail: String? = nil,
+        secondaryCategories: [String]? = nil,
+        labelIDs: [String]? = nil
     ) {
         self.id = id
         self.accountID = accountID
@@ -70,6 +76,15 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         self.categoryReason = categoryReason
         self.categoryConfidence = categoryConfidence
         self.senderEmail = senderEmail ?? EmailTextNormalizer.email(from: sender)
+        self.secondaryCategories = secondaryCategories
+        self.labelIDs = labelIDs
+    }
+
+    /// The stored placement the category views read. Mail a label-move rule
+    /// filed reports `custom:<labelId>`, the same string the v1 read sends.
+    static func placement(primary: String?, filedUnder: String?) -> String? {
+        if let filedUnder = filedUnder?.nilIfBlank { return "custom:\(filedUnder)" }
+        return primary
     }
 
     init?(json: JSONValue, accountID fallbackAccountID: String? = nil) {
@@ -91,7 +106,12 @@ struct MailThreadSummary: Identifiable, Hashable, Codable, Sendable {
         date = Self.date(from: json["lastDate"]?.doubleValue ?? json["date"]?.doubleValue)
         unread = json["unread"]?.boolValue ?? false
         starred = json["starred"]?.boolValue ?? false
-        category = json["smartCategory"]?["primary"]?.stringValue
+        category = Self.placement(
+            primary: json["smartCategory"]?["primary"]?.stringValue,
+            filedUnder: json["smartCategory"]?["filedUnder"]?.stringValue
+        )
+        secondaryCategories = json["smartCategory"]?["secondary"]?.arrayValue?.compactMap(\.stringValue)
+        labelIDs = json["smartCategory"]?["customLabels"]?.arrayValue?.compactMap(\.stringValue)
         categoryReason = json["smartCategory"]?["reason"]?.stringValue?.nilIfBlank
         categoryConfidence = json["smartCategory"]?["confidence"]?.doubleValue
         // Server-derived when present; otherwise fall back to parsing the same
@@ -300,10 +320,15 @@ struct LiveMailThreadPayload: Decodable, Sendable {
             date: Date(timeIntervalSince1970: timestamp),
             unread: unread,
             starred: starred ?? false,
-            category: smartCategory?.primary,
+            category: MailThreadSummary.placement(
+                primary: smartCategory?.primary,
+                filedUnder: smartCategory?.filedUnder
+            ),
             categoryReason: smartCategory?.reason,
             categoryConfidence: smartCategory?.confidence,
-            senderEmail: senderEmail?.nilIfBlank?.lowercased() ?? EmailTextNormalizer.email(from: fromAddress)
+            senderEmail: senderEmail?.nilIfBlank?.lowercased() ?? EmailTextNormalizer.email(from: fromAddress),
+            secondaryCategories: smartCategory?.secondary,
+            labelIDs: smartCategory?.customLabels
         )
     }
 }
@@ -312,6 +337,9 @@ struct LiveMailCategoryPayload: Decodable, Sendable {
     let primary: String
     let reason: String?
     let confidence: Double?
+    let secondary: [String]?
+    let customLabels: [String]?
+    let filedUnder: String?
 }
 
 struct LiveMailThreadDetailPayload: Decodable, Sendable {
@@ -2338,5 +2366,42 @@ struct CheckinSummary: Identifiable, Hashable, Codable, Sendable {
         tomorrowIntentText = json["tomorrowIntentText"]?.stringValue?.nilIfBlank
         reflectionReconcileStatus = json["reflectionReconcileStatus"]?.stringValue?.nilIfBlank
         tomorrowPlanStatus = json["tomorrowPlanStatus"]?.stringValue?.nilIfBlank
+    }
+}
+
+// A server-paged mail list: one account, one category or label, or both
+// (audit NAT-2, 2026-09-26). The unified scope is the plain inbox.
+struct MailListScope: Hashable, Sendable {
+    let accountID: String?
+    let category: String?
+
+    static let unified = MailListScope(accountID: nil, category: nil)
+
+    var isUnified: Bool { accountID == nil && category == nil }
+    var key: String { "\(accountID ?? "*")/\(category ?? "*")" }
+}
+
+struct MailScopeCursor: Hashable, Sendable {
+    let cursor: String?
+    let hasMore: Bool
+}
+
+// A custom label the user shows as a mail view (NAT-4). Its threads are
+// queried with `category=custom:<id>`.
+struct MailLabelSummary: Identifiable, Hashable, Codable, Sendable {
+    let id: String
+    let name: String
+
+    var rawCategory: String { "custom:\(id)" }
+
+    /// Enabled labels marked "Show in sidebar", from `list_smart_labels`.
+    static func sidebarLabels(from result: JSONValue) -> [MailLabelSummary] {
+        (result["custom"]?.arrayValue ?? []).compactMap { row in
+            guard let id = row["_id"]?.stringValue?.nilIfBlank,
+                  let name = row["name"]?.stringValue?.nilIfBlank,
+                  row["enabled"]?.boolValue != false,
+                  row["sidebarVisible"]?.boolValue != false else { return nil }
+            return MailLabelSummary(id: id, name: name)
+        }
     }
 }

@@ -24,8 +24,9 @@ struct MailPresentationTests {
 
     @Test
     func correctionPresentsOnlyClassifierDestinations() {
-        // All Mail is a viewing scope, never a correction target.
-        #expect(MailCategoryScope.feedbackCases == [.main, .codes, .orders])
+        // All Mail is a viewing scope, never a correction target. Noise is a
+        // destination (CLS-9) so promotions can leave Main on native too.
+        #expect(MailCategoryCorrection.allCases == [.main, .codes, .orders, .noise])
     }
 
     @Test
