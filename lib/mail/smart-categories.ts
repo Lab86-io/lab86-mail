@@ -34,8 +34,9 @@ export const SMART_CATEGORY_LABELS: Record<SmartCategoryId, string> = {
 // Increase this number when a change to this file or to smartCategoryFromJev
 // changes a stored verdict. The backlog cron then sorts every row again that
 // has an older number, so stored verdicts follow the new code without a manual
-// run.
-export const SMART_CLASSIFIER_VERSION = 1;
+// run. Also increase it when the sort writes new derived data.
+// 2: the sort writes custom-label membership rows (CLS-13).
+export const SMART_CLASSIFIER_VERSION = 2;
 
 // Gmail labels that "Apply smart labels" writes. Labels from the old product
 // name keep working: labelsForSmartCategory rewrites them to this prefix.

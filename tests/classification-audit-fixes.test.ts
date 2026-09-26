@@ -660,6 +660,11 @@ describe('CLS-1 and CLS-12 Jev input and Jev writes', () => {
       NOW,
     );
     expect(result.status).toBe('accepted');
+    // Drop the membership rows the ingest wrote, so the check below proves the
+    // Jev write keeps membership in step (CLS-13).
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query('mailLabelMembership').collect()) await ctx.db.delete(row._id);
+    });
     await t.mutation((api as any).jev.storeAssessments, {
       internalSecret: SECRET,
       userId: USER,
@@ -686,5 +691,9 @@ describe('CLS-1 and CLS-12 Jev input and Jev writes', () => {
     // "linen shirt" is only in the body; the Jev write read the body too.
     expect(row?.smartCustomKeys).toEqual(['linen']);
     expect(row?.smartClassifierVersion).toBe(SMART_CLASSIFIER_VERSION);
+    const membership = await t.run((ctx) => ctx.db.query('mailLabelMembership').collect());
+    expect(membership.map((member) => [member.providerThreadId, member.labelKey])).toEqual([
+      ['t-long', 'linen'],
+    ]);
   });
 });

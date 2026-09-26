@@ -10,10 +10,12 @@ import {
   classifierContent,
   classifyCorpusThread,
   computeCategoryUnreadCounts,
+  deleteLabelMembership,
   latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   queryCategoryThreads,
+  syncLabelMembership,
 } from './smart';
 
 const providerValidator = v.union(
@@ -381,6 +383,7 @@ export const upsertCorpusBatch = mutation({
           ...classified,
           createdAt: ts,
         });
+      await syncLabelMembership(ctx, existing, { ...classifyRow, ...classified });
       if (existing?.latestMessageId !== patch.latestMessageId || patch.lastDate > existing.lastDate) {
         const areaLinks = await ctx.db
           .query('areaArtifactLinks')
@@ -633,6 +636,7 @@ export const deleteCorpusThread = mutation({
       )
       .unique();
     if (thread && thread.userId === args.userId) await ctx.db.delete(thread._id);
+    await deleteLabelMembership(ctx, args.userId, args.accountId, args.providerThreadId);
     const messages = await ctx.db
       .query('mailCorpusMessages')
       .withIndex('by_account_thread', (q) =>
@@ -1115,6 +1119,7 @@ export const storeLlmVerdicts = mutation({
         llmClassifiedMessageId: item.messageId,
         ...merged,
       });
+      await syncLabelMembership(ctx, row, { ...row, ...merged });
       if (llmCategory) stored += 1;
     }
     return { stored };
