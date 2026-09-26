@@ -207,6 +207,48 @@ struct AssistantDraftArtifactTests {
         #expect(fixture.store.record(for: key, ownerID: "user-1")?.serverDraftID == "draft-1")
     }
 
+    // Coordinator item 5 (audit 2026-09-26): a reply draft from chat sends
+    // as a reply in its thread, not as new mail with "Re:".
+    @Test @MainActor
+    func aReplyDraftSendsAsAReplyInItsThread() async throws {
+        let fixture = Fixture()
+        defer { fixture.tearDown() }
+        let key = AssistantDraftKey(sessionID: "s", toolCallID: "reply")
+        var seed = Self.seed
+        seed.subject = "Re: Lake plans"
+        seed.replyAccountID = "acct-2"
+        seed.replyThreadID = "thread-7"
+        let record = fixture.store.receive(seed, key: key, ownerID: "user-1")
+        // The reply goes from the mailbox that holds the thread.
+        #expect(record.accountID == "acct-2")
+        fixture.store.resolveAccountIfNeeded(key, ownerID: "user-1", accounts: Self.accounts)
+        #expect(fixture.store.record(for: key, ownerID: "user-1")?.replyTarget == "thread-7")
+        fixture.transport.sendResult = .success(.sent(accountID: "acct-2", threadID: "thread-7", messageID: "m-9"))
+        await fixture.store.send(key, ownerID: "user-1", pendingSends: fixture.pendingSends, undoSeconds: 0)
+        let call = try #require(fixture.transport.sendCalls.first)
+        #expect(call.mode == "reply")
+        #expect(call.threadID == "thread-7")
+        #expect(call.accountID == "acct-2")
+    }
+
+    @Test @MainActor
+    func aReplyDraftMovedToAnotherMailboxSendsAsNewMail() async throws {
+        let fixture = Fixture()
+        defer { fixture.tearDown() }
+        let key = AssistantDraftKey(sessionID: "s", toolCallID: "moved")
+        var seed = Self.seed
+        seed.replyAccountID = "acct-2"
+        seed.replyThreadID = "thread-7"
+        fixture.store.receive(seed, key: key, ownerID: "user-1")
+        fixture.store.update(key, ownerID: "user-1") { $0.accountID = "acct-1" }
+        #expect(fixture.store.record(for: key, ownerID: "user-1")?.replyTarget == nil)
+        fixture.transport.sendResult = .success(.sent(accountID: "acct-1", threadID: nil, messageID: "m-1"))
+        await fixture.store.send(key, ownerID: "user-1", pendingSends: fixture.pendingSends, undoSeconds: 0)
+        let call = try #require(fixture.transport.sendCalls.first)
+        #expect(call.mode == "new")
+        #expect(call.threadID == nil)
+    }
+
     @Test @MainActor
     func sendRejectsDuplicateTapsAndConfirmsOnlyAnExplicitSentResult() async {
         let fixture = Fixture()
@@ -941,6 +983,8 @@ struct AssistantDraftArtifactTests {
             let subject: String
             let body: String
             let attachments: [String]
+            var mode: String = "new"
+            var threadID: String? = nil
         }
 
         var saveCalls: [SaveCall] = []
@@ -1011,7 +1055,9 @@ struct AssistantDraftArtifactTests {
                     bcc: bcc,
                     subject: subject,
                     body: body,
-                    attachments: attachments.map(\.filename)
+                    attachments: attachments.map(\.filename),
+                    mode: mode,
+                    threadID: threadID
                 )
             )
             let started = startWaiters

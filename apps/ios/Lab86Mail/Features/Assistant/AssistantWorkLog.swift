@@ -11,6 +11,15 @@ struct AssistantToolRow: Identifiable, Equatable, Sendable {
         case running
         case done
         case failed
+        /// The tool asks a question instead of acting (for example several
+        /// events match a title). It is not done and not failed.
+        case needsInput
+    }
+
+    /// The state a finished call's output means.
+    static func outcomeState(output: JSONValue) -> State {
+        if output["status"]?.stringValue == "needs_input" { return .needsInput }
+        return output["ok"]?.boolValue == false ? .failed : .done
     }
 
     let callID: String
@@ -76,6 +85,8 @@ struct AssistantToolRow: Identifiable, Equatable, Sendable {
             return activity.running + "…"
         case .done:
             return activity.done
+        case .needsInput:
+            return shape?.activity?.done ?? "Several matches. Waiting for your choice"
         case .failed:
             let detail = errorText?.nilIfBlank
                 ?? output?["error"]?.stringValue?.nilIfBlank
@@ -195,6 +206,7 @@ enum AssistantWorkLog {
 
     enum HeaderState: Equatable, Sendable {
         case working
+        case waiting
         case done(count: Int, seconds: Int?)
         case failed(count: Int)
     }
@@ -204,6 +216,7 @@ enum AssistantWorkLog {
         let failed = rows.filter { $0.state == .failed }.count
         if failed > 0 { return .failed(count: failed) }
         if rows.contains(where: { $0.state == .running }) { return .working }
+        if rows.contains(where: { $0.state == .needsInput }) { return .waiting }
         return .done(count: rows.count, seconds: turnFinished ? duration(rows: rows) : nil)
     }
 
@@ -211,6 +224,8 @@ enum AssistantWorkLog {
         switch state {
         case .working:
             return "Working"
+        case .waiting:
+            return "Waiting for your choice"
         case .done(let count, let seconds):
             let base = "Did \(count) thing\(count == 1 ? "" : "s")"
             guard let seconds else { return base }
@@ -224,7 +239,7 @@ enum AssistantWorkLog {
     /// header. Any failure, or one or two rows, stays open.
     static func collapsesByDefault(rows: [AssistantToolRow], turnFinished: Bool) -> Bool {
         guard turnFinished, rows.count >= 3 else { return false }
-        return !rows.contains { $0.state == .failed }
+        return !rows.contains { $0.state == .failed || $0.state == .needsInput }
     }
 
     /// Whole seconds from the first start to the last end, at least one.

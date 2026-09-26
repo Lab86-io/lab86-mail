@@ -122,6 +122,11 @@ struct AssistantWorkLogRowView: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.red)
                 .accessibilityLabel("Failed")
+        case .needsInput:
+            Image(systemName: "questionmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tint)
+                .accessibilityLabel("Needs your choice")
         }
     }
 
@@ -130,6 +135,7 @@ struct AssistantWorkLogRowView: View {
         case .running: .secondary
         case .done: Color.secondary.opacity(0.7)
         case .failed: .red
+        case .needsInput: .primary
         }
     }
 }

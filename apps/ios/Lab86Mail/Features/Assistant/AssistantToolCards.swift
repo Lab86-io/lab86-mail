@@ -55,8 +55,14 @@ enum AssistantToolCard: Equatable, Sendable {
         let subject: String
         let body: String
 
+        var replyAccountID: String? = nil
+        var replyThreadID: String? = nil
+
         var seed: AssistantDraftSeed {
-            AssistantDraftSeed(fromEmail: from, to: to, cc: cc, bcc: bcc, subject: subject, body: body)
+            AssistantDraftSeed(
+                fromEmail: from, to: to, cc: cc, bcc: bcc, subject: subject, body: body,
+                replyAccountID: replyAccountID, replyThreadID: replyThreadID
+            )
         }
     }
 
@@ -159,6 +165,15 @@ enum AssistantToolCard: Equatable, Sendable {
     case order(OrderCard)
     case socialPost(SocialPostCard)
     case summary(tool: String, String)
+
+    /// A draft card bound to the thread a `draft_reply` call of the same turn
+    /// drafted for. Other cards are unchanged.
+    func replying(to context: (accountID: String, threadID: String)?) -> AssistantToolCard {
+        guard let context, case .draft(var draft) = self else { return self }
+        draft.replyAccountID = context.accountID
+        draft.replyThreadID = context.threadID
+        return .draft(draft)
+    }
 
     // MARK: - Parsing
 

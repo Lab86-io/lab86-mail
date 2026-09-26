@@ -32,7 +32,8 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
     case openURL(url: String, label: String?)
     case importFile(connectionID: String, fileID: String, mimeType: String?)
     case undoOperation(operationID: String)
-    case rememberSender(email: String)
+    /// notes: the saved note, so the field starts with it (AI-2).
+    case rememberSender(email: String, notes: String?)
     case unknown(kind: String)
 
     /// The wire discriminator.
@@ -80,7 +81,7 @@ enum ShapeAction: Equatable, Sendable, Identifiable {
         case .openURL(let url, _): "open_url:\(url)"
         case .importFile(let connectionID, let fileID, _): "import_file:\(connectionID):\(fileID)"
         case .undoOperation(let operationID): "undo_operation:\(operationID)"
-        case .rememberSender(let email): "remember_sender:\(email)"
+        case .rememberSender(let email, _): "remember_sender:\(email)"
         case .unknown(let kind): "unknown:\(kind)"
         }
     }
@@ -127,7 +128,7 @@ extension ShapeAction: Decodable {
     private enum Keys: String, CodingKey {
         case kind, account, threadId, messageId, calendarId, eventId, startIso, endIso, title
         case boardId, cardId, workId, areaId, documentId, path, url, label, connectionId, fileId
-        case mimeType, operationId, email
+        case mimeType, operationId, email, notes
     }
 
     init(from decoder: Decoder) throws {
@@ -190,7 +191,7 @@ extension ShapeAction: Decodable {
             self = .undoOperation(operationID: operationID)
         case "remember_sender":
             guard let email = text(.email) else { self = .unknown(kind: kind); return }
-            self = .rememberSender(email: email)
+            self = .rememberSender(email: email, notes: text(.notes))
         default:
             self = .unknown(kind: kind)
         }

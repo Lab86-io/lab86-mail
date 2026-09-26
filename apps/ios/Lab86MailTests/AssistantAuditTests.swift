@@ -194,4 +194,187 @@ struct AssistantAuditTests {
             Issue.record("Weather keeps its fallback card")
         }
     }
+
+    // MARK: - Server contract (fix/audit-ai)
+
+    private func event(_ fields: [String: JSONValue]) -> JSONValue { .object(fields) }
+
+    private func approvals(_ chat: AssistantChatModel) -> [AssistantInlineApproval] {
+        chat.messages.flatMap(\.parts).compactMap { part in
+            if case .approval(let approval) = part { return approval }
+            return nil
+        }
+    }
+
+    private func rows(_ chat: AssistantChatModel) -> [AssistantToolRow] {
+        chat.messages.flatMap(\.parts).compactMap { part in
+            if case .toolRow(let row) = part { return row }
+            return nil
+        }
+    }
+
+    private func requestGatedInvite(_ chat: AssistantChatModel, reply: String) {
+        chat.apply(event: event([
+            "type": .string("tool-input-start"), "toolCallId": .string("c1"),
+            "toolName": .string("calendar_create_event"),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-input-available"), "toolCallId": .string("c1"),
+            "toolName": .string("calendar_create_event"),
+            "input": .object([
+                "title": .string("Standup"),
+                "attendees": .array([.object(["email": .string("sam@example.com")])]),
+            ]),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-approval-request"), "toolCallId": .string("c1"), "approvalId": .string("ap1"),
+        ]), to: reply)
+    }
+
+    @Test
+    func aGatedCallShowsTheServerApprovalSummary() throws {
+        let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil)
+        let reply = chat.appendAssistantReply()
+        requestGatedInvite(chat, reply: reply)
+        // Before the summary: a title from the call, never the event title alone.
+        #expect(approvals(chat).first?.title == "Send invitations for “Standup”")
+        #expect(approvals(chat).first?.confirmLabel == "Approve")
+
+        chat.apply(event: event([
+            "type": .string("data-tool-approval"),
+            "id": .string("c1"),
+            "data": .object([
+                "approvalId": .string("ap1"),
+                "toolName": .string("calendar_create_event"),
+                "title": .string("Send invitations for “Standup”"),
+                "description": .string("This creates the event and emails an invitation to each attendee."),
+                "metadata": .array([.object(["label": .string("Invitees"), "value": .string("sam@example.com")])]),
+                "confirmLabel": .string("Send invitations"),
+                "denyLabel": .string("Cancel"),
+                "intent": .string("default"),
+            ]),
+        ]), to: reply)
+        let approval = try #require(approvals(chat).first)
+        #expect(approval.id == "ap1")
+        #expect(approval.usesApprovalResponse)
+        #expect(approval.description == "This creates the event and emails an invitation to each attendee.")
+        #expect(approval.metadata.map(\.value) == ["sam@example.com"])
+        #expect(approval.confirmLabel == "Send invitations")
+        #expect(!approval.destructive)
+        #expect(rows(chat).isEmpty)
+    }
+
+    @Test
+    func aDeclinedCallSaysNothingRan() throws {
+        let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil)
+        let reply = chat.appendAssistantReply()
+        requestGatedInvite(chat, reply: reply)
+        chat.stop()
+        let next = chat.appendAssistantReply()
+        chat.apply(event: event(["type": .string("tool-output-denied"), "toolCallId": .string("c1")]), to: next)
+        let approval = try #require(approvals(chat).first)
+        #expect(approval.decision == false)
+        #expect(approval.outcome == AssistantInlineApproval.declinedOutcome)
+    }
+
+    @Test
+    func answeringAnApprovalContinuesTheRunWithTheResponse() async throws {
+        let server = StubBackendServer()
+        defer { server.tearDown() }
+        server.routes["/api/agent"] = .object([:])
+        let chat = model(server)
+        let reply = chat.appendAssistantReply()
+        requestGatedInvite(chat, reply: reply)
+        chat.stop()
+        chat.answerApproval("ap1", approved: true)
+        try await waitUntilIdle(chat)
+        let body = try #require(agentBodies(server).last)
+        let parts = (body["messages"]?.arrayValue ?? []).flatMap { $0["parts"]?.arrayValue ?? [] }
+        let gated = try #require(parts.first { $0["toolCallId"] == .string("c1") })
+        #expect(gated["state"] == .string("approval-responded"))
+        #expect(gated["approval"]?["id"] == .string("ap1"))
+        #expect(gated["approval"]?["approved"] == .bool(true))
+    }
+
+    @Test
+    func aCalendarQuestionIsNotShownAsDone() throws {
+        let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil)
+        let reply = chat.appendAssistantReply()
+        chat.apply(event: event([
+            "type": .string("tool-input-start"), "toolCallId": .string("c2"),
+            "toolName": .string("calendar_update_event"),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-output-available"), "toolCallId": .string("c2"),
+            "output": .object([
+                "status": .string("needs_input"),
+                "needsDisambiguation": .bool(true),
+                "question": .string("Several events match."),
+                "candidates": .array([.object(["eventId": .string("e1"), "title": .string("Standup")])]),
+            ]),
+        ]), to: reply)
+        let row = try #require(rows(chat).first)
+        #expect(row.state == .needsInput)
+        #expect(row.sentence == "Several matches. Waiting for your choice")
+        #expect(AssistantWorkLog.headerState(rows: [row], turnFinished: true) == .waiting)
+        #expect(AssistantWorkLog.headerText(.waiting) == "Waiting for your choice")
+        #expect(AssistantToolRow.outcomeState(output: .object(["ok": .bool(true)])) == .done)
+        #expect(AssistantToolRow.outcomeState(output: .object(["ok": .bool(false)])) == .failed)
+        // A saved conversation reopens it as a question too.
+        #expect(AssistantChatModel.toolRowPartJSON(row)["state"] == .string("output-available"))
+    }
+
+    @Test
+    func aReplyDraftKeepsTheThreadFromDraftReply() {
+        let chat = AssistantChatModel(backend: BackendClient(baseURL: nil), baseURL: nil)
+        let reply = chat.appendAssistantReply()
+        chat.apply(event: event([
+            "type": .string("tool-input-start"), "toolCallId": .string("d1"), "toolName": .string("draft_reply"),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-input-available"), "toolCallId": .string("d1"), "toolName": .string("draft_reply"),
+            "input": .object(["account": .string("acct-2"), "threadId": .string("thread-7")]),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-output-available"), "toolCallId": .string("d1"),
+            "output": .object(["draft": .string("Sounds good."), "model": .string("m")]),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-input-start"), "toolCallId": .string("s1"), "toolName": .string("show_message_draft"),
+        ]), to: reply)
+        chat.apply(event: event([
+            "type": .string("tool-output-available"), "toolCallId": .string("s1"),
+            "output": .object([
+                "ok": .bool(true),
+                "payload": .object([
+                    "to": .array([.string("sam@example.com")]),
+                    "subject": .string("Re: Lake plans"),
+                    "body": .string("Sounds good."),
+                ]),
+            ]),
+        ]), to: reply)
+        guard case .draft(let draft) = rows(chat).last?.card else {
+            Issue.record("Expected a draft card")
+            return
+        }
+        #expect(draft.seed.replyAccountID == "acct-2")
+        #expect(draft.seed.replyThreadID == "thread-7")
+    }
+
+    @Test
+    func theSenderCardCarriesTheSavedNoteAndReplacesIt() throws {
+        let data = Data(#"{"kind":"remember_sender","email":"sam@example.com","notes":"Prefers mornings"}"#.utf8)
+        let action = try JSONDecoder().decode(ShapeAction.self, from: data)
+        guard case .rememberSender(let email, let notes) = action else {
+            Issue.record("Expected remember_sender")
+            return
+        }
+        #expect(email == "sam@example.com")
+        #expect(notes == "Prefers mornings")
+        let loaded = AssistantShapeActions.rememberArguments(email: email, notes: " Prefers mornings\n", savedNoteLoaded: true)
+        #expect(loaded["mode"] == .string("replace"))
+        #expect(loaded["notes"] == .string("Prefers mornings"))
+        // A note that never loaded is added to, never overwritten.
+        #expect(AssistantShapeActions.rememberArguments(email: email, notes: "x", savedNoteLoaded: false)["mode"] == .string("append"))
+    }
 }
