@@ -5,6 +5,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { ModelPicker, type ModelPickerProps } from '../components/settings/ModelPicker';
 import { ProviderGlyph } from '../components/settings/ProviderGlyph';
 import { buildModelCatalog } from '../lib/ai/model-catalog';
+import {
+  PINNED_MODELS_KEY,
+  readPinnedModels,
+  togglePinnedModel,
+  writePinnedModels,
+} from '../lib/shell/pinned-models';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let view: ReactTestRenderer;
@@ -100,14 +106,14 @@ test('provider filters toggle and combine with search; text-only models stay exc
   expect(text(view.root)).toContain('No vision models match');
 });
 
-test('starring is separate from selecting, and favorites can be filtered and removed', async () => {
+test('pinning is separate from selecting, and pins can be filtered and removed', async () => {
   const change = await mount();
-  await click('Star GLM-5.3 Flash');
+  await click('Pin GLM-5.3 Flash');
   expect(change).not.toHaveBeenCalled();
-  expect(button('Unstar GLM-5.3 Flash').props['aria-pressed']).toBe(true);
-  await click('Starred models');
+  expect(button('Unpin GLM-5.3 Flash').props['aria-pressed']).toBe(true);
+  await click('Pinned models');
   expect(rows().map((row) => row.props['data-model-id'])).toEqual([glm]);
-  await click('Unstar GLM-5.3 Flash');
+  await click('Unpin GLM-5.3 Flash');
   expect(rows()).toHaveLength(0);
   await click('All providers');
   expect(rows().length).toBeGreaterThan(1);
@@ -144,9 +150,9 @@ test('disabled panels disable search, filters, favorites, rows and tier controls
   expect(view.root.findByType('input').props.disabled).toBe(true);
   expect(buttons().every((node) => node.props.disabled)).toBe(true);
   await click('Select GLM-5.3 Flash');
-  await click('Star GLM-5.3 Flash');
+  await click('Pin GLM-5.3 Flash');
   expect(change).not.toHaveBeenCalled();
-  expect(button('Star GLM-5.3 Flash')).toBeDefined();
+  expect(button('Pin GLM-5.3 Flash')).toBeDefined();
 });
 
 test('a changed provider catalog and externally changed value update the persistent panel', async () => {
@@ -197,4 +203,39 @@ test('unknown, retired and empty saved choices render safely with an available l
   }
   const html = renderToStaticMarkup(<ModelPicker {...base} catalog={[]} />);
   expect(html).toContain('No vision models match');
+});
+
+test('pins survive a reload through device storage', async () => {
+  const saved = new Map<string, string>();
+  const previous = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => saved.get(key) ?? null,
+    setItem: (key: string, value: string) => void saved.set(key, value),
+  };
+  try {
+    await mount();
+    await click('Pin GLM-5.3 Flash');
+    expect(saved.get(PINNED_MODELS_KEY)).toBe(JSON.stringify([glm]));
+    await act(async () => view.unmount());
+    await mount();
+    expect(button('Unpin GLM-5.3 Flash').props['aria-pressed']).toBe(true);
+  } finally {
+    (globalThis as any).localStorage = previous;
+  }
+});
+
+test('pin storage ignores bad values and a blocked store', () => {
+  const store = { getItem: () => '{bad', setItem: () => {} };
+  expect(readPinnedModels(store).size).toBe(0);
+  expect(readPinnedModels({ getItem: () => '[1,"a"]', setItem: () => {} })).toEqual(new Set(['a']));
+  expect(readPinnedModels(null).size).toBe(0);
+  expect(() =>
+    writePinnedModels(new Set(['a']), {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('full');
+      },
+    }),
+  ).not.toThrow();
+  expect(togglePinnedModel(new Set(['a']), 'a').size).toBe(0);
 });
