@@ -9,6 +9,7 @@ import {
   withNylasRetry,
 } from '@/lib/nylas/retry';
 import { safeExternalUrl } from '@/lib/shared/url';
+import { normalizeAllDayRange } from './all-day';
 import { type EventInputRow, maybeKickCalendarSync, toEventInput } from './sync';
 
 const calendarApi = (api as any).calendarData;
@@ -50,7 +51,11 @@ export interface UpdateEventPatch {
   location?: string;
   participants?: Array<{ email: string; name?: string }>;
   busy?: boolean;
+  // A non-empty rule replaces the series rule. An empty array is ignored: old
+  // clients send one on every edit, and it would turn a series into one event.
   recurrence?: string[];
+  // The only way to stop a series from repeating ("Never").
+  clearRecurrence?: boolean;
 }
 
 export interface UnsubscribeCalendarInput {
@@ -95,7 +100,7 @@ export async function createCalendarEvent(input: CreateEventInput) {
       ? { conferencing: { provider: 'Google Meet', autocreate: {} } }
       : {}),
     busy: input.busy ?? true,
-    when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone),
+    when: toNylasWhen(input.startAt, input.endAt, input.allDay, input.timezone, input.timezone),
     participants: input.participants?.map((p) => ({ email: p.email, name: p.name })),
     recurrence: input.recurrence,
     metadata: {
@@ -230,24 +235,45 @@ export async function updateCalendarEvent(input: {
   eventId: string;
   patch: UpdateEventPatch;
   notifyParticipants?: boolean;
+  // The user's IANA zone. A timed write keeps the event's own zone when it is
+  // known, and all-day dates are read in this zone.
+  timezone?: string;
 }) {
   const account = await getAccount(input.userId, input.accountId);
   const accountId = account.accountId;
-  const previous = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
+  const mirrored = await getMirrorEvent(input.userId, accountId, input.eventId, input.calendarId);
+  // Sync stores only the expanded instances of a series, not the master. With
+  // no mirror row the target can be a master, so read it from the provider:
+  // its rule goes back with the edit, and undo can restore it.
+  const master = mirrored ? null : await findProviderEvent(account, input.calendarId, input.eventId);
+  const previous = mirrored ?? (master ? toEventInput(master, input.calendarId) : null);
+  const seriesRule = Array.isArray(master?.recurrence) ? (master.recurrence as string[]) : [];
   const requestBody: Record<string, unknown> = {};
   if (input.patch.title !== undefined) requestBody.title = input.patch.title;
   if (input.patch.description !== undefined) requestBody.description = input.patch.description;
   if (input.patch.location !== undefined) requestBody.location = input.patch.location;
   if (input.patch.busy !== undefined) requestBody.busy = input.patch.busy;
-  if (input.patch.recurrence !== undefined) requestBody.recurrence = input.patch.recurrence;
+  if (input.patch.clearRecurrence) requestBody.recurrence = [];
+  else if (input.patch.recurrence?.length) requestBody.recurrence = input.patch.recurrence;
+  else if (seriesRule.length) requestBody.recurrence = seriesRule;
   if (input.patch.participants !== undefined) {
     requestBody.participants = input.patch.participants.map((p) => ({ email: p.email, name: p.name }));
   }
-  if (input.patch.startAt !== undefined || input.patch.endAt !== undefined) {
+  if (
+    input.patch.startAt !== undefined ||
+    input.patch.endAt !== undefined ||
+    (input.patch.allDay !== undefined && input.patch.allDay !== Boolean(previous?.allDay))
+  ) {
     const startAt = input.patch.startAt ?? previous?.startAt;
     const endAt = input.patch.endAt ?? previous?.endAt;
     if (!startAt || !endAt) throw new Error('Event times unknown; sync the calendar first.');
-    requestBody.when = toNylasWhen(startAt, endAt, input.patch.allDay ?? previous?.allDay);
+    requestBody.when = toNylasWhen(
+      startAt,
+      endAt,
+      input.patch.allDay ?? previous?.allDay,
+      previous?.startTimezone || input.timezone,
+      input.timezone,
+    );
   }
   let response: any;
   try {
@@ -298,6 +324,7 @@ export async function updateCalendarEvent(input: {
               startAt: previous.startAt,
               endAt: previous.endAt,
               allDay: previous.allDay,
+              startTimezone: previous.startTimezone,
               participants: previous.participants,
               recurrence: previous.recurrence,
             },
@@ -307,6 +334,26 @@ export async function updateCalendarEvent(input: {
   });
   kickSyncAfterMutation(account);
   return { ok: true, operationId };
+}
+
+async function findProviderEvent(account: NylasAccountRow, calendarId: string, eventId: string) {
+  try {
+    const response = await withNylasRetry(
+      () =>
+        requireNylas().events.find({
+          identifier: account.grantId,
+          eventId,
+          queryParams: { calendarId } as any,
+          overrides: calendarWriteOverrides(),
+        }),
+      1,
+    );
+    return (response?.data as any) ?? null;
+  } catch (err: any) {
+    // The edit can still go through without the master; it then sends no rule.
+    console.warn(`[calendar] master lookup failed event=${eventId}: ${describeNylasError(err)}`);
+    return null;
+  }
 }
 
 export async function deleteCalendarEvent(input: {
@@ -379,6 +426,7 @@ export async function deleteCalendarEvent(input: {
               startAt: inverseSource.startAt,
               endAt: inverseSource.endAt,
               allDay: inverseSource.allDay,
+              startTimezone: inverseSource.startTimezone,
               participants: inverseSource.participants,
               recurrence: inverseSource.recurrence,
             },
@@ -508,7 +556,7 @@ registerUndoExecutor('calendar.recreate_event', async (payload, ctx) => {
         description: fields.description,
         location: fields.location,
         busy: fields.busy ?? true,
-        when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
+        when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay, fields.startTimezone),
         participants: fields.participants,
         recurrence: fields.recurrence,
         metadata: {
@@ -548,7 +596,7 @@ registerUndoExecutor('calendar.restore_event', async (payload, ctx) => {
           description: fields.description,
           location: fields.location,
           busy: fields.busy,
-          when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay),
+          when: toNylasWhen(fields.startAt, fields.endAt, fields.allDay, fields.startTimezone),
           participants: fields.participants,
           recurrence: fields.recurrence,
         } as any,
@@ -657,18 +705,30 @@ async function getAccount(userId: string, accountId: string): Promise<NylasAccou
   return requireConnectedAccount(userId, accountId);
 }
 
-function toNylasWhen(startAt: number, endAt: number, allDay?: boolean, timezone?: string) {
+// `timezone` is the zone stamped on a timed event: the event's own zone when it
+// is known, else the user's. `userTimezone` reads all-day input.
+export function toNylasWhen(
+  startAt: number,
+  endAt: number,
+  allDay?: boolean,
+  timezone?: string,
+  userTimezone?: string,
+) {
   if (allDay) {
-    const startDate = new Date(startAt).toISOString().slice(0, 10);
-    const endDate = new Date(endAt).toISOString().slice(0, 10);
-    if (startDate === endDate || endAt - startAt <= 86_400_000) {
+    // Clients send date-only strings, which parse to local midnight in the
+    // user's zone. Stored rows (undo) are already UTC-midnight dates.
+    const range = normalizeAllDayRange(startAt, endAt, userTimezone || timezone);
+    const startDate = new Date(range.startAt).toISOString().slice(0, 10);
+    const endDate = new Date(range.endAt).toISOString().slice(0, 10);
+    if (range.endAt - range.startAt <= 86_400_000) {
       return { date: startDate };
     }
     return { startDate, endDate };
   }
   // Google (via Nylas) needs the timezone alongside the unix seconds to place a
-  // timed event correctly; without it events land in UTC / get rejected.
-  const tz = timezone || 'UTC';
+  // timed event correctly; without it events land in UTC / get rejected. UTC
+  // is the last resort: a series placed in UTC moves by an hour at DST.
+  const tz = timezone || userTimezone || 'UTC';
   return {
     startTime: Math.floor(startAt / 1000),
     endTime: Math.floor(endAt / 1000),

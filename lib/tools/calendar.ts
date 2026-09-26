@@ -311,7 +311,7 @@ export const calendarSuggestTimes = defineTool({
 export const calendarCreateEvent = defineTool({
   name: 'calendar_create_event',
   description:
-    'Create a calendar event. Times are ISO timestamps; allDay uses date granularity. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
+    'Create a calendar event. Times are ISO timestamps; for allDay pass date-only startIso/endIso ("2026-09-26") with an exclusive end. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
   category: 'calendar',
   mutating: true,
   input: z.object({
@@ -498,7 +498,7 @@ async function resolveSingleTarget(
 export const calendarUpdateEvent = defineTool({
   name: 'calendar_update_event',
   description:
-    'Update fields of an existing event (title, times, location, description, attendees, recurrence). Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
+    'Update fields of an existing event (title, times, location, description, attendees, recurrence). Send only the fields that change. For an all-day event, pass date-only startIso/endIso ("2026-09-26") with an exclusive end. An empty recurrence array is ignored; pass clearRecurrence: true to stop a series from repeating. Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
   category: 'calendar',
   mutating: true,
   input: z.object({
@@ -517,6 +517,7 @@ export const calendarUpdateEvent = defineTool({
     location: z.string().optional(),
     attendees: z.array(participantSchema).optional(),
     recurrence: z.array(z.string()).optional(),
+    clearRecurrence: z.boolean().optional().describe('True stops a repeating series ("Never").'),
     busy: z.boolean().optional(),
     notifyParticipants: z.boolean().default(false),
   }),
@@ -549,6 +550,7 @@ export const calendarUpdateEvent = defineTool({
       calendarId: resolved.target.calendarId,
       eventId: resolved.target.eventId,
       notifyParticipants: args.notifyParticipants,
+      timezone: ctx.userTimezone,
       patch: {
         title: args.title,
         startAt: args.startIso ? parseIso(args.startIso, 'startIso') : undefined,
@@ -558,6 +560,7 @@ export const calendarUpdateEvent = defineTool({
         location: args.location,
         participants: args.attendees,
         recurrence: args.recurrence,
+        clearRecurrence: args.clearRecurrence,
         busy: args.busy,
       },
     });
