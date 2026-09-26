@@ -1,7 +1,6 @@
 import { v } from 'convex/values';
-import { internal } from './_generated/api';
 import type { QueryCtx } from './_generated/server';
-import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Calendar corpus storage. Writers
@@ -106,7 +105,6 @@ export const upsertCalendarBatch = mutation({
             await ctx.db.delete(event._id);
           }
         }
-        await deleteLegacyCalendarCorpus(ctx, args.userId, args.accountId, removedIds);
       }
     }
     return { ok: true, count: args.calendars.length };
@@ -171,7 +169,6 @@ export const deleteEvent = mutation({
     requireInternalSecret(args.internalSecret);
     const row = await findEventByProviderId(ctx, args);
     if (row && row.userId === args.userId) await ctx.db.delete(row._id);
-    await deleteLegacyCorpusEvent(ctx, args);
     if (args.includeInstances) {
       const instances = await ctx.db
         .query('calendarEvents')
@@ -183,12 +180,6 @@ export const deleteEvent = mutation({
         if (args.providerCalendarId && instance.providerCalendarId !== args.providerCalendarId) continue;
         if (instance.userId === args.userId) {
           await ctx.db.delete(instance._id);
-          await deleteLegacyCorpusEvent(ctx, {
-            userId: args.userId,
-            accountId: args.accountId,
-            providerCalendarId: instance.providerCalendarId,
-            providerEventId: instance.providerEventId,
-          });
         }
       }
     }
@@ -222,7 +213,6 @@ export const removeCalendar = mutation({
       )
       .collect();
     for (const event of events) await ctx.db.delete(event._id);
-    await deleteLegacyCalendarCorpus(ctx, args.userId, args.accountId, new Set([args.providerCalendarId]));
     return { ok: true };
   },
 });
@@ -281,12 +271,6 @@ export const reconcileWindow = mutation({
       if (row.startAt >= args.windowEnd) continue;
       if (keep.has(row.providerEventId)) continue;
       await ctx.db.delete(row._id);
-      await deleteLegacyCorpusEvent(ctx, {
-        userId: args.userId,
-        accountId: args.accountId,
-        providerCalendarId: row.providerCalendarId,
-        providerEventId: row.providerEventId,
-      });
       pruned += 1;
     }
     return {
@@ -530,23 +514,14 @@ export const searchEvents = query({
     requireInternalSecret(args.internalSecret);
     const limit = clampLimit(args.limit, 25, 100);
     const text = (args.query || '').trim();
-    const useCanonicalSearch = await calendarSearchCutoverReady(ctx);
     let rows: any[];
     if (text) {
-      const canonical = await ctx.db
+      rows = await ctx.db
         .query('calendarEvents')
         .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
         .take(limit * 4);
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacy = await ctx.db
-          .query('calendarEventCorpus')
-          .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
-          .take(limit * 4);
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
     } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
-      const canonical = await queryEventsInWindow(
+      rows = await queryEventsInWindow(
         ctx,
         args.userId,
         args.startAt,
@@ -554,33 +529,12 @@ export const searchEvents = query({
         limit * 4,
         Boolean(args.includeCancelled),
       );
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacy = await queryLegacyEventsInWindow(
-          ctx,
-          args.userId,
-          args.startAt,
-          args.endAt,
-          limit * 4,
-          Boolean(args.includeCancelled),
-        );
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
     } else {
-      const canonical = await ctx.db
+      rows = await ctx.db
         .query('calendarEvents')
         .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
         .order('desc')
         .take(limit * 4);
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacy = await ctx.db
-          .query('calendarEventCorpus')
-          .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
-          .order('desc')
-          .take(limit * 4);
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
     }
     return filterCalendarRows(rows, args)
       .sort((a, b) => a.startAt - b.startAt)
@@ -603,26 +557,16 @@ export const countEvents = query({
     requireInternalSecret(args.internalSecret);
     const CAP = 1000;
     const text = (args.query || '').trim();
-    const useCanonicalSearch = await calendarSearchCutoverReady(ctx);
     let sourceTruncated = false;
     let rows: any[];
     if (text) {
-      const canonical = await ctx.db
+      rows = await ctx.db
         .query('calendarEvents')
         .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
         .take(CAP);
-      sourceTruncated ||= canonical.length >= CAP;
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacy = await ctx.db
-          .query('calendarEventCorpus')
-          .withSearchIndex('by_search_text', (q) => q.search('searchText', text).eq('userId', args.userId))
-          .take(CAP);
-        sourceTruncated ||= legacy.length >= CAP;
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
+      sourceTruncated = rows.length >= CAP;
     } else if (typeof args.startAt === 'number' && typeof args.endAt === 'number') {
-      const canonicalPage = await queryEventsInWindowPage(
+      const page = await queryEventsInWindowPage(
         ctx,
         args.userId,
         args.startAt,
@@ -630,37 +574,14 @@ export const countEvents = query({
         CAP,
         Boolean(args.includeCancelled),
       );
-      const canonical = canonicalPage.rows;
-      sourceTruncated ||= canonicalPage.sourceTruncated;
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacyPage = await queryLegacyEventsInWindowPage(
-          ctx,
-          args.userId,
-          args.startAt,
-          args.endAt,
-          CAP,
-          Boolean(args.includeCancelled),
-        );
-        const legacy = legacyPage.rows;
-        sourceTruncated ||= legacyPage.sourceTruncated;
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
+      rows = page.rows;
+      sourceTruncated = page.sourceTruncated;
     } else {
-      const canonical = await ctx.db
+      rows = await ctx.db
         .query('calendarEvents')
         .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
         .take(CAP);
-      sourceTruncated ||= canonical.length >= CAP;
-      if (useCanonicalSearch) rows = canonical;
-      else {
-        const legacy = await ctx.db
-          .query('calendarEventCorpus')
-          .withIndex('by_user_start', (q) => q.eq('userId', args.userId))
-          .take(CAP);
-        sourceTruncated ||= legacy.length >= CAP;
-        rows = mergeCalendarSearchRows(canonical, legacy);
-      }
+      sourceTruncated = rows.length >= CAP;
     }
     const matched = filterCalendarRows(rows, args);
     return {
@@ -726,314 +647,6 @@ export const liveEvents = query({
   },
 });
 
-// Canonical rows existed before searchText/yearMonth became required at write
-// time. Walk the whole table once, in bounded pages, before cutting search over
-// or deleting the legacy search corpus. This also covers canonical-only rows
-// that have no duplicate left to supply a backfill.
-export const backfillCanonicalEventSearchBatch = internalMutation({
-  args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
-    const page = await ctx.db
-      .query('calendarEvents')
-      .paginate({ cursor: args.cursor ?? null, numItems: limit });
-    let migrated = 0;
-    for (const row of page.page) {
-      if (row.searchText && row.yearMonth) continue;
-      await ctx.db.patch(row._id, {
-        searchText: row.searchText || normalizeCalendarCorpusText(buildEventSearchText(row)),
-        yearMonth: row.yearMonth || yearMonth(row.startAt),
-      });
-      migrated += 1;
-    }
-    return {
-      scanned: page.page.length,
-      migrated,
-      done: page.isDone,
-      ...(!page.isDone ? { continueCursor: page.continueCursor } : {}),
-    };
-  },
-});
-
-// Search now runs on calendarEvents directly. Drain the former duplicate
-// corpus in small transactions so existing deployments reclaim its document
-// and index storage without a large mutation. Legacy canonical rows may
-// predate the searchable fields, so preserve that corpus data before each
-// duplicate is deleted.
-export const purgeLegacyEventCorpusBatch = internalMutation({
-  args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
-  handler: async (ctx, args) => {
-    const limit = Math.min(Math.max(Math.floor(args.limit ?? 250), 25), 500);
-    const page = await ctx.db
-      .query('calendarEventCorpus')
-      .paginate({ cursor: args.cursor ?? null, numItems: limit });
-    let migrated = 0;
-    let skipped = 0;
-    for (const row of page.page) {
-      const canonical = await findEventByProviderId(ctx, row);
-      if (canonical && canonical.userId !== row.userId) {
-        console.warn(`Skipping cross-user calendar event ${row.providerEventId}.`);
-        skipped += 1;
-        continue;
-      }
-      if (!canonical) {
-        const { _id, _creationTime, ...event } = row;
-        await ctx.db.insert('calendarEvents', event);
-        migrated += 1;
-      } else if (!canonical.searchText || !canonical.yearMonth) {
-        await ctx.db.patch(canonical._id, {
-          searchText: canonical.searchText || row.searchText,
-          yearMonth: canonical.yearMonth || row.yearMonth,
-        });
-        migrated += 1;
-      }
-      await ctx.db.delete(row._id);
-    }
-    return {
-      deleted: page.page.length - skipped,
-      migrated,
-      skipped,
-      done: page.isDone,
-      ...(!page.isDone ? { continueCursor: page.continueCursor } : {}),
-    };
-  },
-});
-
-const CALENDAR_SEARCH_MIGRATION = 'calendar-search-canonical-v1';
-
-async function calendarSearchCutoverReady(ctx: QueryCtx): Promise<boolean> {
-  const state = await ctx.db
-    .query('dataMigrations')
-    .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
-    .unique();
-  // The legacy corpus remains intact throughout the canonical phase. Once
-  // that phase durably advances, every canonical row is searchable and reads
-  // can cut over before the duplicate corpus is drained.
-  return state?.status === 'completed' || state?.phase === 'legacy';
-}
-
-function mergeCalendarSearchRows(canonical: any[], legacy: any[]): any[] {
-  const rows = new Map<string, any>();
-  for (const row of canonical) {
-    rows.set(
-      `${row.userId}\u0000${row.accountId}\u0000${row.providerCalendarId}\u0000${row.providerEventId}`,
-      row,
-    );
-  }
-  for (const row of legacy) {
-    const key = `${row.userId}\u0000${row.accountId}\u0000${row.providerCalendarId}\u0000${row.providerEventId}`;
-    if (!rows.has(key)) rows.set(key, row);
-  }
-  return [...rows.values()];
-}
-
-export const calendarSearchMigrationStatus = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db
-      .query('dataMigrations')
-      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
-      .unique();
-  },
-});
-
-const calendarMigrationProgress = {
-  phase: v.union(v.literal('canonical'), v.literal('legacy')),
-  cursor: v.optional(v.string()),
-  canonicalScanned: v.number(),
-  canonicalMigrated: v.number(),
-  legacyDeleted: v.number(),
-  legacyMigrated: v.number(),
-  legacySkipped: v.number(),
-};
-
-export const saveCalendarSearchMigrationProgress = internalMutation({
-  args: calendarMigrationProgress,
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('dataMigrations')
-      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
-      .unique();
-    const progress = {
-      status: 'running' as const,
-      ...args,
-      // Optional mutation args are omitted on the wire. Assign explicitly so
-      // switching phases removes the prior phase's continuation cursor.
-      cursor: args.cursor,
-      updatedAt: now(),
-    };
-    if (existing) {
-      await ctx.db.patch(existing._id, progress);
-      return existing._id;
-    }
-    return await ctx.db.insert('dataMigrations', {
-      name: CALENDAR_SEARCH_MIGRATION,
-      ...progress,
-    });
-  },
-});
-
-export const markCalendarSearchMigrationComplete = internalMutation({
-  args: { result: v.any() },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('dataMigrations')
-      .withIndex('by_name', (q) => q.eq('name', CALENDAR_SEARCH_MIGRATION))
-      .unique();
-    const completedAt = now();
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        status: 'completed',
-        cursor: undefined,
-        updatedAt: completedAt,
-        completedAt,
-        result: args.result,
-      });
-      return existing._id;
-    }
-    return await ctx.db.insert('dataMigrations', {
-      name: CALENDAR_SEARCH_MIGRATION,
-      status: 'completed',
-      updatedAt: completedAt,
-      completedAt,
-      result: args.result,
-    });
-  },
-});
-
-// Deployment entry point: each invocation performs a small bounded amount of
-// work. The workflow repeats it until done, while durable phase/cursor state
-// makes retries safe and keeps every action well below Convex's timeout.
-export const completeCalendarSearchMigration = internalAction({
-  args: {
-    batchSize: v.optional(v.number()),
-    maxBatches: v.optional(v.number()),
-  },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    canonicalScanned: number;
-    canonicalMigrated: number;
-    legacyDeleted: number;
-    legacyMigrated: number;
-    legacySkipped: number;
-    done: boolean;
-    alreadyComplete?: boolean;
-  }> => {
-    const state = await ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus, {});
-    if (state?.status === 'completed') {
-      return {
-        canonicalScanned: 0,
-        canonicalMigrated: 0,
-        legacyDeleted: 0,
-        legacyMigrated: 0,
-        legacySkipped: 0,
-        done: true,
-        alreadyComplete: true,
-      };
-    }
-    const batchSize = Math.min(Math.max(Math.floor(args.batchSize ?? 500), 25), 500);
-    const maxBatchesPerInvocation = Math.min(Math.max(Math.floor(args.maxBatches ?? 20), 1), 20);
-    let batchesRun = 0;
-    let phase: 'canonical' | 'legacy' = state?.phase === 'legacy' ? 'legacy' : 'canonical';
-    let canonicalCursor: string | undefined = phase === 'canonical' ? state?.cursor : undefined;
-    let canonicalScanned = state?.canonicalScanned ?? 0;
-    let canonicalMigrated = state?.canonicalMigrated ?? 0;
-    let legacyCursor: string | undefined = phase === 'legacy' ? state?.cursor : undefined;
-    let legacyDeleted = state?.legacyDeleted ?? 0;
-    let legacyMigrated = state?.legacyMigrated ?? 0;
-    let legacySkipped = state?.legacySkipped ?? 0;
-    const saveProgress = async (cursor?: string) => {
-      await ctx.runMutation(internal.calendarData.saveCalendarSearchMigrationProgress, {
-        phase,
-        ...(cursor ? { cursor } : {}),
-        canonicalScanned,
-        canonicalMigrated,
-        legacyDeleted,
-        legacyMigrated,
-        legacySkipped,
-      });
-    };
-
-    if (phase === 'canonical') {
-      while (batchesRun < maxBatchesPerInvocation) {
-        const result = (await ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch, {
-          limit: batchSize,
-          ...(canonicalCursor ? { cursor: canonicalCursor } : {}),
-        })) as { scanned: number; migrated: number; done: boolean; continueCursor?: string };
-        batchesRun += 1;
-        canonicalScanned += result.scanned;
-        canonicalMigrated += result.migrated;
-        if (result.done) {
-          phase = 'legacy';
-          canonicalCursor = undefined;
-          await saveProgress();
-          break;
-        }
-        if (!result.continueCursor) throw new Error('Canonical calendar search backfill lost its cursor.');
-        canonicalCursor = result.continueCursor;
-        await saveProgress(canonicalCursor);
-      }
-      if (phase === 'canonical') {
-        return {
-          canonicalScanned,
-          canonicalMigrated,
-          legacyDeleted,
-          legacyMigrated,
-          legacySkipped,
-          done: false,
-        };
-      }
-    }
-
-    while (batchesRun < maxBatchesPerInvocation) {
-      const result = (await ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch, {
-        limit: batchSize,
-        ...(legacyCursor ? { cursor: legacyCursor } : {}),
-      })) as {
-        deleted: number;
-        migrated: number;
-        skipped: number;
-        done: boolean;
-        continueCursor?: string;
-      };
-      batchesRun += 1;
-      legacyDeleted += result.deleted;
-      legacyMigrated += result.migrated;
-      legacySkipped += result.skipped;
-      if (result.done) {
-        legacyCursor = undefined;
-        const result = {
-          canonicalScanned,
-          canonicalMigrated,
-          legacyDeleted,
-          legacyMigrated,
-          legacySkipped,
-          done: true,
-        };
-        // Cross-user legacy collisions are quarantined above because deleting
-        // or migrating them would corrupt ownership. Retain their audit count
-        // while preventing every deploy from paying for the same full scan.
-        await ctx.runMutation(internal.calendarData.markCalendarSearchMigrationComplete, { result });
-        return result;
-      }
-      if (!result.continueCursor) throw new Error('Legacy calendar cleanup lost its cursor.');
-      legacyCursor = result.continueCursor;
-      await saveProgress(legacyCursor);
-    }
-
-    return {
-      canonicalScanned,
-      canonicalMigrated,
-      legacyDeleted,
-      legacyMigrated,
-      legacySkipped,
-      done: false,
-    };
-  },
-});
-
 async function queryEventsInWindow(
   ctx: QueryCtx,
   userId: string,
@@ -1053,29 +666,7 @@ async function queryEventsInWindowPage(
   limit?: number,
   includeCancelled = false,
 ) {
-  return windowPage(ctx, 'calendarEvents', userId, startAt, endAt, limit, includeCancelled);
-}
-
-async function queryLegacyEventsInWindow(
-  ctx: QueryCtx,
-  userId: string,
-  startAt: number,
-  endAt: number,
-  limit?: number,
-  includeCancelled = false,
-) {
-  return (await queryLegacyEventsInWindowPage(ctx, userId, startAt, endAt, limit, includeCancelled)).rows;
-}
-
-async function queryLegacyEventsInWindowPage(
-  ctx: QueryCtx,
-  userId: string,
-  startAt: number,
-  endAt: number,
-  limit?: number,
-  includeCancelled = false,
-) {
-  return windowPage(ctx, 'calendarEventCorpus', userId, startAt, endAt, limit, includeCancelled);
+  return windowPage(ctx, userId, startAt, endAt, limit, includeCancelled);
 }
 
 // Multi-day spans are bounded (the longest realistic events are weeks), so a
@@ -1089,7 +680,6 @@ const SPAN_LOOKBACK_MS = 62 * 24 * 60 * 60 * 1000;
 // true when the cap cut rows off, so callers can say the list is partial.
 async function windowPage(
   ctx: QueryCtx,
-  table: 'calendarEvents' | 'calendarEventCorpus',
   userId: string,
   startAt: number,
   endAt: number,
@@ -1102,7 +692,7 @@ async function windowPage(
       ? q.gt(q.field('endAt'), startAt)
       : q.and(q.gt(q.field('endAt'), startAt), q.neq(q.field('status'), 'cancelled'));
   const spanning = await ctx.db
-    .query(table)
+    .query('calendarEvents')
     .withIndex('by_user_start', (q) =>
       q
         .eq('userId', userId)
@@ -1112,7 +702,7 @@ async function windowPage(
     .filter(keep)
     .take(cap + 1);
   const inWindow = await ctx.db
-    .query(table)
+    .query('calendarEvents')
     .withIndex('by_user_start', (q) => q.eq('userId', userId).gte('startAt', startAt).lt('startAt', endAt))
     .filter(keep)
     .take(cap + 1);
@@ -1144,50 +734,6 @@ async function findEventByProviderId(
       q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
     )
     .unique();
-}
-
-// Delete-only compatibility for the bounded corpus migration. New and updated
-// events are no longer dual-written, but a user deletion must remove an
-// existing legacy duplicate until the one-time purge has drained the table.
-async function deleteLegacyCorpusEvent(
-  ctx: any,
-  args: { userId: string; accountId: string; providerEventId: string; providerCalendarId?: string },
-) {
-  const row = args.providerCalendarId
-    ? await ctx.db
-        .query('calendarEventCorpus')
-        .withIndex('by_account_calendar_event', (q: any) =>
-          q
-            .eq('accountId', args.accountId)
-            .eq('providerCalendarId', args.providerCalendarId as string)
-            .eq('providerEventId', args.providerEventId),
-        )
-        .unique()
-    : await ctx.db
-        .query('calendarEventCorpus')
-        .withIndex('by_account_event', (q: any) =>
-          q.eq('accountId', args.accountId).eq('providerEventId', args.providerEventId),
-        )
-        .unique();
-  if (row && row.userId === args.userId) await ctx.db.delete(row._id);
-}
-
-async function deleteLegacyCalendarCorpus(
-  ctx: any,
-  userId: string,
-  accountId: string,
-  providerCalendarIds: Set<string>,
-) {
-  if (providerCalendarIds.size === 0) return;
-  for (const providerCalendarId of providerCalendarIds) {
-    const rows = await ctx.db
-      .query('calendarEventCorpus')
-      .withIndex('by_user_account_calendar_start', (q: any) =>
-        q.eq('userId', userId).eq('accountId', accountId).eq('providerCalendarId', providerCalendarId),
-      )
-      .collect();
-    for (const row of rows) await ctx.db.delete(row._id);
-  }
 }
 
 function filterCalendarRows(rows: any[], args: any) {

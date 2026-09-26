@@ -33,8 +33,6 @@ function newHarness() {
   return convexTest(schema, convexModules);
 }
 
-type Harness = ReturnType<typeof newHarness>;
-
 const HOUR = 3_600_000;
 const BASE = Date.UTC(2026, 6, 20, 12, 0, 0); // 2026-07-20T12:00Z
 
@@ -47,27 +45,6 @@ function eventInput(overrides: Record<string, unknown> = {}) {
     endAt: BASE + HOUR,
     ...overrides,
   };
-}
-
-async function seedLegacyCorpusRow(t: Harness, overrides: Record<string, unknown> = {}) {
-  return t.run((ctx) =>
-    ctx.db.insert('calendarEventCorpus', {
-      userId: USER,
-      accountId: scope.accountId,
-      grantId: scope.grantId,
-      provider: 'google',
-      providerEventId: 'legacy_event',
-      providerCalendarId: 'cal_1',
-      title: 'Legacy xylophone rehearsal',
-      startAt: BASE,
-      endAt: BASE + HOUR,
-      searchText: 'legacy xylophone rehearsal',
-      yearMonth: '2026-07',
-      createdAt: BASE,
-      updatedAt: BASE,
-      ...overrides,
-    }),
-  );
 }
 
 describe('calendar and event upserts', () => {
@@ -91,7 +68,6 @@ describe('calendar and event upserts', () => {
       ...scope,
       events: [eventInput({ providerCalendarId: 'cal_2', providerEventId: 'event_on_2' })],
     });
-    await seedLegacyCorpusRow(t, { providerCalendarId: 'cal_2', providerEventId: 'legacy_on_2' });
 
     const result = await t.mutation(api.calendarData.upsertCalendarBatch, {
       ...scope,
@@ -102,7 +78,6 @@ describe('calendar and event upserts', () => {
     calendars = await t.query(api.calendarData.listCalendars, { internalSecret: SECRET, userId: USER });
     expect(calendars.map((c) => c.providerCalendarId)).toEqual(['cal_1']);
     expect(await t.run((ctx) => ctx.db.query('calendarEvents').collect())).toHaveLength(0);
-    expect(await t.run((ctx) => ctx.db.query('calendarEventCorpus').collect())).toHaveLength(0);
   });
 
   test('upsertEventBatch derives search fields, patches in place, and rejects cross-user collisions', async () => {
@@ -149,7 +124,7 @@ describe('calendar and event upserts', () => {
 });
 
 describe('event deletion', () => {
-  test('deleteEvent removes the row, its legacy duplicate, and recurring instances on request', async () => {
+  test('deleteEvent removes the row and its recurring instances on request', async () => {
     const t = newHarness();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
@@ -169,7 +144,6 @@ describe('event deletion', () => {
         eventInput({ providerEventId: 'unrelated' }),
       ],
     });
-    await seedLegacyCorpusRow(t, { providerEventId: 'master' });
     await t.mutation(api.calendarData.deleteEvent, {
       internalSecret: SECRET,
       userId: USER,
@@ -181,7 +155,6 @@ describe('event deletion', () => {
     const remaining = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
     // The instance on another calendar is skipped when a calendar id was given.
     expect(remaining.map((r) => r.providerEventId).sort()).toEqual(['inst_other_cal', 'unrelated']);
-    expect(await t.run((ctx) => ctx.db.query('calendarEventCorpus').collect())).toHaveLength(0);
   });
 
   test("deleteEvent never removes another user's row", async () => {
@@ -196,14 +169,13 @@ describe('event deletion', () => {
     expect(await t.run((ctx) => ctx.db.query('calendarEvents').collect())).toHaveLength(1);
   });
 
-  test('removeCalendar drops the calendar, its events, and legacy corpus rows', async () => {
+  test('removeCalendar drops the calendar and its events', async () => {
     const t = newHarness();
     await t.mutation(api.calendarData.upsertCalendarBatch, {
       ...scope,
       calendars: [{ providerCalendarId: 'cal_1', name: 'Doomed' }],
     });
     await t.mutation(api.calendarData.upsertEventBatch, { ...scope, events: [eventInput()] });
-    await seedLegacyCorpusRow(t);
     await t.mutation(api.calendarData.removeCalendar, {
       internalSecret: SECRET,
       userId: USER,
@@ -212,7 +184,6 @@ describe('event deletion', () => {
     });
     expect(await t.run((ctx) => ctx.db.query('calendars').collect())).toHaveLength(0);
     expect(await t.run((ctx) => ctx.db.query('calendarEvents').collect())).toHaveLength(0);
-    expect(await t.run((ctx) => ctx.db.query('calendarEventCorpus').collect())).toHaveLength(0);
   });
 
   test('setCalendarHiddenInternal hides only matching-owner calendars and tolerates misses', async () => {
@@ -253,7 +224,6 @@ describe('reconcileWindow', () => {
         eventInput({ providerEventId: 'after_window', startAt: BASE + 100 * HOUR, endAt: BASE + 101 * HOUR }),
       ],
     });
-    await seedLegacyCorpusRow(t, { providerEventId: 'prune_me' });
     const result = await t.mutation(api.calendarData.reconcileWindow, {
       ...scope,
       providerCalendarId: 'cal_1',
@@ -264,7 +234,6 @@ describe('reconcileWindow', () => {
     expect(result).toMatchObject({ ok: true, pruned: 1, done: true });
     const remaining = await t.run((ctx) => ctx.db.query('calendarEvents').collect());
     expect(remaining.map((r) => r.providerEventId).sort()).toEqual(['after_window', 'keep_me']);
-    expect(await t.run((ctx) => ctx.db.query('calendarEventCorpus').collect())).toHaveLength(0);
   });
 });
 
@@ -439,40 +408,21 @@ describe('event reads', () => {
     expect(count).toEqual({ count: 4, approximate: false });
   });
 
-  test('searchEvents merges legacy rows before cutover and trusts canonical after', async () => {
+  test('searchEvents text search reads the canonical event table', async () => {
     const t = newHarness();
     await t.mutation(api.calendarData.upsertEventBatch, {
       ...scope,
-      events: [eventInput({ providerEventId: 'canonical_evt', title: 'Zebra summit' })],
+      events: [
+        eventInput({ providerEventId: 'canonical_evt', title: 'Zebra summit' }),
+        eventInput({ providerEventId: 'other_evt', title: 'Quarterly review' }),
+      ],
     });
-    await seedLegacyCorpusRow(t, {
-      providerEventId: 'legacy_only',
-      title: 'Zebra legacy briefing',
-      searchText: 'zebra legacy briefing',
-    });
-
-    // Before cutover: text search sees both canonical and legacy rows.
-    const merged = await t.query(api.calendarData.searchEvents, {
+    const found = await t.query(api.calendarData.searchEvents, {
       internalSecret: SECRET,
       userId: USER,
       query: 'zebra',
     });
-    expect(merged.map((r) => r.providerEventId).sort()).toEqual(['canonical_evt', 'legacy_only']);
-
-    // After cutover: legacy corpus is ignored.
-    await t.run(async (ctx) => {
-      await ctx.db.insert('dataMigrations', {
-        name: 'calendar-search-canonical-v1',
-        status: 'completed',
-        updatedAt: Date.now(),
-      });
-    });
-    const canonicalOnly = await t.query(api.calendarData.searchEvents, {
-      internalSecret: SECRET,
-      userId: USER,
-      query: 'zebra',
-    });
-    expect(canonicalOnly.map((r) => r.providerEventId)).toEqual(['canonical_evt']);
+    expect(found.map((r) => r.providerEventId)).toEqual(['canonical_evt']);
   });
 
   test('searchEvents window and unfiltered paths apply account/calendar filters', async () => {

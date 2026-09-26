@@ -294,7 +294,6 @@ export const ACCOUNT_BULK_TABLES = [
   // Snooze rows would otherwise keep waking threads of a removed mailbox.
   'mailSnoozes',
   'calendarEvents',
-  'calendarEventCorpus',
   'areaArtifactLinks',
 ] as const;
 

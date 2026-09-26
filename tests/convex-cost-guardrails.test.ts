@@ -32,55 +32,25 @@ describe('Convex cost guardrails', () => {
     }
   });
 
-  test('calendar search uses the canonical event table instead of a dual-written copy', () => {
+  test('calendar search uses the canonical event table and no legacy corpus remains', () => {
     const schema = read('convex/schema.ts');
     const source = read('convex/calendarData.ts');
-    const events = between(schema, 'calendarEvents: defineTable(', 'calendarEventCorpus: defineTable(');
+    const accounts = read('convex/accounts.ts');
+    const events = between(schema, 'calendarEvents: defineTable(', 'dataMigrations: defineTable(');
     const search = between(source, 'export const searchEvents', 'export const setCalendarColor');
-    const purge = between(
-      source,
-      'export const purgeLegacyEventCorpusBatch',
-      'async function queryEventsInWindow',
-    );
-    const legacyEventDelete = between(
-      source,
-      'async function deleteLegacyCorpusEvent',
-      'async function deleteLegacyCalendarCorpus',
-    );
-    const legacyCalendarDelete = between(
-      source,
-      'async function deleteLegacyCalendarCorpus',
-      'function filterCalendarRows',
-    );
 
     expect(events).toContain(".searchIndex('by_search_text'");
     expect(search).toContain(".query('calendarEvents')");
-    expect(search).toContain(".query('calendarEventCorpus')");
-    expect(search).toContain('calendarSearchCutoverReady(ctx)');
-    expect(source).toContain("return state?.status === 'completed' || state?.phase === 'legacy';");
     expect(search).toContain('count: Math.min(matched.length, CAP)');
     expect(search).toContain('approximate: sourceTruncated || matched.length > CAP');
+    // The one-time migration finished on both deployments; the duplicate
+    // corpus, its merge, and its cutover check are gone.
+    for (const text of [schema, source, accounts]) expect(text).not.toContain('calendarEventCorpus');
+    expect(source).not.toContain('calendarSearchCutoverReady');
+    expect(source).not.toContain('mergeCalendarSearchRows');
+    expect(source).not.toContain('completeCalendarSearchMigration');
     expect(source).not.toContain('upsertCorpusEvent(');
     expect(source).not.toContain('deleteCorpusEvent(');
-    expect(source).toContain('async function deleteLegacyCorpusEvent(');
-    expect(legacyEventDelete.match(/\.query\('calendarEventCorpus'\)/g)).toHaveLength(2);
-    expect(legacyCalendarDelete).toContain(".withIndex('by_user_account_calendar_start'");
-    expect(legacyCalendarDelete).toContain(".eq('providerCalendarId', providerCalendarId)");
-    expect(legacyCalendarDelete).not.toContain(".withIndex('by_user_account'");
-    expect(source).toContain('searchText: canonical.searchText || row.searchText');
-    expect(source).toContain('yearMonth: canonical.yearMonth || row.yearMonth');
-    expect(purge).toContain(".query('calendarEventCorpus')");
-    expect(purge).toContain('.paginate({ cursor: args.cursor ?? null, numItems: limit })');
-    expect(purge).toContain('for (const row of page.page)');
-    expect(purge).toContain('await ctx.db.delete(row._id)');
-    expect(source).toContain('export const backfillCanonicalEventSearchBatch = internalMutation({');
-    expect(source).toContain('export const completeCalendarSearchMigration = internalAction({');
-    expect(source).toContain('ctx.runMutation(internal.calendarData.backfillCanonicalEventSearchBatch');
-    expect(source).toContain('ctx.runMutation(internal.calendarData.purgeLegacyEventCorpusBatch');
-    expect(source).toContain('ctx.runQuery(internal.calendarData.calendarSearchMigrationStatus');
-    expect(source).toContain('ctx.runMutation(internal.calendarData.markCalendarSearchMigrationComplete');
-    expect(source).toContain('const maxBatchesPerInvocation = Math.min(');
-    expect(source).toContain('done: false');
   });
 
   test('calendar reconciliation selects exact overlaps from the end-time index', () => {
@@ -125,10 +95,7 @@ describe('Convex cost guardrails', () => {
       expect(convexDeploy).toContain(markerCondition);
       expect(convexDeploy).toContain('npx convex deploy --allow-deleting-large-indexes');
       expect(convexDeploy).toContain('npx convex deploy');
-      expect(convexDeploy).toContain('for attempt in {1..200}');
-      expect(convexDeploy).toContain("npx convex run calendarData:completeCalendarSearchMigration '{}'");
-      expect(convexDeploy).toContain("jq -e '.done == true'");
-      expect(convexDeploy).toContain('Calendar search migration did not complete');
+      expect(convexDeploy).not.toContain('completeCalendarSearchMigration');
       expect(railwayInstall).toContain('run: npm install -g @railway/cli@5.26.2');
       expect(railwayFlow).toContain('--detach');
       expect(railwayFlow).not.toContain('--ci');

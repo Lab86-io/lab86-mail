@@ -1688,49 +1688,6 @@ export default defineSchema({
       filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
     }),
 
-  calendarEventCorpus: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    grantId: v.string(),
-    provider: v.union(v.literal('google'), v.literal('microsoft'), v.literal('icloud'), v.literal('imap')),
-    providerEventId: v.string(),
-    providerCalendarId: v.string(),
-    title: v.string(),
-    description: v.optional(v.string()),
-    location: v.optional(v.string()),
-    status: v.optional(v.string()),
-    busy: v.optional(v.boolean()),
-    readOnly: v.optional(v.boolean()),
-    startAt: v.number(),
-    endAt: v.number(),
-    allDay: v.optional(v.boolean()),
-    startTimezone: v.optional(v.string()),
-    endTimezone: v.optional(v.string()),
-    masterEventId: v.optional(v.string()),
-    recurrence: v.optional(v.array(v.string())),
-    participants: v.optional(v.array(v.any())),
-    organizer: v.optional(v.any()),
-    conferencing: v.optional(v.any()),
-    icalUid: v.optional(v.string()),
-    htmlLink: v.optional(v.string()),
-    searchText: v.string(),
-    yearMonth: v.string(),
-    providerUpdatedAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_start', ['userId', 'startAt'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_event', ['accountId', 'providerEventId'])
-    .index('by_account_calendar_event', ['accountId', 'providerCalendarId', 'providerEventId'])
-    .index('by_user_account_calendar_start', ['userId', 'accountId', 'providerCalendarId', 'startAt'])
-    .index('by_grant', ['grantId'])
-    .searchIndex('by_search_text', {
-      searchField: 'searchText',
-      filterFields: ['userId', 'accountId', 'providerCalendarId', 'provider', 'yearMonth'],
-    }),
-
   dataMigrations: defineTable({
     name: v.string(),
     status: v.optional(v.union(v.literal('running'), v.literal('completed'))),
