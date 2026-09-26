@@ -16,13 +16,21 @@ const MemorySchema = z.object({
 
 export const remember = defineTool({
   name: 'remember',
-  description: 'Store a note about a sender or recipient, used to personalize drafts/triage.',
+  description:
+    'Store a note about a sender or recipient, used to personalize drafts/triage. By default the note is added to the notes already saved for that email. Use mode "replace" only to rewrite the whole note, and pass the complete new text.',
   category: 'memory',
   mutating: true,
-  input: z.object({ email: z.string(), notes: z.string() }),
+  input: z.object({
+    email: z.string(),
+    notes: z.string(),
+    mode: z
+      .enum(['append', 'replace'])
+      .default('append')
+      .describe('append (default) adds to the saved notes; replace rewrites them.'),
+  }),
   output: z.object({ ok: z.boolean(), memory: MemorySchema }),
-  async handler({ email, notes }) {
-    const m = await rememberSender(email, notes);
+  async handler({ email, notes, mode }) {
+    const m = await rememberSender(email, notes, mode);
     return { ok: true, memory: m };
   },
 });

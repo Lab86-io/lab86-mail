@@ -7,6 +7,8 @@ import {
   SHAPED_TOOL_NAMES,
   type ToolShape,
 } from '../lib/ai/tool-shapes';
+import { toolActivityState } from '../lib/albatross/teach-ui';
+import { needsEventChoice } from '../lib/tools/calendar';
 
 function shape(toolName: string, input: unknown, output: unknown): ToolShape {
   const resolved = resolveToolShape(toolName, input, output);
@@ -89,13 +91,7 @@ describe('resolveToolShape', () => {
 
   test('every mapped tool is a real agent tool', () => {
     for (const name of SHAPED_TOOL_NAMES) {
-      expect(
-        AGENT_TOOL_NAMES.has(name) ||
-          name === 'recent_threads' ||
-          name === 'list_account_threads' ||
-          name === 'tasks_due_cards' ||
-          name === 'tasks_for_thread',
-      ).toBe(true);
+      expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
     }
   });
 
@@ -209,7 +205,12 @@ describe('resolveToolShape', () => {
       totalMessages: 14,
       memory: 'Likes brevity',
     });
-    expect(result.actions).toEqual([{ kind: 'remember_sender', email: 'ada@x.test' }]);
+    // The saved note rides on the action so the card can prefill and edit it.
+    expect(result.actions).toEqual([
+      { kind: 'remember_sender', email: 'ada@x.test', notes: 'Likes brevity' },
+    ]);
+    const fresh = shape('sender_profile', { email: 'new@x.test' }, { email: 'new@x.test', totalMessages: 1 });
+    expect(fresh.actions).toEqual([{ kind: 'remember_sender', email: 'new@x.test' }]);
   });
 
   test('corpus_count → count', () => {
@@ -341,14 +342,33 @@ describe('resolveToolShape', () => {
     expect(result.actions.map((action) => action.kind)).toEqual(['open_event', 'undo_operation']);
   });
 
-  test('calendar_update_event with needsDisambiguation renders nothing', () => {
+  test('calendar_update_event with no candidate rows renders nothing', () => {
     expect(
       resolveToolShape(
         'calendar_update_event',
         { matchTitle: 'x' },
-        { ok: true, needsDisambiguation: true, candidates: [] },
+        { status: 'needs_input', needsDisambiguation: true, candidates: [] },
       ),
     ).toBeNull();
+  });
+
+  test('a calendar disambiguation is a question, not a failure', () => {
+    const candidates = [
+      { accountId: 'acct_1', calendarId: 'cal', eventId: 'e1', title: 'Standup', startAt: 1_789_000_000_000 },
+      { accountId: 'acct_1', calendarId: 'cal', eventId: 'e2', title: 'Standup', startAt: 1_789_086_400_000 },
+    ];
+    const output = needsEventChoice(candidates);
+    expect(output).toMatchObject({ status: 'needs_input', needsDisambiguation: true, candidates });
+    expect('ok' in output).toBe(false);
+    // Web and native read ok:false as a failed row; a question must stay done.
+    expect(toolActivityState('output-available', output)).toBe('done');
+    for (const tool of ['calendar_update_event', 'calendar_delete_event']) {
+      const result = shape(tool, { matchTitle: 'Standup' }, output);
+      expect(result.kind).toBe('events');
+      expect(result.title).toBe('Which “Standup” event?');
+      expect(result.activity.done).toBe('Several events match. Waiting for your choice');
+      expect(result.items.map((row: any) => row.eventId)).toEqual(['e1', 'e2']);
+    }
   });
 
   test('tasks_create_card → task with complete and undo', () => {

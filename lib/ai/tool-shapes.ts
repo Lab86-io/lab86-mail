@@ -27,7 +27,8 @@ export type ShapeAction =
   | { kind: 'open_url'; url: string; label?: string }
   | { kind: 'import_file'; connectionId: string; fileId: string; mimeType?: string }
   | { kind: 'undo_operation'; operationId: string }
-  | { kind: 'remember_sender'; email: string };
+  /** notes: the saved note, so the card can prefill it and save the edit whole. */
+  | { kind: 'remember_sender'; email: string; notes?: string };
 
 export interface ShapeActivity {
   running: string;
@@ -562,8 +563,25 @@ function taskStateShape(input: Rec, output: Rec, toolName: string): ToolShape | 
   };
 }
 
-function calendarReceipt(input: Rec, output: Rec, toolName: string): ReceiptShape | null {
-  if (output.needsDisambiguation) return null;
+/** Several events matched a title: show them as a question, not as a failure. */
+function eventChoiceShape(input: Rec, output: Rec, toolName: string): ToolShape | null {
+  const match = clip(str(input.matchTitle) || str(input.title), 60);
+  const shape = eventsShape(
+    toolName,
+    input,
+    output,
+    asArray(output.candidates),
+    match ? `Which “${match}” event?` : 'Which event?',
+  );
+  if (!shape) return null;
+  const waiting = 'Several events match. Waiting for your choice';
+  return { ...shape, activity: { ...shape.activity, done: waiting } };
+}
+
+function calendarReceipt(input: Rec, output: Rec, toolName: string): ToolShape | null {
+  if (output.status === 'needs_input' || output.needsDisambiguation) {
+    return eventChoiceShape(input, output, toolName);
+  }
   const account = str(input.account) || str(output.accountId);
   const eventId = str(output.eventId) || str(input.eventId);
   const calendarId = str(output.calendarId) || str(input.calendarId) || undefined;
@@ -590,10 +608,6 @@ const MAPPERS: Record<string, Mapper> = {
     threadsShape(tool, input, output, asArray(output.items), `Mail matching “${clip(str(input.query), 60)}”`),
   list_smart_category: (input, output, tool) =>
     threadsShape(tool, input, output, asArray(output.items), `${str(input.category) || 'Category'} mail`),
-  recent_threads: (input, output, tool) =>
-    threadsShape(tool, input, output, asArray(output.threads), 'Recent mail'),
-  list_account_threads: (input, output, tool) =>
-    threadsShape(tool, input, output, asArray(output.threads), 'Recent mail'),
   preview_smart_label: (input, output, tool) =>
     threadsShape(tool, input, output, asArray(output.items), `Preview of “${clip(str(input.name), 40)}”`),
   corpus_search: (input, output, tool) => {
@@ -634,7 +648,11 @@ const MAPPERS: Record<string, Mapper> = {
       totalMessages: total,
       lastSeenIso: iso(output.lastSeen),
       memory: str(asRecord(output.memory).notes) || undefined,
-      actions: [{ kind: 'remember_sender', email }],
+      actions: [
+        str(asRecord(output.memory).notes)
+          ? { kind: 'remember_sender', email, notes: str(asRecord(output.memory).notes) }
+          : { kind: 'remember_sender', email },
+      ],
     };
   },
   corpus_count: (input, output, tool) => {
@@ -802,7 +820,9 @@ const MAPPERS: Record<string, Mapper> = {
   calendar_delete_event: calendarReceipt,
   calendar_rsvp_event: (input, output, tool) => {
     const shape = calendarReceipt(input, output, tool);
-    return shape ? { ...shape, target: { ...shape.target, status: str(input.status) } } : null;
+    return shape?.kind === 'receipt'
+      ? { ...shape, target: { ...shape.target, status: str(input.status) } }
+      : shape;
   },
   calendar_delete_recurring_series: (input, output, tool) =>
     receipt(tool, input, output, 'calendar', [], { deleted: num(output.deleted) }),
@@ -866,22 +886,6 @@ const MAPPERS: Record<string, Mapper> = {
         .filter(Boolean)
         .join('\n'),
     );
-  },
-  tasks_due_cards: (input, output, tool) => {
-    const items = asArray(output.cards)
-      .map((row) => taskRow(row))
-      .filter((row): row is TaskRow => Boolean(row))
-      .slice(0, SHAPE_LIST_LIMIT);
-    if (!items.length) return null;
-    return { kind: 'tasks', ...base(tool, input, output, 'Due tasks'), items, actions: [] };
-  },
-  tasks_for_thread: (input, output, tool) => {
-    const items = asArray(output.cards)
-      .map((row) => taskRow(row))
-      .filter((row): row is TaskRow => Boolean(row))
-      .slice(0, SHAPE_LIST_LIMIT);
-    if (!items.length) return null;
-    return { kind: 'tasks', ...base(tool, input, output, 'Linked tasks'), items, actions: [] };
   },
   tasks_create_card: (input, output, tool) => {
     const cardId = str(output.cardId);

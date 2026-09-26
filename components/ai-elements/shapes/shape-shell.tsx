@@ -158,6 +158,11 @@ function rowOutcome(status: Record<string, ActionStatus>, entries: ActionEntry[]
   return { done, error, pending };
 }
 
+/** The note field starts from the saved note, so a save edits it instead of erasing it. */
+export function promptNoteFor(action: ShapeAction): string {
+  return action.kind === 'remember_sender' ? action.notes || '' : '';
+}
+
 /**
  * The actions of one row or card. Navigation actions stay enabled after a
  * mutation; mutations disable once one has run on the row.
@@ -186,6 +191,7 @@ export function ActionBar({
       return;
     }
     if (entry.prompt === 'note') {
+      setNote(promptNoteFor(entry.action));
       setPrompting(entry.key);
       return;
     }
