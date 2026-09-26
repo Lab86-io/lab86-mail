@@ -166,3 +166,22 @@ test('latest edition reflects current scoped Jev facts while full history remain
   });
   expect(saved.sections.answer).toHaveLength(1);
 });
+
+test('the latest read applies saved dismissals so a reload keeps items hidden', async () => {
+  const { editorialFixture } = await import('./fixtures/editorial');
+  const { edition } = editorialFixture();
+  const saved = { ...edition, generatedAt: Date.now() - 3 * 86_400_000 };
+  setDailyReportReaderForTest({
+    configured: () => true,
+    loadDismissals: async () => ({ threads: new Set(['account-a:thread-a']), tasks: new Set(['check']) }),
+    query: (async () => ({ page: [saved], isDone: true, continueCursor: '' })) as any,
+  });
+  await context(async () => {
+    const latest = await getLatestDailyReport();
+    expect(latest?.sections.answer).toEqual([]);
+    expect(latest?.sections.tasks).toEqual([]);
+    expect(JSON.stringify(latest?.document)).not.toContain('thread-a');
+    // History stays a snapshot.
+    expect((await listDailyReports(1))[0].sections.answer).toHaveLength(1);
+  });
+});

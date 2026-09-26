@@ -417,3 +417,39 @@ test('the daily pipeline carries a terminal writer error to the job, not into th
   expect(composed.writerTerminalError?.message).toBe('Payment required');
   expect(JSON.stringify(finalizeBudgetReport(edition, composed))).not.toContain('Payment required');
 });
+
+test('saved dismissals hide items from the latest edition on every read, also after 24 hours', () => {
+  const { edition } = editorialFixture();
+  const read = migrateDailyReport(edition, NOW);
+  const refsOf = (value: typeof read) => collectBriefRefs(value.document!).map((ref) => ref.id);
+  expect(refsOf(read)).toContain('thread-a');
+  expect(refsOf(read)).toContain('check');
+  for (const at of [NOW + 1000, NOW + 3 * 86_400_000]) {
+    const hidden = projectBriefMail(read, [], policy, at, {
+      threads: new Set(['account-a:thread-a']),
+      tasks: new Set(['check']),
+    });
+    expect(refsOf(hidden)).not.toContain('thread-a');
+    expect(refsOf(hidden)).not.toContain('check');
+    expect(hidden.sections.answer?.some((item) => item.threadId === 'thread-a')).toBe(false);
+    expect(hidden.sections.tasks).toEqual([]);
+  }
+  // Nothing hidden and an old edition: the stored snapshot comes back as is.
+  expect(projectBriefMail(read, [], policy, NOW + 3 * 86_400_000, { threads: new Set() })).toBe(read);
+  expect(JSON.stringify(migrateDailyReport(edition, NOW))).toBe(JSON.stringify(read));
+});
+
+test('a mail update keeps the written lede and changes only the item lines', () => {
+  const { edition } = editorialFixture();
+  const read = migrateDailyReport(edition, NOW);
+  const live = projectBriefMail(
+    read,
+    [thread({ jev: assessment({ sourceRevision: 'updated-request' }) })],
+    policy,
+    NOW + 2000,
+  );
+  expect(live).not.toBe(read);
+  expect(live.prose?.lede).toBe(edition.prose!.lede);
+  expect(live.prose?.model).toBe('fixture');
+  expect(JSON.stringify(live.document)).not.toContain('refreshed from the latest mail');
+});

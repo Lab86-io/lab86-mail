@@ -2,7 +2,8 @@ import { editorialPlanSchema } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import { projectBriefMail } from '../jev/report';
+import { DEFAULT_JEV_PREFERENCES } from '../jev/contract';
+import { type BriefHiddenItems, projectBriefMail } from '../jev/report';
 import { loadJevPolicy, markJevBriefItems } from '../jev/service';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
@@ -21,6 +22,7 @@ import {
   MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
+import { listDismissedDailyReportTasks, listDismissedDailyReportThreads } from './daily-report-dismissals';
 import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 const saveDefaults = {
@@ -51,11 +53,24 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
+// Saved brief dismissals (dismiss, resolve, archive) as hidden item sets.
+async function loadBriefDismissals(): Promise<BriefHiddenItems> {
+  const [threads, tasks] = await Promise.all([
+    listDismissedDailyReportThreads(),
+    listDismissedDailyReportTasks(),
+  ]);
+  return {
+    threads: new Set(threads.map((row) => `${row.account}:${row.threadId}`)),
+    tasks: new Set(tasks.map((row) => row.cardId).filter(Boolean)),
+  };
+}
+
 const readDefaults = {
   query: convexQuery,
   configured: isConvexConfigured,
   loadPolicy: loadJevPolicy,
   load: getDailyReport,
+  loadDismissals: loadBriefDismissals,
 };
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
@@ -110,7 +125,17 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
     ? await readDependencies.load(latest._id)
     : await migrateDailyReportForRead(latest);
   if (!report) return null;
-  if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
+  if (!readDependencies.configured()) return report;
+  const hidden = await readDependencies.loadDismissals().catch((): BriefHiddenItems => ({}));
+  // Dismissals apply to any latest edition; live mail facts only to a fresh one.
+  if (Date.now() - report.generatedAt > 24 * 3600_000)
+    return projectBriefMail(
+      report,
+      [],
+      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+      Date.now(),
+      hidden,
+    );
   const items = [
     ...(report.sections.answer || []),
     ...(report.sections.today || []),
@@ -144,9 +169,17 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
         ).values(),
       ],
       policy,
+      Date.now(),
+      hidden,
     );
   } catch {
-    return report;
+    return projectBriefMail(
+      report,
+      [],
+      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+      Date.now(),
+      hidden,
+    );
   }
 }
 
