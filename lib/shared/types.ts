@@ -453,7 +453,18 @@ export interface DailyReportSinceLastEdition {
     areaId?: string;
     completedAt: number;
   }>;
-  agentActions: Array<{ tool: string; surface: string; summary: string; createdAt: number }>;
+  agentActions: Array<{
+    tool: string;
+    surface: string;
+    summary: string;
+    createdAt: number;
+    // The operations log row, for Undo (FEATURES item 7). Absent on editions
+    // written before 2026-09-26.
+    operationId?: string;
+    undoable?: boolean;
+    reason?: string;
+    status?: string;
+  }>;
 }
 
 // The model-written prose of a budget brief. Everything else in the edition is

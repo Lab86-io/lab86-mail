@@ -40,6 +40,7 @@ const LANE_TITLES: Record<string, string> = {
   answer: 'Answer',
   today: 'Today',
   know: 'Know',
+  since: 'What Albatross did',
   waiting: 'Waiting on',
   tasks: 'Tasks this week',
   connected: 'Connected tools',
@@ -49,7 +50,7 @@ const LANE_TITLES: Record<string, string> = {
 // Paragraph regions and their kickers: the daily `yesterday` and `week-ahead`,
 // and the area `week`.
 const PARAGRAPH_KICKERS: Record<string, string> = {
-  yesterday: 'Yesterday',
+  yesterday: 'Since yesterday',
   'week-ahead': 'Week ahead',
   week: 'Week ahead',
 };
@@ -273,14 +274,18 @@ function LetterRow({
   const isEvent = kind === 'event';
   const isTask = kind === 'task' || kind === 'card';
   const isTool = kind === 'mcp';
+  // A logged operation from "What Albatross did" (FEATURES item 7).
+  const isOperation = kind === 'derived' && item.ref.id.startsWith('operation:');
   const subject = entity?.title || item.ref.label || '(no subject)';
   const sender = isEvent
     ? 'Calendar'
     : isTask
       ? 'Task'
-      : item.framing.sender ||
-        (entity?.subtitle ? shortFrom(entity.subtitle) : '') ||
-        (isTool ? 'Connected tool' : 'Unknown sender');
+      : isOperation
+        ? item.framing.sender || 'Albatross'
+        : item.framing.sender ||
+          (entity?.subtitle ? shortFrom(entity.subtitle) : '') ||
+          (isTool ? 'Connected tool' : 'Unknown sender');
   const age = item.framing.age?.trim() || '';
   const completed = isTask ? (context.completedRefs.get(key) ?? entity?.completed ?? false) : false;
   const unread = kind === 'thread' && entity?.unread === true;
@@ -318,19 +323,19 @@ function LetterRow({
       )}
       style={{ animationDelay: `${delayMs}ms` }}
     >
-      {isEvent || isTask ? (
+      {isEvent || isTask || isOperation ? (
         <span
           aria-hidden
           className={cn(
             'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full font-display text-[11px] font-semibold',
             isEvent
               ? 'bg-[var(--color-accent-3-soft)] text-[var(--color-accent-3)]'
-              : completed
+              : completed || isOperation
                 ? 'bg-[var(--color-accent-2-soft)] text-[var(--color-accent-2)]'
                 : 'border border-[var(--color-border-strong)] text-[var(--color-text-muted)]',
           )}
         >
-          {isEvent ? eventHour(entity?.startAt) : completed ? '\u2713' : dueDay(entity?.dueAt)}
+          {isEvent ? eventHour(entity?.startAt) : completed || isOperation ? '\u2713' : dueDay(entity?.dueAt)}
         </span>
       ) : (
         <Avatar name={sender} size={28} className="mt-0.5" />

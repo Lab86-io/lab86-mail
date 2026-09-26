@@ -598,3 +598,21 @@ export const setBriefCorrection = mutation({
     return { previous };
   },
 });
+
+// ---- "Since yesterday" (FEATURES item 7) -----------------------------------
+// The live status of the operations an edition lists, so a row the user undid
+// here or in Activity leaves the edition. Only the caller's rows answer.
+export const operationStates = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), ids: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await Promise.all(
+      args.ids.slice(0, 24).map(async (raw) => {
+        const id = ctx.db.normalizeId('aiOperations', raw);
+        const row = id ? await ctx.db.get(id) : null;
+        return row && row.userId === args.userId ? { id: raw, status: row.status } : null;
+      }),
+    );
+    return rows.filter((row) => row !== null);
+  },
+});

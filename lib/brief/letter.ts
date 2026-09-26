@@ -25,6 +25,7 @@ export type BriefLetterKind = 'daily' | 'area';
 export const DAILY_LETTER_REGION_IDS = [
   'lede',
   'yesterday',
+  'since',
   'answer',
   'today',
   'know',

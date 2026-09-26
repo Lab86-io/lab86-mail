@@ -128,6 +128,8 @@ export async function loadSinceLastEditionFromConvex(
       areaId: row.areaId ? String(row.areaId) : undefined,
       completedAt: Number(row.completedAt || 0),
     })),
+    // What Albatross did, newest first, each with the log row id so the
+    // brief can offer Undo (FEATURES item 7).
     agentActions: (operations || [])
       .filter(
         (row) =>
@@ -142,6 +144,12 @@ export async function loadSinceLastEditionFromConvex(
         surface: String(row.surface || ''),
         summary: String(row.summary || '').slice(0, 200),
         createdAt: Number(row.createdAt || 0),
+        ...(row._id ? { operationId: String(row._id) } : {}),
+        undoable: Boolean(row.inverse),
+        ...(typeof row.reason === 'string' && row.reason.trim()
+          ? { reason: row.reason.trim().slice(0, 200) }
+          : {}),
+        status: String(row.status),
       })),
   };
 }
@@ -472,7 +480,13 @@ export async function composeBudgetBrief(
     { generate: deps.generate, userId },
   );
 
-  const document = composeBudgetBriefDocument({ report, prose, areas, timezone });
+  // The look back is part of the letter: "What Albatross did" follows the lede.
+  const document = composeBudgetBriefDocument({
+    report: { ...report, sections: { ...report.sections, since } },
+    prose,
+    areas,
+    timezone,
+  });
   return {
     document,
     prose,

@@ -1,4 +1,5 @@
 import { editorialPlanSchema } from '../brief/editorial';
+import { applySinceOperationStates, loadOperationStates, sinceOperationIds } from '../brief/since';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
@@ -170,6 +171,7 @@ const readDefaults = {
   loadDismissals: loadBriefDismissals,
   loadClosedTracked,
   loadSelfAddresses,
+  loadOperationStates: (userId: string, ids: string[]) => loadOperationStates(userId, ids),
 };
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
@@ -246,12 +248,14 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
   const hidden: BriefHiddenItems = { ...dismissals, closedTracked };
   // Dismissals apply to any latest edition; live mail facts only to a fresh one.
   if (Date.now() - report.generatedAt > 24 * 3600_000)
-    return projectBriefMail(
-      report,
-      [],
-      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
-      Date.now(),
-      hidden,
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [],
+        { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+        Date.now(),
+        hidden,
+      ),
     );
   const items = [
     ...(report.sections.answer || []),
@@ -277,27 +281,45 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
         .catch(() => []),
       readDependencies.loadSelfAddresses(userId).catch(() => new Set<string>()),
     ]);
-    return projectBriefMail(
-      report,
-      [
-        ...new Map(
-          [...(Array.isArray(threads) ? threads : []), ...(Array.isArray(arrivals) ? arrivals : [])].map(
-            (thread) => [`${thread.account}:${thread._id}`, thread],
-          ),
-        ).values(),
-      ],
-      policy,
-      Date.now(),
-      { ...hidden, selfAddresses },
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [
+          ...new Map(
+            [...(Array.isArray(threads) ? threads : []), ...(Array.isArray(arrivals) ? arrivals : [])].map(
+              (thread) => [`${thread.account}:${thread._id}`, thread],
+            ),
+          ).values(),
+        ],
+        policy,
+        Date.now(),
+        { ...hidden, selfAddresses },
+      ),
     );
   } catch {
-    return projectBriefMail(
-      report,
-      [],
-      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
-      Date.now(),
-      hidden,
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [],
+        { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+        Date.now(),
+        hidden,
+      ),
     );
+  }
+}
+
+// An operation the user undid since the edition leaves its look back.
+async function withLiveSince(report: DailyReport): Promise<DailyReport> {
+  const ids = sinceOperationIds(report);
+  if (!ids.length) return report;
+  try {
+    return applySinceOperationStates(
+      report,
+      await readDependencies.loadOperationStates(requireStoreUserId(), ids),
+    );
+  } catch {
+    return report;
   }
 }
 

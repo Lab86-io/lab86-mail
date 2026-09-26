@@ -1,3 +1,4 @@
+import { sinceRegion } from '../brief/since';
 import {
   type BriefDocumentV2,
   type BriefNode,
@@ -21,6 +22,7 @@ import type { BriefLane } from './brief-score';
 //
 //   regions[0] "lede"        hero { text role:lede }
 //   regions[n] "yesterday"   text role:body                             when prose
+//   regions[n] "since"       entity_list (derived operation refs, Undo) when Albatross acted
 //   regions[n] "answer"      entity_list (thread refs, lane answer)     when items
 //   regions[n] "today"       entity_list (event refs, then thread refs) when items or events
 //   regions[n] "know"        entity_list (thread refs, lane know)       when items
@@ -336,6 +338,10 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
       tree: { kind: 'text', emphasis: 'standard', tone: 'neutral', role: 'body', text: yesterday },
     });
   }
+
+  // What Albatross did since the last edition, each with Undo (FEATURES item 7).
+  const since = sinceRegion(sections.since, timezone);
+  if (since) regions.push(since);
 
   const days = briefWeekDays(generatedAt, timezone, 1);
   const todayEvents = (eventsByDay(sections.calendar ?? [], days, timezone).get(days[0].dayKey) || []).slice(
