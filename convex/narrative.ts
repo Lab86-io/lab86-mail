@@ -1315,6 +1315,20 @@ export const claim = mutation({
       dailyRunDate: date,
       dailyRuns: runs + 1,
     });
+    // The previous lease has expired, so any run still marked running lost its
+    // worker (a deploy or crash skipped finish). Close it here.
+    const stale = await ctx.db
+      .query('narrativeRuns')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(50);
+    for (const run of stale)
+      if (run.status === 'running')
+        await ctx.db.patch(run._id, {
+          status: 'partial',
+          endedAt: now,
+          error: 'The run stopped before it finished.',
+        });
     await ctx.db.insert('narrativeRuns', {
       userId: args.userId,
       runId: args.runId,
