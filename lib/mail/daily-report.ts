@@ -24,6 +24,7 @@ import {
 } from '../jev/contract';
 import { explicitReplyRequested } from '../jev/fallback';
 import { loadJevPolicy } from '../jev/service';
+import { labelsHaveRole } from '../mail/search/folders';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -418,6 +419,19 @@ export async function generateDailyReport(input: {
     scores.set(key, floor.briefEligible ? Math.max(1, scoreBriefCandidate(signals)) : -100);
   }
 
+  // Thread facts the live edition compares against later (FEATURES item 8):
+  // unread and in the inbox when written, and the counterparty's address.
+  const threadFacts = new Map<string, BriefThreadFacts>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const counterparty = floors.get(key)?.counterparty || '';
+    threadFacts.set(key, {
+      unread: Boolean(thread.unread),
+      inInbox: labelsHaveRole(thread.labels || [], 'INBOX'),
+      ...(counterparty && !self.has(counterparty) ? { senderEmail: counterparty } : {}),
+    });
+  }
+
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
   const enrichCap = Math.min(
     Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || ENRICH_CAP),
@@ -490,6 +504,7 @@ export async function generateDailyReport(input: {
         scores,
         signals: signalsByKey,
         tier,
+        threadFacts,
       });
       await saveDailyReport(partial);
     } catch {
@@ -586,11 +601,25 @@ export async function generateDailyReport(input: {
     scores,
     signals: signalsByKey,
     tier,
+    threadFacts,
   });
   // Silent callers persist the composed artifact themselves; saving the bare
   // structured doc here would wipe the rendered edition mid-pass.
   if (!input.silent) await saveDailyReport(report);
   return report;
+}
+
+export interface BriefThreadFacts {
+  unread: boolean;
+  inInbox: boolean;
+  senderEmail?: string;
+}
+
+function validEmail(value: string | undefined | null): string | undefined {
+  const email = String(value || '')
+    .trim()
+    .toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
@@ -1088,6 +1117,7 @@ export async function composeReport(input: {
   scores?: Map<string, number>;
   signals?: Map<string, BriefScoreSignals>;
   tier?: BriefPlanTier;
+  threadFacts?: Map<string, BriefThreadFacts>;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const threadDismissals = new Map(
@@ -1109,6 +1139,8 @@ export async function composeReport(input: {
   };
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
+    const facts = input.threadFacts?.get(`${insight.account}:${insight.threadId}`);
+    const senderEmail = facts?.senderEmail || validEmail(insight.jev?.sender);
     return {
       account: insight.account,
       threadId: insight.threadId,
@@ -1124,7 +1156,9 @@ export async function composeReport(input: {
         insight.lane === 'bulk'
           ? null
           : insight.commitments.find((c) => c.dueAt)?.dueAt || tracked?.dueAt || null,
-      unread: false,
+      unread: facts?.unread ?? false,
+      ...(facts?.inInbox ? { inInbox: true } : {}),
+      ...(senderEmail ? { senderEmail } : {}),
       trackedThreadId: tracked?._id,
       surfacedBecause: insight.surfacedBecause,
       demotionReason: insight.demotionReason ?? null,

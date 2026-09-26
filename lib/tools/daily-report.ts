@@ -6,6 +6,7 @@ import {
   saveBriefPreferences,
 } from '../brief/preferences';
 import { briefSourceHealth, loadBriefSourceRows } from '../brief/source-health';
+import { steerBriefItem, steerBriefItemInputSchema } from '../brief/steering';
 import { isConvexConfigured } from '../hosted/env';
 import { generateAgentReport } from '../mail/agent-report';
 import { enqueueBriefJob, waitForBriefJob } from '../mail/brief-jobs';
@@ -330,5 +331,26 @@ export const getBriefSourcesTool = defineTool({
       input?.reportId ? getDailyReportStore(input.reportId).catch(() => null) : Promise.resolve(null),
     ]);
     return { health: briefSourceHealth(rows, { report }) };
+  },
+});
+
+// Per-item steering (FEATURES item 8). The result carries the operationId;
+// undo_operation reverses it, and Activity lists it with Undo.
+export const steerBriefItemTool = defineTool({
+  name: 'steer_brief_item',
+  description:
+    'Steer one Daily Brief item. mode not_for_me keeps this conversation out of the brief, less_from_sender keeps the sender out, keep_showing keeps the conversation in even after it is read or handled. Returns an operationId for undo_operation.',
+  category: 'mail',
+  mutating: true,
+  input: steerBriefItemInputSchema,
+  output: z.object({
+    ok: z.boolean(),
+    mode: z.string(),
+    operationId: z.string(),
+    correction: z.any(),
+    summary: z.string(),
+  }),
+  async handler(input, ctx) {
+    return steerBriefItem(signedInUser(ctx.userId), input);
   },
 });

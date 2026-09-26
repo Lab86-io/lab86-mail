@@ -433,6 +433,11 @@ export interface DailyReportItem {
   // When this thread first entered a brief edition (brief round 2026-09-22).
   // Carried from the previous edition so the letter can say "Day 3".
   firstSurfacedAt?: number | null;
+  // The counterparty's address, for "Less from this sender" (FEATURES item 8).
+  senderEmail?: string;
+  // The thread was in the inbox when the edition was written. The live
+  // edition drops it once it leaves the inbox (archived, moved, or trashed).
+  inInbox?: boolean;
 }
 
 export type BriefBudgetLane = 'answer' | 'today' | 'know';

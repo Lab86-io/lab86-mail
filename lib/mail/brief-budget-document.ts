@@ -100,15 +100,45 @@ function threadPayload(item: DailyReportItem) {
   };
 }
 
+// The three steering actions of a lane item (FEATURES item 8). They share one
+// action name; `payload.mode` picks the choice. Clients put them in the
+// item's overflow menu and run `steer_brief_item`.
+export const BRIEF_STEERING_ACTIONS = [
+  { mode: 'not_for_me', label: 'Not for me' },
+  { mode: 'less_from_sender', label: 'Less from this sender' },
+  { mode: 'keep_showing', label: 'Keep showing' },
+] as const;
+
+export function steeringActions(item: DailyReportItem): ItemAction[] {
+  const payload = threadPayload(item);
+  return BRIEF_STEERING_ACTIONS.filter((entry) => entry.mode !== 'less_from_sender' || item.senderEmail).map(
+    (entry) => ({
+      action: 'steer_item',
+      label: entry.label,
+      payload: {
+        ...payload,
+        mode: entry.mode,
+        ...(entry.mode === 'less_from_sender' && item.senderEmail ? { senderEmail: item.senderEmail } : {}),
+      },
+      style: 'quiet' as const,
+    }),
+  );
+}
+
 // The actions for one thread row. Open comes first; clients treat the first
 // known action as the row tap. The rest are the review and immediate actions
-// both clients already run.
+// both clients already run, then the steering actions.
 export function threadActions(item: DailyReportItem, region: ThreadRegion): ItemAction[] {
   const payload = threadPayload(item);
   const open: ItemAction = { action: 'open_thread', label: 'Open', payload, style: 'quiet' };
   const dismiss: ItemAction = { action: 'dismiss_thread', label: 'Not needed', payload, style: 'quiet' };
   if (region === 'answer') {
-    return [open, { action: 'draft_reply', label: 'Reply', payload, style: 'secondary' }, dismiss];
+    return [
+      open,
+      { action: 'draft_reply', label: 'Reply', payload, style: 'secondary' },
+      dismiss,
+      ...steeringActions(item),
+    ];
   }
   if (region === 'today') {
     const actions: ItemAction[] = [open];
@@ -120,7 +150,7 @@ export function threadActions(item: DailyReportItem, region: ThreadRegion): Item
         style: 'secondary',
       });
     }
-    actions.push(dismiss);
+    actions.push(dismiss, ...steeringActions(item));
     return actions;
   }
   if (region === 'waiting') {
@@ -134,7 +164,7 @@ export function threadActions(item: DailyReportItem, region: ThreadRegion): Item
       },
     ];
   }
-  return [open, dismiss];
+  return [open, dismiss, ...steeringActions(item)];
 }
 
 function laneItem(item: DailyReportItem, lane: ThreadRegion, line: string | undefined, generatedAt: number) {

@@ -3,6 +3,7 @@ import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { composeBudgetBriefDocument } from '../mail/brief-budget-document';
 import { assignBriefLane, budgetForTier, selectBriefItems } from '../mail/brief-score';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
+import { labelsHaveRole } from '../mail/search/folders';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefNode } from '../shared/brief-document';
 import { emailFromHeader } from '../shared/format';
@@ -24,6 +25,39 @@ export interface BriefHiddenItems {
   threads?: ReadonlySet<string>;
   /** Task card ids. */
   tasks?: ReadonlySet<string>;
+  /** Tracked thread ids the user resolved or dismissed (FEATURES item 8). */
+  closedTracked?: ReadonlySet<string>;
+  /** The user's own addresses: a newest message from one of them is an answer. */
+  selfAddresses?: ReadonlySet<string>;
+}
+
+/**
+ * Why a live thread no longer needs the edition (FEATURES item 8): it left the
+ * inbox, the user read an item that asked for nothing, or the user answered.
+ * A "Keep showing" correction (`included`) keeps it. Waiting items stay until
+ * the reply comes: reading them or writing last is what waiting means.
+ */
+export function handledSinceEdition(
+  item: DailyReportItem,
+  current: Thread,
+  options: { included: boolean; waiting: boolean; selfAddresses?: ReadonlySet<string> },
+): 'trashed' | 'archived' | 'read' | 'answered' | null {
+  if (options.included) return null;
+  const labels = current.labels || [];
+  if (labelsHaveRole(labels, 'TRASH') || labelsHaveRole(labels, 'SPAM')) return 'trashed';
+  if (item.inInbox === true && labels.length > 0 && !labelsHaveRole(labels, 'INBOX')) return 'archived';
+  if (options.waiting) return null;
+  const obligations = (current.jev ?? item.jev)?.obligations ?? [];
+  const owesWork = obligations.some((entry) => entry.kind === 'reply' || entry.kind === 'action');
+  if (item.unread === true && current.unread === false && !owesWork) return 'read';
+  const from = (emailFromHeader(current.fromAddress) || '').toLowerCase();
+  if (
+    from &&
+    options.selfAddresses?.has(from) &&
+    Number(current.lastDate || 0) > Number(item.receivedAt || 0)
+  )
+    return 'answered';
+  return null;
 }
 
 /**
@@ -55,10 +89,12 @@ export function projectBriefMail(
   const live = now - report.generatedAt <= 24 * 3600_000;
   const hiddenThreads = hidden.threads ?? new Set<string>();
   const hiddenTasks = hidden.tasks ?? new Set<string>();
-  const isHidden = (item: Pick<DailyReportItem, 'account' | 'threadId'>) =>
-    hiddenThreads.has(`${item.account}:${item.threadId}`);
+  const closedTracked = hidden.closedTracked ?? new Set<string>();
+  const isHidden = (item: Pick<DailyReportItem, 'account' | 'threadId' | 'trackedThreadId'>) =>
+    hiddenThreads.has(`${item.account}:${item.threadId}`) ||
+    Boolean(item.trackedThreadId && closedTracked.has(item.trackedThreadId));
   if (!live) {
-    if (!hiddenThreads.size && !hiddenTasks.size) return report;
+    if (!hiddenThreads.size && !hiddenTasks.size && !closedTracked.size) return report;
     const s: Partial<DailyReport['sections']> = report.sections ?? {};
     const touched =
       [
@@ -78,7 +114,7 @@ export function projectBriefMail(
   }
   const byKey = new Map(live ? threads.map((thread) => [`${thread.account}:${thread._id}`, thread]) : []);
   let changed = false;
-  const project = (items?: DailyReportItem[]) =>
+  const project = (items?: DailyReportItem[], waitingSection = false) =>
     (items || []).flatMap((item) => {
       if (isHidden(item)) {
         changed = true;
@@ -116,7 +152,16 @@ export function projectBriefMail(
         wasActionable &&
         !assessment.obligations.length &&
         (!assessment.meaningfulChange || !policy.preferences.briefAccountChanges);
-      if (excluded || bulkExcluded || resolved) {
+      const handled = handledSinceEdition(item, current, {
+        included,
+        waiting:
+          waitingSection ||
+          (hasObligation(assessment ?? item.jev, 'waiting') &&
+            !hasObligation(assessment ?? item.jev, 'reply') &&
+            !hasObligation(assessment ?? item.jev, 'action')),
+        selfAddresses: hidden.selfAddresses,
+      });
+      if (excluded || bulkExcluded || resolved || handled) {
         changed = true;
         return [];
       }
@@ -161,7 +206,7 @@ export function projectBriefMail(
     today: project(report.sections.today),
     know: project(report.sections.know),
     overflow: project(report.sections.overflow),
-    waiting: project(report.sections.waiting),
+    waiting: project(report.sections.waiting, true),
     replyOwed: project(report.sections.replyOwed),
     followUpOwed: project(report.sections.followUpOwed),
     timeSensitive: project(report.sections.timeSensitive),

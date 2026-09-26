@@ -12,7 +12,7 @@ import {
   markWeekdays,
   noiseFooterCopy,
 } from '@/lib/brief/letter';
-import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
+import { briefActionTier, isBriefSteeringAction, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import type {
   BriefActionV2,
   BriefContentLeaf,
@@ -21,7 +21,7 @@ import type {
 } from '@/lib/shared/brief-document';
 import { shortFrom } from '@/lib/shared/format';
 import { cn } from '@/lib/utils';
-import { BriefReviewPopover } from './BriefActions';
+import { BriefReviewPopover, BriefSteeringMenu } from './BriefActions';
 import { type BriefNodeContext, BriefNodeView, withBriefRegion } from './BriefNodeView';
 import { payloadForBriefAction } from './brief-action-runtime';
 
@@ -285,7 +285,11 @@ function LetterRow({
   const completed = isTask ? (context.completedRefs.get(key) ?? entity?.completed ?? false) : false;
   const unread = kind === 'thread' && entity?.unread === true;
   const line = item.framing.reason || (gone ? 'This item is no longer available.' : '');
-  const known = item.actions.filter((candidate) => isKnownBriefAction(candidate.action));
+  // Steering choices go to the overflow menu; the row keeps the rest.
+  const known = item.actions.filter(
+    (candidate) => isKnownBriefAction(candidate.action) && !isBriefSteeringAction(candidate.action),
+  );
+  const steering = item.actions.filter((candidate) => isBriefSteeringAction(candidate.action));
   const action = known[0];
   const run = (candidate: BriefActionV2) =>
     context.onAction(candidate, payloadForBriefAction(candidate, item.ref), item.ref);
@@ -368,7 +372,7 @@ function LetterRow({
               {subject}
             </p>
           </div>
-          {known.length && !gone ? (
+          {(known.length || steering.length) && !gone ? (
             <span
               data-brief-letter-actions
               className="flex shrink-0 flex-wrap items-baseline gap-x-3 self-start @[480px]:self-baseline"
@@ -382,6 +386,9 @@ function LetterRow({
                   onRun={() => run(candidate)}
                 />
               ))}
+              {steering.length ? (
+                <BriefSteeringMenu actions={steering} onRun={run} className="self-center" />
+              ) : null}
             </span>
           ) : null}
         </div>

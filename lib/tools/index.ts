@@ -95,6 +95,7 @@ import {
   restoreDailyReportTaskTool,
   restoreDailyReportThreadTool,
   saveBriefPreferencesTool,
+  steerBriefItemTool,
 } from './daily-report';
 import { DISPLAY_TOOLS } from './display';
 import {
@@ -264,6 +265,7 @@ const allTools: AnyTool[] = [
   getBriefPreferencesTool,
   saveBriefPreferencesTool,
   getBriefSourcesTool,
+  steerBriefItemTool,
   listSmartLabels,
   createSmartLabel,
   previewSmartLabel,
