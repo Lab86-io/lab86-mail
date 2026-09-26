@@ -1,6 +1,6 @@
 import { runWithAiRequestContext } from '../ai/context';
+import { mapConcurrent } from '../classifier/client';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { mapConcurrent } from '../jev/client';
 import { loadJevPolicy } from '../jev/service';
 import { contentVersion, syncCloudContent } from './cloud-sync';
 import { type ContentItem } from './contract';

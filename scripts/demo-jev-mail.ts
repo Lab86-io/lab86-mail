@@ -1,6 +1,6 @@
 /** Live provider calls on synthetic messages, using the same questions and policy as the Settings demo. */
 import { mkdir, writeFile } from 'node:fs/promises';
-import { evaluateJev } from '../lib/jev/client';
+import { evaluateClassifier } from '../lib/classifier/client';
 import { DEFAULT_JEV_PREFERENCES } from '../lib/jev/contract';
 import { demoMailInput, demoResult, JEV_DEMO_EXAMPLES } from '../lib/jev/demo';
 import { buildMailQuestions } from '../lib/jev/mail';
@@ -11,7 +11,7 @@ const results = [];
 for (const example of JEV_DEMO_EXAMPLES) {
   const input = demoMailInput(example.input, Date.now());
   const start = performance.now();
-  const response = await evaluateJev({
+  const response = await evaluateClassifier({
     apiKey,
     state: {
       mailboxOwnerAddresses: input.selfAddresses,

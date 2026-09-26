@@ -115,6 +115,14 @@ export default defineSchema({
     .index('by_user_run_key', ['userId', 'runId', 'key'])
     .index('by_user_run_created', ['userId', 'runId', 'createdAt'])
     .index('by_user', ['userId']),
+  // Deployment-wide operator settings (not per user), e.g. the selected mail classifier.
+  deploymentSettings: defineTable({
+    key: v.string(),
+    value: v.any(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.string()),
+  }).index('by_key', ['key']),
+
   users: defineTable({
     clerkUserId: v.string(),
     email: v.string(),

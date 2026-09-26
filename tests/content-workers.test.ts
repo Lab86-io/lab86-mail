@@ -29,12 +29,12 @@ const answers: any = {
 test('classification supplies trusted owner identity, validates answer types and requires confident work matching', async () => {
   const calls: any[] = [];
   const deps: any = {
-    resolveJevRuntime: async () => ({ apiKey: 'fake' }),
-    evaluateJev: async (args: any) => {
+    resolveClassifierRuntime: async () => ({ apiKey: 'fake' }),
+    evaluateClassifier: async (args: any) => {
       calls.push(args);
       return { model: 'typesafe/jev-1.13', answers };
     },
-    recordJevUsage: async () => {},
+    recordClassifierUsage: async () => {},
   };
   expect(await classifyContent('owner', item, [{ id: 'work', text: 'Launch' }], deps)).toMatchObject({
     actionable: true,
@@ -42,7 +42,7 @@ test('classification supplies trusted owner identity, validates answer types and
     workId: 'work',
   });
   expect(calls[0].state.ownerIdentities).toEqual(['Jakob']);
-  deps.evaluateJev = async () => ({
+  deps.evaluateClassifier = async () => ({
     model: 'typesafe/jev-1.13',
     answers: {
       ...answers,
@@ -54,7 +54,7 @@ test('classification supplies trusted owner identity, validates answer types and
     actionable: false,
     workId: null,
   });
-  deps.evaluateJev = async () => ({
+  deps.evaluateClassifier = async () => ({
     model: 'typesafe/jev-1.13',
     answers: { ...answers, actionable: { type: 'choice' } },
   });
@@ -64,8 +64,8 @@ test('classification supplies trusted owner identity, validates answer types and
 test('embedding parsing restores provider order, records usage and rejects malformed dimensions', async () => {
   const usage: any[] = [];
   const deps: any = {
-    resolveJevRuntime: async () => ({ apiKey: 'fake' }),
-    recordJevUsage: async (...args: any[]) => usage.push(args),
+    resolveOpenRouterUtilityRuntime: async () => ({ apiKey: 'fake' }),
+    recordClassifierUsage: async (...args: any[]) => usage.push(args),
   };
   const fetcher: any = async (_url: string, args: any) => {
     expect(JSON.parse(args.body).dimensions).toBe(1536);

@@ -55,7 +55,22 @@ createRoot(document.getElementById('root')!).render(
             revision: 0,
             configured: false,
             configurationMessage: 'Connect your OpenRouter key to start classifying.',
-            model: 'typesafe/jev-1.13',
+            model: 'Jev 1.13',
+            classifier: {
+              selectedId: 'jev-1.13',
+              revision: 0,
+              canChange: false,
+              options: [
+                {
+                  id: 'jev-1.13',
+                  label: 'Jev 1.13',
+                  vendor: 'TypeSafe via OpenRouter',
+                  description: 'Native typed decisions with calibrated probabilities.',
+                  status: 'evaluated',
+                  configured: true,
+                },
+              ],
+            },
             counts: { accepted: 0, uncertain: 0, pending: 0, unavailable: 0 },
             sampledThreads: 0,
             sampleLimit: 500,
@@ -64,6 +79,7 @@ createRoot(document.getElementById('root')!).render(
           busy={false}
           onSave={() => undefined}
           onReprocess={() => undefined}
+          onSelectClassifier={() => undefined}
         />
       ) : (
         <JevSection />

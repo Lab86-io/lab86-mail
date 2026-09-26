@@ -7,6 +7,13 @@ import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { aiCreditDefaults } from '@/lib/hosted/env';
 import { decryptSecret } from '@/lib/security/crypto';
 import {
+  CLASSIFIER_MODELS,
+  type ClassifierCredential,
+  type ClassifierModel,
+  defaultClassifier,
+} from '../classifier/catalog';
+import { loadSelectedClassifier } from '../classifier/selection';
+import {
   B2C_BYOK_MONTHLY_PRICE_USD,
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
@@ -174,7 +181,7 @@ interface RuntimeState {
 interface ResolvedAiRuntime {
   userId: string | null;
   source: AiSource;
-  provider: AiProvider;
+  provider: AiProvider | ClassifierCredential;
   modelName: string;
   model: any;
 }
@@ -183,54 +190,80 @@ export function hasPlatformAi() {
   return Boolean(openrouter || openai || anthropic);
 }
 
-/** Fixed Jev transport. It shares credential, entitlement and usage policy,
- * but never resolves a generative model or the user's model picker. */
-const jevRuntimeDefaults = {
+/** Deployment-selected typed-decision classifier. It shares credential,
+ * entitlement and usage policy, but never resolves a generative model or the
+ * user's model picker. */
+const classifierRuntimeDefaults = {
   query: convexQuery,
   requiresOwnKey: isUserOpenRouterKeyRequired,
   entitlement: getAiBillingEntitlement,
   decrypt: decryptSecret,
   assertBudget: assertLab86Budget,
-  platformKey: () => process.env.OPENROUTER_API_KEY,
+  selectedClassifier: loadSelectedClassifier,
+  platformKey: (credential: ClassifierCredential) =>
+    credential === 'together' ? process.env.TOGETHER_API_KEY : process.env.OPENROUTER_API_KEY,
 };
-export async function resolveJevRuntime(
-  userId: string,
-  dependencies = jevRuntimeDefaults,
-): Promise<{
+export interface ClassifierRuntime {
   userId: string;
   source: AiSource;
   apiKey: string;
-}> {
-  const state = await dependencies.query<RuntimeState>(api.ai.getRuntimeState, { userId });
+  model: ClassifierModel;
+}
+export async function resolveClassifierRuntime(
+  userId: string,
+  dependencies = classifierRuntimeDefaults,
+): Promise<ClassifierRuntime> {
+  const [state, model] = await Promise.all([
+    dependencies.query<RuntimeState>(api.ai.getRuntimeState, { userId }),
+    dependencies.selectedClassifier(),
+  ]);
   const wantsOwnKey =
     dependencies.requiresOwnKey() || (state.settings?.enabled !== false && state.settings?.mode === 'byok');
   if (wantsOwnKey) {
+    if (model.credential !== 'openrouter')
+      throw new Error(`${model.label} is not available with your own API key.`);
     if (state.key?.provider !== 'openrouter')
-      throw new Error('Jev requires an OpenRouter key in Intelligence settings.');
+      throw new Error(`${model.label} requires an OpenRouter key in Intelligence settings.`);
     if (!dependencies.requiresOwnKey()) {
       const entitlement = await dependencies.entitlement();
       if (entitlement.plan === 'free') throw new Error('Your own API key requires an eligible plan.');
     }
-    return { userId, source: 'byok', apiKey: dependencies.decrypt(state.key.encryptedKey) };
+    return { userId, source: 'byok', apiKey: dependencies.decrypt(state.key.encryptedKey), model };
   }
   dependencies.assertBudget(state, await dependencies.entitlement(), 'jev_mail');
-  const apiKey = dependencies.platformKey();
-  if (!apiKey) throw new Error('Jev is not configured for this deployment.');
-  return { userId, source: 'lab86', apiKey };
+  const apiKey = dependencies.platformKey(model.credential);
+  if (!apiKey) throw new Error(`${model.label} is not configured for this deployment.`);
+  return { userId, source: 'lab86', apiKey, model };
 }
 
-export async function recordJevUsage(
-  runtime: { userId: string; source: AiSource },
+/** OpenRouter credentials under classifier policy, for OpenRouter-only calls such
+ * as content embeddings, whichever classifier the deployment selected. */
+export function resolveOpenRouterUtilityRuntime(userId: string, dependencies = classifierRuntimeDefaults) {
+  return resolveClassifierRuntime(userId, {
+    ...dependencies,
+    selectedClassifier: async () => CLASSIFIER_MODELS.find((model) => model.credential === 'openrouter')!,
+  });
+}
+
+export async function recordClassifierUsage(
+  runtime: { userId: string; source: AiSource; model?: ClassifierModel },
   feature: string,
   result?: { model: string; usage: { input_tokens: number; output_tokens: number } },
   record = recordUsage,
 ) {
+  const model = runtime.model || defaultClassifier();
   return record(
-    { ...runtime, provider: 'openrouter', modelName: result?.model || 'typesafe/jev-1.13', model: undefined },
+    {
+      userId: runtime.userId,
+      source: runtime.source,
+      provider: model.credential,
+      modelName: result?.model || model.wireModel,
+      model: undefined,
+    },
     feature,
     result ? { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens } : undefined,
     Boolean(result),
-    result ? undefined : 'Jev evaluation unavailable',
+    result ? undefined : 'Classifier evaluation unavailable',
   );
 }
 

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-export const JEV_MODEL = 'typesafe/jev-1.13';
 export const JEV_VERSION = 1;
 export const JEV_QUESTION_VERSION = 'mail-1';
 

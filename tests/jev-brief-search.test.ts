@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { classifierById } from '../lib/classifier/catalog';
 import { briefAttention } from '../lib/jev/brief';
 import { projectBriefMail } from '../lib/jev/report';
 import { rerankMail, sortSearchCandidates } from '../lib/jev/search';
@@ -9,6 +10,7 @@ import { compareMailRelevance, mailListUsesRelevance, matchingMailExcerpt } from
 import { migrateDailyReport } from '../lib/store/daily-reports';
 import { assessment, mailInput, NOW, policy, report, reportItem, responseFor, thread } from './fixtures/jev';
 
+const JEV = classifierById('jev-1.13')!;
 const attention = (extra: Partial<Parameters<typeof briefAttention>[0]> = {}) =>
   briefAttention({
     assessment: assessment(),
@@ -187,9 +189,14 @@ describe('latest Brief projection', () => {
 function searchDeps(overrides: Record<string, unknown> = {}) {
   return {
     loadJevPolicy: mock(async () => policy),
-    resolveJevRuntime: mock(async () => ({ userId: 'u', source: 'lab86', apiKey: 'test-only' })),
-    recordJevUsage: mock(async () => undefined),
-    evaluateJev: mock(async ({ state, questions }: any) => ({
+    resolveClassifierRuntime: mock(async () => ({
+      userId: 'u',
+      source: 'lab86',
+      apiKey: 'test-only',
+      model: JEV,
+    })),
+    recordClassifierUsage: mock(async () => undefined),
+    evaluateClassifier: mock(async ({ state, questions }: any) => ({
       model: 'typesafe/jev-1.13',
       answers: Object.fromEntries(
         Object.keys(questions).map((key, i) => [
@@ -214,14 +221,16 @@ describe('query-specific relevance', () => {
     const important = thread({ _id: 'budget', searchRank: 1 });
     const result = await rerankMail('u', 'Budget approval fixture', [campaign, important], undefined, deps);
     expect(result.map((t) => t._id)).toEqual(['budget', 'campaign']);
-    expect(deps.evaluateJev.mock.calls[0][0].questions.candidate_0.instructions).toContain('candidates[0]');
-    expect(deps.evaluateJev.mock.calls[0][0].questions.candidate_0.instructions).toContain(
+    expect(deps.evaluateClassifier.mock.calls[0][0].questions.candidate_0.instructions).toContain(
+      'candidates[0]',
+    );
+    expect(deps.evaluateClassifier.mock.calls[0][0].questions.candidate_0.instructions).toContain(
       'Honor explicit requests for promotions',
     );
     await rerankMail('u', 'Budget approval fixture', [campaign, important], undefined, deps);
-    expect(deps.evaluateJev).toHaveBeenCalledTimes(1);
+    expect(deps.evaluateClassifier).toHaveBeenCalledTimes(1);
     await rerankMail('other', 'Budget approval fixture', [campaign, important], undefined, deps);
-    expect(deps.evaluateJev).toHaveBeenCalledTimes(2);
+    expect(deps.evaluateClassifier).toHaveBeenCalledTimes(2);
   });
   test('recent-order preference survives all downstream relevance comparators', async () => {
     const deps = searchDeps({
@@ -253,12 +262,12 @@ describe('query-specific relevance', () => {
         }),
       ]).map((t) => t._id),
     ).toEqual(['new', 'middle-other-account', 'old']);
-    expect(deps.evaluateJev).not.toHaveBeenCalled();
+    expect(deps.evaluateClassifier).not.toHaveBeenCalled();
   });
   test('provider failure preserves retrieval order, and cancellation cannot publish stale results', async () => {
     const candidates = [thread({ _id: 'a' }), thread({ _id: 'b' })];
     const deps = searchDeps({
-      evaluateJev: async () => {
+      evaluateClassifier: async () => {
         throw new Error('unavailable');
       },
     });
@@ -318,9 +327,14 @@ describe('Jev sweep orchestration', () => {
     const afterClassified = mock(() => undefined);
     const deps = {
       loadJevPolicy: async () => policy,
-      resolveJevRuntime: async () => ({ userId: 'u', source: 'lab86', apiKey: 'test-only' }),
-      evaluateJev: async () => responseFor(input),
-      recordJevUsage: usage,
+      resolveClassifierRuntime: async () => ({
+        userId: 'u',
+        source: 'lab86',
+        apiKey: 'test-only',
+        model: JEV,
+      }),
+      evaluateClassifier: async () => responseFor(input),
+      recordClassifierUsage: usage,
       afterClassified,
       convexMutation: async (_ref: unknown, args: any) => {
         mutations.push(args);
@@ -336,14 +350,14 @@ describe('Jev sweep orchestration', () => {
   test('disabled users make no model calls; failures are retriable and empty queues stop', async () => {
     const input = { ...mailInput(), leaseId: 'lease' };
     const writes: any[] = [];
-    const runtime = mock(async () => ({ userId: 'u', source: 'lab86', apiKey: 'test-only' }));
+    const runtime = mock(async () => ({ userId: 'u', source: 'lab86', apiKey: 'test-only', model: JEV }));
     const deps = {
       loadJevPolicy: async () => ({ ...policy, preferences: { ...policy.preferences, enabled: false } }),
-      resolveJevRuntime: runtime,
-      evaluateJev: async () => {
+      resolveClassifierRuntime: runtime,
+      evaluateClassifier: async () => {
         throw new Error('offline');
       },
-      recordJevUsage: async () => undefined,
+      recordClassifierUsage: async () => undefined,
       convexMutation: async (_r: unknown, args: any) => {
         if (args.items) {
           writes.push(args.items);

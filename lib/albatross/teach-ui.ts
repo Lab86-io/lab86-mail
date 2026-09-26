@@ -21,7 +21,7 @@ export type SettingsTabId =
   | 'account';
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> = [
-  { id: 'jev', label: 'Jev' },
+  { id: 'jev', label: 'Classification' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'mailboxes', label: 'Mailboxes' },
   { id: 'connections', label: 'Connections' },

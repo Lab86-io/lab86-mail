@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { settingsRequest } from '@/components/settings/JevSection';
+import { classifierForServedModel } from '@/lib/classifier/catalog';
 import { type JevAssessment, jevReason } from '@/lib/jev/contract';
 
 export function JevMailDetails({ assessment }: { assessment?: JevAssessment | null }) {
@@ -24,7 +25,7 @@ export function JevMailDetails({ assessment }: { assessment?: JevAssessment | nu
       </summary>
       <div className="mt-3 space-y-3">
         <p className="text-[var(--color-text-muted)]">
-          Jev · {assessment.purpose} ·{' '}
+          {classifierForServedModel(assessment.model)?.label || assessment.model} · {assessment.purpose} ·{' '}
           {assessment.status === 'uncertain' ? 'More context may be needed' : 'Classified'}
         </p>
         {evidence.map((item) => (
@@ -45,7 +46,7 @@ export function JevMailDetails({ assessment }: { assessment?: JevAssessment | nu
           </blockquote>
         ))}
         <Link href="/settings?tab=jev" className="inline-block underline">
-          Jev settings and Brief corrections
+          Classification settings and Brief corrections
         </Link>
       </div>
     </details>

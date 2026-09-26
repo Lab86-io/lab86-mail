@@ -1,4 +1,4 @@
-import type { JevResponse } from '../../lib/jev/client';
+import type { ClassifierResponse } from '../../lib/classifier/client';
 import { DEFAULT_JEV_PREFERENCES, type JevAssessment } from '../../lib/jev/contract';
 import { buildMailQuestions, type JevMailInput, mailSourceRevision } from '../../lib/jev/mail';
 import type { DailyReport, DailyReportItem, Thread } from '../../lib/shared/types';
@@ -26,7 +26,10 @@ export function mailInput(body = 'Please confirm the budget by Friday.'): JevMai
     contextComplete: true,
   };
 }
-export function responseFor(input: JevMailInput, choices: Record<string, string | number> = {}): JevResponse {
+export function responseFor(
+  input: JevMailInput,
+  choices: Record<string, string | number> = {},
+): ClassifierResponse {
   return {
     model: 'typesafe/jev-1.13-20260917',
     answers: Object.fromEntries(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { evaluateJev, mapConcurrent, validateJevResponse } from '../lib/jev/client';
+import { evaluateClassifier, mapConcurrent, validateClassifierResponse } from '../lib/classifier/client';
 import {
   assessmentIsCurrent,
   attentionMatches,
@@ -22,7 +22,7 @@ describe('Jev typed transport', () => {
   test('uses the fixed decisions endpoint, independent of the generative model picker', async () => {
     const input = mailInput();
     const questions = buildMailQuestions(input);
-    const response = await evaluateJev({ apiKey: 'test-only', state: input, questions }, (async (
+    const response = await evaluateClassifier({ apiKey: 'test-only', state: input, questions }, (async (
       url,
       init,
     ) => {
@@ -73,28 +73,28 @@ describe('Jev typed transport', () => {
     ]) {
       const raw = responseFor(input);
       mutate(raw);
-      expect(() => validateJevResponse(raw, questions)).toThrow('invalid_response');
+      expect(() => validateClassifierResponse(raw, questions)).toThrow('invalid_response');
     }
-    expect(() => validateJevResponse(null, questions)).toThrow('invalid_response');
+    expect(() => validateClassifierResponse(null, questions)).toThrow('invalid_response');
   });
   test('sanitizes provider failures and honors cancellation and deadlines', async () => {
     const request = { apiKey: 'test-only', state: {}, questions: buildMailQuestions(mailInput()) };
-    await expect(evaluateJev({ ...request, apiKey: '' })).rejects.toThrow('not_configured');
+    await expect(evaluateClassifier({ ...request, apiKey: '' })).rejects.toThrow('not_configured');
     await expect(
-      evaluateJev(request, (async () => new Response('secret body', { status: 429 })) as typeof fetch),
+      evaluateClassifier(request, (async () => new Response('secret body', { status: 429 })) as typeof fetch),
     ).rejects.toThrow('provider');
     await expect(
-      evaluateJev(request, (async () => new Response('not json')) as typeof fetch),
+      evaluateClassifier(request, (async () => new Response('not json')) as typeof fetch),
     ).rejects.toThrow('invalid_response');
     await expect(
-      evaluateJev(request, (async () => {
+      evaluateClassifier(request, (async () => {
         throw new Error('private network data');
       }) as typeof fetch),
     ).rejects.toThrow('provider');
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
     await expect(
-      evaluateJev({ ...request, signal: controller.signal }, (async () => {
+      evaluateClassifier({ ...request, signal: controller.signal }, (async () => {
         throw new Error('aborted');
       }) as typeof fetch),
     ).rejects.toThrow('cancelled');
@@ -102,7 +102,7 @@ describe('Jev typed transport', () => {
       new Promise((_resolve, reject) => {
         init.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       })) as typeof fetch;
-    await expect(evaluateJev({ ...request, timeoutMs: 2 }, abortingFetch)).rejects.toThrow('timeout');
+    await expect(evaluateClassifier({ ...request, timeoutMs: 2 }, abortingFetch)).rejects.toThrow('timeout');
   });
   test('bounds concurrency and preserves input order', async () => {
     let active = 0;

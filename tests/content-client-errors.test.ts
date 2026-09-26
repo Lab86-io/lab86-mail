@@ -7,7 +7,7 @@ test('settings loaders give useful errors for non-JSON outages and preserve stru
   try {
     globalThis.fetch = (async () => new Response('Unavailable', { status: 503 })) as typeof fetch;
     await expect(contentRequest()).rejects.toThrow('Content could not load.');
-    await expect(settingsRequest()).rejects.toThrow('Jev settings could not load.');
+    await expect(settingsRequest()).rejects.toThrow('Classification settings could not load.');
     globalThis.fetch = (async () =>
       Response.json({ error: 'Reload to resolve this conflict.' }, { status: 409 })) as typeof fetch;
     await expect(contentRequest()).rejects.toThrow('Reload to resolve this conflict.');

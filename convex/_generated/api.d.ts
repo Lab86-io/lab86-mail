@@ -29,6 +29,7 @@ import type * as boards from "../boards.js";
 import type * as briefEvents from "../briefEvents.js";
 import type * as calendarData from "../calendarData.js";
 import type * as calendarSync from "../calendarSync.js";
+import type * as classifier from "../classifier.js";
 import type * as cloudFiles from "../cloudFiles.js";
 import type * as crons from "../crons.js";
 import type * as dailyReports from "../dailyReports.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   briefEvents: typeof briefEvents;
   calendarData: typeof calendarData;
   calendarSync: typeof calendarSync;
+  classifier: typeof classifier;
   cloudFiles: typeof cloudFiles;
   crons: typeof crons;
   dailyReports: typeof dailyReports;

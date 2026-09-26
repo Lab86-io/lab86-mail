@@ -11,9 +11,9 @@ import {
 } from '../albatross/daily-report';
 import { checkWaitingReplies } from '../albatross/reply-watch-runtime';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
+import { mapConcurrent } from '../classifier/client';
 import { api, convexQuery } from '../hosted/convex';
 import { briefAttention } from '../jev/brief';
-import { mapConcurrent } from '../jev/client';
 import {
   correctionForMail,
   DEFAULT_JEV_PREFERENCES,

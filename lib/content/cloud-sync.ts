@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mapConcurrent } from '../classifier/client';
 import { getCloudFileAccess, listCloudFileConnections } from '../files/connections';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
-import { mapConcurrent } from '../jev/client';
 import { boundedBytes, extractContent, MAX_DOWNLOAD_BYTES, supportedContent } from './extract';
 
 const ref = (api as any).content;

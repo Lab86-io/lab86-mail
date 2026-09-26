@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import type { ClassifierModel } from '../classifier/catalog';
+import { type ClassifierResponse } from '../classifier/client';
 import { classifyThreadDeterministic, SMART_CATEGORY_LABELS } from '../mail/smart-categories';
 import { briefAttention } from './brief';
-import { type JevResponse } from './client';
 import { type JevPreferences, jevReason } from './contract';
 import { assessmentFromResponse, type JevMailInput, mailSourceRevision, smartCategoryFromJev } from './mail';
 
@@ -92,12 +93,13 @@ export function demoMailInput(input: JevDemoInput, now: number): JevMailInput {
 
 export function demoResult(
   input: JevMailInput,
-  response: JevResponse,
+  response: ClassifierResponse,
   preferences: JevPreferences,
   inferenceMs: number,
   now: number,
+  model?: ClassifierModel,
 ) {
-  const assessment = assessmentFromResponse(input, response, now);
+  const assessment = assessmentFromResponse(input, response, now, model);
   const last = input.messages.at(-1)!;
   const local = classifyThreadDeterministic({
     _id: input.threadId,

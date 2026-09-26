@@ -21,10 +21,10 @@ function dependencies(extra: Record<string, unknown> = {}) {
   return {
     requireCurrentUser: async () => ({ userId: 'viewer' }),
     runWithAiRequestContext: async (_ctx: any, fn: () => Promise<unknown>) => fn(),
-    resolveJevRuntime: mock(async () => ({ userId: 'viewer', apiKey: 'private-secret' })),
+    resolveClassifierRuntime: mock(async () => ({ userId: 'viewer', apiKey: 'private-secret' })),
     loadJevPolicy: mock(async () => ({ preferences: DEFAULT_JEV_PREFERENCES })),
-    recordJevUsage: mock(async () => undefined),
-    evaluateJev: mock(async () => responseFor(input)),
+    recordClassifierUsage: mock(async () => undefined),
+    evaluateClassifier: mock(async () => responseFor(input)),
     enforceUserRateLimit: mock(async () => undefined),
     ...extra,
   } as any;
@@ -48,18 +48,18 @@ describe('live Jev demonstration', () => {
     expect(result.inferenceMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(result)).not.toContain('private-secret');
     expect(deps.loadJevPolicy).toHaveBeenCalledWith('viewer');
-    expect(deps.resolveJevRuntime).toHaveBeenCalledWith('viewer');
+    expect(deps.resolveClassifierRuntime).toHaveBeenCalledWith('viewer');
     expect(deps.enforceUserRateLimit.mock.calls[0][0]).toMatchObject({
       userId: 'viewer',
       key: 'jev:demo',
       limit: 10,
     });
-    expect(deps.evaluateJev.mock.calls[0][0]).toMatchObject({
+    expect(deps.evaluateClassifier.mock.calls[0][0]).toMatchObject({
       apiKey: 'private-secret',
       signal: req.signal,
       questions: { purpose: { type: 'choice' }, reply: { type: 'noul' } },
     });
-    expect(deps.recordJevUsage.mock.calls[0][1]).toBe('jev_demo');
+    expect(deps.recordClassifierUsage.mock.calls[0][1]).toBe('jev_demo');
   });
   test('auth and strict bounded input validation run before any paid request', async () => {
     const deps = dependencies({
@@ -68,7 +68,7 @@ describe('live Jev demonstration', () => {
       },
     });
     expect((await createJevDemoRoute(deps)(request())).status).toBe(401);
-    expect(deps.evaluateJev).not.toHaveBeenCalled();
+    expect(deps.evaluateClassifier).not.toHaveBeenCalled();
     const validAuth = dependencies();
     for (const body of [
       { ...example, userId: 'victim' },
@@ -82,7 +82,7 @@ describe('live Jev demonstration', () => {
     }
     const malformed = new NextRequest('http://localhost/api/jev/demo', { method: 'POST', body: '{' });
     expect((await createJevDemoRoute(validAuth)(malformed)).status).toBe(400);
-    expect(validAuth.evaluateJev).not.toHaveBeenCalled();
+    expect(validAuth.evaluateClassifier).not.toHaveBeenCalled();
     expect(validAuth.enforceUserRateLimit).toHaveBeenCalledTimes(7);
     await expect(
       createJevDemoRoute(
@@ -104,18 +104,18 @@ describe('live Jev demonstration', () => {
     const response = await createJevDemoRoute(limited)(limitedRequest);
     expect(response.status).toBe(429);
     expect(response.headers.get('Retry-After')).toBe('2');
-    expect(limited.evaluateJev).not.toHaveBeenCalled();
+    expect(limited.evaluateClassifier).not.toHaveBeenCalled();
     expect(limitedRequest.bodyUsed).toBe(false);
     const unavailable = dependencies({
-      evaluateJev: async () => {
+      evaluateClassifier: async () => {
         throw new Error('private-secret');
       },
     });
     const failed = await createJevDemoRoute(unavailable)(request());
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain('private-secret');
-    expect(unavailable.recordJevUsage).toHaveBeenCalledTimes(1);
-    expect(unavailable.recordJevUsage.mock.calls[0]).toHaveLength(2);
+    expect(unavailable.recordClassifierUsage).toHaveBeenCalledTimes(1);
+    expect(unavailable.recordClassifierUsage.mock.calls[0]).toHaveLength(2);
   });
   test('bounds declared and chunked bytes before JSON parsing, including a false small content length', async () => {
     const deps = dependencies();
@@ -144,7 +144,7 @@ describe('live Jev demonstration', () => {
       expect(cancelled).toHaveBeenCalledTimes(1);
     }
     expect(deps.enforceUserRateLimit).toHaveBeenCalledTimes(3);
-    expect(deps.evaluateJev).not.toHaveBeenCalled();
+    expect(deps.evaluateClassifier).not.toHaveBeenCalled();
     const multilingual = { ...example, body: '字'.repeat(2400), reply: '字'.repeat(2400) };
     expect((await route(request(multilingual))).status).toBe(200);
   });
