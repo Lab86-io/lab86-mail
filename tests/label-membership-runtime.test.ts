@@ -157,7 +157,7 @@ describe('label membership writes (CLS-13)', () => {
     expect(counts['custom:march']).toBeUndefined();
   });
 
-  test('a stored model verdict updates the attention flag on membership and the badge', async () => {
+  test('a later verdict change updates the attention flag on membership and the badge', async () => {
     const t = newHarness();
     await seedLabel(t, 'receipts', 'Receipts');
     await ingest(t, 'model', 1_000, 'Receipts for March');
@@ -166,17 +166,32 @@ describe('label membership writes (CLS-13)', () => {
         Boolean(row.needsAttention),
       );
     expect(await attention()).toEqual([true]);
-    await t.mutation(api.mailCorpus.storeLlmVerdicts, {
+    // A user rule that mutes the sender gives the thread a new verdict with no
+    // attention; the reclassify write must carry that onto the membership row.
+    const ts = Date.now();
+    await t.run((ctx) =>
+      ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'smartRule',
+        key: 'mute_alice',
+        doc: {
+          _id: 'mute_alice',
+          name: 'Mute Alice',
+          enabled: true,
+          scope: 'sender',
+          match: 'alice@example.com',
+          effect: 'always_noise',
+          createdAt: 1,
+        },
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    );
+    await t.mutation(api.smart.reclassifyMatchingThreads, {
       internalSecret: SECRET,
       userId: USER,
-      items: [
-        {
-          accountId: 'account_1',
-          providerThreadId: 'model',
-          messageId: 'model_m_1000',
-          verdict: { primary: 'orders', secondary: [], needsAttention: false, reason: 'model verdict' },
-        },
-      ],
+      scope: 'sender',
+      match: 'alice@example.com',
     });
     expect(await attention()).toEqual([false]);
     const counts = await t.run((ctx) => computeCategoryUnreadCounts(ctx, USER));
