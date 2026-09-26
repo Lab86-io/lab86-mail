@@ -342,11 +342,16 @@ export function parseClockMinutes(value: string, fallback = 19 * 60) {
   return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 ? hour * 60 + minute : fallback;
 }
 
-export function checkinIsDue(preference: CheckinPreferenceLike, at = new Date(), windowMinutes = 15) {
+/**
+ * Due from the check-in time to the end of the local day. A missed cron run
+ * no longer loses the day's check-in; ensureCheckin is safe to run more than
+ * once each day (WRK-15).
+ */
+export function checkinIsDue(preference: CheckinPreferenceLike, at = new Date()) {
   if (!preference.eveningCheckinEnabled) return false;
   const now = localMinuteOfDay(preference.timezone, at);
   const target = parseClockMinutes(preference.eveningCheckinLocalTime);
-  return now >= target && now < target + windowMinutes;
+  return now >= target;
 }
 
 export function fallbackEmailIsDue(input: {

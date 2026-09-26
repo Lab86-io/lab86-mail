@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import type { DailyCheckinData } from '@/components/albatross/DailyCheckin';
 import { api } from '@/convex/_generated/api';
 import {
+  CENTER_NOTIFICATION_TYPES,
   type NotificationRow,
   type PendingApproval,
   type PendingQuestion,
@@ -22,9 +23,10 @@ export interface CurrentMove {
 export function useNotifications() {
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const center = useQuery(api.albatrossNotifications.liveCenter, isAuthenticated ? { limit: 100 } : 'skip') as
-    | { notifications: NotificationRow[] }
-    | undefined;
+  const center = useQuery(
+    api.albatrossNotifications.liveCenter,
+    isAuthenticated ? { limit: 100, types: [...CENTER_NOTIFICATION_TYPES] } : 'skip',
+  ) as { notifications: NotificationRow[] } | undefined;
   const questions = useQuery(
     api.albatrossWorkV2.livePendingQuestions,
     isAuthenticated ? { limit: 100 } : 'skip',
