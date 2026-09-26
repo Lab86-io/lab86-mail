@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import { directModelIdFor, isTerminalAiError, resolveJevRuntime } from '../lib/ai/gateway';
+import { directModelIdFor, isTerminalAiError, resolveClassifierRuntime } from '../lib/ai/gateway';
+import { CLASSIFIER_MODELS } from '../lib/classifier/catalog';
 import {
   ENTITLEMENT_SNAPSHOT_MAX_AGE_MS,
   entitlementFromSnapshot,
@@ -101,14 +102,15 @@ describe('billing entitlement snapshot', () => {
     expect((await getAiBillingEntitlement({}, d.deps)).plan).toBe('pro');
   });
 
-  test('Jev passes its user and stored snapshot to the plan check', async () => {
+  test('the classifier passes its user and stored snapshot to the plan check', async () => {
     const entitlement = mock(async (..._args: any[]) => ({
       plan: 'byok',
       status: 'active',
       monthlyCredits: 0,
     }));
     const snapshot = { plan: 'byok', status: 'active', monthlyCredits: 0 };
-    const runtime = await resolveJevRuntime('user-1', {
+    const openrouterModel = CLASSIFIER_MODELS.find((model) => model.credential === 'openrouter')!;
+    const runtime = await resolveClassifierRuntime('user-1', {
       query: async () => ({
         settings: { mode: 'byok' },
         key: { provider: 'openrouter', encryptedKey: 'encrypted' },
@@ -119,6 +121,7 @@ describe('billing entitlement snapshot', () => {
       decrypt: () => 'key',
       assertBudget: () => undefined,
       platformKey: () => 'platform',
+      selectedClassifier: async () => openrouterModel,
     } as any);
     expect(runtime.source).toBe('byok');
     expect(entitlement.mock.calls[0][0]).toEqual({ userId: 'user-1', snapshot });

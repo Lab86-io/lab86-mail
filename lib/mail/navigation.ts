@@ -25,7 +25,6 @@ export const MAILBOXES = [
   { query: QUICK_SEARCH_QUERIES.sent, label: 'Sent' },
   { query: QUICK_SEARCH_QUERIES.drafts, label: 'Drafts' },
   { query: QUICK_SEARCH_QUERIES.allMail, label: 'All mail' },
-  { query: 'label:MailOS/Snoozed', label: 'Snoozed' },
   { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash' },
 ];
 

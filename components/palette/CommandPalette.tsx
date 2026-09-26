@@ -540,7 +540,6 @@ function SearchContent({
             {Object.entries({
               Inbox: DEFAULT_MAIL_QUERY,
               ...QUICK_SEARCH_QUERIES,
-              Snoozed: 'label:MailOS/Snoozed',
             })
               .filter(([label]) => matchesSearch(`mail ${label}`, trimmed))
               .map(([label, value]) => (
