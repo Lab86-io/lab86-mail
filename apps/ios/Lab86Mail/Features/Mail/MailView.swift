@@ -687,7 +687,9 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
 
     // Whether a stored classification is visible inside this scope. Main is
     // the catch-all for everything that isn't codes/orders/noise (including
-    // unclassified mail and the folded-in legacy labels).
+    // unclassified mail and the folded-in legacy labels). Mail that a
+    // label-move rule filed arrives as `custom:<labelId>` and shows only in
+    // All Mail.
     func includes(storedCategory: String?) -> Bool {
         switch self {
         case .all:
@@ -698,7 +700,19 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
             return storedCategory == "orders"
         case .main:
             return storedCategory != "codes" && storedCategory != "orders" && storedCategory != "noise"
+                && !Self.isFiled(storedCategory)
         }
+    }
+
+    static func isFiled(_ storedCategory: String?) -> Bool {
+        storedCategory?.hasPrefix("custom:") == true
+    }
+
+    // Human title for a stored classification in the explanation sheet.
+    static func storedTitle(_ storedCategory: String?) -> String {
+        guard let storedCategory else { return "Unclassified" }
+        if isFiled(storedCategory) { return "Filed under your label" }
+        return storedCategory.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
 
@@ -760,7 +774,7 @@ private struct CategoryExplanationSheet: View {
         NavigationStack {
             List {
                 Section("Classification") {
-                    LabeledContent("Category", value: thread.category?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Unclassified")
+                    LabeledContent("Category", value: MailCategoryScope.storedTitle(thread.category))
                     if let confidence = thread.categoryConfidence {
                         LabeledContent("Confidence", value: confidence.formatted(.percent.precision(.fractionLength(0))))
                     }

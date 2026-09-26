@@ -69,6 +69,18 @@ struct MailPresentationTests {
         #expect(!MailCategoryScope.orders.includes(storedCategory: "noise"))
     }
 
+    @Test
+    func mailFiledUnderALabelLeavesMainButStaysInAllMail() {
+        let filed = "custom:smart-label-dev-ops"
+        #expect(!MailCategoryScope.main.includes(storedCategory: filed))
+        #expect(!MailCategoryScope.codes.includes(storedCategory: filed))
+        #expect(!MailCategoryScope.orders.includes(storedCategory: filed))
+        #expect(MailCategoryScope.all.includes(storedCategory: filed))
+        #expect(MailCategoryScope.storedTitle(filed) == "Filed under your label")
+        #expect(MailCategoryScope.storedTitle("finance_admin") == "Finance Admin")
+        #expect(MailCategoryScope.storedTitle(nil) == "Unclassified")
+    }
+
     // MARK: - Raw routing values (sidebar taps, deep links, stored prefs)
 
     @Test

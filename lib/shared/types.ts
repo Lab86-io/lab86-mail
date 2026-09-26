@@ -279,6 +279,10 @@ export interface SmartCategory {
   signals: string[];
   classifiedAt: number;
   model?: string;
+  // Set when the user's newest matching rule moved this mail into a custom
+  // label. Filed mail lives only in that label's view: `primary` keeps the
+  // classifier's judgment, but no built-in category lists the thread.
+  filedUnder?: string;
 }
 
 export interface SmartLabelDefinition {
