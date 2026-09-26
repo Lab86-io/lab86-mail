@@ -21,15 +21,21 @@ export function createDailyReportPost(deps = defaults) {
     const body = await req.json().catch(() => null);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
     if (!userId) return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
-    const kind = body?.kind === 'morning' ? 'morning' : 'manual';
+    const kind = body?.kind === 'morning' || body?.kind === 'weekly' ? body.kind : 'manual';
+    // A weekend light edition (lib/brief/schedule.ts). Only a morning edition is light.
+    const light = kind === 'morning' && body?.light === true;
     try {
       const job = await deps.enqueue({
         userId,
         kind: 'daily',
         edition: kind,
         timezone: typeof body?.timezone === 'string' ? body.timezone : undefined,
+        ...(light ? { light: true } : {}),
       });
-      return NextResponse.json({ ok: true, userId, kind, ...job }, { status: 202 });
+      return NextResponse.json(
+        { ok: true, userId, kind, ...(light ? { light } : {}), ...job },
+        { status: 202 },
+      );
     } catch {
       return NextResponse.json({ ok: false, error: 'Could not queue the daily brief.' }, { status: 500 });
     }

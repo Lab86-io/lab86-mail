@@ -85,6 +85,7 @@ import {
   dismissDailyReportTaskTool,
   dismissDailyReportThreadTool,
   generateDailyReportTool,
+  getBriefPreferencesTool,
   getDailyReportTool,
   getLatestDailyReportTool,
   listDailyReportsTool,
@@ -92,6 +93,7 @@ import {
   listDailyReportThreadDismissalsTool,
   restoreDailyReportTaskTool,
   restoreDailyReportThreadTool,
+  saveBriefPreferencesTool,
 } from './daily-report';
 import { DISPLAY_TOOLS } from './display';
 import {
@@ -258,6 +260,8 @@ const allTools: AnyTool[] = [
   listDailyReportThreadDismissalsTool,
   restoreDailyReportTaskTool,
   restoreDailyReportThreadTool,
+  getBriefPreferencesTool,
+  saveBriefPreferencesTool,
   listSmartLabels,
   createSmartLabel,
   previewSmartLabel,

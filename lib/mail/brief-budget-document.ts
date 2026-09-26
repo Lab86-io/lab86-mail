@@ -30,6 +30,9 @@ import type { BriefLane } from './brief-score';
 //   regions[n] "week-ahead"  text role:body
 //   regions[n] "areas"       entity_list variant:compact (area refs)    when areas, max 3
 //
+// A light (weekend) edition keeps lede, yesterday, answer, today, and
+// week-ahead only (lib/brief/schedule.ts).
+//
 // Nothing else. Every entity item carries the real ref, `framing.lane`,
 // `framing.reason` (the model's one line, may be absent), `framing.sender`,
 // `framing.age` when carried over, and its actions: open first, then the
@@ -61,7 +64,7 @@ export interface BudgetAreaLine {
 }
 
 export interface BudgetBriefDocumentInput {
-  report: Pick<DailyReport, 'generatedAt' | 'sections' | 'narrative'>;
+  report: Pick<DailyReport, 'generatedAt' | 'sections' | 'narrative'> & Pick<Partial<DailyReport>, 'light'>;
   prose: { lede: string; weekAhead: string; lines: Record<string, string>; yesterday?: string };
   areas?: BudgetAreaLine[];
   timezone?: string | null;
@@ -281,6 +284,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
   const lede = input.prose.lede.trim() || input.report.narrative || 'Your brief is ready.';
   const weekAhead = input.prose.weekAhead.trim();
   const yesterday = (input.prose.yesterday || '').trim();
+  const light = input.report.light === true;
   const regions: BriefRegion[] = [];
 
   regions.push({
@@ -309,7 +313,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     BUDGET_TODAY_EVENT_LIMIT,
   );
 
-  for (const lane of ['answer', 'today', 'know'] as const) {
+  for (const lane of light ? (['answer', 'today'] as const) : (['answer', 'today', 'know'] as const)) {
     const items = sections[lane] ?? [];
     const events = lane === 'today' ? todayEvents : [];
     if (!items.length && !events.length) continue;
@@ -331,7 +335,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const waiting = (sections.waiting ?? []).slice(0, BUDGET_WAITING_LIMIT);
+  const waiting = light ? [] : (sections.waiting ?? []).slice(0, BUDGET_WAITING_LIMIT);
   if (waiting.length) {
     regions.push({
       id: 'waiting',
@@ -349,7 +353,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const tasks = tasksForBrief(sections.tasks, generatedAt, BUDGET_TASK_LIMIT, timezone);
+  const tasks = light ? [] : tasksForBrief(sections.tasks, generatedAt, BUDGET_TASK_LIMIT, timezone);
   if (tasks.length) {
     regions.push({
       id: 'tasks',
@@ -365,7 +369,7 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const connected = rankConnectedItems(sections.mcp ?? [], generatedAt);
+  const connected = light ? [] : rankConnectedItems(sections.mcp ?? [], generatedAt);
   if (connected.length) {
     regions.push({
       id: 'connected',
@@ -389,7 +393,9 @@ export function composeBudgetBriefDocument(input: BudgetBriefDocumentInput): Bri
     });
   }
 
-  const areas = (input.areas ?? []).filter((area) => area.areaId && area.name).slice(0, BUDGET_AREA_LIMIT);
+  const areas = light
+    ? []
+    : (input.areas ?? []).filter((area) => area.areaId && area.name).slice(0, BUDGET_AREA_LIMIT);
   if (areas.length) {
     regions.push({
       id: 'areas',

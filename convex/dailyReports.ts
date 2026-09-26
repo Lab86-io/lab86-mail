@@ -1,17 +1,27 @@
 import { v } from 'convex/values';
+import {
+  BRIEF_CATCH_UP_HOURS,
+  type BriefSchedule,
+  DEFAULT_BRIEF_SCHEDULE,
+  isBriefDeliveryHour,
+  localWeekday,
+  normalizeBriefSchedule,
+  scheduledEditionFor,
+} from '../lib/brief/schedule';
 import { internal } from './_generated/api';
 import type { QueryCtx } from './_generated/server';
-import { internalAction, internalQuery, query } from './_generated/server';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
-// Local hour the scheduled morning edition fires (24h clock, in each user's tz).
-// Evening editions were dropped — mornings + manual generation only.
-export const MORNING_HOUR = 7;
-// Catch-up window (brief round 2026-09-22): when the 07:00 tick failed (a
+// The default local hour of the scheduled edition (24h clock, in each user's
+// zone). Each user can pick 05:00 to 11:00 (lib/brief/schedule.ts). Evening
+// editions were dropped — mornings + manual generation only.
+export const MORNING_HOUR = DEFAULT_BRIEF_SCHEDULE.deliveryHour;
+// Catch-up window (brief round 2026-09-22): when the delivery tick failed (a
 // deploy, a model outage, a timeout), each later hourly tick inside this
-// window fires again for every user who still has no morning edition for the
-// local date. The window closes at noon so a late brief never lands at night.
-export const CATCH_UP_LAST_HOUR = 11;
+// window fires again for every user who still has no edition for the local
+// date. The window is the BRIEF_CATCH_UP_HOURS after the user's hour.
+export const CATCH_UP_LAST_HOUR = MORNING_HOUR + BRIEF_CATCH_UP_HOURS;
 // The clock that schedules users with no known zone. It only picks the hour
 // the cron fires; it is never written into the job as the user's zone.
 const DEFAULT_TZ = 'America/New_York';
@@ -49,12 +59,20 @@ export function pickBriefZone(sources: BriefTimezoneSources): string | undefined
   return isRealZone(sources.lastClient) ? sources.lastClient : undefined;
 }
 
-async function briefTimezoneSourcesFor(ctx: QueryCtx, userId: string): Promise<BriefTimezoneSources> {
+async function briefPreferenceRow(ctx: QueryCtx, userId: string) {
+  return ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .unique();
+}
+
+async function briefTimezoneSourcesFor(
+  ctx: QueryCtx,
+  userId: string,
+  knownPreference?: Awaited<ReturnType<typeof briefPreferenceRow>>,
+): Promise<BriefTimezoneSources> {
   const [preference, calendars, jobs] = await Promise.all([
-    ctx.db
-      .query('albatrossNotificationPreferences')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .unique(),
+    knownPreference !== undefined ? Promise.resolve(knownPreference) : briefPreferenceRow(ctx, userId),
     ctx.db
       .query('calendars')
       .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -146,10 +164,17 @@ export const reportTargetPage = internalQuery({
     const userIds = [...new Set(accounts.map((account) => account.userId))];
     const targets = await Promise.all(
       userIds.map(async (userId) => {
-        const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, userId));
+        const preference = await briefPreferenceRow(ctx, userId);
+        const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, userId, preference));
         // `timezone` schedules the tick; `zoneKnown` says whether it is the
-        // user's real zone and may be written into the job.
-        return { userId, timezone: zone ?? SCHEDULE_ONLY_TZ, zoneKnown: Boolean(zone) };
+        // user's real zone and may be written into the job. `schedule` is the
+        // user's delivery hour, weekend edition, and weekly review.
+        return {
+          userId,
+          timezone: zone ?? SCHEDULE_ONLY_TZ,
+          zoneKnown: Boolean(zone),
+          schedule: normalizeBriefSchedule(preference),
+        };
       }),
     );
     return { targets, nextUserId: accounts.length === TARGET_BATCH_SIZE ? userIds.at(-1) : undefined };
@@ -170,14 +195,23 @@ export function localDateKey(timezone: string, at: Date): string {
   }
 }
 
-// True when the user already has a morning edition dated today in their zone.
+// True when the user already has a scheduled edition (morning by default, or
+// the weekly review) dated today in their zone.
 export const hasMorningEdition = internalQuery({
-  args: { userId: v.string(), timezone: v.string(), at: v.number() },
+  args: {
+    userId: v.string(),
+    timezone: v.string(),
+    at: v.number(),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('weekly'))),
+  },
   handler: async (ctx, args) => {
     const latest = await ctx.db
       .query('userDocs')
       .withIndex('by_user_kind_report_edition_generated', (q) =>
-        q.eq('userId', args.userId).eq('kind', 'dailyReport').eq('doc.kind', 'morning'),
+        q
+          .eq('userId', args.userId)
+          .eq('kind', 'dailyReport')
+          .eq('doc.kind', args.edition ?? 'morning'),
       )
       .order('desc')
       .first();
@@ -189,21 +223,53 @@ export const hasMorningEdition = internalQuery({
   },
 });
 
-// Which targets fire on this tick: the morning hour always, and the catch-up
-// hours only when the local date has no morning edition yet. Pure, for tests.
+export interface BriefTarget {
+  userId: string;
+  timezone: string;
+  schedule?: BriefSchedule;
+}
+
+export interface DueBriefTarget {
+  userId: string;
+  kind: 'morning' | 'weekly';
+  timezone: string;
+  catchUp: boolean;
+  light?: true;
+}
+
+// True when `at` is inside the target's catch-up window for its edition.
+function inCatchUpWindow(target: BriefTarget, at: Date) {
+  const schedule = target.schedule ?? DEFAULT_BRIEF_SCHEDULE;
+  const hour = localHour(target.timezone, at);
+  return (
+    hour !== null && hour > schedule.deliveryHour && hour <= schedule.deliveryHour + BRIEF_CATCH_UP_HOURS
+  );
+}
+
+// Which targets fire on this tick: the user's delivery hour always, and the
+// catch-up hours only when the local date has no edition of that kind yet.
+// The local weekday picks the edition: the Sunday weekly review, a light or
+// no weekend edition, or the full morning edition. Pure, for tests.
 export function dueTargets(
-  targets: Array<{ userId: string; timezone: string }>,
+  targets: BriefTarget[],
   at: Date,
-  hasEdition: (target: { userId: string; timezone: string }) => boolean,
+  hasEdition: (target: BriefTarget, kind: 'morning' | 'weekly') => boolean,
 ) {
-  const due: Array<{ userId: string; kind: 'morning'; timezone: string; catchUp: boolean }> = [];
+  const due: DueBriefTarget[] = [];
   for (const target of targets) {
+    const schedule = target.schedule ?? DEFAULT_BRIEF_SCHEDULE;
+    const edition = scheduledEditionFor(schedule, localWeekday(target.timezone, at));
     const hour = localHour(target.timezone, at);
-    if (hour === MORNING_HOUR) {
-      due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone, catchUp: false });
-    } else if (hour !== null && hour > MORNING_HOUR && hour <= CATCH_UP_LAST_HOUR && !hasEdition(target)) {
-      due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone, catchUp: true });
-    }
+    if (!edition || hour === null) continue;
+    const row = {
+      userId: target.userId,
+      kind: edition.kind,
+      timezone: target.timezone,
+      ...(edition.light ? { light: true as const } : {}),
+    };
+    if (hour === schedule.deliveryHour) due.push({ ...row, catchUp: false });
+    else if (inCatchUpWindow(target, at) && !hasEdition(target, edition.kind))
+      due.push({ ...row, catchUp: true });
   }
   return due;
 }
@@ -245,18 +311,23 @@ export const tick = internalAction({
       afterUserId: args.afterUserId,
     });
     const at = new Date(args.at ?? Date.now());
-    // The morning hour fires every target. Inside the catch-up window only
-    // the users with no edition for the local date fire again.
+    // The delivery hour fires every target. Inside the catch-up window only
+    // the users with no edition of that kind for the local date fire again.
     const editionByUser = new Map<string, boolean>();
     for (const target of targets) {
-      const hour = localHour(target.timezone, at);
-      if (hour === null || hour <= MORNING_HOUR || hour > CATCH_UP_LAST_HOUR) continue;
+      if (!inCatchUpWindow(target, at)) continue;
+      const edition = scheduledEditionFor(
+        target.schedule ?? DEFAULT_BRIEF_SCHEDULE,
+        localWeekday(target.timezone, at),
+      );
+      if (!edition) continue;
       editionByUser.set(
         target.userId,
         await ctx.runQuery(internal.dailyReports.hasMorningEdition, {
           userId: target.userId,
           timezone: target.timezone,
           at: at.getTime(),
+          edition: edition.kind,
         }),
       );
     }
@@ -267,7 +338,9 @@ export const tick = internalAction({
       ({ catchUp, ...target }) => {
         if (catchUp) console.log(`[daily-report cron] catch-up edition for ${target.userId}`);
         // Never send the scheduling clock as the user's zone.
-        return unknownZone.has(target.userId) ? { userId: target.userId, kind: target.kind } : target;
+        if (!unknownZone.has(target.userId)) return target;
+        const { timezone: _clock, ...withoutZone } = target;
+        return withoutZone;
       },
     );
     // The morning hour also rewrites every area's living brief so the Daily
@@ -322,5 +395,67 @@ export const areaRefreshTick = internalAction({
     if (nextUserId)
       await ctx.scheduler.runAfter(0, internal.dailyReports.areaRefreshTick, { afterUserId: nextUserId });
     console.log(`[area-refresh cron] refreshed ${refreshed}/${targets.length} users`);
+  },
+});
+
+// ---- Brief preferences (FEATURES items 3, 6, 9) ----------------------------
+// Stored on the notification preference row. The app server reads and saves
+// them for web and native through the brief preference tools.
+
+export const briefPreferences = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await briefPreferenceRow(ctx, args.userId);
+    const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, args.userId, row));
+    return {
+      ...normalizeBriefSchedule(row),
+      emailEnabled: row?.briefEmailEnabled === true,
+      timezone: zone ?? null,
+    };
+  },
+});
+
+export const saveBriefPreferences = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    deliveryHour: v.optional(v.number()),
+    weekendMode: v.optional(v.union(v.literal('full'), v.literal('light'), v.literal('off'))),
+    weeklyReview: v.optional(v.boolean()),
+    emailEnabled: v.optional(v.boolean()),
+    // The client's zone. Written only when the row is new, so a saved zone
+    // never moves under the user.
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (args.deliveryHour !== undefined && !isBriefDeliveryHour(args.deliveryHour))
+      throw new Error('The delivery hour must be a whole hour from 5 to 11.');
+    const patch = {
+      ...(args.deliveryHour !== undefined ? { briefDeliveryHour: args.deliveryHour } : {}),
+      ...(args.weekendMode !== undefined ? { briefWeekendMode: args.weekendMode } : {}),
+      ...(args.weeklyReview !== undefined ? { weeklyReviewEnabled: args.weeklyReview } : {}),
+      ...(args.emailEnabled !== undefined ? { briefEmailEnabled: args.emailEnabled } : {}),
+      updatedAt: Date.now(),
+    };
+    const existing = await briefPreferenceRow(ctx, args.userId);
+    if (existing) await ctx.db.patch(existing._id, patch);
+    else
+      await ctx.db.insert('albatrossNotificationPreferences', {
+        userId: args.userId,
+        // UTC is not a place; the brief zone then comes from the calendars.
+        timezone: isRealZone(args.timezone) ? args.timezone : 'UTC',
+        eveningCheckinEnabled: true,
+        eveningCheckinLocalTime: '19:00',
+        inAppEnabled: true,
+        webPushEnabled: false,
+        emailFallbackEnabled: true,
+        emailFallbackDelayMinutes: 90,
+        createdAt: patch.updatedAt,
+        ...patch,
+      });
+    const row = await briefPreferenceRow(ctx, args.userId);
+    return { ...normalizeBriefSchedule(row), emailEnabled: row?.briefEmailEnabled === true };
   },
 });

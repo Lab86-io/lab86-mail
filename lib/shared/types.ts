@@ -547,8 +547,9 @@ export interface DailyReportArtifactError {
   at: number;
 }
 
-/** The edition kinds the brief writes. The scheduler sends morning only. */
-export type BriefEditionKind = 'morning' | 'manual';
+/** The edition kinds the brief writes. The scheduler sends morning and, on
+ * Sunday, the weekly review (FEATURES item 9). */
+export type BriefEditionKind = 'morning' | 'manual' | 'weekly';
 
 export interface DailyReport {
   _id: string;
@@ -556,6 +557,11 @@ export interface DailyReport {
   // now, but history still renders those editions.
   kind: BriefEditionKind | 'evening';
   generatedAt: number;
+  // A weekend edition: lede, answer, today with the calendar, and the week
+  // ahead only (lib/brief/schedule.ts).
+  light?: boolean;
+  // The first edition after the first mailbox connected (FEATURES item 4).
+  first?: boolean;
   // Progressive generation: 'partial' editions stream lanes in as threads are
   // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.
   status?: 'partial' | 'ready';

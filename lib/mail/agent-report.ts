@@ -213,14 +213,18 @@ export function withArtifactError(report: DailyReport, error: DailyReportArtifac
   };
 }
 
-export async function generateAgentReport(input: {
+export interface AgentReportInput {
   kind: BriefEditionKind;
   userId?: string | null;
   now?: number;
   reportId?: string;
   /** A retry over a published edition: skip the progress saves so the edition stays ready. */
   quiet?: boolean;
-}): Promise<DailyReport> {
+  /** A weekend edition without the know, waiting, task, and tool sections. */
+  light?: boolean;
+}
+
+export async function generateAgentReport(input: AgentReportInput): Promise<DailyReport> {
   // The dateline, the weather, and the week-ahead weekday names all read the
   // context timezone. A usable context value stands; when it is missing or
   // UTC-filler, resolve one from the user's synced calendars.
@@ -229,13 +233,7 @@ export async function generateAgentReport(input: {
   return runWithAiRequestContext({ ...context, userTimezone }, () => runAgentReport(input));
 }
 
-async function runAgentReport(input: {
-  kind: BriefEditionKind;
-  userId?: string | null;
-  now?: number;
-  reportId?: string;
-  quiet?: boolean;
-}): Promise<DailyReport> {
+async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
   // Fresh source observations precede selection; the editorial writer then
   // chooses a focused account from this refreshed evidence.
@@ -260,6 +258,7 @@ async function runAgentReport(input: {
     });
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
+    if (input.light) structured.light = true;
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.
@@ -353,13 +352,15 @@ export interface ComposeBudgetBriefDeps {
   now?: number;
 }
 
+// The items the prose describes. A light edition shows no know or waiting rows,
+// so the writer does not spend a line on them.
 function selectedItems(report: DailyReport): Array<{ item: DailyReportItem; lane: BriefLane | 'waiting' }> {
   const s = report.sections;
   return [
     ...(s.answer ?? []).map((item) => ({ item, lane: 'answer' as const })),
     ...(s.today ?? []).map((item) => ({ item, lane: 'today' as const })),
-    ...(s.know ?? []).map((item) => ({ item, lane: 'know' as const })),
-    ...(s.waiting ?? []).map((item) => ({ item, lane: 'waiting' as const })),
+    ...(report.light ? [] : (s.know ?? []).map((item) => ({ item, lane: 'know' as const }))),
+    ...(report.light ? [] : (s.waiting ?? []).map((item) => ({ item, lane: 'waiting' as const }))),
   ];
 }
 

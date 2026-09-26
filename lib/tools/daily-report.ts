@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import {
+  briefPreferencesInputSchema,
+  loadBriefPreferences,
+  saveBriefPreferences,
+} from '../brief/preferences';
 import { isConvexConfigured } from '../hosted/env';
 import { generateAgentReport } from '../mail/agent-report';
 import { enqueueBriefJob, waitForBriefJob } from '../mail/brief-jobs';
@@ -266,5 +271,42 @@ export const restoreDailyReportThreadTool = defineTool({
   async handler(args) {
     await restoreDailyReportThread(args);
     return { ok: true };
+  },
+});
+
+function signedInUser(userId: string | null | undefined): string {
+  if (!userId) throw new Error('Sign in required');
+  return userId;
+}
+
+// Brief delivery preferences (FEATURES items 3, 6, 9). Web Settings and native
+// share these two tools.
+export const getBriefPreferencesTool = defineTool({
+  name: 'get_brief_preferences',
+  description:
+    'Read when the Daily Brief arrives: the local delivery hour (5-11), the weekend edition (full, light, off), the Sunday weekly review, and the edition by email with its availability.',
+  category: 'ai',
+  mutating: false,
+  input: z.object({}).optional(),
+  output: z.object({ preferences: z.any() }),
+  async handler(_input, ctx) {
+    return { preferences: await loadBriefPreferences(signedInUser(ctx.userId)) };
+  },
+});
+
+export const saveBriefPreferencesTool = defineTool({
+  name: 'save_brief_preferences',
+  description:
+    'Change when the Daily Brief arrives. Pass only the fields to change: deliveryHour (5-11, local), weekendMode (full, light, off), weeklyReview, emailEnabled.',
+  category: 'ai',
+  mutating: true,
+  input: briefPreferencesInputSchema,
+  output: z.object({ preferences: z.any() }),
+  async handler(input, ctx) {
+    return {
+      preferences: await saveBriefPreferences(signedInUser(ctx.userId), input, {
+        timezone: ctx.userTimezone,
+      }),
+    };
   },
 });

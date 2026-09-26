@@ -19,6 +19,7 @@ import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
+import { BriefSection } from '@/components/settings/BriefSection';
 import { JevSection } from '@/components/settings/JevSection';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
@@ -80,6 +81,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
+  brief: () => <BriefSection />,
   ai: () => (
     <AiSection
       heading={

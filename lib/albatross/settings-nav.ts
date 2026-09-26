@@ -30,6 +30,7 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   areas: { group: 'workspace', description: 'Where your mail and work belong.' },
   sending: { group: 'behavior', description: 'The undo window after Send.' },
   notifications: { group: 'behavior', description: 'Check-ins, push, and email fallback.' },
+  brief: { group: 'behavior', description: 'When the brief arrives, and weekends.' },
   ai: { group: 'behavior', description: 'Models, keys, and your plan.' },
   narrative: { group: 'behavior', description: 'How the brief reads.' },
   appearance: { group: 'you', description: 'Palette, type, and corners.' },

@@ -303,6 +303,8 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
   const migrated: DailyReport = {
     _id: raw._id,
     kind: raw.kind ?? 'manual',
+    ...(raw.light === true ? { light: true } : {}),
+    ...(raw.first === true ? { first: true } : {}),
     generatedAt: raw.generatedAt ?? 0,
     status: raw.status ?? 'ready',
     progress: raw.progress,

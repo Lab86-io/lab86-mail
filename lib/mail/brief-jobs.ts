@@ -19,6 +19,10 @@ export async function enqueueBriefJob(input: {
   timezone?: string;
   areaId?: string;
   force?: boolean;
+  /** A weekend edition without the know, waiting, task, and tool sections. */
+  light?: boolean;
+  /** The first edition after the first mailbox connects: deterministic first. */
+  first?: boolean;
 }) {
   return convexMutation<{ jobId: string; reportId?: string; started: boolean }>(functions.enqueue, {
     ...input,
@@ -112,6 +116,7 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
                   reportId: job.reportId,
                   now: job.createdAt,
                   quiet: isPublishedEdition(saved),
+                  ...(job.light === true ? { light: true } : {}),
                 });
           if (report.editorial?.mode !== 'generated' && !finalAttempt && !recordedNoAccess(report, startedAt))
             throw new Error('Editorial writer needs another attempt');
