@@ -104,24 +104,38 @@ enum MacWakeNotifier {
         return UNNotificationRequest(identifier: "wake:\(nudge.id)", content: content, trigger: nil)
     }
 
-    // Adds the wake category next to the shared ones. Runs once at launch.
-    static func registerCategory(center: UNUserNotificationCenter = .current()) {
+    static var category: UNNotificationCategory {
         let open = UNNotificationAction(identifier: openActionID, title: "Open", options: [.foreground])
-        let category = UNNotificationCategory(identifier: categoryID, actions: [open], intentIdentifiers: [])
-        center.getNotificationCategories { existing in
-            center.setNotificationCategories(existing.union([category]))
-        }
+        return UNNotificationCategory(identifier: categoryID, actions: [open], intentIdentifiers: [])
     }
 
-    // Posts the notification only while the app is in the background. An
-    // active app shows the in-window bar instead.
+    // Registers the shared categories and the wake category in one write at
+    // launch. A second, separate write replaces the whole set, so it could
+    // drop the other categories.
     @MainActor
-    static func postIfInactive(_ nudge: WakeNudge, center: UNUserNotificationCenter = .current()) {
-        guard !NSApplication.shared.isActive else { return }
+    static func registerCategories() {
+        NotificationCoordinator.configureCategories(adding: [category])
+    }
+
+    // Whether a nudge that the shell shows also goes to Notification Center.
+    // An active app shows only the in-window bar. Pure, so the rule is
+    // testable.
+    static func shouldPost(appIsActive: Bool) -> Bool {
+        !appIsActive
+    }
+
+    // Posts the notification only while the app is not active. An active app
+    // shows the in-window bar instead.
+    @MainActor
+    static func postIfInactive(
+        _ nudge: WakeNudge,
+        appIsActive: Bool = NSApplication.shared.isActive,
+        center: UNUserNotificationCenter = .current()
+    ) {
+        guard shouldPost(appIsActive: appIsActive) else { return }
         center.add(request(for: nudge))
     }
 }
-
 
 /// The Mac host for the wake nudge. It sits under the toolbar at the trailing
 /// edge and shows one Work at a time.
@@ -158,6 +172,12 @@ struct MacWakeNudgeOverlay: View {
         )
         .onChange(of: environment.store.allWork, initial: true) { _, work in
             model.consider(work)
+        }
+        // A wake that arrives while the app is in the background also goes
+        // to Notification Center (NAT-8).
+        .onChange(of: model.current) { _, nudge in
+            guard let nudge else { return }
+            MacWakeNotifier.postIfInactive(nudge)
         }
     }
 }
