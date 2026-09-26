@@ -25,6 +25,8 @@ struct ThreadView: View {
     @State private var proofError: String?
     @State private var showsProofChoices = false
     @State private var dismissedProofOffer = false
+    // Round 2 (FEATURES item 13): unsubscribe asks first; block has Undo.
+    @State private var unsubscribe: UnsubscribeFlowModel?
 
     var body: some View {
         Group {
@@ -134,6 +136,18 @@ struct ThreadView: View {
             CommitmentReviewView(route: route, suggestedTitle: detail?.subject ?? summary?.subject ?? "New event")
         }
         .sheet(item: $openTask) { TaskDetailView(task: $0) }
+        .modifier(OptionalUnsubscribeFlow(model: unsubscribe) {
+            environment.navigation.threadRoute = nil
+        })
+    }
+
+    private var senderTarget: SenderTarget {
+        SenderTarget(
+            accountID: route.accountID,
+            threadID: route.threadID,
+            sender: summary?.sender,
+            mailbox: environment.store.accounts.first { $0.id == route.accountID }?.email
+        )
     }
 
     private var pageTitle: String {
@@ -361,6 +375,19 @@ struct ThreadView: View {
                 Button("Move to Trash", systemImage: "trash", role: .destructive) {
                     Task {
                         await environment.store.trash(summary)
+                        environment.navigation.threadRoute = nil
+                    }
+                }
+            }
+            Divider()
+            Button("Unsubscribe…", systemImage: "envelope.badge.shield.half.filled") {
+                let model = UnsubscribeFlowModel(client: SenderToolsClient(tools: environment.tools))
+                unsubscribe = model
+                Task { await model.begin(senderTarget) }
+            }
+            Button("Block sender", systemImage: "hand.raised") {
+                Task {
+                    if await SenderBlocking.block(senderTarget, environment: environment) != nil {
                         environment.navigation.threadRoute = nil
                     }
                 }

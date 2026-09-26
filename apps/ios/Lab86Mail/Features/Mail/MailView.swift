@@ -10,6 +10,7 @@ struct MailView: View {
     @State private var mailboxScope = MailboxScope.inbox
     @State private var selectedThreadKeys: Set<String> = []
     @State private var editMode: EditMode = .inactive
+    @State private var showsSenderCleanup = false
     @State private var triageVerdicts: [BulkTriageVerdict] = []
     @State private var categoryInfoThread: MailThreadSummary?
     @State private var isBulkTriaging = false
@@ -189,6 +190,9 @@ struct MailView: View {
                             }
                         }
                     }
+                    Section {
+                        Button("Sender cleanup") { showsSenderCleanup = true }
+                    }
                 } label: {
                     Label(scopeTitle, systemImage: "line.3.horizontal.decrease.circle")
                 }
@@ -284,6 +288,7 @@ struct MailView: View {
             }
             await environment.mailIdentity.resolve(entries: entries)
         }
+        .sheet(isPresented: $showsSenderCleanup) { SenderCleanupView() }
         .sheet(item: $categoryInfoThread) { thread in
             CategoryExplanationSheet(thread: thread) { correction in
                 Task {
