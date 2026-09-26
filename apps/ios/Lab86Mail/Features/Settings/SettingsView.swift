@@ -49,11 +49,13 @@ struct SettingsView: View {
 
                 Section("Notifications") {
                     NavigationLink("Delivery and schedule") { NotificationSettingsView() }
+                    NavigationLink("Mail alerts") { MailAlertsSettingsView() }
                 }
 
                 Section("Mail") {
                     NavigationLink("Signatures") { SignaturesSettingsView() }
                     NavigationLink("Saved replies") { SavedRepliesSettingsView() }
+                    NavigationLink("How you write") { VoiceProfileSettingsView() }
                 }
 
                 Section("Personalization") {
