@@ -598,7 +598,7 @@ function NotificationsSection() {
         <SettingsRow
           id="checkin-enabled"
           label="Evening check-in"
-          description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
+          description="Ask what actually moved today. Your answers shape tomorrow’s brief."
           control={
             <Switch
               id="checkin-enabled"

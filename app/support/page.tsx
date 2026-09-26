@@ -11,16 +11,15 @@ export default function SupportPage() {
           .
         </p>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Include the email address on your Lab86 Mail account, the connected provider, and the approximate
+          Include the email address on your Albatross account, the connected provider, and the approximate
           time of the issue. Do not send passwords or provider API keys.
         </p>
         <p>
-          To delete your account, open Accounts and AI in the app settings and choose Delete. You can also
-          email{' '}
+          To delete your account, open Settings, Account, and choose Delete account. You can also email{' '}
           <a href="mailto:support@lab86.io" className="underline">
             support@lab86.io
           </a>{' '}
-          from the address on your Lab86 Mail account.
+          from the address on your Albatross account.
         </p>
         <p>
           Security reports should go to{' '}
