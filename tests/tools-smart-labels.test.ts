@@ -16,7 +16,7 @@ import {
 import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('smart label and rule tools', () => {
-  test('creates, lists, updates, and disables custom labels', async () => {
+  test('creates, lists, updates, disables, and deletes custom labels', async () => {
     const created = await runTool(createSmartLabel.handler, {
       name: 'Launch',
       description: 'Product launch threads',
@@ -35,8 +35,56 @@ describe('smart label and rule tools', () => {
     });
     expect(updated.label.description).toBe('Updated launch description');
 
-    const disabled = await runTool(deleteSmartLabel.handler, { id: created.label._id });
+    // Disable keeps the label, so the settings dialog can enable it again.
+    const disabled = await runTool(updateSmartLabel.handler, { id: created.label._id, enabled: false });
     expect(disabled.label.enabled).toBe(false);
+    const withDisabled = await runTool(listSmartLabels.handler, { includeDisabled: true });
+    expect(withDisabled.custom.some((label: any) => label._id === created.label._id)).toBe(true);
+    const reenabled = await runTool(updateSmartLabel.handler, { id: created.label._id, enabled: true });
+    expect(reenabled.label.enabled).toBe(true);
+  });
+
+  test('delete removes the label and turns off the rules that file mail under it', async () => {
+    const created = await runTool(createSmartLabel.handler, {
+      name: 'Receipts Box',
+      description: 'Receipts',
+      positiveExamples: ['receipt'],
+      negativeExamples: ['newsletter'],
+    });
+    expect(created.label.gmailLabelName).toBe('Albatross/Receipts Box');
+    const filing = await runTool(createSmartRule.handler, {
+      name: 'File receipts',
+      scope: 'sender',
+      match: 'shop@example.test',
+      effect: 'always_custom_label',
+      customLabelId: created.label._id,
+    });
+    const other = await runTool(createSmartRule.handler, {
+      name: 'Other rule',
+      scope: 'sender',
+      match: 'news@example.test',
+      effect: 'always_noise',
+    });
+
+    const deleted = await runTool(deleteSmartLabel.handler, { id: created.label._id });
+    expect(deleted.label._id).toBe(created.label._id);
+    expect(deleted.disabledRuleIds).toEqual([filing.rule._id]);
+
+    const listed = await runTool(listSmartLabels.handler, { includeDisabled: true });
+    expect(listed.custom.some((label: any) => label._id === created.label._id)).toBe(false);
+    const rules = await runTool(listSmartRules.handler, { includeDisabled: true });
+    expect(rules.rules.find((rule: any) => rule._id === filing.rule._id)?.enabled).toBe(false);
+    expect(rules.rules.find((rule: any) => rule._id === other.rule._id)?.enabled).toBe(true);
+
+    // The name is free again after a real delete.
+    const again = await runTool(createSmartLabel.handler, {
+      name: 'Receipts Box',
+      description: 'Receipts',
+      positiveExamples: ['receipt'],
+      negativeExamples: ['newsletter'],
+    });
+    expect(again.label._id).not.toBe(created.label._id);
+    await expect(runTool(deleteSmartLabel.handler, { id: 'missing-label' })).rejects.toThrow(/not found/);
   });
 
   test('creates rules and toggles enabled state', async () => {
@@ -77,8 +125,10 @@ describe('smart label and rule tools', () => {
     ).toBe(true);
   });
 
-  test('apply_smart_correction and mark_sender_human update local categories', async () => {
+  test('apply_smart_correction and mark_sender_human record the new category', async () => {
     const { account, threadId } = await seedThreadMessage({
+      threadId: 'cls14-correction-thread',
+      messageId: 'cls14-correction-message',
       from: 'Human Friend <friend@example.test>',
       subject: 'Coffee tomorrow?',
       labels: ['INBOX', 'UNREAD', 'CATEGORY_PERSONAL'],
@@ -92,16 +142,19 @@ describe('smart label and rule tools', () => {
     });
     expect(corrected.ok).toBe(true);
     expect(corrected.rule).toBeTruthy();
-    const correctedThread = await withToolContext(() => getThread(account, threadId));
-    expect(correctedThread?.smartCategory?.primary).toBe('main');
-    expect(correctedThread?.smartCategory?.ruleHits).toContain(corrected.rule._id);
 
     const marked = await runTool(markSenderHuman.handler, { account, threadId });
     expect(marked.ok).toBe(true);
     expect(marked.rule.scope).toBe('sender');
-    const markedThread = await withToolContext(() => getThread(account, threadId));
-    expect(markedThread?.smartCategory?.primary).toBe('main');
-    expect(markedThread?.smartCategory?.isHumanLike).toBe(true);
+
+    const { corrections } = await runTool(listSmartRules.handler, { correctionLimit: 10 });
+    const byRule = new Map(corrections.map((item: any) => [item.ruleId, item]));
+    expect((byRule.get(corrected.rule._id) as any)?.newCategory).toBe('main');
+    expect((byRule.get(marked.rule._id) as any)?.newCategory).toBe('main');
+    // The corpus row is the stored verdict. The unused local thread cache is
+    // not written.
+    const cached = await withToolContext(() => getThread(account, threadId));
+    expect(cached?.smartCategory ?? null).toBeNull();
   });
 
   test('apply_smart_correction requires move_to targets', async () => {

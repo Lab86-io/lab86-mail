@@ -79,6 +79,10 @@ export function SmartLabelsSettings({
         <div className="grid gap-6 md:grid-cols-2">
           <section className="space-y-2">
             <h3 className="text-[13px] font-semibold">Create custom label</h3>
+            <p className="text-[12px] text-[var(--color-text-muted)]">
+              Labels match keywords. Mail gets the label when each word of the name or of the match example is
+              in its sender, subject, preview, or body. The description is only a note.
+            </p>
             <div className="grid gap-2">
               <label htmlFor="smart-label-name" className="sr-only">
                 Name
@@ -97,27 +101,27 @@ export function SmartLabelsSettings({
                 id="smart-label-description"
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
-                placeholder="What should this label match?"
+                placeholder="Description (a note for you, not matched)"
                 className="min-h-20 rounded-md border bg-background px-2 py-2 text-[13px]"
               />
               <label htmlFor="smart-label-positive" className="sr-only">
-                Positive example
+                Words that match
               </label>
               <input
                 id="smart-label-positive"
                 value={positive}
                 onChange={(event) => setPositive(event.target.value)}
-                placeholder="Positive example"
+                placeholder="Words that match, for example: invoice acme"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <label htmlFor="smart-label-negative" className="sr-only">
-                Negative example
+                Words that exclude
               </label>
               <input
                 id="smart-label-negative"
                 value={negative}
                 onChange={(event) => setNegative(event.target.value)}
-                placeholder="Negative example"
+                placeholder="Words that exclude, for example: newsletter"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <div className="flex gap-2">
