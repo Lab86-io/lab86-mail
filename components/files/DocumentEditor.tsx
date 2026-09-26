@@ -26,7 +26,10 @@ import { Button } from '@/components/ui/button';
 import { useClientStore } from '@/lib/client-state';
 import { documentDraftMatchesSave } from '@/lib/documents/autosave';
 import { discardDraft, peekDraft, pendingFlush, type RetainedDraft } from '@/lib/documents/draft-store';
-import { googleModelWriteLimitation } from '@/lib/documents/google-write-policy';
+import {
+  googleLinkedFileSyncLimitation,
+  googleModelWriteLimitation,
+} from '@/lib/documents/google-write-policy';
 import type {
   AlbatrossDocumentModel,
   AlbatrossDocumentRecord,
@@ -515,6 +518,9 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
   const engineSheet = model.kind === 'sheet';
   const googleWriteNotice = googleModelWriteLimitation(model);
   const googleWriteBlocked = engineSheet || Boolean(googleWriteNotice);
+  // A linked spreadsheet or deck can import from Google but never sync back.
+  const googleSyncBlocked =
+    googleWriteBlocked || Boolean(googleLinkedFileSyncLimitation(document.kind, document.google));
   const importNotes = document.importSource?.warnings || [];
 
   return (
@@ -567,12 +573,12 @@ export function DocumentEditor({ documentId, onClose }: { documentId: string; on
         >
           <History className="size-3.5" />
         </Button>
-        {!googleWriteBlocked ? (
+        {!googleSyncBlocked ? (
           <Button
             variant="outline"
             size="sm"
             onClick={() => publishMutation.mutate()}
-            disabled={googleWriteBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
+            disabled={googleSyncBlocked || publishMutation.isPending || saveMutation.isPending || dirty}
             aria-label={document.google ? 'Sync Google' : 'Publish to Google'}
             title={googleWriteBlocked ? googleWriteNotice || undefined : undefined}
           >
