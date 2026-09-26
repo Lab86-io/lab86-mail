@@ -101,7 +101,8 @@ describe('the contract', () => {
     )) {
       expect(mapping[kind]).toBeDefined();
     }
-    expect(mapping['calendar.resync']).toBe('#/components/schemas/CalendarResyncCommand');
+    // Every mapped kind is a command the contract still has.
+    expect(Object.keys(mapping).length).toBe(MobileContractV1.schemas.MobileCommand.options.length);
     expect(document.components.schemas.SyncChange.discriminator.mapping.workShape).toBe(
       '#/components/schemas/WorkShapeSyncChange',
     );

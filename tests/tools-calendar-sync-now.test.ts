@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { startCalendarResync } from '../lib/calendar/resync';
 import { executeMobileCommand } from '../lib/mobile/v1/command-executor';
 import { MobileCommandSchema } from '../lib/mobile/v1/contract';
 import { calendarListEvents, calendarSyncNow } from '../lib/tools/calendar';
 
-// The `calendar_sync_now` tool and the default mobile executor both reach the
-// shared resync helper without an injection seam, so one Convex fetch stub
-// covers them. The sync claim is refused, so no provider call happens.
+// The `calendar_sync_now` tool and the shared resync helper reach Convex
+// without an injection seam, so one Convex fetch stub covers them and the
+// default mobile executor dependencies. The sync claim is refused, so no
+// provider call happens.
 
 const account = {
   userId: 'user_sync_now',
@@ -150,24 +152,21 @@ describe('calendar_list_events', () => {
   });
 });
 
-describe('calendar.resync with the default executor dependencies', () => {
+describe('the shared resync helper and the default executor dependencies', () => {
   test('view_open on a fresh account reads sync state and starts nothing', async () => {
+    const fresh = Date.now() - 5_000;
     await withConvexStub(
       {
         ...handlers,
-        'calendarData:getSyncStates': () => [
-          { accountId: 'acct_1', status: 'ready', lastSyncedAt: Date.now() - 5_000 },
-        ],
+        'calendarData:getSyncStates': () => [{ accountId: 'acct_1', status: 'ready', lastSyncedAt: fresh }],
       },
       async (calls) => {
-        const command = MobileCommandSchema.parse({
-          idempotencyKey: 'calendar-resync-default-1',
-          kind: 'calendar.resync',
-          payload: { accountID: 'acct_1', reason: 'view_open' },
-          clientCreatedAt: '2026-09-03T09:00:00.000Z',
+        const result = await startCalendarResync({
+          userId: user.userId,
+          accountId: 'acct_1',
+          reason: 'view_open',
         });
-        const result = await executeMobileCommand(command, user);
-        expect(result).toEqual({ status: 'applied', syncDomain: 'calendar' });
+        expect(result).toEqual({ started: false, lastSyncedAt: fresh, skippedReason: 'fresh' });
         expect(calls.map((call) => call.path)).toEqual(['calendarData:getSyncStates']);
       },
     );

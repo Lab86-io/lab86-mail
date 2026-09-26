@@ -8,19 +8,11 @@ enum MobileCommandKind: String, Codable, CaseIterable, Sendable {
     case mailMarkUnread = "mail.markUnread"
     case mailStar = "mail.star"
     case mailUnstar = "mail.unstar"
-    case mailAddLabel = "mail.addLabel"
-    case mailRemoveLabel = "mail.removeLabel"
     case mailSnooze = "mail.snooze"
     case mailUnsnooze = "mail.unsnooze"
-    case mailMute = "mail.mute"
     case mailRestore = "mail.restore"
-    case mailSend = "mail.send"
-    case mailSaveDraft = "mail.saveDraft"
-    case mailDeleteDraft = "mail.deleteDraft"
     case calendarCreate = "calendar.create"
-    case taskCreate = "task.create"
     case taskSetCompleted = "task.setCompleted"
-    case workCapture = "work.capture"
     case workSetHorizon = "work.setHorizon"
     case workListAdd = "work.listAdd"
     case workListToggle = "work.listToggle"
@@ -28,8 +20,6 @@ enum MobileCommandKind: String, Codable, CaseIterable, Sendable {
     case workMetricLog = "work.metricLog"
     case workMilestoneToggle = "work.milestoneToggle"
     case workSetShape = "work.setShape"
-    case approvalApprove = "approval.approve"
-    case approvalReject = "approval.reject"
 }
 
 struct MailThreadCommandTarget: Codable, Equatable, Sendable {
@@ -50,13 +40,6 @@ struct MailThreadMessageCommandTarget: Codable, Equatable, Sendable {
         self.threadID = threadID
         self.messageID = messageID
     }
-}
-
-struct MailMessageLabelCommandPayload: Codable, Equatable, Sendable {
-    let accountID: String
-    let threadID: String
-    let messageID: String
-    let label: String
 }
 
 // Snooze acts on the whole thread, so the message is optional.
@@ -86,47 +69,6 @@ struct MailUnsnoozeCommandPayload: Codable, Equatable, Sendable {
     }
 }
 
-enum MailSendMode: String, Codable, Equatable, Sendable {
-    case new
-    case reply
-    case replyAll
-    case forward
-}
-
-// Text-only durable sends; attachment sends stay on the multipart compose
-// boundary, mirroring the server contract exactly.
-struct MailSendCommandPayload: Codable, Equatable, Sendable {
-    let accountID: String
-    let mode: MailSendMode
-    let to: String?
-    let cc: String?
-    let bcc: String?
-    let subject: String?
-    let bodyText: String
-    let bodyHTML: String?
-    let threadID: String?
-    let messageID: String?
-}
-
-struct MailSaveDraftCommandPayload: Codable, Equatable, Sendable {
-    let accountID: String
-    let draftID: String?
-    let threadID: String?
-    let inReplyToMessageID: String?
-    let to: String
-    let cc: String?
-    let bcc: String?
-    let subject: String
-    let bodyText: String
-    let bodyHTML: String?
-    let scheduledFor: Date?
-}
-
-struct MailDeleteDraftCommandPayload: Codable, Equatable, Sendable {
-    let accountID: String
-    let draftID: String
-}
-
 struct CalendarCommandAttendee: Codable, Equatable, Sendable {
     let email: String
     let name: String?
@@ -146,37 +88,9 @@ struct CalendarCreateCommandPayload: Codable, Equatable, Sendable {
     let busy: Bool
 }
 
-enum TaskPriority: String, Codable, Equatable, Sendable {
-    case low
-    case medium
-    case high
-}
-
-struct TaskCreateCommandPayload: Codable, Equatable, Sendable {
-    let boardID: String?
-    let column: String?
-    let title: String
-    let description: String?
-    let priority: TaskPriority?
-    let dueAt: Date?
-}
-
 struct TaskCompletionCommandPayload: Codable, Equatable, Sendable {
     let cardID: String
     let completed: Bool
-}
-
-enum WorkCaptureSource: String, Codable, Equatable, Sendable {
-    case text
-    case voice
-    case chat
-}
-
-struct WorkCaptureCommandPayload: Codable, Equatable, Sendable {
-    let rawText: String
-    let transcript: String?
-    let source: WorkCaptureSource
-    let areaID: String?
 }
 
 // The horizon a client asks for. Dates are ISO timestamps on the wire, like
@@ -244,15 +158,6 @@ struct WorkSetShapeCommandPayload: Codable, Equatable, Sendable {
     let shape: WorkShape
 }
 
-struct ApprovalApproveCommandPayload: Codable, Equatable, Sendable {
-    let approvalID: String
-}
-
-struct ApprovalRejectCommandPayload: Codable, Equatable, Sendable {
-    let approvalID: String
-    let reason: String?
-}
-
 enum DurableMobileCommand: Codable, Equatable, Sendable {
     case mailArchive(MailThreadCommandTarget)
     case mailTrash(MailThreadCommandTarget)
@@ -260,19 +165,11 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case mailMarkUnread(MailThreadMessageCommandTarget)
     case mailStar(MailThreadMessageCommandTarget)
     case mailUnstar(MailThreadMessageCommandTarget)
-    case mailAddLabel(MailMessageLabelCommandPayload)
-    case mailRemoveLabel(MailMessageLabelCommandPayload)
     case mailSnooze(MailSnoozeCommandPayload)
     case mailUnsnooze(MailUnsnoozeCommandPayload)
-    case mailMute(MailThreadCommandTarget)
     case mailRestore(MailThreadCommandTarget)
-    case mailSend(MailSendCommandPayload)
-    case mailSaveDraft(MailSaveDraftCommandPayload)
-    case mailDeleteDraft(MailDeleteDraftCommandPayload)
     case calendarCreate(CalendarCreateCommandPayload)
-    case taskCreate(TaskCreateCommandPayload)
     case taskSetCompleted(TaskCompletionCommandPayload)
-    case workCapture(WorkCaptureCommandPayload)
     case workSetHorizon(WorkSetHorizonCommandPayload)
     case workListAdd(WorkListAddCommandPayload)
     case workListToggle(WorkListItemCommandPayload)
@@ -280,8 +177,6 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case workMetricLog(WorkMetricLogCommandPayload)
     case workMilestoneToggle(WorkMilestoneToggleCommandPayload)
     case workSetShape(WorkSetShapeCommandPayload)
-    case approvalApprove(ApprovalApproveCommandPayload)
-    case approvalReject(ApprovalRejectCommandPayload)
 
     var kind: MobileCommandKind {
         switch self {
@@ -291,19 +186,11 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
         case .mailMarkUnread: .mailMarkUnread
         case .mailStar: .mailStar
         case .mailUnstar: .mailUnstar
-        case .mailAddLabel: .mailAddLabel
-        case .mailRemoveLabel: .mailRemoveLabel
         case .mailSnooze: .mailSnooze
         case .mailUnsnooze: .mailUnsnooze
-        case .mailMute: .mailMute
         case .mailRestore: .mailRestore
-        case .mailSend: .mailSend
-        case .mailSaveDraft: .mailSaveDraft
-        case .mailDeleteDraft: .mailDeleteDraft
         case .calendarCreate: .calendarCreate
-        case .taskCreate: .taskCreate
         case .taskSetCompleted: .taskSetCompleted
-        case .workCapture: .workCapture
         case .workSetHorizon: .workSetHorizon
         case .workListAdd: .workListAdd
         case .workListToggle: .workListToggle
@@ -311,8 +198,6 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
         case .workMetricLog: .workMetricLog
         case .workMilestoneToggle: .workMilestoneToggle
         case .workSetShape: .workSetShape
-        case .approvalApprove: .approvalApprove
-        case .approvalReject: .approvalReject
         }
     }
 }

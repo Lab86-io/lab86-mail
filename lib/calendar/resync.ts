@@ -3,12 +3,12 @@ import { type CalendarSyncResult, syncAllCalendarAccounts, syncCalendarAccount }
 
 const calendarApi = (api as any).calendarData;
 
-// One entry point for every user-triggered calendar resync: the HTTP route,
-// the mobile `calendar.resync` command, and the `calendar_sync_now` tool.
+// One entry point for every user-triggered calendar resync: the HTTP route
+// (web and native) and the `calendar_sync_now` tool.
 // The reason decides two things: whether the debounce applies, and whether
 // the sync claim is forced.
 
-// Reasons a client can send over HTTP or the mobile command.
+// Reasons a client can send over HTTP.
 export const CALENDAR_RESYNC_CLIENT_REASONS = ['view_open', 'pull', 'manual_http'] as const;
 export type CalendarResyncClientReason = (typeof CALENDAR_RESYNC_CLIENT_REASONS)[number];
 

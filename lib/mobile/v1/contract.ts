@@ -526,26 +526,6 @@ const calendarCreatePayload = z
   })
   .strict();
 
-const taskCreatePayload = z
-  .object({
-    boardID: optionalIdentifier,
-    column: z.string().trim().min(1).max(160).optional(),
-    title: z.string().trim().min(1).max(500),
-    description: z.string().max(20_000).optional(),
-    priority: z.enum(['low', 'medium', 'high']).optional(),
-    dueAt: isoTimestamp.optional(),
-  })
-  .strict();
-
-const mailMessageLabelPayload = z
-  .object({
-    accountID: identifier,
-    threadID: identifier,
-    messageID: identifier,
-    label: z.string().trim().min(1).max(240),
-  })
-  .strict();
-
 // Snooze acts on the whole thread. `messageID` is optional: the Snoozed list
 // does not always know the message a snooze started from.
 const mailSnoozePayload = z
@@ -562,77 +542,6 @@ const mailUnsnoozePayload = z
     accountID: identifier,
     threadID: identifier,
     messageID: optionalIdentifier,
-  })
-  .strict();
-
-// Text-only durable sends. Attachment sends stay on the authenticated
-// multipart /api/compose boundary — bytes do not belong in a queued command.
-const mailSendPayload = z
-  .object({
-    accountID: identifier,
-    mode: z.enum(['new', 'reply', 'replyAll', 'forward']),
-    to: z.string().max(20_000).optional(),
-    cc: z.string().max(20_000).optional(),
-    bcc: z.string().max(20_000).optional(),
-    subject: z.string().max(2_000).optional(),
-    bodyText: z.string().max(500_000),
-    bodyHTML: z.string().max(1_000_000).optional(),
-    threadID: optionalIdentifier,
-    messageID: optionalIdentifier,
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if ((value.mode === 'new' || value.mode === 'forward') && !value.to?.trim()) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'to is required for new and forward sends.',
-      });
-    }
-    if (value.mode === 'new' && value.subject === undefined) {
-      ctx.addIssue({ code: 'custom', message: 'subject is required for a new send.' });
-    }
-    if (value.mode !== 'new' && !value.messageID) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'messageID is required for reply, replyAll, and forward sends.',
-      });
-    }
-  });
-
-const mailSaveDraftPayload = z
-  .object({
-    accountID: identifier,
-    draftID: optionalIdentifier,
-    threadID: optionalIdentifier,
-    inReplyToMessageID: optionalIdentifier,
-    to: z.string().max(20_000),
-    cc: z.string().max(20_000).optional(),
-    bcc: z.string().max(20_000).optional(),
-    subject: z.string().max(2_000),
-    bodyText: z.string().max(500_000),
-    bodyHTML: z.string().max(1_000_000).optional(),
-    scheduledFor: isoTimestamp.optional(),
-    // Explicit unschedule for an existing draft (mirrors `snoozeCleared`):
-    // omitting `scheduledFor` on an update must mean "leave it unchanged".
-    scheduleCleared: z.literal(true).optional(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if (value.scheduleCleared && value.scheduledFor !== undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'scheduleCleared cannot be combined with scheduledFor.',
-      });
-    }
-    if (value.scheduleCleared && !value.draftID) {
-      ctx.addIssue({ code: 'custom', message: 'scheduleCleared requires an existing draftID.' });
-    }
-  });
-
-const mailDeleteDraftPayload = z
-  .object({
-    accountID: identifier,
-    draftID: identifier,
   })
   .strict();
 
@@ -654,82 +563,23 @@ export const MailStarCommandSchema = z
 export const MailUnstarCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.unstar'), payload: mailThreadMessagePayload })
   .strict();
-export const MailAddLabelCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.addLabel'), payload: mailMessageLabelPayload })
-  .strict();
-export const MailRemoveLabelCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('mail.removeLabel'),
-    payload: mailMessageLabelPayload,
-  })
-  .strict();
 export const MailSnoozeCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.snooze'), payload: mailSnoozePayload })
   .strict();
 export const MailUnsnoozeCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.unsnooze'), payload: mailUnsnoozePayload })
   .strict();
-export const MailMuteCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.mute'), payload: mailThreadPayload })
-  .strict();
 export const MailRestoreCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.restore'), payload: mailThreadPayload })
   .strict();
-export const MailSendCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.send'), payload: mailSendPayload })
-  .strict();
-export const MailSaveDraftCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.saveDraft'), payload: mailSaveDraftPayload })
-  .strict();
-export const MailDeleteDraftCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('mail.deleteDraft'),
-    payload: mailDeleteDraftPayload,
-  })
-  .strict();
 export const CalendarCreateCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('calendar.create'), payload: calendarCreatePayload })
-  .strict();
-// Asks the server to sync the calendar mirror. `view_open` is skipped when the
-// last sync finished under two minutes ago. `pull` and `manual_http` always
-// sync. The receipt carries no sync change; the calendar feed updates as the
-// sync writes events.
-export const CalendarResyncCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('calendar.resync'),
-    payload: z
-      .object({
-        accountID: optionalIdentifier,
-        reason: z.enum(['view_open', 'pull', 'manual_http']),
-      })
-      .strict(),
-  })
-  .strict();
-export const TaskCreateCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('task.create'), payload: taskCreatePayload })
   .strict();
 export const TaskSetCompletedCommandSchema = z
   .object({
     ...mobileCommandBase,
     kind: z.literal('task.setCompleted'),
     payload: z.object({ cardID: identifier, completed: z.boolean() }).strict(),
-  })
-  .strict();
-export const WorkCaptureCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('work.capture'),
-    payload: z
-      .object({
-        rawText: z.string().trim().min(1).max(20_000),
-        transcript: z.string().max(20_000).optional(),
-        source: z.enum(['text', 'voice', 'chat']),
-        areaID: optionalIdentifier,
-      })
-      .strict(),
   })
   .strict();
 // Set or clear the horizon of one Work. Dates are ISO timestamps, like every
@@ -759,24 +609,6 @@ export const WorkSetHorizonCommandSchema = z
           ctx.addIssue({ code: 'custom', message: 'Provide horizon or horizonCleared, not both.' });
         }
       }),
-  })
-  .strict();
-// Hold text from the chat bar or from one chat reply as Work. `text` is the
-// user message. `replyText` is the assistant reply the user chose to hold.
-// A second command for the same `(conversationID, sourceMessageID)` returns
-// the Work that already exists.
-export const WorkCaptureFromChatCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('work.captureFromChat'),
-    payload: z
-      .object({
-        text: z.string().trim().min(1).max(20_000),
-        conversationID: identifier,
-        sourceMessageID: optionalIdentifier,
-        replyText: z.string().max(20_000).optional(),
-      })
-      .strict(),
   })
   .strict();
 // Shape commands. Each one is a user touch on the Work. The receipt carries a
@@ -832,26 +664,6 @@ export const WorkSetShapeCommandSchema = z
     payload: z.object({ workID: identifier, shape: WorkShapeSchema }).strict(),
   })
   .strict();
-export const ApprovalApproveCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('approval.approve'),
-    payload: z
-      .object({
-        approvalID: identifier,
-        editedArguments: z.record(z.string(), z.unknown()).optional(),
-      })
-      .strict(),
-  })
-  .strict();
-export const ApprovalRejectCommandSchema = z
-  .object({
-    ...mobileCommandBase,
-    kind: z.literal('approval.reject'),
-    payload: z.object({ approvalID: identifier, reason: z.string().max(1_000).optional() }).strict(),
-  })
-  .strict();
-
 export const MobileCommandVariantSchemas = {
   MailArchiveCommand: MailArchiveCommandSchema,
   MailTrashCommand: MailTrashCommandSchema,
@@ -859,30 +671,18 @@ export const MobileCommandVariantSchemas = {
   MailMarkUnreadCommand: MailMarkUnreadCommandSchema,
   MailStarCommand: MailStarCommandSchema,
   MailUnstarCommand: MailUnstarCommandSchema,
-  MailAddLabelCommand: MailAddLabelCommandSchema,
-  MailRemoveLabelCommand: MailRemoveLabelCommandSchema,
   MailSnoozeCommand: MailSnoozeCommandSchema,
   MailUnsnoozeCommand: MailUnsnoozeCommandSchema,
-  MailMuteCommand: MailMuteCommandSchema,
   MailRestoreCommand: MailRestoreCommandSchema,
-  MailSendCommand: MailSendCommandSchema,
-  MailSaveDraftCommand: MailSaveDraftCommandSchema,
-  MailDeleteDraftCommand: MailDeleteDraftCommandSchema,
   CalendarCreateCommand: CalendarCreateCommandSchema,
-  CalendarResyncCommand: CalendarResyncCommandSchema,
-  TaskCreateCommand: TaskCreateCommandSchema,
   TaskSetCompletedCommand: TaskSetCompletedCommandSchema,
-  WorkCaptureCommand: WorkCaptureCommandSchema,
   WorkSetHorizonCommand: WorkSetHorizonCommandSchema,
-  WorkCaptureFromChatCommand: WorkCaptureFromChatCommandSchema,
   WorkListAddCommand: WorkListAddCommandSchema,
   WorkListToggleCommand: WorkListToggleCommandSchema,
   WorkListRemoveCommand: WorkListRemoveCommandSchema,
   WorkMetricLogCommand: WorkMetricLogCommandSchema,
   WorkMilestoneToggleCommand: WorkMilestoneToggleCommandSchema,
   WorkSetShapeCommand: WorkSetShapeCommandSchema,
-  ApprovalApproveCommand: ApprovalApproveCommandSchema,
-  ApprovalRejectCommand: ApprovalRejectCommandSchema,
 } as const;
 
 const commandSchemas = Object.values(MobileCommandVariantSchemas) as [
@@ -892,30 +692,18 @@ const commandSchemas = Object.values(MobileCommandVariantSchemas) as [
   typeof MailMarkUnreadCommandSchema,
   typeof MailStarCommandSchema,
   typeof MailUnstarCommandSchema,
-  typeof MailAddLabelCommandSchema,
-  typeof MailRemoveLabelCommandSchema,
   typeof MailSnoozeCommandSchema,
   typeof MailUnsnoozeCommandSchema,
-  typeof MailMuteCommandSchema,
   typeof MailRestoreCommandSchema,
-  typeof MailSendCommandSchema,
-  typeof MailSaveDraftCommandSchema,
-  typeof MailDeleteDraftCommandSchema,
   typeof CalendarCreateCommandSchema,
-  typeof CalendarResyncCommandSchema,
-  typeof TaskCreateCommandSchema,
   typeof TaskSetCompletedCommandSchema,
-  typeof WorkCaptureCommandSchema,
   typeof WorkSetHorizonCommandSchema,
-  typeof WorkCaptureFromChatCommandSchema,
   typeof WorkListAddCommandSchema,
   typeof WorkListToggleCommandSchema,
   typeof WorkListRemoveCommandSchema,
   typeof WorkMetricLogCommandSchema,
   typeof WorkMilestoneToggleCommandSchema,
   typeof WorkSetShapeCommandSchema,
-  typeof ApprovalApproveCommandSchema,
-  typeof ApprovalRejectCommandSchema,
 ];
 
 export const MobileCommandSchema = z.discriminatedUnion('kind', commandSchemas);

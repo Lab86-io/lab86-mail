@@ -1,13 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createMobileAssistantRoutePost } from '../app/api/mobile/v1/assistant/route/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
-import { executeMobileCommand, mobileCommandDomain } from '../lib/mobile/v1/command-executor';
-import {
-  AssistantRouteRequestSchema,
-  AssistantRouteVerdictSchema,
-  MobileCommandSchema,
-  SyncChangeSchema,
-} from '../lib/mobile/v1/contract';
+import { AssistantRouteRequestSchema, AssistantRouteVerdictSchema } from '../lib/mobile/v1/contract';
 import { mobileOpenAPIV1 } from '../lib/mobile/v1/openapi';
 import { RateLimitError } from '../lib/rate-limit';
 
@@ -18,107 +12,15 @@ const user = {
   source: 'clerk' as const,
 };
 
-const createdAt = '2026-09-03T09:00:00.000Z';
-
-function command(kind: string, payload: Record<string, unknown>, idempotencyKey = `${kind}-1`) {
-  return MobileCommandSchema.parse({ idempotencyKey, kind, payload, clientCreatedAt: createdAt });
-}
-
-describe('work.captureFromChat command', () => {
-  test('parses, names the work domain, and rejects payload drift', () => {
-    const parsed = command('work.captureFromChat', {
-      text: 'plan the move',
-      conversationID: 'conv-1',
-      sourceMessageID: 'msg-1',
-      replyText: '1. Book movers',
-    });
-    expect(parsed.kind).toBe('work.captureFromChat');
-    expect(mobileCommandDomain(parsed)).toBe('work');
-    expect(() => command('work.captureFromChat', { text: 'x' })).toThrow();
-    expect(() => command('work.captureFromChat', { text: 'x', conversationID: 'c', extra: 1 })).toThrow();
-  });
-
-  test('runs captureFromChat and reports a workCaptured sync change', async () => {
-    const calls: any[] = [];
-    const deps = {
-      captureFromChat: async (input: any) => {
-        calls.push(input);
-        return { captureId: 'capture-4', workIds: ['work-4', 'work-5'], work: [], existing: false };
-      },
-    } as any;
-    const result = await executeMobileCommand(
-      command('work.captureFromChat', {
-        text: 'plan the move',
-        conversationID: 'conv-1',
-        sourceMessageID: 'msg-1',
-        replyText: '1. Book movers',
-      }),
-      user,
-      deps,
-    );
-    expect(calls).toEqual([
-      {
-        text: 'plan the move',
-        replyText: '1. Book movers',
-        conversationId: 'conv-1',
-        sourceMessageId: 'msg-1',
-      },
-    ]);
-    expect(result).toEqual({
-      status: 'applied',
-      syncDomain: 'work',
-      entityKind: 'workCaptured',
-      entityID: 'work-4',
-      syncPayload: { workIDs: ['work-4', 'work-5'], existing: false },
-    });
-  });
-
-  test('a repeated Hold reports existing and keeps the first Work id', async () => {
-    const deps = {
-      captureFromChat: async () => ({
-        captureId: 'capture-4',
-        workIds: ['work-4'],
-        work: [],
-        existing: true,
-      }),
-    } as any;
-    const result = await executeMobileCommand(
-      command('work.captureFromChat', {
-        text: 'plan the move',
-        conversationID: 'conv-1',
-        sourceMessageID: 'msg-1',
-      }),
-      user,
-      deps,
-    );
-    expect(result).toMatchObject({
-      entityID: 'work-4',
-      syncPayload: { workIDs: ['work-4'], existing: true },
-    });
-  });
-
-  test('the workCaptured sync change decodes through the public contract', () => {
-    const change = SyncChangeSchema.parse({
-      revision: 12,
-      operation: 'upsert',
-      domain: 'work',
-      entityKind: 'workCaptured',
-      entityID: 'work-4',
-      payload: { workIDs: ['work-4'], existing: false },
-    });
-    expect(change.entityKind).toBe('workCaptured');
-  });
-
-  test('the OpenAPI document lists the command, the sync change, and the route path', () => {
+describe('the assistant route contract', () => {
+  test('the OpenAPI document lists the route path and its verdict', () => {
     const document = mobileOpenAPIV1();
-    expect(document.components.schemas.MobileCommand.discriminator.mapping['work.captureFromChat']).toBe(
-      '#/components/schemas/WorkCaptureFromChatCommand',
-    );
-    expect(document.components.schemas.SyncChange.discriminator.mapping.workCaptured).toBe(
-      '#/components/schemas/WorkCapturedSyncChange',
-    );
     expect(document.paths['/api/mobile/v1/assistant/route'].post.operationId).toBe('postAssistantRoute');
     expect(document.components.schemas.AssistantRouteVerdict).toBeDefined();
+    // Hold captures through /api/albatross/capture; there is no chat capture command.
+    expect(document.components.schemas.MobileCommand.discriminator.mapping).not.toHaveProperty(
+      'work.captureFromChat',
+    );
   });
 });
 

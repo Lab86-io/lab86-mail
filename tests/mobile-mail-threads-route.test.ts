@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { createMobileMailThreadGet } from '../app/api/mobile/v1/mail/threads/[threadID]/route';
 import { createMobileMailThreadsGet } from '../app/api/mobile/v1/mail/threads/route';
 import { AuthRequiredError } from '../lib/auth/current-user';
-import { MailSendCommandSchema, MobileCommandSchema } from '../lib/mobile/v1/contract';
 import { mailThreadSummaryFromCorpus } from '../lib/mobile/v1/mail-reads';
 
 const user = {
@@ -272,47 +271,5 @@ describe('GET /api/mobile/v1/mail/threads/{threadID}', () => {
     expect(response.status).toBe(500);
     const body: any = await response.json();
     expect(body.error.retryable).toBe(true);
-  });
-});
-
-describe('mail.send payload validation', () => {
-  const base = { idempotencyKey: 'send-1', kind: 'mail.send', clientCreatedAt: '2026-08-19T09:00:00.000Z' };
-
-  test('a new send requires recipients and a subject', () => {
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'new', bodyText: 'hi' },
-      }),
-    ).toThrow();
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'new', to: 'sam@example.com', bodyText: 'hi' },
-      }),
-    ).toThrow(/subject/);
-  });
-
-  test('reply modes require the anchor message', () => {
-    expect(() =>
-      MailSendCommandSchema.parse({
-        ...base,
-        payload: { accountID: 'account-1', mode: 'reply', bodyText: 'hi' },
-      }),
-    ).toThrow(/messageID/);
-  });
-
-  test('a complete send parses through the discriminated command union', () => {
-    const parsed = MobileCommandSchema.parse({
-      ...base,
-      payload: {
-        accountID: 'account-1',
-        mode: 'new',
-        to: 'sam@example.com',
-        subject: 'Hello',
-        bodyText: 'Body',
-      },
-    });
-    expect(parsed.kind).toBe('mail.send');
   });
 });

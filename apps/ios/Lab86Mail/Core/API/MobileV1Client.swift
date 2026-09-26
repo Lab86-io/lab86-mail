@@ -613,36 +613,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
-        case .mailAddLabel(let payload):
-            .mail_addLabel(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_addLabel,
-                    payload: .init(
-                        accountID: payload.accountID,
-                        threadID: payload.threadID,
-                        messageID: payload.messageID,
-                        label: payload.label
-                    )
-                )
-            )
-        case .mailRemoveLabel(let payload):
-            .mail_removeLabel(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_removeLabel,
-                    payload: .init(
-                        accountID: payload.accountID,
-                        threadID: payload.threadID,
-                        messageID: payload.messageID,
-                        label: payload.label
-                    )
-                )
-            )
         case .mailSnooze(let payload):
             .mail_snooze(
                 .init(
@@ -672,16 +642,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
-        case .mailMute(let payload):
-            .mail_mute(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_mute,
-                    payload: .init(accountID: payload.accountID, threadID: payload.threadID)
-                )
-            )
         case .mailRestore(let payload):
             .mail_restore(
                 .init(
@@ -690,59 +650,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     clientCreatedAt: snapshot.clientCreatedAt,
                     kind: .mail_restore,
                     payload: .init(accountID: payload.accountID, threadID: payload.threadID)
-                )
-            )
-        case .mailSend(let payload):
-            .mail_send(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_send,
-                    payload: .init(
-                        accountID: payload.accountID,
-                        mode: sendMode(payload.mode),
-                        to: payload.to,
-                        cc: payload.cc,
-                        bcc: payload.bcc,
-                        subject: payload.subject,
-                        bodyText: payload.bodyText,
-                        bodyHTML: payload.bodyHTML,
-                        threadID: payload.threadID,
-                        messageID: payload.messageID
-                    )
-                )
-            )
-        case .mailSaveDraft(let payload):
-            .mail_saveDraft(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_saveDraft,
-                    payload: .init(
-                        accountID: payload.accountID,
-                        draftID: payload.draftID,
-                        threadID: payload.threadID,
-                        inReplyToMessageID: payload.inReplyToMessageID,
-                        to: payload.to,
-                        cc: payload.cc,
-                        bcc: payload.bcc,
-                        subject: payload.subject,
-                        bodyText: payload.bodyText,
-                        bodyHTML: payload.bodyHTML,
-                        scheduledFor: payload.scheduledFor
-                    )
-                )
-            )
-        case .mailDeleteDraft(let payload):
-            .mail_deleteDraft(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .mail_deleteDraft,
-                    payload: .init(accountID: payload.accountID, draftID: payload.draftID)
                 )
             )
         case .calendarCreate(let payload):
@@ -769,23 +676,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
-        case .taskCreate(let payload):
-            .task_create(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .task_create,
-                    payload: .init(
-                        boardID: payload.boardID,
-                        column: payload.column,
-                        title: payload.title,
-                        description: payload.description,
-                        priority: taskPriority(payload.priority),
-                        dueAt: payload.dueAt
-                    )
-                )
-            )
         case .taskSetCompleted(let payload):
             .task_setCompleted(
                 .init(
@@ -794,21 +684,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     clientCreatedAt: snapshot.clientCreatedAt,
                     kind: .task_setCompleted,
                     payload: .init(cardID: payload.cardID, completed: payload.completed)
-                )
-            )
-        case .workCapture(let payload):
-            .work_capture(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .work_capture,
-                    payload: .init(
-                        rawText: payload.rawText,
-                        transcript: payload.transcript,
-                        source: workCaptureSource(payload.source),
-                        areaID: payload.areaID
-                    )
                 )
             )
         case .workSetHorizon(let payload):
@@ -900,58 +775,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     )
                 )
             )
-        case .approvalApprove(let payload):
-            .approval_approve(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .approval_approve,
-                    payload: .init(approvalID: payload.approvalID)
-                )
-            )
-        case .approvalReject(let payload):
-            .approval_reject(
-                .init(
-                    idempotencyKey: snapshot.idempotencyKey,
-                    baseRevision: snapshot.baseRevision,
-                    clientCreatedAt: snapshot.clientCreatedAt,
-                    kind: .approval_reject,
-                    payload: .init(approvalID: payload.approvalID, reason: payload.reason)
-                )
-            )
-        }
-    }
-
-    private static func sendMode(
-        _ mode: MailSendMode
-    ) -> Components.Schemas.MailSendCommand.PayloadPayload.ModePayload {
-        switch mode {
-        case .new: .new
-        case .reply: .reply
-        case .replyAll: .replyAll
-        case .forward: .forward
-        }
-    }
-
-    private static func taskPriority(
-        _ priority: TaskPriority?
-    ) -> Components.Schemas.TaskCreateCommand.PayloadPayload.PriorityPayload? {
-        switch priority {
-        case .low: .low
-        case .medium: .medium
-        case .high: .high
-        case nil: nil
-        }
-    }
-
-    private static func workCaptureSource(
-        _ source: WorkCaptureSource
-    ) -> Components.Schemas.WorkCaptureCommand.PayloadPayload.SourcePayload {
-        switch source {
-        case .text: .text
-        case .voice: .voice
-        case .chat: .chat
         }
     }
 

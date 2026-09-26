@@ -1794,52 +1794,22 @@
             "$ref": "#/components/schemas/MailUnstarCommand"
           },
           {
-            "$ref": "#/components/schemas/MailAddLabelCommand"
-          },
-          {
-            "$ref": "#/components/schemas/MailRemoveLabelCommand"
-          },
-          {
             "$ref": "#/components/schemas/MailSnoozeCommand"
           },
           {
             "$ref": "#/components/schemas/MailUnsnoozeCommand"
           },
           {
-            "$ref": "#/components/schemas/MailMuteCommand"
-          },
-          {
             "$ref": "#/components/schemas/MailRestoreCommand"
-          },
-          {
-            "$ref": "#/components/schemas/MailSendCommand"
-          },
-          {
-            "$ref": "#/components/schemas/MailSaveDraftCommand"
-          },
-          {
-            "$ref": "#/components/schemas/MailDeleteDraftCommand"
           },
           {
             "$ref": "#/components/schemas/CalendarCreateCommand"
           },
           {
-            "$ref": "#/components/schemas/CalendarResyncCommand"
-          },
-          {
-            "$ref": "#/components/schemas/TaskCreateCommand"
-          },
-          {
             "$ref": "#/components/schemas/TaskSetCompletedCommand"
           },
           {
-            "$ref": "#/components/schemas/WorkCaptureCommand"
-          },
-          {
             "$ref": "#/components/schemas/WorkSetHorizonCommand"
-          },
-          {
-            "$ref": "#/components/schemas/WorkCaptureFromChatCommand"
           },
           {
             "$ref": "#/components/schemas/WorkListAddCommand"
@@ -1858,12 +1828,6 @@
           },
           {
             "$ref": "#/components/schemas/WorkSetShapeCommand"
-          },
-          {
-            "$ref": "#/components/schemas/ApprovalApproveCommand"
-          },
-          {
-            "$ref": "#/components/schemas/ApprovalRejectCommand"
           }
         ],
         "discriminator": {
@@ -1875,30 +1839,18 @@
             "mail.markUnread": "#/components/schemas/MailMarkUnreadCommand",
             "mail.star": "#/components/schemas/MailStarCommand",
             "mail.unstar": "#/components/schemas/MailUnstarCommand",
-            "mail.addLabel": "#/components/schemas/MailAddLabelCommand",
-            "mail.removeLabel": "#/components/schemas/MailRemoveLabelCommand",
             "mail.snooze": "#/components/schemas/MailSnoozeCommand",
             "mail.unsnooze": "#/components/schemas/MailUnsnoozeCommand",
-            "mail.mute": "#/components/schemas/MailMuteCommand",
             "mail.restore": "#/components/schemas/MailRestoreCommand",
-            "mail.send": "#/components/schemas/MailSendCommand",
-            "mail.saveDraft": "#/components/schemas/MailSaveDraftCommand",
-            "mail.deleteDraft": "#/components/schemas/MailDeleteDraftCommand",
             "calendar.create": "#/components/schemas/CalendarCreateCommand",
-            "calendar.resync": "#/components/schemas/CalendarResyncCommand",
-            "task.create": "#/components/schemas/TaskCreateCommand",
             "task.setCompleted": "#/components/schemas/TaskSetCompletedCommand",
-            "work.capture": "#/components/schemas/WorkCaptureCommand",
             "work.setHorizon": "#/components/schemas/WorkSetHorizonCommand",
-            "work.captureFromChat": "#/components/schemas/WorkCaptureFromChatCommand",
             "work.listAdd": "#/components/schemas/WorkListAddCommand",
             "work.listToggle": "#/components/schemas/WorkListToggleCommand",
             "work.listRemove": "#/components/schemas/WorkListRemoveCommand",
             "work.metricLog": "#/components/schemas/WorkMetricLogCommand",
             "work.milestoneToggle": "#/components/schemas/WorkMilestoneToggleCommand",
-            "work.setShape": "#/components/schemas/WorkSetShapeCommand",
-            "approval.approve": "#/components/schemas/ApprovalApproveCommand",
-            "approval.reject": "#/components/schemas/ApprovalRejectCommand"
+            "work.setShape": "#/components/schemas/WorkSetShapeCommand"
           }
         }
       },
@@ -3593,132 +3545,6 @@
         ],
         "additionalProperties": false
       },
-      "MailAddLabelCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.addLabel"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "threadID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "messageID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "label": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID",
-              "label"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "MailRemoveLabelCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.removeLabel"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "threadID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "messageID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "label": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "accountID",
-              "threadID",
-              "messageID",
-              "label"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
       "MailSnoozeCommand": {
         "type": "object",
         "properties": {
@@ -3837,57 +3663,6 @@
         ],
         "additionalProperties": false
       },
-      "MailMuteCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.mute"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "threadID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "accountID",
-              "threadID"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
       "MailRestoreCommand": {
         "type": "object",
         "properties": {
@@ -3927,243 +3702,6 @@
             "required": [
               "accountID",
               "threadID"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "MailSendCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.send"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "new",
-                  "reply",
-                  "replyAll",
-                  "forward"
-                ]
-              },
-              "to": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "cc": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "bcc": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 2000
-              },
-              "bodyText": {
-                "type": "string",
-                "maxLength": 500000
-              },
-              "bodyHTML": {
-                "type": "string",
-                "maxLength": 1000000
-              },
-              "threadID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "messageID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "accountID",
-              "mode",
-              "bodyText"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "MailSaveDraftCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.saveDraft"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "draftID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "threadID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "inReplyToMessageID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "to": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "cc": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "bcc": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "subject": {
-                "type": "string",
-                "maxLength": 2000
-              },
-              "bodyText": {
-                "type": "string",
-                "maxLength": 500000
-              },
-              "bodyHTML": {
-                "type": "string",
-                "maxLength": 1000000
-              },
-              "scheduledFor": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-              },
-              "scheduleCleared": {
-                "type": "boolean",
-                "const": true
-              }
-            },
-            "required": [
-              "accountID",
-              "to",
-              "subject",
-              "bodyText"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "MailDeleteDraftCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "mail.deleteDraft"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "draftID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "accountID",
-              "draftID"
             ],
             "additionalProperties": false
           }
@@ -4291,131 +3829,6 @@
         ],
         "additionalProperties": false
       },
-      "CalendarResyncCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "calendar.resync"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "accountID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "reason": {
-                "type": "string",
-                "enum": [
-                  "view_open",
-                  "pull",
-                  "manual_http"
-                ]
-              }
-            },
-            "required": [
-              "reason"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "TaskCreateCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "task.create"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "boardID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "column": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 160
-              },
-              "title": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 500
-              },
-              "description": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "priority": {
-                "type": "string",
-                "enum": [
-                  "low",
-                  "medium",
-                  "high"
-                ]
-              },
-              "dueAt": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-              }
-            },
-            "required": [
-              "title"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
       "TaskSetCompletedCommand": {
         "type": "object",
         "properties": {
@@ -4453,69 +3866,6 @@
             "required": [
               "cardID",
               "completed"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "WorkCaptureCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "work.capture"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "rawText": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 20000
-              },
-              "transcript": {
-                "type": "string",
-                "maxLength": 20000
-              },
-              "source": {
-                "type": "string",
-                "enum": [
-                  "text",
-                  "voice",
-                  "chat"
-                ]
-              },
-              "areaID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              }
-            },
-            "required": [
-              "rawText",
-              "source"
             ],
             "additionalProperties": false
           }
@@ -4597,66 +3947,6 @@
             },
             "required": [
               "workID"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "WorkCaptureFromChatCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "work.captureFromChat"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "text": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 20000
-              },
-              "conversationID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "sourceMessageID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "replyText": {
-                "type": "string",
-                "maxLength": 20000
-              }
-            },
-            "required": [
-              "text",
-              "conversationID"
             ],
             "additionalProperties": false
           }
@@ -4978,107 +4268,6 @@
             "required": [
               "workID",
               "shape"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "ApprovalApproveCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "approval.approve"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "approvalID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "editedArguments": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "approvalID"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "idempotencyKey",
-          "clientCreatedAt",
-          "kind",
-          "payload"
-        ],
-        "additionalProperties": false
-      },
-      "ApprovalRejectCommand": {
-        "type": "object",
-        "properties": {
-          "idempotencyKey": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 240
-          },
-          "baseRevision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "clientCreatedAt": {
-            "type": "string",
-            "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
-          },
-          "kind": {
-            "type": "string",
-            "const": "approval.reject"
-          },
-          "payload": {
-            "type": "object",
-            "properties": {
-              "approvalID": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 240
-              },
-              "reason": {
-                "type": "string",
-                "maxLength": 1000
-              }
-            },
-            "required": [
-              "approvalID"
             ],
             "additionalProperties": false
           }

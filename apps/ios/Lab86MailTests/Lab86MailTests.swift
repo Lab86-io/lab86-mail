@@ -2017,13 +2017,8 @@ struct Lab86MailTests {
         let outbox = CommandOutbox(modelContainer: container)
         _ = try await outbox.enqueue(
             ownerID: "user-one",
-            command: .workCapture(
-                WorkCaptureCommandPayload(
-                    rawText: "Prepare the release",
-                    transcript: nil,
-                    source: .text,
-                    areaID: nil
-                )
+            command: .workListAdd(
+                WorkListAddCommandPayload(workID: "work-1", text: "Prepare the release")
             ),
             idempotencyKey: "capture-retry"
         )
@@ -2056,8 +2051,8 @@ struct Lab86MailTests {
         let outbox = CommandOutbox(modelContainer: container)
         _ = try await outbox.enqueue(
             ownerID: "user-one",
-            command: .approvalReject(
-                ApprovalRejectCommandPayload(approvalID: "approval-1", reason: nil)
+            command: .mailUnsnooze(
+                MailUnsnoozeCommandPayload(accountID: "account-1", threadID: "thread-1")
             ),
             idempotencyKey: "reject-failed"
         )
