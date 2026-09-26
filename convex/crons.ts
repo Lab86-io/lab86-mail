@@ -153,4 +153,13 @@ crons.interval(
 
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
+// Shared browser sessions use keepAlive. End the stale ones at Browserbase and
+// in the ledger, so no pane shows a dead live view.
+crons.interval(
+  'albatross browser session sweep',
+  { minutes: 30 },
+  (internal as any).albatrossBrowserSessions.sweepStaleSessionsTick,
+  {},
+);
+
 export default crons;
