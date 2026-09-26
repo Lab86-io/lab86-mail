@@ -736,3 +736,78 @@ describe('Convex standing orders', () => {
     ).rejects.toThrow('Only a routine you turned on');
   });
 });
+
+describe('the default Convex wiring', () => {
+  test('each default reads or writes the right Convex function with the user', async () => {
+    const convex = await import('../lib/hosted/convex');
+    const calls: Array<[string, any]> = [];
+    const name = (fn: any) => String(fn?.[Symbol.for('functionName')] ?? fn);
+    const query = spyOn(convex, 'convexQuery').mockImplementation((async (fn: any, args: any) => {
+      calls.push([name(fn), args]);
+      return { routines: [], watches: [] };
+    }) as any);
+    const mutation = spyOn(convex, 'convexMutation').mockImplementation((async (fn: any, args: any) => {
+      calls.push([name(fn), args]);
+      return null;
+    }) as any);
+    restores.push(
+      () => query.mockRestore(),
+      () => mutation.mockRestore(),
+    );
+    await standingOrderDefaults.overview('u');
+    await standingOrderDefaults.setRoutinePaused('u', 'r1', true);
+    await standingOrderDefaults.sortingPolicy('u');
+    await standingOrderDefaults.saveSortingPolicy('u', { preferences: {}, corrections: [], revision: 3 });
+    await standingOrderDefaults.saveContentPreferences('u', { enabled: true, prepare: false });
+    await standingOrderDefaults.notificationPreferences('u');
+    await standingOrderDefaults.saveCodeCleanup(
+      'u',
+      {
+        nativePushEnabled: true,
+        newMailPushEnabled: true,
+        eventSuggestionPushEnabled: true,
+        eveningCheckinEnabled: false,
+        eveningCheckinLocalTime: '20:00',
+        inAppEnabled: true,
+        emailFallbackEnabled: false,
+        emailFallbackDelayMinutes: 60,
+        timezone: 'UTC',
+        briefLatitude: 1,
+      },
+      true,
+    );
+    expect(calls.map(([fn]) => fn)).toEqual([
+      'standingOrders:overview',
+      'standingOrders:setRoutinePaused',
+      'jev:policy',
+      'jev:saveSettings',
+      'content:savePreferences',
+      'albatrossNotifications:mobilePreferences',
+      'albatrossNotifications:saveMobilePreferences',
+    ]);
+    expect(calls[1][1]).toEqual({ userId: 'u', routineId: 'r1', paused: true });
+    // Only the required fields and the one flag: optional fields keep their stored values.
+    expect(calls[6][1]).toEqual({
+      userId: 'u',
+      nativePushEnabled: true,
+      newMailPushEnabled: true,
+      eventSuggestionPushEnabled: true,
+      eveningCheckinEnabled: false,
+      eveningCheckinLocalTime: '20:00',
+      inAppEnabled: true,
+      emailFallbackEnabled: false,
+      emailFallbackDelayMinutes: 60,
+      timezone: 'UTC',
+      oneTimeCodeCleanupEnabled: true,
+    });
+  });
+
+  test('smart rules go through the per-user rule store', async () => {
+    await runWithAiRequestContext({ userId: 'rules_user', agent: 'user' }, () =>
+      kvUpsert('smartRule', 'r9', rule({ _id: 'r9' })),
+    );
+    expect((await standingOrderDefaults.listRules('rules_user')).map((entry) => entry._id)).toEqual(['r9']);
+    await standingOrderDefaults.setRuleEnabled('rules_user', 'r9', false);
+    expect((await standingOrderDefaults.listRules('rules_user'))[0].enabled).toBe(false);
+  });
+});

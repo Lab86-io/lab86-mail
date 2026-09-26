@@ -153,3 +153,18 @@ describe('Convex hasDocuments', () => {
     ).rejects.toThrow();
   });
 });
+
+test('the default document check asks Convex for this user', async () => {
+  const { spyOn } = await import('bun:test');
+  const convex = await import('../lib/hosted/convex');
+  const query = spyOn(convex, 'convexQuery').mockImplementation((async (fn: any, args: any) => {
+    expect(String(fn[Symbol.for('functionName')])).toBe('accounts:hasDocuments');
+    expect(args).toEqual({ userId: 'doc_user' });
+    return true;
+  }) as any);
+  try {
+    expect(await surfaceDefaults.hasDocuments('doc_user')).toBe(true);
+  } finally {
+    query.mockRestore();
+  }
+});

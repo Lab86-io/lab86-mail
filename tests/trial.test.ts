@@ -299,3 +299,56 @@ describe('Convex trial grant', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('the default Convex wiring', () => {
+  test('the stored plan and the grant go to Convex when it is configured', async () => {
+    const { spyOn } = await import('bun:test');
+    const env = await import('../lib/hosted/env');
+    const convex = await import('../lib/hosted/convex');
+    const { dataExportDefaults } = await import('../lib/hosted/data-export');
+    const calls: Array<[string, any]> = [];
+    const name = (fn: any) => String(fn?.[Symbol.for('functionName')] ?? fn);
+    const spies = [
+      spyOn(env, 'isConvexConfigured').mockReturnValue(true),
+      spyOn(convex, 'convexMutation').mockImplementation((async (fn: any, args: any) => {
+        calls.push([name(fn), args]);
+        return { granted: true, trialStartedAt: NOW, trialEndsAt: NOW + DAY_MS };
+      }) as any),
+      spyOn(convex, 'convexQuery').mockImplementation((async (fn: any, args: any) => {
+        calls.push([name(fn), args]);
+        return { entitlement: { plan: 'free' } };
+      }) as any),
+    ];
+    try {
+      resetEntitlementSnapshotCacheForTest();
+      const entitlement = await getAiBillingEntitlement(
+        {},
+        {
+          configured: () => true,
+          now: () => NOW,
+          auth: async () => ({ userId: 'user-9', has: () => false }),
+        },
+      );
+      expect(entitlement).toMatchObject({ plan: 'pro', trialEndsAt: NOW + DAY_MS });
+      await dataExportDefaults.tables();
+      await dataExportDefaults.page({ userId: 'user-9', table: 'areas', cursor: null, numItems: 5 });
+      expect(dataExportDefaults.now()).toBeInstanceOf(Date);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(calls.map(([fn]) => fn)).toEqual([
+      'ai:getRuntimeState',
+      'ai:grantTrial',
+      'ai:upsertEntitlement',
+      'accounts:exportTableList',
+      'accounts:exportUserTablePage',
+    ]);
+    expect(calls[1][1]).toEqual({ userId: 'user-9', days: 14, monthlyCredits: 500 });
+    expect(calls[2][1]).toMatchObject({
+      userId: 'user-9',
+      plan: 'pro',
+      status: 'trialing',
+      monthlyCredits: 500,
+    });
+  });
+});
