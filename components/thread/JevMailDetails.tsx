@@ -1,11 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { mailSortingLine } from '@/lib/shell/mail-sorting-labels';
 import Link from 'next/link';
 import { settingsRequest } from '@/components/settings/JevSection';
 import { classifierForServedModel } from '@/lib/classifier/catalog';
 import { type JevAssessment, jevReason } from '@/lib/jev/contract';
+import { mailSortingLine } from '@/lib/shell/mail-sorting-labels';
 
 export function JevMailDetails({ assessment }: { assessment?: JevAssessment | null }) {
   const settings = useQuery({
