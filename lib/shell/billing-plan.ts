@@ -1,4 +1,4 @@
-import { FREE_PLAN_NAME, formatUsd, PAID_PLANS, trialState } from '../hosted/plans';
+import { type BillingPlanView, FREE_PLAN_NAME, formatUsd, PAID_PLANS, trialState } from '../hosted/plans';
 
 /**
  * The billing line in Settings, Intelligence. The settings API returns the
@@ -80,4 +80,15 @@ export function billingSummary(input: BillingSummaryInput): BillingSummary {
     showUpgrade: true,
     showManage: true,
   };
+}
+
+/**
+ * The short plan line in Settings, Account: "Pro trial, 12 days left." or
+ * "Own key." Billing itself stays in Settings, Intelligence. The view is the
+ * GET /api/billing/plan response.
+ */
+export function accountPlanLine(view: Pick<BillingPlanView, 'planName' | 'trial'>): string {
+  if (!view.trial.active) return `${view.planName}.`;
+  const days = view.trial.daysLeft === 1 ? '1 day' : `${view.trial.daysLeft} days`;
+  return `${view.planName}, ${days} left.`;
 }

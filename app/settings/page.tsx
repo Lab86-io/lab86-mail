@@ -12,13 +12,23 @@ import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQ
 import { Check, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  Suspense,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
+import { AccountPlanRow } from '@/components/settings/AccountPlan';
 import { AiSection } from '@/components/settings/AiSection';
 import { BriefSection } from '@/components/settings/BriefSection';
 import { JevSection } from '@/components/settings/JevSection';
@@ -161,6 +171,9 @@ function AdvancedSection() {
   );
 }
 
+/** Opens another settings tab from inside a section, the way the rail does. */
+const OpenSettingsTab = createContext<(tab: SettingsTabId) => void>(() => {});
+
 function SettingsPageBody() {
   useApplyThemeExtras();
   const searchParams = useSearchParams();
@@ -275,7 +288,9 @@ function SettingsPageBody() {
               </div>
             ))}
           </nav>
-          <div className="min-w-0">{TAB_SECTIONS[tab]()}</div>
+          <div className="min-w-0">
+            <OpenSettingsTab.Provider value={selectTab}>{TAB_SECTIONS[tab]()}</OpenSettingsTab.Provider>
+          </div>
         </div>
       </div>
     </main>
@@ -1435,6 +1450,7 @@ function ConnectionsSection() {
 
 function AccountSection() {
   const qc = useQueryClient();
+  const openTab = useContext(OpenSettingsTab);
   const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
   const { user } = useUser();
   const clerk = useClerk();
@@ -1471,6 +1487,12 @@ function AccountSection() {
           label={name || email || 'Your account'}
           description={name && email ? email : 'Signed in with Clerk.'}
           control={<UserButton appearance={{ elements: { avatarBox: 'size-8' } }} />}
+        />
+        <AccountPlanRow
+          onOpenBilling={() => {
+            openTab('ai');
+            window.scrollTo({ top: 0 });
+          }}
         />
         <SettingsRow
           label="Profile and security"
