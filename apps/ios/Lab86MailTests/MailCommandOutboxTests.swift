@@ -601,6 +601,7 @@ struct MailCommandOutboxTests {
         #expect(OutboxMailCommandQueue.retryDelay(for: [snapshot(.applied, next: nil)], now: now) == nil)
         #expect(OutboxMailCommandQueue.retryDelay(for: [snapshot(.failed, next: now.addingTimeInterval(30))], now: now) == 30)
         #expect(OutboxMailCommandQueue.retryDelay(for: [snapshot(.pending, next: nil)], now: now) == 2)
+        #expect(OutboxMailCommandQueue.retryDelay(for: [snapshot(.submitting, next: nil)], now: now) == 30)
         #expect(OutboxMailCommandQueue.retryDelay(for: [snapshot(.failed, next: now.addingTimeInterval(9_000))], now: now) == 300)
         #expect(OutboxMailCommandQueue.retryDelay(
             for: [snapshot(.failed, next: now.addingTimeInterval(90)), snapshot(.queued, next: now.addingTimeInterval(20))],

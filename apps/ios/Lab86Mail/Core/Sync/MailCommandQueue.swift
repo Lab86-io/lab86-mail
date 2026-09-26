@@ -93,11 +93,12 @@ final class OutboxMailCommandQueue: MailCommandQueueing {
     }
 
     /// Seconds until the next waiting action is due, from 2 to 300, or nil
-    /// when no action waits.
+    /// when no action waits. An action another drain is sending gets 30
+    /// seconds to finish before the next look.
     nonisolated static func retryDelay(for commands: [PendingCommandSnapshot], now: Date) -> TimeInterval? {
         let due = commands
             .filter { MailCommandPhase($0) == .waiting }
-            .map { $0.nextAttemptAt ?? now }
+            .map { $0.nextAttemptAt ?? ($0.status == .submitting ? now.addingTimeInterval(30) : now) }
             .min()
         guard let due else { return nil }
         return min(max(due.timeIntervalSince(now), 2), 300)
