@@ -551,6 +551,51 @@ export const listAccountThreads = defineTool({
   },
 });
 
+const SnoozedThread = z.object({
+  id: z.string(),
+  account: z.string(),
+  accountEmail: z.string().nullable(),
+  threadId: z.string(),
+  messageId: z.string().nullable(),
+  untilTs: z.number(),
+  untilIso: z.string(),
+  snoozedAt: z.number(),
+  subject: z.string(),
+  fromAddress: z.string(),
+  snippet: z.string(),
+  lastDate: z.number().nullable(),
+});
+
+/** Active snoozes for one user, newest first, with the return time as ISO. */
+export async function listSnoozedForUser(
+  userId: string,
+  limit?: number,
+  query: typeof convexQuery = convexQuery,
+): Promise<Array<z.infer<typeof SnoozedThread>>> {
+  const result = await query<{ items: Array<Omit<z.infer<typeof SnoozedThread>, 'untilIso'>> }>(
+    (api as any).mailCorpus.listSnoozedThreadsInternal,
+    { userId, limit },
+  );
+  return (result?.items || []).map((item) => ({ ...item, untilIso: new Date(item.untilTs).toISOString() }));
+}
+
+// The snoozed threads of every connected mailbox, newest snooze first, with
+// the time each one comes back. Native clients call this through
+// POST /api/tools/list_snoozed and cancel with unsnooze_thread.
+export const listSnoozed = defineTool({
+  name: 'list_snoozed',
+  description:
+    'List snoozed mail threads, newest snooze first: subject, sender, snippet, mailbox, and the time each thread comes back to the inbox. Use unsnooze_thread to bring one back now.',
+  category: 'mail',
+  mutating: false,
+  input: z.object({ limit: z.number().int().min(1).max(200).optional() }).optional(),
+  output: z.object({ snoozed: z.array(SnoozedThread) }),
+  async handler(args, ctx) {
+    if (!ctx.userId || !isConvexConfigured()) return { snoozed: [] };
+    return { snoozed: await listSnoozedForUser(ctx.userId, args?.limit) };
+  },
+});
+
 async function requireNylasResult<T>(value: Promise<T | null>, message: string): Promise<T> {
   const result = await value;
   if (!result) throw new Error(message);

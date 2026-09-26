@@ -6,6 +6,7 @@ import { ChevronDown, Settings2, SquarePen } from 'lucide-react';
 import { useState } from 'react';
 import { ScheduledSends } from '@/components/inbox/ScheduledSends';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
+import { SnoozedThreads } from '@/components/inbox/SnoozedThreads';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,7 +20,9 @@ import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import {
+  MAIL_LISTS,
   MAILBOXES,
+  type MailListId,
   MORE_MAIL_VIEWS,
   mailNavigationSelection,
   PRIMARY_MAIL_VIEWS,
@@ -34,8 +37,11 @@ export function MailNav() {
   const setSmartCategory = useClientStore((s) => s.setSmartCategory);
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const accountFilter = useClientStore((s) => s.accountFilter);
+  const setThreadAccount = useClientStore((s) => s.setThreadAccount);
+  const setSelectedThread = useClientStore((s) => s.setSelectedThread);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [scheduledOpen, setScheduledOpen] = useState(false);
+  const [openList, setOpenList] = useState<MailListId | null>(null);
+  const listOpenChange = (id: MailListId) => (open: boolean) => setOpenList(open ? id : null);
   const queryClient = useQueryClient();
 
   // categoryCounts requires an identity and throws without one. Before Convex
@@ -72,9 +78,17 @@ export function MailNav() {
         onFolder={setQuery}
         onCompose={openComposeNew}
         onSettings={() => setSettingsOpen(true)}
-        onScheduled={() => setScheduledOpen(true)}
+        onList={setOpenList}
       />
-      <ScheduledSends open={scheduledOpen} onOpenChange={setScheduledOpen} />
+      <ScheduledSends open={openList === 'scheduled'} onOpenChange={listOpenChange('scheduled')} />
+      <SnoozedThreads
+        open={openList === 'snoozed'}
+        onOpenChange={listOpenChange('snoozed')}
+        onOpenThread={(row) => {
+          setThreadAccount(row.account);
+          setSelectedThread(row.threadId);
+        }}
+      />
       <SmartLabelsSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -100,7 +114,7 @@ export function MailNavView({
   onFolder,
   onCompose,
   onSettings,
-  onScheduled,
+  onList,
 }: {
   query: string;
   smartCategory: string | null;
@@ -110,7 +124,7 @@ export function MailNavView({
   onFolder: (query: string) => void;
   onCompose: () => void;
   onSettings: () => void;
-  onScheduled?: () => void;
+  onList?: (id: MailListId) => void;
 }) {
   const selection = mailNavigationSelection(smartCategory, query, customLabels);
   const extras = [
@@ -211,11 +225,13 @@ export function MailNavView({
               ) : null}
             </DropdownMenuItem>
           ))}
-          {onScheduled ? (
-            <DropdownMenuItem onSelect={onScheduled} className="text-[12.5px]">
-              Scheduled
-            </DropdownMenuItem>
-          ) : null}
+          {onList
+            ? MAIL_LISTS.map((list) => (
+                <DropdownMenuItem key={list.id} onSelect={() => onList(list.id)} className="text-[12.5px]">
+                  {list.label}
+                </DropdownMenuItem>
+              ))
+            : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onSettings} className="gap-2 text-[12.5px]">
             <Settings2 className="size-3.5" aria-hidden />

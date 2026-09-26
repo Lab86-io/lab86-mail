@@ -9,9 +9,12 @@ import {
   classificationFreshnessPatch,
   classifierContent,
   classifyCorpusThread,
+  deleteLabelMembership,
+  latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   queryCategoryThreads,
+  syncLabelMembership,
 } from './smart';
 
 const providerValidator = v.union(
@@ -379,6 +382,7 @@ export const upsertCorpusBatch = mutation({
           ...classified,
           createdAt: ts,
         });
+      await syncLabelMembership(ctx, existing, { ...classifyRow, ...classified });
       if (existing?.latestMessageId !== patch.latestMessageId || patch.lastDate > existing.lastDate) {
         const areaLinks = await ctx.db
           .query('areaArtifactLinks')
@@ -631,6 +635,7 @@ export const deleteCorpusThread = mutation({
       )
       .unique();
     if (thread && thread.userId === args.userId) await ctx.db.delete(thread._id);
+    await deleteLabelMembership(ctx, args.userId, args.accountId, args.providerThreadId);
     const messages = await ctx.db
       .query('mailCorpusMessages')
       .withIndex('by_account_thread', (q) =>
@@ -1215,6 +1220,64 @@ export const cancelSnooze = mutation({
     const ts = now();
     for (const row of rows) await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
     return { threadIds: rows.map((row) => row.threadId) };
+  },
+});
+
+// One user's active snoozes, newest first, each with its thread summary and
+// mailbox address. A thread that is not in the corpus yet still shows, so the
+// user can always see and cancel a snooze.
+async function snoozedThreads(ctx: any, userId: string, limit: number) {
+  const rows = await ctx.db
+    .query('mailSnoozes')
+    .withIndex('by_user_status_created', (q: any) => q.eq('userId', userId).eq('status', 'active'))
+    .order('desc')
+    .take(limit);
+  const accounts = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user', (q: any) => q.eq('userId', userId))
+    .collect();
+  const emails = new Map(accounts.map((account: any) => [account.accountId, account.email]));
+  return await Promise.all(
+    rows.map(async (row: any) => {
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q: any) =>
+          q.eq('userId', userId).eq('accountId', row.accountId).eq('providerThreadId', row.threadId),
+        )
+        .first();
+      return {
+        id: String(row._id),
+        account: row.accountId,
+        accountEmail: emails.get(row.accountId) || null,
+        threadId: row.threadId,
+        messageId: row.messageId || null,
+        untilTs: row.untilTs,
+        snoozedAt: row.createdAt,
+        subject: thread?.subject || '(no subject)',
+        fromAddress: thread?.fromAddress || '',
+        snippet: String(thread?.snippet || '').slice(0, 200),
+        lastDate: thread?.lastDate ?? null,
+      };
+    }),
+  );
+}
+
+/** The web Snoozed list: a live query for the signed-in user. */
+export const listSnoozedThreads = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity?.subject) throw new Error('Not authenticated');
+    return { items: await snoozedThreads(ctx, identity.subject, clampLimit(args.limit, 100, 200)) };
+  },
+});
+
+/** The same list for the server tool layer (list_snoozed). */
+export const listSnoozedThreadsInternal = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return { items: await snoozedThreads(ctx, args.userId, clampLimit(args.limit, 100, 200)) };
   },
 });
 

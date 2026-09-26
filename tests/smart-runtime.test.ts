@@ -8,6 +8,7 @@ import {
   computeCategoryUnreadCounts,
   queryCategoryThreads,
 } from '../convex/smart';
+import { SMART_CLASSIFIER_VERSION } from '../lib/mail/smart-categories';
 import { assessment } from './fixtures/jev';
 
 const convexModules = {
@@ -334,29 +335,51 @@ describe('queryCategoryThreads', () => {
     expect(main.items.some((item: { _id: string }) => item._id === 'orders_via_main')).toBe(true);
   });
 
-  test('custom label categories filter the recency window and paginate by lastDate', async () => {
+  test('custom label views merge membership pages with rows the sweep has not reached', async () => {
     const t = newHarness();
-    for (let i = 0; i < 3; i += 1) {
+    const labeled = { smartPrimary: 'main', smartCategory: { primary: 'main', customLabels: ['receipts'] } };
+    for (const [id, lastDate] of [
+      ['member_5', 5_000],
+      ['member_4', 4_000],
+      ['member_3', 3_000],
+    ] as const) {
       await seedThread(t, {
-        providerThreadId: `labeled_${i}`,
-        smartPrimary: 'main',
-        smartCategory: { primary: 'main', customLabels: ['receipts'] },
+        ...labeled,
+        providerThreadId: id,
+        lastDate,
         smartCustomKeys: ['receipts'],
-        lastDate: 1_000 + i,
+        smartClassifierVersion: SMART_CLASSIFIER_VERSION,
+      });
+      await t.run((ctx) =>
+        ctx.db.insert('mailLabelMembership', {
+          userId: USER,
+          accountId: 'account_1',
+          providerThreadId: id,
+          labelKey: 'receipts',
+          lastDate,
+          unread: true,
+        }),
+      );
+    }
+    // Rows from an older classifier have label hits and no membership yet.
+    for (const [id, lastDate] of [
+      ['stale_45', 4_500],
+      ['stale_1', 1_000],
+    ] as const) {
+      await seedThread(t, {
+        ...labeled,
+        providerThreadId: id,
+        lastDate,
+        smartCustomKeys: ['receipts'],
+        smartClassifierVersion: SMART_CLASSIFIER_VERSION - 1,
       });
     }
-    await seedThread(t, {
-      providerThreadId: 'unlabeled',
-      smartPrimary: 'main',
-      smartCategory: { primary: 'main' },
-      lastDate: 5_000,
-    });
     const page = await t.run((ctx) =>
       queryCategoryThreads(ctx, { userId: USER, category: 'custom:receipts', limit: 2 }),
     );
-    expect(page.items).toHaveLength(2);
-    expect(page.items.every((item: { _id: string }) => item._id.startsWith('labeled_'))).toBe(true);
-    expect(page.nextBefore).toBe(Number(page.items[1].lastDate));
+    // A stale row joins only the page whose time range holds it.
+    expect(page.items.map((item: { _id: string }) => item._id)).toEqual(['member_5', 'stale_45', 'member_4']);
+    expect(page.nextBefore).toBe(4_000);
     const next = await t.run((ctx) =>
       queryCategoryThreads(ctx, {
         userId: USER,
@@ -365,7 +388,8 @@ describe('queryCategoryThreads', () => {
         before: page.nextBefore,
       }),
     );
-    expect(next.items.map((item: { _id: string }) => item._id)).toEqual(['labeled_0']);
+    expect(next.items.map((item: { _id: string }) => item._id)).toEqual(['member_3', 'stale_1']);
+    expect(next.nextBefore).toBeUndefined();
   });
 });
 

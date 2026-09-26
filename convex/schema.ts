@@ -338,6 +338,27 @@ export default defineSchema({
     // Backlog sweep: rows without smartPrimary sort first under undefined.
     .index('by_smart_classifier_version', ['smartClassifierVersion']),
 
+  // Custom smart-label membership (CLS-13). A thread row keeps its label hits
+  // in the smartCustomKeys array, and an index cannot key on array members.
+  // This table holds one row for each thread and label hit, so a label view
+  // and its unread badge are indexed reads over the whole mailbox. Every write
+  // of smartCustomKeys calls syncLabelMembership (convex/smart.ts).
+  mailLabelMembership: defineTable({
+    userId: v.string(),
+    accountId: v.string(),
+    providerThreadId: v.string(),
+    labelKey: v.string(),
+    lastDate: v.number(),
+    unread: v.boolean(),
+    needsAttention: v.optional(v.boolean()),
+  })
+    .index('by_user_account', ['userId', 'accountId'])
+    .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
+    .index('by_user_label_lastDate', ['userId', 'labelKey', 'lastDate'])
+    .index('by_user_label_unread', ['userId', 'labelKey', 'unread', 'lastDate'])
+    .index('by_user_account_label_lastDate', ['userId', 'accountId', 'labelKey', 'lastDate'])
+    .index('by_user_account_label_unread', ['userId', 'accountId', 'labelKey', 'unread', 'lastDate']),
+
   mailCorpusMessages: defineTable({
     userId: v.string(),
     accountId: v.string(),
@@ -1521,7 +1542,9 @@ export default defineSchema({
   })
     .index('by_status_until', ['status', 'untilTs'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_user_account_thread', ['userId', 'accountId', 'threadId']),
+    .index('by_user_account_thread', ['userId', 'accountId', 'threadId'])
+    // The Snoozed list: one user's active snoozes, newest first.
+    .index('by_user_status_created', ['userId', 'status', 'createdAt']),
 
   mailWebhookEvents: defineTable({
     eventId: v.string(),

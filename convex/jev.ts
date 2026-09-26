@@ -13,7 +13,13 @@ import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
-import { classifyCorpusThread, latestThreadContent, loadSmartContext, normalizeCorpusThread } from './smart';
+import {
+  classifyCorpusThread,
+  latestThreadContent,
+  loadSmartContext,
+  normalizeCorpusThread,
+  syncLabelMembership,
+} from './smart';
 
 async function preferencesRow(ctx: any, userId: string) {
   return ctx.db
@@ -320,6 +326,7 @@ export const storeAssessments = mutation({
         jevChange: assessment.meaningfulChange,
         updatedAt: Date.now(),
       });
+      await syncLabelMembership(ctx, row, { ...row, ...merged });
       stored++;
     }
     return { stored };

@@ -116,6 +116,7 @@ import {
   listAttachments,
   listLabels,
   listSmartCategory,
+  listSnoozed,
   readThread,
   searchThreads,
 } from './mail';
@@ -230,6 +231,7 @@ const allTools: AnyTool[] = [
   muteThread,
   snoozeThreadTool,
   unsnoozeThreadTool,
+  listSnoozed,
   sendMessage,
   replyMessage,
   replyAllMessage,
