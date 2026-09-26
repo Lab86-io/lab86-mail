@@ -189,7 +189,7 @@ describe('connection lifecycle', () => {
 });
 
 describe('oauth state store', () => {
-  test('consumeOAuthState is single-use, user-scoped, and expiry-aware', async () => {
+  test('consumeOAuthStateFromCallback is single-use and expiry-aware', async () => {
     const t = newHarness();
     const save = (state: string, expiresAt: number) =>
       t.mutation(api.mcp.saveOAuthState, {
@@ -202,36 +202,22 @@ describe('oauth state store', () => {
       });
     await save('state_live', Date.now() + 60_000);
     await save('state_dead', Date.now() - 1);
+    const consume = (state: string) =>
+      t.mutation(api.mcp.consumeOAuthStateFromCallback, { internalSecret: SECRET, state });
 
-    expect(
-      await t.mutation(api.mcp.consumeOAuthState, {
-        internalSecret: SECRET,
-        userId: 'someone_else',
-        state: 'state_live',
-      }),
-    ).toBeNull();
-    const consumed = await t.mutation(api.mcp.consumeOAuthState, {
-      internalSecret: SECRET,
+    await expect(
+      t.mutation(api.mcp.consumeOAuthStateFromCallback, { internalSecret: 'wrong', state: 'state_live' }),
+    ).rejects.toThrow();
+    expect(await consume('state_live')).toEqual({
       userId: USER,
-      state: 'state_live',
+      server: 'github',
+      payloadEncrypted: 'enc:state_live',
+      nativeCallback: false,
     });
-    expect(consumed).toEqual({ server: 'github', payloadEncrypted: 'enc:state_live' });
     // Single use.
-    expect(
-      await t.mutation(api.mcp.consumeOAuthState, {
-        internalSecret: SECRET,
-        userId: USER,
-        state: 'state_live',
-      }),
-    ).toBeNull();
+    expect(await consume('state_live')).toBeNull();
     // Expired states delete on consumption and return nothing.
-    expect(
-      await t.mutation(api.mcp.consumeOAuthState, {
-        internalSecret: SECRET,
-        userId: USER,
-        state: 'state_dead',
-      }),
-    ).toBeNull();
+    expect(await consume('state_dead')).toBeNull();
     expect(await t.run((ctx) => ctx.db.query('mcpOAuthStates').collect())).toHaveLength(0);
   });
 

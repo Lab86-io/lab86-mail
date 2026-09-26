@@ -315,7 +315,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(schema).toContain('mobileCommands: defineTable');
     expect(schema).toContain('mobileSyncTombstones: defineTable');
     expect(schema).toContain(".index('by_user_idempotency'");
-    expect(mobile).toContain('recordDeletion');
+    expect(mobile).toContain(".query('mobileSyncTombstones')");
     expect(mobile).toContain('if (command.undoneAt) return command;');
     expect(route).toContain('claimCommand');
     expect(accounts).toContain("'mobileCommands'");

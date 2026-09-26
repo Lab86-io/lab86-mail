@@ -22,7 +22,7 @@ afterAll(() => {
 });
 
 describe('owned presentation images', () => {
-  test('records an upload once per hash, scopes reads to the owner, and removes the blob with the row', async () => {
+  test('records an upload once per hash and scopes reads to the owner', async () => {
     const t = convexTest(schema, modules);
     const upload = (text: string) => t.run((ctx) => ctx.storage.store(new Blob([text])));
     const first = await t.mutation(assets.create, {
@@ -55,14 +55,6 @@ describe('owned presentation images', () => {
     });
     expect(await t.query(assets.get, { ...auth, userId: 'someone-else', assetId: first.assetId })).toBeNull();
     expect(await t.query(assets.get, { ...auth, assetId: 'not-an-id' })).toBeNull();
-    // Removal deletes the blob.
-    const row = await t.run((ctx) => ctx.db.get(first.assetId));
-    expect(await t.mutation(assets.remove, { ...auth, userId: 'someone-else', assetId: first.assetId })).toBe(
-      false,
-    );
-    expect(await t.mutation(assets.remove, { ...auth, assetId: first.assetId })).toBe(true);
-    expect(await t.run((ctx) => ctx.storage.getUrl((row as any).storageId))).toBeNull();
-    expect(await t.query(assets.get, { ...auth, assetId: first.assetId })).toBeNull();
   });
   test('rejects calls without the internal secret', async () => {
     const t = convexTest(schema, modules);

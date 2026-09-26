@@ -2061,35 +2061,25 @@ describe('area reindex runtime', () => {
       expect(scanBudget.error).toContain('50000 threads');
     }));
 
-  test('queueUserAreaReindex coalesces queued runs and marks running runs for rerun', () =>
+  test('reindex requests coalesce queued runs and mark running runs for rerun', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);
       const userId = 'queue_reindex_user';
-      const first = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'First request',
-        delayMs: 60_000,
-      });
-      const second = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'Second request',
-        delayMs: 60_000,
-      });
-      expect(String(second.runId)).toBe(String(first.runId));
+      const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Queue' });
+      const [created] = await t.run((ctx) => ctx.db.query('areaReindexRuns').collect());
+      const first = await t.mutation(api.albatross.reindexMyAreas, { ...caller(userId) });
+      expect(String(first.runId)).toBe(String(created._id));
       expect(await t.run((ctx) => ctx.db.get(first.runId))).toMatchObject({
         status: 'queued',
-        reason: 'Second request',
+        reason: 'Manual area reindex',
       });
       await t.run((ctx) => ctx.db.patch(first.runId, { status: 'running' }));
-      const third = await t.mutation(internal.albatross.queueUserAreaReindex, {
-        userId,
-        reason: 'While running',
-        delayMs: 60_000,
-      });
-      expect(String(third.runId)).toBe(String(first.runId));
+      const second = await t.mutation(api.albatross.reindexMyAreas, { ...caller(userId), areaId });
+      expect(String(second.runId)).toBe(String(first.runId));
       const run = await t.run((ctx) => ctx.db.get(first.runId));
       expect(run?.rerunRequestedAt).toBeNumber();
-      expect(run?.reason).toBe('While running');
+      expect(run?.reason).toBe('Manual area brief refresh');
+      expect(await t.run((ctx) => ctx.db.query('areaReindexRuns').collect())).toHaveLength(1);
     }));
 });
 

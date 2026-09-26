@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { internalMutation, mutation, query } from './_generated/server';
+import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Codes are only useful for minutes and are dangerous for longer, so every read
@@ -181,12 +181,3 @@ export async function purgeExpiredCodes(ctx: MutationCtx, ts: number, limit: num
   }
   return { expired, deleted: dead.length, more: dead.length === limit };
 }
-
-export const purgeExpired = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const limit = Math.min(500, Math.max(1, Math.round(args.limit ?? 200)));
-    const { expired, deleted } = await purgeExpiredCodes(ctx, now(), limit);
-    return { expired, deleted };
-  },
-});

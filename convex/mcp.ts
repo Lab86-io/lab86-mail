@@ -158,25 +158,6 @@ export const consumeOAuthStateFromCallback = mutation({
   },
 });
 
-export const consumeOAuthState = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    state: v.string(),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('mcpOAuthStates')
-      .withIndex('by_state', (q) => q.eq('state', args.state))
-      .unique();
-    if (!row || row.userId !== args.userId) return null;
-    await ctx.db.delete(row._id);
-    if (row.expiresAt < now()) return null;
-    return { server: row.server, payloadEncrypted: row.payloadEncrypted };
-  },
-});
-
 export const sweepExpiredOAuthStates = internalMutation({
   args: {},
   handler: async (ctx) => {

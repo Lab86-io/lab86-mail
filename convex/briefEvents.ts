@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { mutation } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 
 // Brief item telemetry (brief round 2026-09-22). The app route authenticates
@@ -36,31 +36,5 @@ export const record = mutation({
       createdAt: now(),
     });
     return { id };
-  },
-});
-
-// Counts by region and action for one user, newest first, bounded. This is
-// the read the next scoring round uses to compare regions.
-export const summary = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    since: v.optional(v.number()),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const since = args.since ?? 0;
-    const rows = await ctx.db
-      .query('briefItemEvents')
-      .withIndex('by_user_created', (q) => q.eq('userId', args.userId).gte('createdAt', since))
-      .order('desc')
-      .take(Math.min(Math.max(args.limit ?? 500, 1), 2000));
-    const counts: Record<string, number> = {};
-    for (const row of rows) {
-      const key = `${row.surface}:${row.regionId}:${row.action}:${row.outcome}`;
-      counts[key] = (counts[key] ?? 0) + 1;
-    }
-    return { total: rows.length, counts };
   },
 });

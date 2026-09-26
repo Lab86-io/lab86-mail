@@ -178,15 +178,4 @@ describe('retention sweep', () => {
     expect(second.counts.rateLimits).toBe(5);
     await t.run(async (ctx) => expect(await ctx.db.query('rateLimits').collect()).toHaveLength(0));
   });
-
-  test('purgeExpired is internal', async () => {
-    const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
-      await ctx.db.insert('mailOneTimeCodes', code({ code: 'dead', expiresAt: START - 2 * DAY }));
-    });
-    expect(await t.mutation((internal as any).mailOneTimeCodes.purgeExpired, {})).toEqual({
-      expired: 0,
-      deleted: 1,
-    });
-  });
 });

@@ -8,6 +8,41 @@ const convexModules = {
   '../convex/mobile.ts': () => import('../convex/mobile'),
 };
 
+type MobileDomain = 'mail' | 'tasks' | 'calendar';
+
+// Production no longer writes tombstones through a mutation, but listSync
+// and the stale-revision check still read them. Seed one the way the old
+// writer did: advance the domain head, then store the tombstone.
+async function seedTombstone(
+  t: ReturnType<typeof convexTest>,
+  input: { userId: string; domain: MobileDomain; entityKind: string; entityId: string },
+) {
+  return t.run(async (ctx) => {
+    const head = await ctx.db
+      .query('mobileSyncHeads')
+      .withIndex('by_user_domain', (q) => q.eq('userId', input.userId).eq('domain', input.domain))
+      .unique();
+    const revision = (head?.revision ?? 0) + 1;
+    if (head) await ctx.db.patch(head._id, { revision, updatedAt: Date.now() });
+    else
+      await ctx.db.insert('mobileSyncHeads', {
+        userId: input.userId,
+        domain: input.domain,
+        revision,
+        updatedAt: Date.now(),
+      });
+    await ctx.db.insert('mobileSyncTombstones', {
+      userId: input.userId,
+      domain: input.domain,
+      revision,
+      entityKind: input.entityKind,
+      entityId: input.entityId,
+      createdAt: Date.now(),
+    });
+    return revision;
+  });
+}
+
 describe('mobile Convex runtime', () => {
   test('bootstrapState rejects a wrong secret and scopes state to the requested user', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
@@ -130,8 +165,8 @@ describe('mobile Convex runtime', () => {
         domain: 'tasks' as const,
         entityKind: 'card',
       };
-      expect(await t.mutation(api.mobile.recordDeletion, { ...deletionArgs, entityId: 'card_1' })).toBe(1);
-      expect(await t.mutation(api.mobile.recordDeletion, { ...deletionArgs, entityId: 'card_2' })).toBe(2);
+      expect(await seedTombstone(t, { ...deletionArgs, entityId: 'card_1' })).toBe(1);
+      expect(await seedTombstone(t, { ...deletionArgs, entityId: 'card_2' })).toBe(2);
 
       const begin = (idempotencyKey: string, baseRevision?: number) =>
         t.mutation(api.mobile.beginCommand, {
@@ -418,7 +453,7 @@ describe('mobile Convex runtime', () => {
       };
 
       const rev1 = await applyChange('sync_key_1', 'thread_a');
-      const rev2 = await t.mutation(api.mobile.recordDeletion, {
+      const rev2 = await seedTombstone(t, {
         ...caller,
         domain: 'mail',
         entityKind: 'thread',
@@ -428,7 +463,7 @@ describe('mobile Convex runtime', () => {
       expect([rev1, rev2, rev3]).toEqual([1, 2, 3]);
       // A different domain keeps its own revision counter.
       expect(
-        await t.mutation(api.mobile.recordDeletion, {
+        await seedTombstone(t, {
           ...caller,
           domain: 'tasks',
           entityKind: 'card',
@@ -486,131 +521,6 @@ describe('mobile Convex runtime', () => {
         limit: 10,
       });
       expect(untouched).toMatchObject({ page: [], hasMore: false, serverRevision: 0 });
-    } finally {
-      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
-      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
-    }
-  });
-
-  test('recordUpsert authenticates and persists a revisioned sync change', async () => {
-    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-upsert-secret';
-    try {
-      const t = convexTest(schema, convexModules);
-      const args = {
-        userId: 'upsert_user',
-        domain: 'tasks' as const,
-        entityKind: 'card',
-        entityId: 'card_1',
-        payload: { title: 'x' },
-      };
-      await expect(
-        t.mutation(api.mobile.recordUpsert, { ...args, internalSecret: 'wrong-secret' }),
-      ).rejects.toThrow('Invalid Convex internal secret.');
-
-      const revision = await t.mutation(api.mobile.recordUpsert, {
-        ...args,
-        internalSecret: 'mobile-upsert-secret',
-      });
-      expect(revision).toBe(1);
-      const heads = await t.run((ctx) => ctx.db.query('mobileSyncHeads').collect());
-      expect(heads).toHaveLength(1);
-      const syncChanges = await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect());
-      expect(syncChanges).toEqual([
-        expect.objectContaining({
-          userId: 'upsert_user',
-          domain: 'tasks',
-          entityKind: 'card',
-          entityId: 'card_1',
-          revision: 1,
-          payload: { title: 'x' },
-        }),
-      ]);
-      expect(syncChanges[0]).not.toHaveProperty('internalSecret');
-    } finally {
-      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
-      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
-    }
-  });
-
-  test('markCommandUndone requires an operation id and undoes exactly once', async () => {
-    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-undo-secret';
-    try {
-      const t = convexTest(schema, convexModules);
-      const begin = async (idempotencyKey: string, operationId?: string) => {
-        const begun = await t.mutation(api.mobile.beginCommand, {
-          internalSecret: 'mobile-undo-secret',
-          userId: 'undo_user',
-          idempotencyKey,
-          payloadHash: 'hash',
-          domain: 'tasks',
-          kind: 'card.create',
-          payload: {},
-          clientCreatedAt: '2026-07-20T12:00:00Z',
-        });
-        const commandId = begun.command?._id;
-        if (!commandId) throw new Error('expected a queued command');
-        await t.mutation(api.mobile.claimCommand, {
-          internalSecret: 'mobile-undo-secret',
-          userId: 'undo_user',
-          commandId,
-          claimToken: 'lease',
-          leaseMs: 5_000,
-        });
-        await t.mutation(api.mobile.completeCommand, {
-          internalSecret: 'mobile-undo-secret',
-          userId: 'undo_user',
-          commandId,
-          claimToken: 'lease',
-          status: 'applied',
-          operationId,
-        });
-        return commandId;
-      };
-
-      const notUndoableId = await begin('plain_key');
-      await expect(
-        t.mutation(api.mobile.markCommandUndone, {
-          internalSecret: 'mobile-undo-secret',
-          userId: 'undo_user',
-          commandId: notUndoableId,
-        }),
-      ).rejects.toThrow('This mobile command is not undoable.');
-
-      const undoableId = await begin('undoable_key', 'op_undo_1');
-      const undone = await t.mutation(api.mobile.markCommandUndone, {
-        internalSecret: 'mobile-undo-secret',
-        userId: 'undo_user',
-        commandId: undoableId,
-      });
-      expect(undone?.undoneAt).toBeGreaterThan(0);
-      expect(undone?.entityRevision).toBe(1);
-
-      const changes = await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect());
-      expect(changes).toHaveLength(1);
-      expect(changes[0]).toMatchObject({
-        domain: 'tasks',
-        entityKind: 'operation',
-        entityId: 'op_undo_1',
-        payload: { operationID: 'op_undo_1', undone: true },
-      });
-
-      const again = await t.mutation(api.mobile.markCommandUndone, {
-        internalSecret: 'mobile-undo-secret',
-        userId: 'undo_user',
-        commandId: undoableId,
-      });
-      expect(again?.undoneAt).toBe(undone?.undoneAt ?? Number.NaN);
-      expect(await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect())).toHaveLength(1);
-
-      await expect(
-        t.mutation(api.mobile.markCommandUndone, {
-          internalSecret: 'mobile-undo-secret',
-          userId: 'someone_else',
-          commandId: undoableId,
-        }),
-      ).rejects.toThrow('Mobile command not found.');
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

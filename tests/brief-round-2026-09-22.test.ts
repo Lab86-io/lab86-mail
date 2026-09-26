@@ -655,7 +655,7 @@ describe('convex: catch-up pass and telemetry', () => {
     });
   });
 
-  test('brief events record and summarize per user', async () => {
+  test('brief events record per user and require the internal secret', async () => {
     await withSecret(async () => {
       const t = convexTest(schema, convexModules);
       const base = {
@@ -670,12 +670,13 @@ describe('convex: catch-up pass and telemetry', () => {
       await t.mutation(api.briefEvents.record, { ...base, userId: 'u1', reportId: 'r1' });
       await t.mutation(api.briefEvents.record, { ...base, userId: 'u1', outcome: 'failed' });
       await t.mutation(api.briefEvents.record, { ...base, userId: 'u2' });
-      const summary = await t.query(api.briefEvents.summary, { internalSecret: SECRET, userId: 'u1' });
-      expect(summary.total).toBe(2);
-      expect(summary.counts).toEqual({
-        'daily:answer:draft_reply:done': 1,
-        'daily:answer:draft_reply:failed': 1,
-      });
+      const rows = await t.run((ctx) => ctx.db.query('briefItemEvents').collect());
+      expect(
+        rows
+          .filter((row) => row.userId === 'u1')
+          .map((row) => `${row.surface}:${row.regionId}:${row.action}:${row.outcome}`)
+          .sort(),
+      ).toEqual(['daily:answer:draft_reply:done', 'daily:answer:draft_reply:failed']);
       await expect(
         t.mutation(api.briefEvents.record, { ...base, internalSecret: 'wrong', userId: 'u1' }),
       ).rejects.toThrow();

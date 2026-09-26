@@ -1484,19 +1484,6 @@ export const currentCheckin = query({
   },
 });
 
-export const mobileCurrentCheckin = query({
-  args: { internalSecret: v.optional(v.string()), userId: v.string() },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const rows = await ctx.db
-      .query('albatrossDailyCheckins')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .order('desc')
-      .take(2);
-    return rows.find((row) => row.status === 'scheduled' || row.status === 'open') || null;
-  },
-});
-
 export const targets = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -1852,27 +1839,6 @@ export const expireSubscription = mutation({
       .withIndex('by_endpoint', (q) => q.eq('endpoint', args.endpoint))
       .unique();
     if (row) await ctx.db.patch(row._id, { status: 'expired', updatedAt: now() });
-  },
-});
-
-export const updateMobileDeviceDelivery = mutation({
-  args: {
-    internalSecret: v.optional(v.string()),
-    token: v.string(),
-    status: v.union(v.literal('delivered'), v.literal('expired')),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const row = await ctx.db
-      .query('mobilePushDevices')
-      .withIndex('by_token', (q) => q.eq('token', args.token))
-      .unique();
-    if (!row) return;
-    const ts = now();
-    await ctx.db.patch(row._id, {
-      ...(args.status === 'delivered' ? { lastDeliveredAt: ts } : { status: 'expired' as const }),
-      updatedAt: ts,
-    });
   },
 });
 

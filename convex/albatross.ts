@@ -2546,20 +2546,6 @@ export const recordAreaLinks = mutation({
   },
 });
 
-export const queueUserAreaReindex = internalMutation({
-  args: {
-    userId: v.string(),
-    reason: v.optional(v.string()),
-    delayMs: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const runId = await scheduleAreaReindex(ctx, args.userId, Math.max(0, args.delayMs ?? 0), {
-      reason: args.reason,
-    });
-    return { runId };
-  },
-});
-
 export const reindexUserAreaArtifacts = internalMutation({
   args: { userId: v.string(), cursor: v.optional(v.string()), runId: v.optional(v.id('areaReindexRuns')) },
   handler: async (ctx, args) => {
