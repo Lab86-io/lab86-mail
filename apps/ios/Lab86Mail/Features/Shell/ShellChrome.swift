@@ -92,7 +92,7 @@ struct ShellStatusOverlay: View {
                         .buttonStyle(.borderedProminent)
                         .tint(environment.theme.accentColor)
                         Button("Dismiss") {
-                            environment.store.undoNotice = nil
+                            environment.store.dismissUndoNotice()
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)

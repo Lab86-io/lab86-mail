@@ -22,6 +22,7 @@ struct ActivityView: View {
     @State private var archivedRaw = ""
     @State private var readRaw = ""
     @State private var showsArchived = false
+    @State private var changes: RecentChangesModel?
 
     private var archivedIDs: Set<String> {
         Set(archivedRaw.split(separator: "\n").map(String.init))
@@ -280,6 +281,11 @@ struct ActivityView: View {
                         }
                     }
                 }
+                // What changed, why, and the Undo (round 2). Always shown,
+                // so an empty decision inbox still offers the record.
+                if !showsArchived, let changes {
+                    RecentChangesSection(model: changes)
+                }
             }
             .navigationTitle("Activity")
             .toolbar {
@@ -295,6 +301,10 @@ struct ActivityView: View {
             }
             .task {
                 loadLocalState()
+                if changes == nil {
+                    changes = RecentChangesModel(client: OperationsClient(tools: environment.tools))
+                }
+                await changes?.load()
                 await environment.store.refreshToday()
                 await environment.store.refreshExecution()
                 loadCheckinDraft()
@@ -302,6 +312,7 @@ struct ActivityView: View {
             .refreshable {
                 await environment.store.refreshToday()
                 await environment.store.refreshExecution()
+                await changes?.load()
             }
         }
     }

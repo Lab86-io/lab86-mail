@@ -264,8 +264,25 @@ struct BulkTriageVerdict: Identifiable, Hashable, Sendable {
 }
 
 struct UndoableOperationNotice: Identifiable, Hashable, Sendable {
+    /// What an Undo refreshes afterwards.
+    enum Kind: Hashable, Sendable {
+        case general
+        case mail
+    }
+
     let id: String
     let summary: String
+    /// Every operation the notice takes back, oldest first. A bulk action
+    /// records one operation for each conversation.
+    let operationIDs: [String]
+    let kind: Kind
+
+    init(id: String, summary: String, operationIDs: [String]? = nil, kind: Kind = .general) {
+        self.id = id
+        self.summary = summary
+        self.operationIDs = operationIDs ?? [id]
+        self.kind = kind
+    }
 }
 
 struct LiveMailThreadsPayload: Decodable, Sendable {
