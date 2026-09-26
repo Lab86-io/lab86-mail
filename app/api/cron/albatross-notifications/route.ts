@@ -75,6 +75,7 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
     const at = deps.now();
     let checkin: any = null;
     let dueNotificationIds: string[] = [];
+    let ensuredToday = false;
     if (body.force === true || checkinIsDue(preference, at)) {
       const ensured = await convexMutation<any>((api as any).albatrossNotifications.ensureCheckin, {
         userId,
@@ -82,11 +83,16 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
         timezone: preference.timezone,
       });
       checkin = ensured?.checkin;
-      dueNotificationIds = Array.isArray(ensured?.notificationIds)
-        ? ensured.notificationIds.map(String)
-        : ensured?.notificationId
-          ? [String(ensured.notificationId)]
-          : [];
+      ensuredToday = Boolean(ensured?.checkin);
+      // The check-in stays due all evening, so push only prompts that are
+      // still unread (WRK-15).
+      dueNotificationIds = Array.isArray(ensured?.openNotificationIds)
+        ? ensured.openNotificationIds.map(String)
+        : Array.isArray(ensured?.notificationIds)
+          ? ensured.notificationIds.map(String)
+          : ensured?.notificationId
+            ? [String(ensured.notificationId)]
+            : [];
     }
     if (!checkin) {
       checkin = await convexQuery<any>((api as any).albatrossNotifications.latestUnansweredCheckin, {
@@ -119,11 +125,10 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
       context.preference?.nativePushEnabled !== false &&
       context.mobileDevices?.length
     ) {
-      // `ensured` carries both alignment prompts on the due path. On fallback
-      // lookup, the reflection notification remains the safe single target.
-      const nativeNotificationIds = dueNotificationIds.length
-        ? dueNotificationIds
-        : [String(notification._id)];
+      // `ensured` carries the unread alignment prompts on the due path. On
+      // fallback lookup, the open prompt's notification is the single target.
+      const nativeNotificationIds =
+        dueNotificationIds.length || ensuredToday ? dueNotificationIds : [String(notification._id)];
       results.nativePush = await Promise.all(
         nativeNotificationIds.map((id: string) => dispatchNativeNotification(userId, String(id))),
       );

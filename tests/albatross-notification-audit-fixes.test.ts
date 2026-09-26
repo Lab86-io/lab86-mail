@@ -378,3 +378,72 @@ describe('INF-4 and WRK-14 cron email fallback', () => {
     }
   });
 });
+
+describe('WRK-15 repeat check-in pushes', () => {
+  test('ensureCheckin lists only unread prompts as open', async () => {
+    const t = harness();
+    const first = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+      internalSecret: SECRET,
+      userId,
+      localDate: '2026-09-26',
+      timezone: 'UTC',
+    });
+    expect(first.openNotificationIds).toHaveLength(2);
+    await t.mutation(api.albatrossNotifications.answerCheckin, {
+      internalSecret: SECRET,
+      userId,
+      checkinId: first.checkin!._id as Id<'albatrossDailyCheckins'>,
+      promptKind: 'reflection',
+      responseText: 'Filed the taxes.',
+    });
+    const again = await t.mutation(api.albatrossNotifications.ensureCheckin, {
+      internalSecret: SECRET,
+      userId,
+      localDate: '2026-09-26',
+      timezone: 'UTC',
+    });
+    expect(again.notificationIds).toHaveLength(2);
+    expect(again.openNotificationIds).toHaveLength(1);
+  });
+
+  test('the due path pushes nothing when every prompt was read', async () => {
+    const pushed: string[] = [];
+    const post = createAlbatrossNotificationsPost({
+      isInternalCronRequest: () => true,
+      isStagingRuntime: () => false,
+      now: () => new Date('2026-09-26T21:00:00Z'),
+      transactionalEmailConfigured: () => false,
+      dispatchNativeNotification: (async (_user: string, id: string) => {
+        pushed.push(id);
+        return { sent: 1 };
+      }) as any,
+      convexMutation: (async (fn: any) =>
+        getFunctionName(fn).endsWith('ensureCheckin')
+          ? {
+              checkin: { _id: 'checkin_1', createdAt: Date.now() },
+              notificationIds: ['a', 'b'],
+              openNotificationIds: [],
+            }
+          : null) as any,
+      convexQuery: (async (fn: any) =>
+        getFunctionName(fn).endsWith('deliveryContext')
+          ? {
+              notification: { _id: 'b', title: 'T', body: 'B', deepLink: '/' },
+              deliveries: [],
+              subscriptions: [],
+              mobileDevices: [{ token: 'device' }],
+              preference: null,
+            }
+          : null) as any,
+    });
+    const response = await post(
+      new NextRequest('http://localhost/api/cron/albatross-notifications', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId, timezone: 'UTC', eveningCheckinLocalTime: '19:00' }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(pushed).toEqual([]);
+  });
+});

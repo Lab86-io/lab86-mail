@@ -160,6 +160,7 @@ async function ensureDailyAlignmentNotifications(
     },
   ];
   const notificationIds = [];
+  const openNotificationIds = [];
   for (const prompt of prompts) {
     const dedupeKey = `daily-checkin:${input.localDate}:${prompt.kind}`;
     let notification = await ctx.db
@@ -200,14 +201,15 @@ async function ensureDailyAlignmentNotifications(
         enabled: inAppEnabled,
         timestamp: ts,
       });
+      notificationIds.push(notification._id);
       // The check-in stays due all evening (WRK-15). A prompt the user already
       // read or answered is not pushed again.
       const current = await ctx.db.get(notification._id);
       if (current && (current.status === 'queued' || current.status === 'delivered'))
-        notificationIds.push(notification._id);
+        openNotificationIds.push(notification._id);
     }
   }
-  return notificationIds;
+  return { notificationIds, openNotificationIds };
 }
 
 async function applyCompletedCandidates(
@@ -1579,7 +1581,7 @@ export const ensureCheckin = mutation({
       .withIndex('by_user_date', (q) => q.eq('userId', args.userId).eq('localDate', args.localDate))
       .unique();
     if (existing) {
-      const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
+      const { notificationIds, openNotificationIds } = await ensureDailyAlignmentNotifications(ctx, {
         userId: args.userId,
         checkinId: existing._id,
         localDate: existing.localDate,
@@ -1592,6 +1594,7 @@ export const ensureCheckin = mutation({
         checkin: await ctx.db.get(existing._id),
         notificationId: notificationIds[0],
         notificationIds,
+        openNotificationIds,
         created: false,
       };
     }
@@ -1676,7 +1679,7 @@ export const ensureCheckin = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    const notificationIds = await ensureDailyAlignmentNotifications(ctx, {
+    const { notificationIds, openNotificationIds } = await ensureDailyAlignmentNotifications(ctx, {
       userId: args.userId,
       checkinId,
       localDate: args.localDate,
@@ -1686,6 +1689,7 @@ export const ensureCheckin = mutation({
       checkin: await ctx.db.get(checkinId),
       notificationId: notificationIds[0],
       notificationIds,
+      openNotificationIds,
       created: true,
     };
   },
