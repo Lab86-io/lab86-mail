@@ -227,6 +227,18 @@ export function mobileOpenAPIV1() {
           },
         },
       },
+      '/api/mobile/v1/today/summary': {
+        get: {
+          operationId: 'getMobileTodaySummary',
+          responses: {
+            '200': {
+              description: 'Lead line, next move, next meeting, and edition time, for widgets',
+              content: jsonContent('TodaySummary'),
+            },
+            ...errorResponses,
+          },
+        },
+      },
       '/api/mobile/v1/commands/{id}/undo': {
         post: {
           operationId: 'undoMobileCommand',
