@@ -42,7 +42,10 @@ export async function contentAccess(ctx: any, userId: string, item: any, purpose
       q.eq('userId', userId).eq(account ? 'accountId' : 'connectionId', item.connectionId),
     )
     .unique();
-  if (!connection || connection.status !== 'connected') return false;
+  // A connector sync error keeps its indexed items readable; only a disconnect hides them.
+  const readable =
+    table === 'mcpConnections' ? connection?.status !== 'disconnected' : connection?.status === 'connected';
+  if (!connection || !readable) return false;
   if (
     table === 'mcpConnections' &&
     !(purpose === 'brief' ? connection.includeInBrief : connection.includeInSearch)

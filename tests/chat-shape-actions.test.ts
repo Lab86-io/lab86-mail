@@ -73,6 +73,8 @@ describe('actionable chat results', () => {
       expect(h.navigation).toEqual([]);
       if (action.kind === 'snooze_thread') expect(h.calls.at(-1)?.args.messageId).toBe('newest');
       if (action.kind === 'rsvp_event') expect(h.calls[0].args.status).toBe('maybe');
+      // The card field holds the whole saved note, so its save replaces the note.
+      if (action.kind === 'remember_sender') expect(h.calls[0].args.mode).toBe('replace');
     });
   }
   const navigationActions: ShapeAction[] = [

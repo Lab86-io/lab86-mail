@@ -781,9 +781,11 @@ export const listItemsForBrief = query({
       .query('mcpConnections')
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
+    // A sync error (status 'error') keeps the items already indexed; only a
+    // disconnect hides them. The error itself lives on the sync state row.
     const enabled = connections.filter(
       (connection) =>
-        connection.status === 'connected' &&
+        connection.status !== 'disconnected' &&
         connection.includeInBrief &&
         (!args.server || connection.server === args.server),
     );
@@ -829,7 +831,7 @@ export const searchItems = query({
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .collect();
     const searchable = new Set(
-      connections.filter((c) => c.status === 'connected' && c.includeInSearch).map((c) => c.connectionId),
+      connections.filter((c) => c.status !== 'disconnected' && c.includeInSearch).map((c) => c.connectionId),
     );
     if (searchable.size === 0) return [];
     const trimmed = args.query.trim();

@@ -11,7 +11,7 @@ const defaults = { convexMutation, callMcpTool, connectMcp, getConnectionToken, 
 export async function syncMcpContent(userId: string, deps = defaults) {
   for (const connection of await deps.listUserConnections(userId)) {
     if (
-      connection.status !== 'connected' ||
+      connection.status === 'disconnected' ||
       (!connection.includeInSearch && !connection.includeInBrief) ||
       !['slack', 'jira', 'granola'].includes(connection.server)
     )

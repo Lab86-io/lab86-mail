@@ -11,6 +11,7 @@
 import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { Loader } from '@/components/ui/loader';
+import { approvalSummary } from '@/lib/ai/approval';
 
 function LoadingCard() {
   return (
@@ -74,6 +75,49 @@ export function ApprovalPart({ part, onResult }: { part: any; onResult: HitlResu
         choice={decision === 'approved' || decision === 'denied' ? decision : undefined}
         onConfirm={answered ? undefined : () => onResult({ decision: 'approved' })}
         onCancel={answered ? undefined : () => onResult({ decision: 'denied' })}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Server-gated tool approval (AI SDK needsApproval) — a call that reaches
+// another person waits here until the user approves or denies it.
+// ---------------------------------------------------------------------------
+
+const TOOL_APPROVAL_STATES = new Set(['approval-requested', 'approval-responded', 'output-denied']);
+
+/** True while a tool part is waiting on, or was stopped by, the approval gate. */
+export function isToolApprovalPart(part: any): boolean {
+  return TOOL_APPROVAL_STATES.has(part?.state) && typeof part?.approval?.id === 'string';
+}
+
+export function ToolApprovalPart({
+  toolName,
+  part,
+  onRespond,
+}: {
+  toolName: string;
+  part: any;
+  onRespond: (approvalId: string, approved: boolean) => void;
+}) {
+  const summary = useMemo(() => approvalSummary(toolName, part.input), [toolName, part.input]);
+  const approvalId = String(part.approval?.id || '');
+  const decided = typeof part.approval?.approved === 'boolean';
+  const choice = decided ? (part.approval.approved ? 'approved' : 'denied') : undefined;
+  return (
+    <div className="max-w-[420px]">
+      <ApprovalCard
+        id={part.toolCallId || approvalId}
+        title={summary.title}
+        description={summary.description || undefined}
+        metadata={summary.metadata.map((row) => ({ key: row.label, value: row.value }))}
+        variant={summary.intent}
+        confirmLabel={summary.confirmLabel}
+        cancelLabel={summary.denyLabel}
+        choice={choice}
+        onConfirm={decided ? undefined : () => onRespond(approvalId, true)}
+        onCancel={decided ? undefined : () => onRespond(approvalId, false)}
       />
     </div>
   );

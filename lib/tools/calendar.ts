@@ -493,6 +493,16 @@ async function resolveSingleTarget(
   return { kind: 'target', resolvedBy: 'title', target: matches[0] };
 }
 
+/** Several events match a title: ask the user, and do not report a failure. */
+export function needsEventChoice(candidates: unknown[]) {
+  return {
+    status: 'needs_input' as const,
+    needsDisambiguation: true,
+    question: 'Several events match. Ask the user which one they mean, then call again with its eventId.',
+    candidates,
+  };
+}
+
 export const calendarUpdateEvent = defineTool({
   name: 'calendar_update_event',
   description:
@@ -519,7 +529,10 @@ export const calendarUpdateEvent = defineTool({
     notifyParticipants: z.boolean().default(false),
   }),
   output: z.object({
-    ok: z.boolean(),
+    // Absent when the tool needs input: a question is not a failure.
+    ok: z.boolean().optional(),
+    status: z.literal('needs_input').optional(),
+    question: z.string().optional(),
     operationId: z.string().optional(),
     resolvedBy: z.enum(['id', 'title']).optional(),
     needsDisambiguation: z.boolean().optional(),
@@ -539,7 +552,7 @@ export const calendarUpdateEvent = defineTool({
       false,
     );
     if (resolved.kind === 'disambiguate') {
-      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+      return needsEventChoice(resolved.candidates);
     }
     const result = await updateCalendarEvent({
       userId,
@@ -581,7 +594,10 @@ export const calendarDeleteEvent = defineTool({
     deleteSeries: z.boolean().default(false),
   }),
   output: z.object({
-    ok: z.boolean(),
+    // Absent when the tool needs input: a question is not a failure.
+    ok: z.boolean().optional(),
+    status: z.literal('needs_input').optional(),
+    question: z.string().optional(),
     operationId: z.string().optional(),
     resolvedBy: z.enum(['id', 'title']).optional(),
     deletedTitle: z.string().optional(),
@@ -601,7 +617,7 @@ export const calendarDeleteEvent = defineTool({
       args.deleteSeries,
     );
     if (resolved.kind === 'disambiguate') {
-      return { ok: false, needsDisambiguation: true, candidates: resolved.candidates };
+      return needsEventChoice(resolved.candidates);
     }
     const result = await deleteCalendarEvent({
       userId,

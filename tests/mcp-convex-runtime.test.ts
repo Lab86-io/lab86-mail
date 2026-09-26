@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
+import { contentAccess } from '../convex/content';
 import schema from '../convex/schema';
 
 const convexModules = {
@@ -519,6 +520,51 @@ describe('item reads', () => {
     expect(
       await t.query(api.mcp.searchItems, { internalSecret: SECRET, userId: USER, query: 'flaky' }),
     ).toEqual([]);
+  });
+});
+
+describe('connector sync errors', () => {
+  test('a sync error keeps indexed items in search and the Brief', async () => {
+    const t = newHarness();
+    await connect(t);
+    await upsert(t, [item()]);
+    await t.mutation(api.mcp.setSyncState, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: CONNECTION,
+      server: 'github',
+      status: 'error',
+      error: 'account check: rate limited',
+    });
+    const connections = await t.query(api.mcp.listConnections, { internalSecret: SECRET, userId: USER });
+    expect(connections[0]).toMatchObject({ status: 'error', syncError: 'account check: rate limited' });
+    const found = await t.query(api.mcp.searchItems, {
+      internalSecret: SECRET,
+      userId: USER,
+      query: 'flaky',
+    });
+    expect(found.map((r) => r.externalId)).toEqual(['org/repo#1']);
+    const brief = await t.query(api.mcp.listItemsForBrief, { internalSecret: SECRET, userId: USER });
+    expect(brief.map((r) => r.externalId)).toEqual(['org/repo#1']);
+  });
+
+  test('indexed connector content stays readable through a sync error, not a disconnect', async () => {
+    const t = newHarness();
+    await connect(t);
+    await upsert(t, [item()]);
+    const content = { userId: USER, source: 'github', connectionId: CONNECTION, externalId: 'org/repo#1' };
+    const setStatus = (status: 'connected' | 'error' | 'disconnected') =>
+      t.run(async (ctx) => {
+        const row = await ctx.db
+          .query('mcpConnections')
+          .withIndex('by_user_connection', (q) => q.eq('userId', USER).eq('connectionId', CONNECTION))
+          .unique();
+        await ctx.db.patch(row!._id, { status });
+      });
+    await setStatus('error');
+    expect(await t.run((ctx) => contentAccess(ctx, USER, content))).toBe(true);
+    await setStatus('disconnected');
+    expect(await t.run((ctx) => contentAccess(ctx, USER, content))).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   enableToolsResult,
   initialToolGroups,
   MAX_ACTIVE_TOOLS,
+  planToolGroups,
   TOOL_GROUP_NAMES,
   TOOL_GROUPS,
 } from '../lib/ai/tool-groups';
@@ -70,6 +71,46 @@ describe('tool groups', () => {
     );
   });
 
+  test('scope groups are never unloaded, and the result reports what was dropped', async () => {
+    // Work and Area chats start with their scope groups loaded.
+    for (const scope of [
+      initialToolGroups({ hasWorkContext: true, narrativeEnabled: true }),
+      initialToolGroups({ hasAreaContext: true, narrativeEnabled: true }),
+      initialToolGroups({ hasWorkContext: true, hasAreaContext: true, narrativeEnabled: true }),
+    ]) {
+      const everything = planToolGroups(allNames, TOOL_GROUP_NAMES, scope);
+      expect(everything.active.length).toBeLessThanOrEqual(MAX_ACTIVE_TOOLS);
+      for (const group of scope)
+        for (const tool of TOOL_GROUPS[group].tools) expect(everything.active).toContain(tool);
+      expect(everything.evicted.some((group) => scope.includes(group))).toBe(false);
+    }
+    // The headroom fits the largest on-demand group in a Work or an Area chat.
+    const largest = Math.max(...TOOL_GROUP_NAMES.map((name) => TOOL_GROUPS[name].tools.length));
+    for (const scope of [
+      initialToolGroups({ hasWorkContext: true, narrativeEnabled: true }),
+      initialToolGroups({ hasAreaContext: true, narrativeEnabled: true }),
+    ])
+      expect(activeToolNames(allNames, [], scope).length + largest).toBeLessThanOrEqual(MAX_ACTIVE_TOOLS);
+
+    // Every requested group that does not fit shows in the enable_tools result.
+    const scoped = liftToolsForAgent('batch', 'UTC', undefined, {
+      scopeGroups: ['narrative', 'areas', 'projects_routines'],
+    });
+    const first = await scoped[ENABLE_TOOLS_NAME].execute(
+      { groups: ['calendar_admin', 'display_media'] },
+      {} as any,
+    );
+    expect(first.enabled).toEqual(['calendar_admin']);
+    expect(first.evicted).toEqual(['display_media']);
+    expect(first.summary).toContain('Could not load display_media');
+    const second = await scoped[ENABLE_TOOLS_NAME].execute({ groups: ['cloud_files'] }, {} as any);
+    expect(second.enabled).toEqual(['cloud_files']);
+    expect(second.evicted).toEqual(['calendar_admin', 'display_media']);
+    expect(second.summary).toBe(
+      'Loaded cloud_files. Those tools are available from the next step. Unloaded calendar_admin to make room; enable it again if you still need it.',
+    );
+  });
+
   test('re-enabling a group moves it to most recent', () => {
     const active = activeToolNames(allNames, ['smart_labels', 'areas', 'smart_labels']);
     expect(active).toContain('create_smart_label');
@@ -105,7 +146,7 @@ describe('tool groups', () => {
 
   test('the enable_tools tool executes and reports the loaded tools', async () => {
     const result = await lifted[ENABLE_TOOLS_NAME].execute({ groups: ['calendar_admin'] }, {} as any);
-    expect(result).toMatchObject({ ok: true, enabled: ['calendar_admin'] });
+    expect(result).toMatchObject({ ok: true, enabled: ['calendar_admin'], evicted: [] });
     expect(result.tools).toContain('calendar_sync_now');
     expect(result.summary).toContain('calendar_admin');
     expect(enableToolsResult(['nope']).enabled).toEqual([]);

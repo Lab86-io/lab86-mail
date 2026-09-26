@@ -40,6 +40,57 @@ function classifyError(err: unknown): string {
   return String((err as { message?: string })?.message || 'sync failed').slice(0, 200);
 }
 
+/** An MCP tool result that reports a failure in-band (isError) instead of throwing. */
+export class McpToolResultError extends Error {
+  constructor(tool: string, result: unknown) {
+    const content = Array.isArray((result as { content?: unknown })?.content)
+      ? ((result as { content: Array<{ type?: string; text?: string }> }).content ?? [])
+      : [];
+    const text = content
+      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join(' ')
+      .trim();
+    super(`${tool} failed${text ? `: ${text}` : ''}`);
+    this.name = 'McpToolResultError';
+  }
+}
+
+async function callSyncTool(
+  deps: SyncConnectionDeps,
+  handle: McpClientHandle,
+  tool: string,
+  args: Record<string, unknown>,
+) {
+  const result = await deps.callMcpTool(handle, tool, args);
+  if ((result as { isError?: unknown })?.isError === true) throw new McpToolResultError(tool, result);
+  return result;
+}
+
+/**
+ * Why no token came back. An OAuth connection whose refresh failed needs the
+ * user to sign in again, so say that instead of a credential-storage error.
+ */
+async function missingTokenState(
+  deps: SyncConnectionDeps,
+  userId: string,
+  connectionId: string,
+): Promise<{ server: string; error: string }> {
+  const row = await deps
+    .listUserConnections(userId)
+    .then((rows) => rows.find((entry) => entry.connectionId === connectionId))
+    .catch(() => undefined);
+  if (!row) return { server: 'unknown', error: 'missing or unreadable credentials' };
+  const label = getServerDef(row.server)?.label || row.server;
+  return {
+    server: row.server,
+    error:
+      row.authKind === 'oauth'
+        ? `Reconnect ${label}: its sign-in expired.`
+        : `Reconnect ${label}: its saved credentials cannot be read.`,
+  };
+}
+
 async function upsertItemsInBatches(
   deps: SyncConnectionDeps,
   args: { userId: string; connectionId: string; server: McpConnectionRow['server'] },
@@ -60,14 +111,15 @@ export async function syncConnection(
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   const resolved = await deps.getConnectionToken(userId, connectionId);
   if (!resolved) {
+    const missing = await missingTokenState(deps, userId, connectionId);
     await deps.convexMutation(mcpApi.setSyncState, {
       userId,
       connectionId,
-      server: 'unknown',
+      server: missing.server,
       status: 'error',
-      error: 'missing or unreadable credentials',
+      error: missing.error,
     });
-    return { ok: false, count: 0, error: 'missing credentials' };
+    return { ok: false, count: 0, error: missing.error };
   }
   const { row, token } = resolved;
   const def = getServerDef(row.server);
@@ -159,7 +211,7 @@ export async function syncConnection(
   try {
     if (row.server === 'granola' && handle.toolNames.has('get_account_info')) {
       try {
-        accountInfo = granolaAccountInfo(await deps.callMcpTool(handle, 'get_account_info', {}));
+        accountInfo = granolaAccountInfo(await callSyncTool(deps, handle, 'get_account_info', {}));
       } catch (err) {
         queryErrors.push(`account check: ${classifyError(err)}`);
       }
@@ -169,7 +221,7 @@ export async function syncConnection(
       if (handle.toolNames.size && !handle.toolNames.has(query.tool)) continue;
       supportedQueries += 1;
       try {
-        const result = await deps.callMcpTool(handle, query.tool, query.args);
+        const result = await callSyncTool(deps, handle, query.tool, query.args);
         const normalized = normalizeItems(query, result);
         const advertisedCount = row.server === 'granola' ? granolaMeetingCountHint(result) : null;
         if (advertisedCount && normalized.length === 0) {
@@ -194,7 +246,7 @@ export async function syncConnection(
       const detailArgs = granolaMeetingDetailArgs(handle.toolSchemas?.get('get_meetings'), ids);
       if (detailArgs) {
         try {
-          const result = await deps.callMcpTool(handle, 'get_meetings', detailArgs);
+          const result = await callSyncTool(deps, handle, 'get_meetings', detailArgs);
           const detailed = normalizeItems(
             { tool: 'get_meetings', args: detailArgs, kind: 'meeting' },
             result,

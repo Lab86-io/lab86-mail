@@ -2,7 +2,12 @@
 
 import { useChat } from '@ai-sdk/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ChatTransport, DefaultChatTransport, type UIMessage } from 'ai';
+import {
+  type ChatTransport,
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+  type UIMessage,
+} from 'ai';
 import { Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, Paperclip, Plus, X } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import {
@@ -18,7 +23,7 @@ import {
 } from 'react';
 import { toast } from 'sonner';
 import { type AskAnswer, AskUserForm } from '@/components/ai-elements/choice-prompt';
-import { HitlPart } from '@/components/ai-elements/hitl-parts';
+import { HitlPart, isToolApprovalPart, ToolApprovalPart } from '@/components/ai-elements/hitl-parts';
 import { RevealDot } from '@/components/ai-elements/reveal-dot';
 import { ToolActivityRow } from '@/components/ai-elements/tool-activity';
 import { TOOL_UI_RENDERED_TOOLS, ToolUiDisplayPart } from '@/components/ai-elements/tool-ui-part';
@@ -59,6 +64,7 @@ import { Markdown } from '@/components/ui/markdown';
 import { PlusIcon } from '@/components/ui/plus';
 import { PromptSuggestion } from '@/components/ui/prompt-suggestion';
 import { RowIcon } from '@/components/ui/row-icon';
+import { createApprovalAutoContinueGuard } from '@/lib/ai/approval';
 import {
   CHAT_FILE_ACCEPT,
   chatUploadPath,
@@ -304,7 +310,24 @@ export function AssistantChat({
     [chatScopeAreaId, chatScopeKind, chatScopeWorkId],
   );
   const shouldAutoContinueHitl = useMemo(() => createHitlAutoContinueGuard(), []);
-  const { messages, sendMessage, status, stop, error, setMessages, addToolResult, regenerate } = useChat({
+  const shouldAutoContinueApproval = useMemo(
+    () =>
+      createApprovalAutoContinueGuard((msgs) =>
+        lastAssistantMessageIsCompleteWithApprovalResponses({ messages: msgs as UIMessage[] }),
+      ),
+    [],
+  );
+  const {
+    messages,
+    sendMessage,
+    status,
+    stop,
+    error,
+    setMessages,
+    addToolResult,
+    addToolApprovalResponse,
+    regenerate,
+  } = useChat({
     transport: previewTransport ?? transport,
     onFinish: () => {
       void qc.invalidateQueries({ queryKey: ['brief-v2', 'inactive'] });
@@ -318,7 +341,10 @@ export function AssistantChat({
     // lastAssistantMessageIsCompleteWithToolCalls also fires after ordinary
     // server-tool turns, which can resubmit in a loop — our server already
     // runs server tools to completion in one response.
-    sendAutomaticallyWhen: ({ messages: msgs }) => shouldAutoContinueHitl(msgs as any),
+    // An answered approval card (a server-gated call that reaches another
+    // person) also continues the run, so the server runs or skips the call.
+    sendAutomaticallyWhen: ({ messages: msgs }) =>
+      shouldAutoContinueHitl(msgs as any) || shouldAutoContinueApproval(msgs as any),
   });
 
   // Hand human-in-the-loop answers back into the stream. Memoized so the
@@ -328,6 +354,12 @@ export function AssistantChat({
       void addToolResult({ tool: tool as any, toolCallId, output });
     },
     [addToolResult],
+  );
+  const respondApproval = useCallback(
+    (approvalId: string, approved: boolean) => {
+      void addToolApprovalResponse({ id: approvalId, approved });
+    },
+    [addToolApprovalResponse],
   );
 
   // The model (esp. gpt-5.x via OpenRouter) intermittently returns an EMPTY
@@ -505,10 +537,11 @@ export function AssistantChat({
   const partHandlers = useMemo<ChatPartHandlers>(
     () => ({
       answer: answerHitl,
+      respondApproval,
       openDraft: (draft) => openComposeNew(draft),
       openThread: (target) => routeEmailPreviewThread(target, { setThreadAccount, setSelectedThread }),
     }),
-    [answerHitl, openComposeNew, setThreadAccount, setSelectedThread],
+    [answerHitl, respondApproval, openComposeNew, setThreadAccount, setSelectedThread],
   );
 
   // --- UI tool intercept ---
@@ -1337,6 +1370,7 @@ function userTextFromMessage(message: any): string {
 // useChat, and route "open this draft" requests into the real composer.
 interface ChatPartHandlers {
   answer: (tool: string, toolCallId: string, output: Record<string, unknown>) => void;
+  respondApproval?: (approvalId: string, approved: boolean) => void;
   openDraft?: (draft: { to?: string; cc?: string; bcc?: string; subject?: string; body?: string }) => void;
   openThread?: (target: { account: string; threadId: string }) => void;
 }
@@ -1383,6 +1417,7 @@ const Part = memo(function Part({ part, streaming = false }: { part: any; stream
     const toolName = toolPartName(part);
     if (toolName === 'ask_user') return <AskUserPart part={part} />;
     if (isHitlToolName(toolName)) return <HitlToolPart toolName={toolName} part={part} />;
+    if (isToolApprovalPart(part)) return <ToolApprovalCardPart toolName={toolName} part={part} />;
     // Successful display tools render their designed tool-ui component; the
     // quiet activity row still covers running/failed states below.
     const state = part.state || 'input-available';
@@ -1414,6 +1449,14 @@ function HitlToolPart({ toolName, part }: { toolName: string; part: any }) {
       part={part}
       onResult={(output) => answer(toolName, part.toolCallId, output)}
     />
+  );
+}
+
+// A server-gated call waiting for (or stopped by) the user's approval.
+function ToolApprovalCardPart({ toolName, part }: { toolName: string; part: any }) {
+  const { respondApproval } = useContext(ChatPartContext);
+  return (
+    <ToolApprovalPart toolName={toolName} part={part} onRespond={(id, ok) => respondApproval?.(id, ok)} />
   );
 }
 
