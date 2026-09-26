@@ -80,6 +80,9 @@ export interface ClientState {
   // The column board is an optional lens, off by default. It used to be a
   // top-level surface, which made it a second system to maintain.
   boardSurfaceEnabled: boolean;
+  // Files in the rail. The server owns the choice (/api/account/surfaces);
+  // this copy lets the rail draw it before that answer arrives.
+  filesSurfaceEnabled: boolean;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
@@ -184,6 +187,7 @@ export interface ClientState {
   setCaptureOpen: (open: boolean) => void;
   openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
+  setFilesSurfaceEnabled: (enabled: boolean) => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -303,6 +307,7 @@ export function persistedClientState(s: ClientState) {
     account: s.account,
     primaryView: s.primaryView,
     boardSurfaceEnabled: s.boardSurfaceEnabled,
+    filesSurfaceEnabled: s.filesSurfaceEnabled,
     query: s.query,
     smartCategory: s.smartCategory,
     selectedAreaId: s.selectedAreaId,
@@ -357,6 +362,7 @@ export const useClientStore = create<ClientState>()(
       captureOpen: false,
       captureSeed: null,
       boardSurfaceEnabled: false,
+      filesSurfaceEnabled: false,
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
@@ -498,6 +504,7 @@ export const useClientStore = create<ClientState>()(
       setCaptureOpen: (captureOpen) => set({ captureOpen, ...(captureOpen ? {} : { captureSeed: null }) }),
       openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
+      setFilesSurfaceEnabled: (filesSurfaceEnabled) => set({ filesSurfaceEnabled }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {

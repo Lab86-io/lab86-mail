@@ -636,3 +636,24 @@ async function rowsByUser(ctx: any, table: string, userId: string) {
   }
   throw lastErr;
 }
+
+/**
+ * Whether the user already made or imported any document. Settings, Advanced
+ * starts "Show Files" on for these users and off for everyone else.
+ */
+export const hasDocuments = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const documents = await ctx.db
+      .query('documents')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .take(25);
+    if (documents.some((row) => !row.archivedAt)) return true;
+    const office = await ctx.db
+      .query('officeDocuments')
+      .withIndex('by_user', (q) => q.eq('userId', args.userId))
+      .first();
+    return office !== null;
+  },
+});

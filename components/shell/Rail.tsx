@@ -11,6 +11,7 @@ import { History, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Ring } from '@/components/loading-ui/ring';
+import { useFilesSurface } from '@/components/settings/surfaces';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -132,7 +133,8 @@ export function Rail({
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const visiblePrimaryView = normalizePrimaryView(activeViewOverride ?? primaryView);
   const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
-  const SURFACES = railSurfaces({ boardEnabled }).map((surface) => ({
+  const filesEnabled = useFilesSurface();
+  const SURFACES = railSurfaces({ boardEnabled, filesEnabled }).map((surface) => ({
     ...surface,
     Icon: SURFACE_ICONS[surface.view],
   }));

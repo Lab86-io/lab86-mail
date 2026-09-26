@@ -21,6 +21,7 @@ import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
+import { useFilesSurface, useSetFilesSurface } from '@/components/settings/surfaces';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -104,14 +105,30 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
 function AdvancedSection() {
   const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
   const setBoardEnabled = useClientStore((s) => s.setBoardSurfaceEnabled);
+  const filesEnabled = useFilesSurface();
+  const setFiles = useSetFilesSurface();
+  const extras = [filesEnabled ? 'Files' : null, boardEnabled ? 'Board' : null].filter(Boolean);
   return (
     <section>
       <SectionHeading
         title="Advanced"
         blurb="Optional surfaces. Albatross does not need any of these to work."
-        aside={boardEnabled ? 'Board on' : 'Nothing extra on'}
+        aside={extras.length ? `${extras.join(' and ')} on` : 'Nothing extra on'}
       />
       <SettingsCard>
+        <SettingsRow
+          id="files-surface"
+          label="Show Files"
+          description="Files and the document editors in the rail. Documents made for an Albatross stay on its Work page either way, and links to a document still open it."
+          control={
+            <Switch
+              id="files-surface"
+              checked={filesEnabled}
+              disabled={setFiles.isPending}
+              onCheckedChange={(on) => setFiles.mutate(on)}
+            />
+          }
+        />
         <SettingsRow
           id="board-surface"
           label="Show the board"
