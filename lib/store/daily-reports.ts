@@ -394,6 +394,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     narrative: raw.narrative ?? '',
     tier: raw.tier === 'free' || raw.tier === 'pro' || raw.tier === 'team' ? raw.tier : undefined,
     ...(raw.budget ? { budget: parseBriefEditionBudget(raw.budget) } : {}),
+    ...(typeof raw.emailedAt === 'number' ? { emailedAt: raw.emailedAt } : {}),
     prose:
       raw.prose && typeof raw.prose === 'object'
         ? {

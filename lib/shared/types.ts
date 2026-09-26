@@ -627,6 +627,8 @@ export interface DailyReport {
   // Writer time, model cost, tokens, and fallback of this edition, summed over
   // its attempts (FEATURES item 5; lib/brief/budget.ts).
   budget?: BriefEditionBudget;
+  // When the edition went out by email (FEATURES item 6). Set once.
+  emailedAt?: number;
   // Model-written prose for the budget brief (2026-09-03).
   prose?: DailyReportProse;
   sections: {
