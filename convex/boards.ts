@@ -253,7 +253,10 @@ export const ensureDefaultBoard = mutation({
       .query('boards')
       .withIndex('by_owner', (q) => q.eq('ownerUserId', userId))
       .collect();
-    if (owned.length) return owned[0]._id;
+    // Only an owned board marked default is the default. An Area board or a
+    // user-made board is not, so a user without one gets a new Personal board.
+    const ownedDefault = owned.find((board) => board.isDefault === true);
+    if (ownedDefault) return ownedDefault._id;
     return insertBoardWithColumns(ctx, userId, 'Personal', { isDefault: true });
   },
 });
@@ -829,7 +832,9 @@ export const listMyBoards = query({
     return boards.map((board) => ({
       boardId: board._id,
       title: board.title,
-      isDefault: board.isDefault,
+      // `isDefault` means "this caller's default". A shared board that is the
+      // owner's default is not the member's default.
+      isDefault: board.ownerUserId === userId ? board.isDefault : undefined,
       owned: board.ownerUserId === userId,
       hasPublicLink: Boolean(board.publicToken),
       updatedAt: board.updatedAt,

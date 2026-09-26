@@ -1094,91 +1094,106 @@ export const albatrossApplyIntentPlan = defineTool({
     const approvalIds: string[] = [];
     const approvals: any[] = [];
 
+    // Each step runs on its own. A failed step does not lose the artifacts
+    // earlier steps created: they are recorded below, so a retry applies only
+    // the missing actions (WRK-4).
+    const failures: Array<{ stepKey?: string; actionKey?: string; title: string; error: string }> = [];
     for (const step of plan.executableSteps) {
-      if (step.kind === 'project') {
-        projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
-          userId,
-          externalId: `intent:${args.intentId}`,
-          title: step.title,
-          outcome: args.plan.outcome,
-          areaId: args.areaId || step.areaId,
-          sourceIntentId: args.intentId,
-          sourceBatchId: operationBatchId,
-          sourceRefs: step.sourceRefs,
-        });
-        const operationId = await recordProjectOperation({
-          userId,
+      try {
+        if (step.kind === 'project') {
+          projectId = await deps.convexMutation<string>(albatrossApi().createProject, {
+            userId,
+            externalId: `intent:${args.intentId}`,
+            title: step.title,
+            outcome: args.plan.outcome,
+            areaId: args.areaId || step.areaId,
+            sourceIntentId: args.intentId,
+            sourceBatchId: operationBatchId,
+            sourceRefs: step.sourceRefs,
+          });
+          const operationId = await recordProjectOperation({
+            userId,
+            projectId,
+            title: step.title,
+            operationBatchId,
+          });
+          operations.push({ operationId, tool: 'albatross_create_project', projectId, title: step.title });
+          artifacts.push({ kind: 'project', id: projectId, title: step.title, operationId });
+          await linkToProject(userId, projectId, {
+            artifactKind: 'intent',
+            artifactId: args.intentId,
+            title: args.intentText || args.intentId,
+            areaId: args.areaId,
+            operationBatchId,
+            sourceIntentId: args.intentId,
+            role: 'primary',
+          });
+          continue;
+        }
+        const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), {
           projectId,
-          title: step.title,
-          operationBatchId,
+          boardId: areaBoardId,
         });
-        operations.push({ operationId, tool: 'albatross_create_project', projectId, title: step.title });
-        artifacts.push({ kind: 'project', id: projectId, title: step.title, operationId });
+        const artifactId =
+          result.cardId ||
+          result.eventId ||
+          result.draft?._id ||
+          result.draft?.id ||
+          result.documentId ||
+          result.operationId ||
+          step.id;
+        operations.push({
+          operationId: result.operationId,
+          tool: step.toolName,
+          artifactId,
+          title: step.title,
+          // stepKey/kind let callers map plan steps back to created artifacts
+          // (the plan dossier's toggleable task cards).
+          stepKey: step.stepKey,
+          actionKey: step.actionKey,
+          kind: step.kind,
+          result,
+        });
+        artifacts.push({
+          kind:
+            step.kind === 'calendar_event'
+              ? 'calendarEvent'
+              : step.kind === 'email_draft'
+                ? 'emailDraft'
+                : step.kind === 'document'
+                  ? 'document'
+                  : step.kind,
+          id: artifactId,
+          title: step.title,
+          operationId: result.operationId,
+          actionKey: step.actionKey,
+          stepKey: step.stepKey,
+        });
         await linkToProject(userId, projectId, {
-          artifactKind: 'intent',
-          artifactId: args.intentId,
-          title: args.intentText || args.intentId,
-          areaId: args.areaId,
+          artifactKind:
+            step.kind === 'calendar_event'
+              ? 'calendarEvent'
+              : step.kind === 'email_draft'
+                ? 'emailDraft'
+                : step.kind === 'document'
+                  ? 'document'
+                  : 'task',
+          artifactId,
+          title: step.title,
+          areaId: step.areaId,
           operationBatchId,
           sourceIntentId: args.intentId,
-          role: 'primary',
         });
-        continue;
+      } catch (error) {
+        failures.push({
+          stepKey: step.stepKey,
+          actionKey: step.actionKey,
+          title: step.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Later steps may need the project. Stop when it cannot be created.
+        if (step.kind === 'project') break;
       }
-      const result: any = await executeToolStep(step, batchContext(ctx, operationBatchId), {
-        projectId,
-        boardId: areaBoardId,
-      });
-      const artifactId =
-        result.cardId ||
-        result.eventId ||
-        result.draft?._id ||
-        result.draft?.id ||
-        result.documentId ||
-        result.operationId ||
-        step.id;
-      operations.push({
-        operationId: result.operationId,
-        tool: step.toolName,
-        artifactId,
-        title: step.title,
-        // stepKey/kind let callers map plan steps back to created artifacts
-        // (the plan dossier's toggleable task cards).
-        stepKey: step.stepKey,
-        actionKey: step.actionKey,
-        kind: step.kind,
-        result,
-      });
-      artifacts.push({
-        kind:
-          step.kind === 'calendar_event'
-            ? 'calendarEvent'
-            : step.kind === 'email_draft'
-              ? 'emailDraft'
-              : step.kind === 'document'
-                ? 'document'
-                : step.kind,
-        id: artifactId,
-        title: step.title,
-        operationId: result.operationId,
-        actionKey: step.actionKey,
-        stepKey: step.stepKey,
-      });
-      await linkToProject(userId, projectId, {
-        artifactKind:
-          step.kind === 'calendar_event'
-            ? 'calendarEvent'
-            : step.kind === 'email_draft'
-              ? 'emailDraft'
-              : step.kind === 'document'
-                ? 'document'
-                : 'task',
-        artifactId,
-        title: step.title,
-        areaId: step.areaId,
-        operationBatchId,
-        sourceIntentId: args.intentId,
-      });
     }
 
     for (const step of plan.approvalSteps) {
@@ -1213,6 +1228,7 @@ export const albatrossApplyIntentPlan = defineTool({
         title: step.title,
         actionKey: step.actionKey,
         stepKey: step.stepKey,
+        stepKind: step.kind,
       });
       await linkToProject(userId, projectId, {
         artifactKind: 'operationBatch',
@@ -1224,11 +1240,16 @@ export const albatrossApplyIntentPlan = defineTool({
       });
     }
 
-    const applicationStatus = statusForApplication({
-      operations,
-      approvals,
-      unresolved: plan.unresolved,
-    });
+    const applicationStatus = failures.length
+      ? 'partially_applied'
+      : statusForApplication({
+          operations,
+          approvals,
+          unresolved: plan.unresolved,
+        });
+    if (failures.length && !artifacts.length) {
+      throw new Error(`Could not apply the plan: ${failures[0].error}`);
+    }
     const applicationId = await deps.convexMutation<string>(albatrossApi().recordPlanApplication, {
       userId,
       intentId: args.intentId,
@@ -1241,8 +1262,21 @@ export const albatrossApplyIntentPlan = defineTool({
       artifacts,
       operationIds: operations.map((operation) => String(operation.operationId || '')).filter(Boolean),
       pendingApprovalIds: approvalIds,
-      unresolvedArtifacts: plan.unresolved,
+      unresolvedArtifacts: [
+        ...plan.unresolved,
+        ...failures.map((failure) => ({ ...failure, reason: 'failed' })),
+      ],
     });
+    if (failures.length) {
+      // The created artifacts are recorded. The caller sees the failure and
+      // does not mark the plan applied, so a retry creates only what is missing.
+      throw new Error(
+        `Applied ${artifacts.length} of the plan's actions. ${failures.length} failed: ${failures
+          .map((failure) => `${failure.title} (${failure.error})`)
+          .join('; ')
+          .slice(0, 400)}`,
+      );
+    }
 
     return {
       ok: true,

@@ -1,7 +1,8 @@
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { mutation, query } from './_generated/server';
-import { now, requireInternalSecret } from './lib';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 
 const callerArgs = {
   internalSecret: v.optional(v.string()),
@@ -129,5 +130,53 @@ export const activeSessionForWork = query({
       replayUrl: live.replayUrl,
       updatedAt: live.updatedAt,
     };
+  },
+});
+
+/**
+ * A Browserbase session lives one hour (`SESSION_TIMEOUT_SECONDS` in
+ * lib/albatross/browser-session.ts). A live row older than that plus a margin
+ * is stale: the pane would show a dead live view (WRK-8).
+ */
+export const BROWSER_SESSION_STALE_AFTER_MS = 70 * 60_000;
+const LIVE_STATUSES = ['starting', 'agent', 'user', 'verifying'] as const;
+
+/** Live rows created before `before`. Bounded; the sweep runs again later. */
+export const staleSessionTargets = internalQuery({
+  args: { before: v.number(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 25, 1), 100);
+    const targets: Array<{ userId: string; sessionId: string }> = [];
+    for (const status of LIVE_STATUSES) {
+      const rows = await ctx.db
+        .query('albatrossBrowserSessions')
+        .withIndex('by_status_created', (q) => q.eq('status', status).lt('createdAt', args.before))
+        .take(limit - targets.length);
+      targets.push(...rows.map((row) => ({ userId: row.userId, sessionId: row.sessionId })));
+      if (targets.length >= limit) break;
+    }
+    return targets;
+  },
+});
+
+/**
+ * The stale-session cron. The app ends each session at Browserbase with the
+ * shared browser-session helper and marks the row ended.
+ */
+export const sweepStaleSessionsTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) return;
+    const sessions = await ctx.runQuery(internal.albatrossBrowserSessions.staleSessionTargets, {
+      before: now() - BROWSER_SESSION_STALE_AFTER_MS,
+    });
+    if (!sessions.length) return;
+    await fanOutInternalPost(`${appUrl}/api/cron/browser-sessions`, secret, [{ sessions }], {
+      label: 'browser session sweep',
+      timeoutMs: 120_000,
+      concurrency: 1,
+    });
   },
 });

@@ -155,6 +155,19 @@ export async function sendWebPush(
   );
 }
 
+/**
+ * Transactional email needs a Resend key, a sender, and the signed-link
+ * secret. Without all three a send can only fail, so the fallback stays off
+ * (INF-4).
+ */
+export function transactionalEmailConfigured() {
+  return Boolean(
+    process.env.RESEND_API_KEY &&
+      process.env.LAB86_NOTIFICATION_FROM &&
+      process.env.LAB86_NOTIFICATION_LINK_SECRET,
+  );
+}
+
 export async function sendCheckinEmail(input: {
   envelope: NotificationEnvelope;
   to: string;
@@ -167,14 +180,17 @@ export async function sendCheckinEmail(input: {
     .trim()
     .split(/\s+/)[0];
   const openUrl = notificationOpenUrl(input.envelope);
+  // The email asks the prompt the notification carries: the reflection or
+  // the plan for tomorrow (WRK-14).
+  const question = input.envelope.title.trim() || 'What did you get done today?';
   const response = await notificationDeliveryDependencies.fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       from,
       to: [input.to],
-      subject: 'What did you actually get done today?',
-      html: `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px 20px;color:#1a1a1a"><p style="font-size:14px;color:#6b6b6b">${firstName ? `${escapeHtml(firstName)}, ` : ''}Albatross is checking in.</p><h1 style="font-family:Georgia,serif;font-size:30px;line-height:1.12;margin:12px 0 16px">What did you actually get done today?</h1><p style="font-size:15px;line-height:1.6;color:#454545">${escapeHtml(input.envelope.body)}</p><p style="margin:26px 0"><a href="${escapeHtml(openUrl)}" style="display:inline-block;background:#1a1a1a;color:#fff;text-decoration:none;padding:11px 16px;border-radius:999px;font-size:14px">Answer Albatross</a></p><p style="font-size:12px;color:#777">You can change check-in time and delivery channels in Lab86 Mail settings.</p></div>`,
+      subject: question,
+      html: `<div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:32px 20px;color:#1a1a1a"><p style="font-size:14px;color:#6b6b6b">${firstName ? `${escapeHtml(firstName)}, ` : ''}Albatross is checking in.</p><h1 style="font-family:Georgia,serif;font-size:30px;line-height:1.12;margin:12px 0 16px">${escapeHtml(question)}</h1><p style="font-size:15px;line-height:1.6;color:#454545">${escapeHtml(input.envelope.body)}</p><p style="margin:26px 0"><a href="${escapeHtml(openUrl)}" style="display:inline-block;background:#1a1a1a;color:#fff;text-decoration:none;padding:11px 16px;border-radius:999px;font-size:14px">Answer Albatross</a></p><p style="font-size:12px;color:#777">You can change check-in time and delivery channels in Lab86 Mail settings.</p></div>`,
     }),
   });
   const payload = await response.json().catch(() => ({}));

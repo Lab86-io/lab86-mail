@@ -27,6 +27,17 @@ async function getBoardForUser(userId: string, boardId: string) {
   return convexQuery<any>(boardsApi.getBoard, { userId, boardId });
 }
 
+/**
+ * The default board is always one the user owns. A shared board can carry
+ * `isDefault` for its owner; a private task must never land there. Returns
+ * undefined when the user owns no default board, so the caller creates one.
+ */
+export function ownedDefaultBoardId(
+  boards: Array<{ boardId?: string; isDefault?: boolean; owned?: boolean }>,
+): string | undefined {
+  return boards.find((board) => board.owned === true && board.isDefault === true)?.boardId;
+}
+
 export async function resolveBoardAndColumn(
   userId: string,
   boardId: string | undefined,
@@ -35,8 +46,7 @@ export async function resolveBoardAndColumn(
   let id = boardId;
   if (!id) {
     const boards = await convexQuery<any[]>(boardsApi.listMyBoards, { userId });
-    const fallback = boards.find((board) => board.isDefault) || boards[0];
-    id = fallback?.boardId;
+    id = ownedDefaultBoardId(boards);
     if (!id) {
       id = await convexMutation<string>(boardsApi.ensureDefaultBoard, { userId });
     }
@@ -72,6 +82,11 @@ const sourceSchema = z.object({
   externalId: z.string().optional(),
   url: z.string().optional(),
   title: z.string().optional(),
+  // Albatross plan provenance. Work completion finds its cards by
+  // `source.intentId`, so the schema must keep these fields.
+  intentId: z.string().optional(),
+  areaId: z.string().optional(),
+  projectId: z.string().optional(),
 });
 
 const taskCardStateSchema = z.object({

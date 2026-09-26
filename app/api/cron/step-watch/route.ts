@@ -46,6 +46,15 @@ interface WatchableStep {
   verification?: StepVerification | null;
 }
 
+/** The row shape `mailCorpus.listRecentCorpusThreads` returns. */
+export interface RecentCorpusThread {
+  _id: string;
+  account: string;
+  subject?: string;
+  snippet?: string;
+  smartCategory?: { primary?: unknown; model?: unknown } | null;
+}
+
 /**
  * One watch pass for one Work: does any recent confirmable thread satisfy an
  * unfinished step that expects a mail confirmation? The gate fails closed —
@@ -92,7 +101,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       }
 
       const threads =
-        (await deps.convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+        (await deps.convexQuery<RecentCorpusThread[]>((api as any).mailCorpus.listRecentCorpusThreads, {
           userId,
           limit: WATCH_RECENT_THREADS,
         })) || [];
@@ -130,8 +139,10 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
             title: String(candidate.thread.subject || 'Mail confirmation').slice(0, 300),
             summary: String(candidate.thread.snippet || '').slice(0, 600) || undefined,
             sourceKind: 'mail_thread',
-            sourceId: String(candidate.thread.providerThreadId),
-            accountId: String(candidate.thread.accountId),
+            // listRecentCorpusThreads returns the provider thread id as `_id`
+            // and the account as `account` (WRK-2).
+            sourceId: String(candidate.thread._id),
+            accountId: String(candidate.thread.account),
             stepIdentity: step.identity,
             trust: 'observed',
             settleContract: true,

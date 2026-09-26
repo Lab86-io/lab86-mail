@@ -6,6 +6,7 @@
 // receives the same decision.
 
 import { z } from 'zod';
+import { parseIsoInTimezone } from '../shared/timezones';
 
 export type HorizonKind = 'now' | 'later' | 'someday';
 
@@ -211,46 +212,96 @@ function countValue(token: string): number {
   return NUMBER_WORDS[clean] ?? 1;
 }
 
-/** The next date with this month (and day). A month already passed rolls to next year. */
-function nextMonthDate(nowMs: number, month: number, day = 1): number {
-  const current = new Date(nowMs);
-  let year = current.getFullYear();
-  let target = new Date(year, month, day, 0, 0, 0, 0);
-  if (target.getTime() <= startOfDay(nowMs)) {
-    year += 1;
-    target = new Date(year, month, day, 0, 0, 0, 0);
+/**
+ * Calendar arithmetic for horizon dates. With a timezone, "Monday" and
+ * "November" are midnight in the user's zone, not the server's (WRK-19).
+ * Without one, the process-local clock is used, as before.
+ */
+export interface HorizonClock {
+  /** The calendar day of an instant: month is 0-based, weekday 0 is Sunday. */
+  today(ms: number): { year: number; month: number; day: number; weekday: number };
+  /** Midnight of a calendar day. Month and day may overflow, like `Date`. */
+  midnight(year: number, month: number, day: number): number;
+}
+
+const LOCAL_CLOCK: HorizonClock = {
+  today(ms) {
+    const date = new Date(ms);
+    return { year: date.getFullYear(), month: date.getMonth(), day: date.getDate(), weekday: date.getDay() };
+  },
+  midnight(year, month, day) {
+    return new Date(year, month, day, 0, 0, 0, 0).getTime();
+  },
+};
+
+export function horizonClock(timezone?: string | null): HorizonClock {
+  if (!timezone) return LOCAL_CLOCK;
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  } catch {
+    return LOCAL_CLOCK;
   }
-  return target.getTime();
+  return {
+    today(ms) {
+      const parts = format.formatToParts(new Date(ms));
+      const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+      const year = get('year');
+      const month = get('month') - 1;
+      const day = get('day');
+      return { year, month, day, weekday: new Date(Date.UTC(year, month, day)).getUTCDay() };
+    },
+    midnight(year, month, day) {
+      const iso = new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
+      return parseIsoInTimezone(`${iso}T00:00:00`, timezone, 'horizon');
+    },
+  };
+}
+
+function clockStartOfDay(clock: HorizonClock, ms: number): number {
+  const today = clock.today(ms);
+  return clock.midnight(today.year, today.month, today.day);
+}
+
+/** The next date with this month (and day). A month already passed rolls to next year. */
+function nextMonthDate(nowMs: number, month: number, day = 1, clock: HorizonClock = LOCAL_CLOCK): number {
+  const { year } = clock.today(nowMs);
+  const target = clock.midnight(year, month, day);
+  if (target <= clockStartOfDay(clock, nowMs)) return clock.midnight(year + 1, month, day);
+  return target;
 }
 
 /** The next occurrence of this weekday, never today. */
-function nextWeekday(nowMs: number, weekday: number): number {
-  const current = new Date(startOfDay(nowMs));
-  const delta = (weekday - current.getDay() + 7) % 7 || 7;
-  current.setDate(current.getDate() + delta);
-  return current.getTime();
+function nextWeekday(nowMs: number, weekday: number, clock: HorizonClock = LOCAL_CLOCK): number {
+  const today = clock.today(nowMs);
+  const delta = (weekday - today.weekday + 7) % 7 || 7;
+  return clock.midnight(today.year, today.month, today.day + delta);
 }
 
-function addUnits(nowMs: number, count: number, unit: string): number {
-  const date = new Date(startOfDay(nowMs));
-  if (unit === 'day') date.setDate(date.getDate() + count);
-  else if (unit === 'week') date.setDate(date.getDate() + count * 7);
-  else if (unit === 'month') date.setMonth(date.getMonth() + count);
-  else date.setFullYear(date.getFullYear() + count);
-  return date.getTime();
+function addUnits(nowMs: number, count: number, unit: string, clock: HorizonClock = LOCAL_CLOCK): number {
+  const today = clock.today(nowMs);
+  if (unit === 'day') return clock.midnight(today.year, today.month, today.day + count);
+  if (unit === 'week') return clock.midnight(today.year, today.month, today.day + count * 7);
+  if (unit === 'month') return clock.midnight(today.year, today.month + count, today.day);
+  return clock.midnight(today.year + count, today.month, today.day);
 }
 
-function firstOfNextMonth(nowMs: number): number {
-  const date = new Date(nowMs);
-  return new Date(date.getFullYear(), date.getMonth() + 1, 1, 0, 0, 0, 0).getTime();
+function firstOfNextMonth(nowMs: number, clock: HorizonClock = LOCAL_CLOCK): number {
+  const today = clock.today(nowMs);
+  return clock.midnight(today.year, today.month + 1, 1);
 }
 
-function firstOfNextYear(nowMs: number): number {
-  return new Date(new Date(nowMs).getFullYear() + 1, 0, 1, 0, 0, 0, 0).getTime();
+function firstOfNextYear(nowMs: number, clock: HorizonClock = LOCAL_CLOCK): number {
+  return clock.midnight(clock.today(nowMs).year + 1, 0, 1);
 }
 
-function nextMonday(nowMs: number): number {
-  return nextWeekday(nowMs, 1);
+function nextMonday(nowMs: number, clock: HorizonClock = LOCAL_CLOCK): number {
+  return nextWeekday(nowMs, 1, clock);
 }
 
 interface DateHit {
@@ -259,24 +310,27 @@ interface DateHit {
 }
 
 /** A date phrase after a preposition: month, month + day, weekday, "next week", "tomorrow". */
-function parseDatePhrase(text: string, nowMs: number): DateHit | null {
+function parseDatePhrase(text: string, nowMs: number, clock: HorizonClock = LOCAL_CLOCK): DateHit | null {
   const monthDay = text.match(new RegExp(`^${MONTH_PATTERN}(?:\\s+(\\d{1,2})(?:st|nd|rd|th)?)?\\b`, 'i'));
   if (monthDay) {
     const month = monthIndex(monthDay[1]);
     const day = monthDay[2] ? Math.min(Math.max(Number(monthDay[2]), 1), 31) : 1;
-    return { at: nextMonthDate(nowMs, month, day), label: monthDay[0] };
+    return { at: nextMonthDate(nowMs, month, day, clock), label: monthDay[0] };
   }
   const weekday = text.match(new RegExp(`^(?:next\\s+)?${WEEKDAY_PATTERN}\\b`, 'i'));
   if (weekday) {
-    return { at: nextWeekday(nowMs, weekdayIndex(weekday[1])), label: weekday[0] };
+    return { at: nextWeekday(nowMs, weekdayIndex(weekday[1]), clock), label: weekday[0] };
   }
-  if (/^tomorrow\b/i.test(text)) return { at: addUnits(nowMs, 1, 'day'), label: 'tomorrow' };
-  if (/^next\s+week\b/i.test(text)) return { at: nextMonday(nowMs), label: 'next week' };
-  if (/^next\s+month\b/i.test(text)) return { at: firstOfNextMonth(nowMs), label: 'next month' };
-  if (/^next\s+year\b/i.test(text)) return { at: firstOfNextYear(nowMs), label: 'next year' };
+  if (/^tomorrow\b/i.test(text)) return { at: addUnits(nowMs, 1, 'day', clock), label: 'tomorrow' };
+  if (/^next\s+week\b/i.test(text)) return { at: nextMonday(nowMs, clock), label: 'next week' };
+  if (/^next\s+month\b/i.test(text)) return { at: firstOfNextMonth(nowMs, clock), label: 'next month' };
+  if (/^next\s+year\b/i.test(text)) return { at: firstOfNextYear(nowMs, clock), label: 'next year' };
   const relative = text.match(new RegExp(`^(?:in\\s+)?${COUNT_PATTERN}\\s+${UNIT_PATTERN}\\b`, 'i'));
   if (relative) {
-    return { at: addUnits(nowMs, countValue(relative[1]), relative[2].toLowerCase()), label: relative[0] };
+    return {
+      at: addUnits(nowMs, countValue(relative[1]), relative[2].toLowerCase(), clock),
+      label: relative[0],
+    };
   }
   return null;
 }
@@ -287,7 +341,8 @@ function parseDatePhrase(text: string, nowMs: number): DateHit | null {
  * date ("after Thanksgiving") keeps only the label, so the Work sleeps until
  * the user sets a date.
  */
-export function parseHorizonHint(text: string, nowMs: number): WorkHorizon | null {
+export function parseHorizonHint(text: string, nowMs: number, timezone?: string | null): WorkHorizon | null {
+  const clock = horizonClock(timezone);
   const clean = String(text || '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -307,7 +362,7 @@ export function parseHorizonHint(text: string, nowMs: number): WorkHorizon | nul
   for (let sleep = sleepPattern.exec(lower); sleep; sleep = sleepPattern.exec(lower)) {
     const preposition = sleep[1];
     const rest = sleep[2];
-    const hit = parseDatePhrase(rest, nowMs);
+    const hit = parseDatePhrase(rest, nowMs, clock);
     if (hit) {
       result = { kind: 'later', notBefore: hit.at, label: `${preposition} ${hit.label}` };
       break;
@@ -337,19 +392,23 @@ export function parseHorizonHint(text: string, nowMs: number): WorkHorizon | nul
     if (relative) {
       result = {
         kind: 'later',
-        notBefore: addUnits(nowMs, countValue(relative[1]), relative[2]),
+        notBefore: addUnits(nowMs, countValue(relative[1]), relative[2], clock),
         label: relative[0],
       };
     } else if (inMonth) {
-      result = { kind: 'later', notBefore: nextMonthDate(nowMs, monthIndex(inMonth[1])), label: inMonth[0] };
+      result = {
+        kind: 'later',
+        notBefore: nextMonthDate(nowMs, monthIndex(inMonth[1]), 1, clock),
+        label: inMonth[0],
+      };
     } else if (next) {
       const unit = next[1];
       const at =
         unit === 'week'
-          ? nextMonday(nowMs)
+          ? nextMonday(nowMs, clock)
           : unit === 'month'
-            ? firstOfNextMonth(nowMs)
-            : firstOfNextYear(nowMs);
+            ? firstOfNextMonth(nowMs, clock)
+            : firstOfNextYear(nowMs, clock);
       result = { kind: 'later', notBefore: at, label: `next ${unit}` };
     }
   }
@@ -357,7 +416,7 @@ export function parseHorizonHint(text: string, nowMs: number): WorkHorizon | nul
   // "not before" is a sleep, never a target.
   const due = lower.match(/\b(?:by|(?<!not\s)before|due)\s+(.+)$/);
   if (due) {
-    const hit = parseDatePhrase(due[1], nowMs);
+    const hit = parseDatePhrase(due[1], nowMs, clock);
     if (hit) {
       if (result) {
         if (typeof result.notBefore !== 'number' || hit.at >= result.notBefore) result.by = hit.at;

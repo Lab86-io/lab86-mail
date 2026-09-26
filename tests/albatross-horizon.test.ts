@@ -203,3 +203,38 @@ describe('workHorizonSchema', () => {
     expect(workHorizonSchema.safeParse({ kind: 'now', extra: true }).success).toBe(false);
   });
 });
+
+describe('WRK-19 horizon dates in the user timezone', () => {
+  // Friday 2026-09-25, 12:00 in New York.
+  const FRIDAY_NY = Date.parse('2026-09-25T16:00:00Z');
+
+  test('"not before Monday" wakes at Monday midnight in the user zone', () => {
+    const parsed = parseHorizonHint('Call the bank, not before Monday', FRIDAY_NY, 'America/New_York');
+    expect(parsed?.notBefore).toBe(Date.parse('2026-09-28T04:00:00Z'));
+  });
+
+  test('the user calendar day decides "next", not the server day', () => {
+    // Sunday 22:00 in New York is already Monday in UTC.
+    const sundayNight = Date.parse('2026-09-28T02:00:00Z');
+    expect(parseHorizonHint('not before Monday', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-09-28T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Reply in 2 days', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-09-29T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Plan it next month', sundayNight, 'America/New_York')?.notBefore).toBe(
+      Date.parse('2026-10-01T04:00:00Z'),
+    );
+    expect(parseHorizonHint('Renew it in November', sundayNight, 'Asia/Tokyo')?.notBefore).toBe(
+      Date.parse('2026-10-31T15:00:00Z'),
+    );
+    expect(parseHorizonHint('Send it by Friday', sundayNight, 'America/New_York')?.by).toBe(
+      Date.parse('2026-10-02T04:00:00Z'),
+    );
+  });
+
+  test('an invalid or missing zone keeps the local clock', () => {
+    expect(parseHorizonHint('Reply next week', NOW, 'Not/AZone')?.notBefore).toBe(localDay(2026, 8, 7));
+    expect(parseHorizonHint('Reply next week', NOW, undefined)?.notBefore).toBe(localDay(2026, 8, 7));
+  });
+});

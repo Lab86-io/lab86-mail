@@ -414,6 +414,64 @@ export function appliedStepsFromApplyResult(result: {
   return [...fromOperations, ...fromApprovals];
 }
 
+const ARTIFACT_KIND_TO_STEP_KIND: Record<string, string> = {
+  task: 'task',
+  calendarEvent: 'calendar_event',
+  emailDraft: 'email_draft',
+  document: 'document',
+};
+
+/**
+ * The applied steps a plan application recorded. Apply records each created
+ * artifact with its stepKey, so a retry after a failed step can still bind
+ * the steps that an earlier attempt created (WRK-4).
+ */
+export function appliedStepsFromApplicationArtifacts(
+  artifacts: Array<{ kind?: unknown; id?: unknown; stepKey?: unknown; stepKind?: unknown }>,
+): AlbatrossAppliedStep[] {
+  return artifacts.flatMap((artifact) => {
+    if (!artifact || typeof artifact.stepKey !== 'string' || !artifact.stepKey) return [];
+    const artifactKind = String(artifact.kind || '');
+    const id = artifact.id ? String(artifact.id) : undefined;
+    if (artifactKind === 'approval') {
+      return [{ stepKey: artifact.stepKey, kind: String(artifact.stepKind || 'approval') }];
+    }
+    const kind = ARTIFACT_KIND_TO_STEP_KIND[artifactKind];
+    if (!kind) return [];
+    return [
+      {
+        stepKey: artifact.stepKey,
+        kind,
+        ...(kind === 'task' && id ? { cardId: id } : {}),
+        ...(kind === 'calendar_event' && id ? { eventId: id } : {}),
+        ...(kind === 'email_draft' && id ? { draftId: id } : {}),
+        ...(kind === 'document' && id ? { documentId: id } : {}),
+      },
+    ];
+  });
+}
+
+function hasAppliedArtifact(step: AlbatrossAppliedStep) {
+  return Boolean(step.cardId || step.eventId || step.draftId || step.documentId);
+}
+
+/** Merge applied-step lists by stepKey. A later list wins for the same key. */
+export function mergeAppliedSteps(
+  ...lists: Array<AlbatrossAppliedStep[] | undefined>
+): AlbatrossAppliedStep[] {
+  const byKey = new Map<string, AlbatrossAppliedStep>();
+  for (const list of lists) {
+    for (const step of list || []) {
+      if (!step?.stepKey) continue;
+      const previous = byKey.get(step.stepKey);
+      // A step without an artifact (an approval) never hides a created one.
+      if (previous && hasAppliedArtifact(previous) && !hasAppliedArtifact(step)) continue;
+      byKey.set(step.stepKey, step);
+    }
+  }
+  return [...byKey.values()];
+}
+
 export function unresolvedArtifactsAfterUndo(
   application: { artifacts?: unknown[] },
   operations: Array<{ status?: string; target?: { id?: string; kind?: string } }>,
