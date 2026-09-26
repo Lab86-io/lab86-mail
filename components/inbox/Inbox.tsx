@@ -6,15 +6,12 @@ import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } f
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
 import {
   Archive,
-  Ban,
-  CheckCircle2,
   CheckSquare,
+  Flag,
   Inbox as InboxIcon,
   MoreHorizontal,
   Search,
   Square,
-  Star,
-  Tag,
   Trash2,
   X,
 } from 'lucide-react';
@@ -45,11 +42,9 @@ import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
 import { AccountScopePopover, ALL_ACCOUNTS } from '@/components/shell/Rail';
-import { ArchiveIcon } from '@/components/ui/archive';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -63,7 +58,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { GaugeIcon } from '@/components/ui/gauge';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RefreshCWIcon } from '@/components/ui/refresh-cw';
@@ -982,7 +976,6 @@ export function Inbox() {
                   onClick={selectVisible}
                   className="ml-2 flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                 >
-                  <CheckSquare className="size-3" />
                   Select visible
                 </button>
               ) : null}
@@ -991,7 +984,6 @@ export function Inbox() {
                 onClick={() => bulkArchive.mutate(selectedIds)}
                 className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
               >
-                <RowIcon icon={ArchiveIcon} size={12} />
                 Archive
               </button>
               <button
@@ -999,7 +991,6 @@ export function Inbox() {
                 onClick={() => bulkTrash.mutate(selectedIds)}
                 className="flex items-center gap-1 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 py-1 shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
               >
-                <RowIcon icon={DeleteIcon} size={12} />
                 Trash
               </button>
               <button
@@ -1007,8 +998,7 @@ export function Inbox() {
                 onClick={() => bulkTriage.mutate()}
                 className="flex items-center gap-1 rounded-lg bg-[var(--color-accent)] px-2.5 py-1 text-[var(--color-accent-foreground)] shadow-[var(--shadow-control)] hover:bg-[var(--color-accent-hover)]"
               >
-                <RowIcon icon={GaugeIcon} size={12} />
-                AI: triage
+                {bulkTriage.isPending ? 'Triaging…' : 'Triage'}
               </button>
               <button
                 type="button"
@@ -1401,7 +1391,7 @@ export const InboxThreadRow = memo(function InboxThreadRow({
             )}
           />
           {item.starred ? (
-            <Star
+            <Flag
               role="img"
               aria-label="Starred"
               className="size-3 shrink-0 fill-[var(--color-warning)] text-[var(--color-warning)]"
@@ -1586,33 +1576,21 @@ function QuickFixMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-        <DropdownMenuItem onSelect={() => onApplyLabels()}>
-          <Tag className="size-3.5" />
-          Apply smart labels
-        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onApplyLabels()}>Apply smart labels</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Fix classification</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => onCorrect('never_main')}>
-          <Ban className="size-3.5" />
-          Never Main
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onCorrect('always_noise')}>
-          <Trash2 className="size-3.5" />
-          Always Noise
-        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onCorrect('never_main')}>Never Main</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onCorrect('always_noise')}>Always Noise</DropdownMenuItem>
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger>
-            <Tag className="size-3.5" />
-            Move to...
-          </DropdownMenuSubTrigger>
+          <DropdownMenuSubTrigger>Move to...</DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            {(['main', 'needs_reply', 'codes', 'orders', 'finance_admin', 'review', 'noise'] as const).map(
-              (category) => (
-                <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
-                  {SMART_CATEGORY_LABELS[category]}
-                </DropdownMenuItem>
-              ),
-            )}
+            {/* Needs reply is an attention view, not a place mail can be moved to:
+                a rule with that primary hid the sender's mail from every view. */}
+            {(['main', 'codes', 'orders', 'finance_admin', 'review', 'noise'] as const).map((category) => (
+              <DropdownMenuItem key={category} onSelect={() => onCorrect('move_to', { category })}>
+                {SMART_CATEGORY_LABELS[category]}
+              </DropdownMenuItem>
+            ))}
             {customLabels.length ? <DropdownMenuSeparator /> : null}
             {customLabels.map((label) => (
               <DropdownMenuItem
@@ -1636,16 +1614,16 @@ function createLabelFromThread(
   item: ThreadRow,
   onCorrect: (action: string, payload?: Record<string, unknown>) => void,
 ) {
-  const name = window.prompt('Smart label name');
+  const name = window.prompt('Label name. Mail that contains these whole words gets the label.');
   if (!name?.trim()) return;
-  const description = window.prompt('What should this label match?');
+  const description = window.prompt('A short note about this label, for you. It is not used for matching.');
   if (!description?.trim()) return;
   const positive = window.prompt(
-    'Positive example',
+    'Words to match. Mail with any of these whole words gets the label.',
     `${item.from || item.fromAddress}: ${item.subject || ''}`,
   );
   if (!positive?.trim()) return;
-  const negative = window.prompt('Negative example');
+  const negative = window.prompt('Words to exclude. Mail with these whole words does not get the label.');
   if (!negative?.trim()) return;
   onCorrect('create_label_from_this', {
     newLabel: {
@@ -1841,8 +1819,7 @@ function LabelConfirmDialog({
                   Cancel
                 </ConfirmationAction>
                 <ConfirmationAction onClick={() => onApply(item)} disabled={applying || labels.length === 0}>
-                  {applying ? <Ring className="mr-1 size-3" /> : <CheckCircle2 className="mr-1 size-3" />}
-                  Apply
+                  {applying ? 'Applying…' : 'Apply'}
                 </ConfirmationAction>
               </ConfirmationActions>
             </div>
