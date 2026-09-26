@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { mailSortingLine } from '@/lib/shell/mail-sorting-labels';
 import Link from 'next/link';
 import { settingsRequest } from '@/components/settings/JevSection';
 import { classifierForServedModel } from '@/lib/classifier/catalog';
@@ -25,8 +26,7 @@ export function JevMailDetails({ assessment }: { assessment?: JevAssessment | nu
       </summary>
       <div className="mt-3 space-y-3">
         <p className="text-[var(--color-text-muted)]">
-          {classifierForServedModel(assessment.model)?.label || assessment.model} · {assessment.purpose} ·{' '}
-          {assessment.status === 'uncertain' ? 'More context may be needed' : 'Classified'}
+          {mailSortingLine(assessment, classifierForServedModel(assessment.model)?.label || 'Classification')}
         </p>
         {evidence.map((item) => (
           <blockquote

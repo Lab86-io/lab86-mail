@@ -80,8 +80,8 @@ export function SmartLabelsSettings({
           <section className="space-y-2">
             <h3 className="text-[13px] font-semibold">Create custom label</h3>
             <p className="text-[12px] text-[var(--color-text-muted)]">
-              Labels match keywords. Mail gets the label when each word of the name or of the match example is
-              in its sender, subject, preview, or body. The description is only a note.
+              A label matches mail that contains whole words from its name or its words to match, and skips
+              mail with its words to exclude. The note is for you and is not matched.
             </p>
             <div className="grid gap-2">
               <label htmlFor="smart-label-name" className="sr-only">
@@ -101,27 +101,27 @@ export function SmartLabelsSettings({
                 id="smart-label-description"
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
-                placeholder="Description (a note for you, not matched)"
+                placeholder="A short note about this label (not used for matching)"
                 className="min-h-20 rounded-md border bg-background px-2 py-2 text-[13px]"
               />
               <label htmlFor="smart-label-positive" className="sr-only">
-                Words that match
+                Words to match
               </label>
               <input
                 id="smart-label-positive"
                 value={positive}
                 onChange={(event) => setPositive(event.target.value)}
-                placeholder="Words that match, for example: invoice acme"
+                placeholder="Words to match"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <label htmlFor="smart-label-negative" className="sr-only">
-                Words that exclude
+                Words to exclude
               </label>
               <input
                 id="smart-label-negative"
                 value={negative}
                 onChange={(event) => setNegative(event.target.value)}
-                placeholder="Words that exclude, for example: newsletter"
+                placeholder="Words to exclude"
                 className="h-9 rounded-md border bg-background px-2 text-[13px]"
               />
               <div className="flex gap-2">

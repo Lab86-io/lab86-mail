@@ -612,7 +612,7 @@ function BoardView({
                     className="h-7 gap-1.5 px-2 text-[12px]"
                     onClick={() => setNewColumnOpen(true)}
                   >
-                    <Plus className="size-3" /> Column
+                    Add column
                   </Button>
                 ) : null}
               </>,
@@ -749,7 +749,7 @@ function BoardView({
                       onClick={() => setCreateInColumn(column.id)}
                       className="mx-2 mb-2 mt-auto inline-flex h-8 items-center justify-start gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
                     >
-                      <Plus className="size-3.5" /> Add card
+                      Add card
                     </button>
                   ) : null}
                 </KanbanBoard>
@@ -2257,7 +2257,9 @@ function CreateCardDialog({
       setDue(r.dueAt ? toLocalInputValue(r.dueAt) : '');
       setNlText('');
       if (r.model === 'local') {
-        toast.message('Used your text as the title — enable AI in settings for date/priority parsing.');
+        toast.message(
+          'Used your text as the title. Set up a model in Settings, Intelligence, to read dates and priority.',
+        );
       }
     } catch (err: any) {
       toast.error(err?.message || 'Could not parse that');

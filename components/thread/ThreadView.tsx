@@ -2,17 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  Mail,
-  Search,
-  UserRound,
-  X,
-} from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -40,6 +30,7 @@ import type { JevAssessment } from '@/lib/jev/contract';
 import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
+import { unreadMessageIds } from '@/lib/shell/reader-read-state';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 import {
@@ -199,6 +190,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: () => toast.error('Could not archive this thread. Try again.'),
   });
 
   const trash = useMutation({
@@ -208,6 +200,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: () => toast.error('Could not move this thread to Trash. Try again.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
@@ -262,10 +255,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     if (!account || !threadId || !messages.length) return;
     const key = `${account}:${threadId}`;
     if (markedReadRef.current.has(key)) return;
-    const unreadIds = messages
-      .filter((m) => m.labels?.includes('UNREAD'))
-      .map((m) => m._id)
-      .filter(Boolean);
+    const unreadIds = unreadMessageIds(messages);
     if (!unreadIds.length) return;
     markedReadRef.current.add(key);
     markThreadRead.mutate({ ids: unreadIds });
@@ -292,6 +282,16 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     refetchOnWindowFocus: false,
     retry: 0,
   });
+  // The `s` shortcut asks for a summary; run it the same way the button does.
+  const summaryRequestThreadId = useClientStore((s) => s.summaryRequestThreadId);
+  const refetchSummary = summary.refetch;
+  useEffect(() => {
+    if (!threadId || summaryRequestThreadId !== threadId) return;
+    if (!useClientStore.getState().claimThreadSummaryRequest(threadId)) return;
+    if (!canSummarizeThread) return;
+    setSummaryEnabled(true);
+    void refetchSummary();
+  }, [threadId, summaryRequestThreadId, canSummarizeThread, refetchSummary]);
   const ordered = useMemo(() => [...messages].reverse(), [messages]);
 
   const photoAccount =
@@ -610,9 +610,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply')}
                 disabled={!replyAnchor}
                 title="Reply (r)"
+                aria-label="Reply"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpLeftIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply</span>
               </button>
               <button
@@ -620,9 +624,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply_all')}
                 disabled={!replyAnchor}
                 title="Reply all"
+                aria-label="Reply all"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={ReplyAllIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={ReplyAllIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply all</span>
               </button>
               <button
@@ -630,9 +638,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('forward')}
                 disabled={!replyAnchor}
                 title="Forward"
+                aria-label="Forward"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpRightIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpRightIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Forward</span>
               </button>
               <span className="mx-1 h-4 w-px shrink-0 bg-[var(--color-border)]" aria-hidden />
@@ -706,7 +718,7 @@ function SummaryCard({
             className="text-[10px] text-[var(--color-text-faint)]"
             title="Model that generated this summary"
           >
-            {model || 'AI'}
+            {model || 'Model'}
           </span>
           <button
             type="button"
@@ -890,14 +902,12 @@ function ContactButton({
             onClick={() => onShowEmails(contact.email!)}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
           >
-            <Search className="size-3.5 text-[var(--color-text-muted)]" />
             Show emails with them
           </button>
           <a
             href={`mailto:${contact.email}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
-            <UserRound className="size-3.5" />
             New email
           </a>
         </div>
@@ -1156,7 +1166,6 @@ function Attachments({
                     download={preview.filename}
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
                   >
-                    <Download className="size-3.5" />
                     Download
                   </a>
                   <a
@@ -1165,7 +1174,6 @@ function Attachments({
                     rel="noreferrer"
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                   >
-                    <ExternalLink className="size-3.5" />
                     Open
                   </a>
                 </div>

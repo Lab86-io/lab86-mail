@@ -561,21 +561,17 @@ function SearchContent({
           </CommandGroup>
         ) : null}
         {scope === 'all' && pathname === '/' && trimmed ? (
-          <CommandGroup heading="AI commands">
+          <CommandGroup heading="Ask Albatross">
             {[
               ['Triage newest 25', 'Triage my newest 25 inbox threads'],
               ['Summarize today', 'Summarize my unread from today and propose 3 replies'],
             ]
-              .filter(([label]) => matchesSearch(`ai ${label}`, trimmed))
+              .filter(([label]) => matchesSearch(`ask ${label}`, trimmed))
               .map(([label, request]) => (
                 <CommandItem
                   key={label}
-                  value={`ai:${label}`}
-                  onSelect={() =>
-                    onNavigate(() =>
-                      document.dispatchEvent(new CustomEvent('lab86-mail:ask', { detail: request })),
-                    )
-                  }
+                  value={`ask:${label}`}
+                  onSelect={() => onNavigate(() => useClientStore.getState().askAssistant(request))}
                 >
                   {label}
                 </CommandItem>

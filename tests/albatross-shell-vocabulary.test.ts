@@ -125,9 +125,12 @@ describe('the product names itself', () => {
   });
 
   test('the rail offers Today and Albatrosses as real destinations', () => {
-    const rail = read('components/shell/Rail.tsx');
-    expect(rail).toContain("view: 'today', label: 'Today'");
-    expect(rail).toContain("view: 'albatrosses', label: 'Albatrosses'");
+    // The surface list moved to lib/shell/rail-surfaces so the optional board
+    // can join it; the rail renders that list.
+    expect(read('components/shell/Rail.tsx')).toContain('railSurfaces({ boardEnabled })');
+    const surfaces = read('lib/shell/rail-surfaces.ts');
+    expect(surfaces).toContain("view: 'today', label: 'Today'");
+    expect(surfaces).toContain("view: 'albatrosses', label: 'Albatrosses'");
   });
 
   test('the rail badge is words, never a number', () => {

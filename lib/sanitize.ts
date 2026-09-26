@@ -16,18 +16,75 @@ function getDOMPurify(): any {
 
 export function sanitizeEmailHtml(html: string): string {
   if (typeof window === 'undefined') return '';
-  if (!cachedRead) {
-    const instance = getDOMPurify();
-    cachedRead = (input: string) =>
-      instance.sanitize(input, {
-        FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'],
-        FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
-        // Raster image data: URIs only — keeps inline signature images working
-        // while excluding svg+xml and other embeddable documents.
-        ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp);base64,)/i,
-      }) as string;
-  }
+  if (!cachedRead) cachedRead = createInlineEmailSanitizer(getDOMPurify());
   return cachedRead(html);
+}
+
+// The inline read path renders mail straight into the app DOM, so mail must
+// not be able to draw over the app: form controls are removed, and inline
+// styles lose the properties that lift an element out of the message box
+// (fixed or absolute positioning, stacking, offsets, transforms). The
+// `.email-body` container also sets `contain: paint` as a second layer.
+const INLINE_FORBID_TAGS = [
+  'script',
+  'style',
+  'iframe',
+  'object',
+  'embed',
+  'link',
+  'meta',
+  'base',
+  'form',
+  'input',
+  'button',
+  'textarea',
+  'select',
+  'option',
+  'optgroup',
+  'fieldset',
+  'legend',
+  'label',
+  'dialog',
+];
+
+const INLINE_BLOCKED_STYLE =
+  /^(?:position|z-index|inset(?:-.+)?|top|right|bottom|left|transform|translate|rotate|scale|float|clip-path|pointer-events|content|behavior|-moz-binding|filter|backdrop-filter)$/i;
+
+/** Keep only style declarations that stay inside the message box. */
+export function containInlineStyle(style: string): string {
+  return style
+    .split(';')
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => {
+      const colon = declaration.indexOf(':');
+      if (colon <= 0) return false;
+      const property = declaration.slice(0, colon).trim();
+      const value = declaration.slice(colon + 1).toLowerCase();
+      if (INLINE_BLOCKED_STYLE.test(property)) return false;
+      return !/expression\s*\(|javascript:|url\s*\(\s*['"]?\s*(?!https?:|data:image\/)/i.test(value);
+    })
+    .join('; ');
+}
+
+/** Build the inline sanitizer on a DOMPurify instance (exported for tests). */
+export function createInlineEmailSanitizer(instance: any): (html: string) => string {
+  instance.addHook(
+    'uponSanitizeAttribute',
+    (_node: Element, data: { attrName: string; attrValue: string; keepAttr: boolean }) => {
+      if (data.attrName !== 'style') return;
+      const contained = containInlineStyle(data.attrValue || '');
+      if (contained) data.attrValue = contained;
+      else data.keepAttr = false;
+    },
+  );
+  return (input: string) =>
+    instance.sanitize(input, {
+      FORBID_TAGS: INLINE_FORBID_TAGS,
+      FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover', 'formaction', 'form'],
+      // Raster image data: URIs only — keeps inline signature images working
+      // while excluding svg+xml and other embeddable documents.
+      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|bmp);base64,)/i,
+    }) as string;
 }
 
 // Sanitizer for HTML rendered inside the isolated email iframe. Unlike the

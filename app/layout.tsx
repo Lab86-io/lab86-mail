@@ -43,7 +43,7 @@ const instrument = Instrument_Serif({
 
 export const metadata: Metadata = {
   title: 'Albatross',
-  description: 'AI-native mail across connected accounts',
+  description: 'Mail, calendar, and files across connected accounts, with a daily brief',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },

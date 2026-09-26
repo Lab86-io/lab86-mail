@@ -1,11 +1,11 @@
 'use client';
 
-// The AI section of Settings: mode cards, provider, the two model pickers,
+// The Intelligence section of Settings: mode cards, provider, the two model pickers,
 // the API key, and billing. Extracted from app/settings/page.tsx so the
 // pickers and the retired-model notice can be tested on their own.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, Check, CreditCard, KeyRound, Trash2 } from 'lucide-react';
+import { Brain, KeyRound, Trash2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { Ring } from '@/components/loading-ui/ring';
@@ -24,12 +24,14 @@ import {
   type SavedModelSummary,
 } from '@/lib/ai/model-catalog';
 import type { Provider } from '@/lib/ai/model-options';
+import { type BillingPlan, billingSummary } from '@/lib/shell/billing-plan';
 
 type AiSettingsResponse = {
   settings?: { mode?: 'lab86' | 'byok'; provider?: Provider; model?: string; fastModel?: string };
   key?: { provider: Provider; masked?: string } | null;
   requiresUserOpenRouterKey?: boolean;
   subscriptionsDisabled?: boolean;
+  entitlement?: { plan?: BillingPlan; status?: string; source?: string } | null;
   catalog?: CatalogModel[];
   catalogLive?: boolean;
   defaults?: { normal: string; fast: string };
@@ -86,10 +88,10 @@ export function AiSection({ heading }: { heading: ReactNode }) {
     },
     onSuccess: () => {
       setApiKey('');
-      toast.success('AI settings saved');
+      toast.success('Settings saved');
       qc.invalidateQueries({ queryKey: ['ai-settings'] });
     },
-    onError: (err: any) => toast.error(err?.message || 'Could not save AI settings'),
+    onError: (err: any) => toast.error(err?.message || 'Could not save these settings'),
   });
 
   const deleteKey = useMutation({
@@ -126,15 +128,12 @@ export function AiSection({ heading }: { heading: ReactNode }) {
 
   const requireOpenRouter = Boolean(ai?.requiresUserOpenRouterKey);
   const subscriptionsDisabled = Boolean(ai?.subscriptionsDisabled);
-  const paidPlan = ai?.usage?.paidPlan;
-  const pricesPresent =
-    typeof paidPlan?.monthlyUsd === 'number' &&
-    typeof paidPlan?.annualUsd === 'number' &&
-    typeof paidPlan?.byokMonthlyUsd === 'number' &&
-    typeof paidPlan?.byokAnnualUsd === 'number';
-  const priceLine = pricesPresent
-    ? `Pro (hosted AI) is $${paidPlan.monthlyUsd}/mo or $${paidPlan.annualUsd}/yr · bring-your-own-key is $${paidPlan.byokMonthlyUsd}/mo or $${paidPlan.byokAnnualUsd}/yr.`
-    : 'Two plans: hosted AI, or bring your own key for less.';
+  const billing = billingSummary({
+    plan: ai?.entitlement?.plan,
+    usageStatus: ai?.usage?.status,
+    subscriptionsDisabled,
+    paidPlan: ai?.usage?.paidPlan,
+  });
 
   // The catalog for the provider in play. The server builds it for the saved
   // provider; a provider switch in the form rebuilds it locally from the same
@@ -171,14 +170,14 @@ export function AiSection({ heading }: { heading: ReactNode }) {
       {heading}
       {loadError ? (
         <div role="alert" className="text-[13px] text-[var(--color-danger)]">
-          Could not load AI settings.{' '}
+          Could not load Intelligence settings.{' '}
           <button type="button" onClick={() => void refetch()}>
             Retry
           </button>
         </div>
       ) : !aiLoaded ? (
         <div className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-4 py-6 text-[13px] text-[var(--color-text-muted)]">
-          <Ring className="size-3.5" /> Loading your AI configuration…
+          <Ring className="size-3.5" /> Loading your model settings…
         </div>
       ) : (
         <div className="space-y-4">
@@ -211,8 +210,8 @@ export function AiSection({ heading }: { heading: ReactNode }) {
             <ModeCard
               active={aiMode === 'lab86'}
               disabled={requireOpenRouter}
-              title="Lab86 AI"
-              description="Included with Pro. Curated models, zero setup, budgeted for you."
+              title="Hosted models"
+              description="Included with Pro. Curated models, no setup, with a monthly budget."
               icon={<Brain className="size-4" />}
               onClick={() => setAiMode('lab86')}
             />
@@ -249,7 +248,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
             </div>
             {aiMode === 'lab86' ? (
               <div className="self-end rounded-md bg-[var(--color-bg-muted)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)]">
-                Lab86 AI runs through OpenRouter. Normal handles deep work; fast handles quick tasks.
+                Hosted models run through OpenRouter. Normal handles deep work; fast handles quick tasks.
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -313,43 +312,39 @@ export function AiSection({ heading }: { heading: ReactNode }) {
                 disabled={!aiLoaded || saveAi.isPending}
                 className="w-full sm:w-auto"
               >
-                {saveAi.isPending ? <Ring className="size-3" /> : <Check className="size-3.5" />}
-                Save AI settings
+                {saveAi.isPending ? 'Saving…' : 'Save'}
               </Button>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-[12.5px] shadow-[var(--shadow-soft)]">
-            <span className="text-[var(--color-text-muted)]">
-              {subscriptionsDisabled
-                ? 'Subscriptions are paused. AI usage requires your OpenRouter key.'
-                : ai?.usage?.status === 'reduced_cost'
-                  ? 'AI is using reduced-cost routing for the rest of this billing period.'
-                  : ai?.usage?.status === 'exhausted'
-                    ? 'AI chat is paused for this billing period — core mail automation continues.'
-                    : priceLine}
+            <span data-slot="billing-line" className="text-[var(--color-text-muted)]">
+              {billing.line}
             </span>
-            {!subscriptionsDisabled ? (
+            {billing.showUpgrade || billing.showManage ? (
               <span className="ml-auto flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => checkout.mutate()}
-                  disabled={checkout.isPending}
-                >
-                  <CreditCard className="size-3.5" />
-                  Upgrade
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => portal.mutate()}
-                  disabled={portal.isPending}
-                >
-                  Manage
-                </Button>
+                {billing.showUpgrade ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => checkout.mutate()}
+                    disabled={checkout.isPending}
+                  >
+                    Upgrade
+                  </Button>
+                ) : null}
+                {billing.showManage ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => portal.mutate()}
+                    disabled={portal.isPending}
+                  >
+                    Manage
+                  </Button>
+                ) : null}
               </span>
             ) : null}
           </div>

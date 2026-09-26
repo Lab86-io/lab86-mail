@@ -235,6 +235,8 @@ export function PreparedWork() {
   });
   const change = useMutation({
     mutationFn: (body: unknown) => contentRequest('brief', body),
+    // The section shows its own error line.
+    meta: { errorToast: false },
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ['brief-preparations'] });
       await client.invalidateQueries({ queryKey: ['albatross'] });

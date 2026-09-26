@@ -10,7 +10,6 @@ import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
-  ArrowLeft,
   CalendarDays,
   Check,
   KeyRound,
@@ -98,7 +97,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
     <AiSection
       heading={
         <SectionHeading
-          title="AI"
+          title="Intelligence"
           blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
         />
       }
@@ -177,7 +176,6 @@ function SettingsPageBody() {
             href="/"
             className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
           >
-            <ArrowLeft className="size-3.5" />
             Back to Albatross
           </Link>
           <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
@@ -470,7 +468,8 @@ function SendingSection() {
         />
       </SettingsCard>
       <SettingsNote>
-        The window applies to every mailbox. Scheduled sends and replies from the brief use the same hold.
+        The window applies to every mailbox and to replies from the brief. Scheduled sends do not use it;
+        cancel them from Mail, More, Scheduled.
       </SettingsNote>
     </section>
   );
@@ -597,7 +596,7 @@ function NotificationsSection() {
         <SettingsRow
           id="checkin-enabled"
           label="Evening check-in"
-          description="Ask what actually moved today and carry an unanswered check-in into tomorrow’s brief."
+          description="Ask what actually moved today. Your answers shape tomorrow’s brief."
           control={
             <Switch
               id="checkin-enabled"
@@ -1225,7 +1224,6 @@ function ConnectionsSection() {
                   disabled={resync.isPending}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >
-                  <RefreshCw className="size-3.5" />
                   Resync
                 </Button>
                 <Button
@@ -1240,7 +1238,6 @@ function ConnectionsSection() {
                   disabled={disconnect.isPending}
                   className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
-                  <Trash2 className="size-3.5" />
                   Disconnect
                 </Button>
               </div>
@@ -1305,10 +1302,7 @@ function ConnectionsSection() {
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
-                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>
-                        <Plus className="size-3.5" />
-                        Connect
-                      </a>
+                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>Connect</a>
                     </Button>
                   </div>
                 </div>
@@ -1459,7 +1453,7 @@ function AccountSection() {
       <SettingsCard tone="danger">
         <SettingsRow
           label="Delete everything"
-          description="Mail grants, the search index, AI settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          description="Mail grants, the search index, model settings, usage records, and your Lab86 account. Gone for good, with no export first."
           control={
             <AlertDialog
               onOpenChange={(open) => {

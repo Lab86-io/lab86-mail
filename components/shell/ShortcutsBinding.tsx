@@ -131,7 +131,9 @@ export function ShortcutsBinding() {
         case 's':
           if (selectedThreadId) {
             e.preventDefault();
-            qc.invalidateQueries({ queryKey: ['summary', account, selectedThreadId] });
+            // The summary query is disabled until asked for, and invalidating
+            // a disabled query does not refetch it. The reader runs it.
+            useClientStore.getState().requestThreadSummary(selectedThreadId);
           }
           break;
         case 't':

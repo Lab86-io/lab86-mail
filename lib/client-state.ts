@@ -104,6 +104,17 @@ export interface ClientState {
   queueBriefResponse: (request: BriefResponseRequest) => boolean;
   claimBriefResponse: (id: string) => BriefResponseRequest | null;
   clearBriefResponse: () => void;
+  /**
+   * A request another surface (the command palette) hands to the assistant.
+   * The assistant opens and sends it once. Transient; never persisted.
+   */
+  assistantPrompt: string | null;
+  /** A summary asked for from the keyboard (`s`). The open reader claims it. */
+  summaryRequestThreadId: string | null;
+  requestThreadSummary: (threadId: string) => void;
+  claimThreadSummaryRequest: (threadId: string) => boolean;
+  askAssistant: (prompt: string) => boolean;
+  claimAssistantPrompt: () => string | null;
   assistantInvitation: string | null;
   setAssistantInvitation: (phrase: string | null) => void;
   setAssistantDocument: (document: AssistantDocumentContext | null) => void;
@@ -388,6 +399,25 @@ export const useClientStore = create<ClientState>()(
         return request;
       },
       clearBriefResponse: () => set({ assistantBriefRequest: null, assistantBriefContext: null }),
+      assistantPrompt: null,
+      summaryRequestThreadId: null,
+      requestThreadSummary: (summaryRequestThreadId) => set({ summaryRequestThreadId }),
+      claimThreadSummaryRequest: (threadId) => {
+        if (get().summaryRequestThreadId !== threadId) return false;
+        set({ summaryRequestThreadId: null });
+        return true;
+      },
+      askAssistant: (prompt) => {
+        const text = prompt.trim();
+        if (!text) return false;
+        set({ assistantPrompt: text, aiBarOpen: true });
+        return true;
+      },
+      claimAssistantPrompt: () => {
+        const prompt = get().assistantPrompt;
+        if (prompt) set({ assistantPrompt: null });
+        return prompt;
+      },
       assistantInvitation: null,
       setAssistantInvitation: (assistantInvitation) => set({ assistantInvitation }),
       setAssistantDocument: (assistantDocument) => set({ assistantDocument }),

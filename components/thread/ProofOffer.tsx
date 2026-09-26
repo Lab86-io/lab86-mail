@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { dismissProofMatches, withoutDismissedProofMatches } from '@/lib/shell/proof-dismissals';
 import { cn } from '@/lib/utils';
 
 /** One candidate returned by /api/albatross/proof-matches. */
@@ -139,7 +140,7 @@ export function ProofOffer({
     if (!subject.trim() && !snippet?.trim()) return;
     void loadProofMatches({ subject, snippet, accountId, providerThreadId: threadId })
       .then((candidates) => {
-        if (!cancelled) setMatches(candidates);
+        if (!cancelled) setMatches(withoutDismissedProofMatches(accountId, threadId, candidates));
       })
       .catch(() => undefined);
     return () => {
@@ -212,7 +213,14 @@ export function ProofOffer({
             type="button"
             size="xs"
             variant="ghost"
-            onClick={() => setDismissed(true)}
+            onClick={() => {
+              dismissProofMatches(
+                accountId,
+                threadId,
+                matches.map((match) => match.workId),
+              );
+              setDismissed(true);
+            }}
             // A dismissal must look pressable at rest, not only on hover; the
             // underline gives it link affordance without competing with the
             // outlined primary next to it.
