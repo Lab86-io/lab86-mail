@@ -669,6 +669,12 @@
     line-height: 1.55;
     overflow-x: auto;
     overflow-wrap: anywhere;
+    /* Inline mail renders in the app DOM. Paint containment makes this box
+       the containing block for any fixed or absolute descendant and clips
+       paint to it, so a message can never draw over the app. */
+    position: relative;
+    contain: paint;
+    isolation: isolate;
   }
 
   .email-body * {
