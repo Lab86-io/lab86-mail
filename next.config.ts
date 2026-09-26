@@ -42,7 +42,7 @@ const config: NextConfig = {
       bodySizeLimit: '4mb',
     },
   },
-  serverExternalPackages: ['mailparser', 'jsdom', '@napi-rs/canvas', 'pdfjs-dist'],
+  serverExternalPackages: ['jsdom', '@napi-rs/canvas', 'pdfjs-dist'],
   outputFileTracingIncludes: {
     '/*': [
       './lib/documents/spreadsheet-worker.mjs',
