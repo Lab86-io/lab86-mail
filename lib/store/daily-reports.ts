@@ -3,7 +3,7 @@ import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
 import { DEFAULT_JEV_PREFERENCES } from '../jev/contract';
-import { type BriefHiddenItems, projectBriefMail } from '../jev/report';
+import { type BriefHiddenItems, briefJevDigest, projectBriefMail } from '../jev/report';
 import { loadJevPolicy, markJevBriefItems } from '../jev/service';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
@@ -40,8 +40,8 @@ function storedBytes(value: unknown) {
   return Buffer.byteLength(JSON.stringify(value), 'utf8');
 }
 
-// Overflow items only need their identity and line to render. `jev` stays: the
-// live projection compares its sourceRevision and reads its obligations.
+// Overflow items only need their identity and line to render. Of `jev`, only
+// the digest that the live projection reads stays (see briefJevDigest).
 function slimOverflowItem(item: DailyReportItem): DailyReportItem {
   return {
     account: item.account,
@@ -59,7 +59,7 @@ function slimOverflowItem(item: DailyReportItem): DailyReportItem {
     ...(item.lane ? { lane: item.lane } : {}),
     ...(item.trackedThreadId ? { trackedThreadId: item.trackedThreadId } : {}),
     ...(item.firstSurfacedAt != null ? { firstSurfacedAt: item.firstSurfacedAt } : {}),
-    ...(item.jev ? { jev: item.jev } : {}),
+    ...(item.jev ? { jev: briefJevDigest(item.jev) } : {}),
   };
 }
 

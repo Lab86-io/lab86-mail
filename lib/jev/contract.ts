@@ -53,6 +53,14 @@ export const jevAssessmentSchema = z.object({
 });
 export type JevAssessment = z.infer<typeof jevAssessmentSchema>;
 export type JevObligation = z.infer<typeof obligationSchema>;
+/**
+ * The part of an assessment that the live brief refresh (projectBriefMail)
+ * reads from a stored brief item: the revision it compares, the change flag,
+ * and the kind of each obligation. Overflow items store only this.
+ */
+export type JevBriefDigest = Pick<JevAssessment, 'sourceRevision' | 'meaningfulChange'> & {
+  obligations: Array<Pick<JevObligation, 'kind'>>;
+};
 export const ATTENTION_VIEWS = ['needs_reply', 'needs_action', 'waiting_for', 'important_changes'] as const;
 export type AttentionView = (typeof ATTENTION_VIEWS)[number];
 export function isAttentionView(value: string): value is AttentionView {
@@ -70,7 +78,10 @@ export function assessmentIsCurrent(
     (!revision || parsed.data.sourceRevision === revision)
   );
 }
-export function hasObligation(assessment: JevAssessment | null | undefined, kind: JevObligation['kind']) {
+export function hasObligation(
+  assessment: Pick<JevBriefDigest, 'obligations'> | null | undefined,
+  kind: JevObligation['kind'],
+) {
   return Boolean(assessment?.obligations.some((item) => item.kind === kind));
 }
 export function attentionMatches(assessment: JevAssessment | null | undefined, view: AttentionView) {

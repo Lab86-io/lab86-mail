@@ -1,6 +1,6 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
 import type { EditorialPlan } from '../brief/editorial';
-import type { JevAssessment } from '../jev/contract';
+import type { JevAssessment, JevBriefDigest } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
 import type { TriageHandoffV1 } from './triage-handoff';
@@ -403,7 +403,8 @@ export interface ThreadInsight {
 }
 
 export interface DailyReportItem {
-  jev?: JevAssessment;
+  // Overflow items in a stored edition keep only the digest (see dailyReportForStorage).
+  jev?: JevAssessment | JevBriefDigest;
   account: AccountEmail;
   threadId: string;
   subject: string;

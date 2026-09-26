@@ -11,6 +11,8 @@ import { briefAttention } from './brief';
 import {
   correctionForMail,
   hasObligation,
+  type JevAssessment,
+  type JevBriefDigest,
   type JevCorrection,
   type JevPreferences,
   jevReason,
@@ -22,6 +24,21 @@ export interface BriefHiddenItems {
   threads?: ReadonlySet<string>;
   /** Task card ids. */
   tasks?: ReadonlySet<string>;
+}
+
+/**
+ * The Jev fields that projectBriefMail reads from a stored item: it compares
+ * `sourceRevision` with the live assessment, and it reads `meaningfulChange`
+ * and the kind of each obligation to decide if the item was actionable, if it
+ * is only waiting, and which lane it takes. Evidence text, probabilities, and
+ * the other fields are read only from the live thread, never from the item.
+ */
+export function briefJevDigest(assessment: JevAssessment | JevBriefDigest): JevBriefDigest {
+  return {
+    sourceRevision: assessment.sourceRevision,
+    meaningfulChange: assessment.meaningfulChange,
+    obligations: assessment.obligations.map((obligation) => ({ kind: obligation.kind })),
+  };
 }
 
 /** Read projection of the latest edition. Never writes over the historical snapshot.
