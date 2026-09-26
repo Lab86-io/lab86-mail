@@ -292,6 +292,16 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     refetchOnWindowFocus: false,
     retry: 0,
   });
+  // The `s` shortcut asks for a summary; run it the same way the button does.
+  const summaryRequestThreadId = useClientStore((s) => s.summaryRequestThreadId);
+  const refetchSummary = summary.refetch;
+  useEffect(() => {
+    if (!threadId || summaryRequestThreadId !== threadId) return;
+    if (!useClientStore.getState().claimThreadSummaryRequest(threadId)) return;
+    if (!canSummarizeThread) return;
+    setSummaryEnabled(true);
+    void refetchSummary();
+  }, [threadId, summaryRequestThreadId, canSummarizeThread, refetchSummary]);
   const ordered = useMemo(() => [...messages].reverse(), [messages]);
 
   const photoAccount =

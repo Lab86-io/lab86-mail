@@ -17,3 +17,12 @@ test('an empty request does nothing and a request never survives a reload', () =
   useClientStore.getState().askAssistant('Summarize today');
   expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('assistantPrompt');
 });
+
+test('the s shortcut hands a summary request to the reader of that thread only', () => {
+  const state = useClientStore.getState();
+  state.requestThreadSummary('thread-1');
+  expect(useClientStore.getState().claimThreadSummaryRequest('thread-2')).toBe(false);
+  expect(useClientStore.getState().claimThreadSummaryRequest('thread-1')).toBe(true);
+  expect(useClientStore.getState().claimThreadSummaryRequest('thread-1')).toBe(false);
+  expect(persistedClientState(useClientStore.getState())).not.toHaveProperty('summaryRequestThreadId');
+});
