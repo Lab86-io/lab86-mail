@@ -1,35 +1,21 @@
-import { captureFromChat } from '@/lib/albatross/capture-from-chat';
-import { captureWork } from '@/lib/albatross/capture-work';
 import type { WorkHorizon as StoredWorkHorizon } from '@/lib/albatross/horizon';
 import type { CurrentUser } from '@/lib/auth/current-user';
-import { startCalendarResync } from '@/lib/calendar/resync';
 import { api, type ConvexCallArgs, convexMutation } from '@/lib/hosted/convex';
 import { getTool } from '@/lib/tools';
 import { invokeTool } from '@/lib/tools/registry';
 import type { MobileCommand, MobileDomain, MobileSyncExecution } from './contract';
-
-// A command that changes no entity (for example `calendar.resync`) records
-// no sync change. It still names its domain for the command row.
-export type MobileSilentExecution = {
-  syncDomain: MobileDomain;
-  entityKind?: undefined;
-  entityID?: undefined;
-  syncPayload?: undefined;
-};
+import { MobileNotFoundError } from './http';
 
 export type MobileCommandExecution = {
   status: 'applied' | 'needsApproval';
   operationID?: string;
   approvalID?: string;
   undoExpiresAt?: number;
-} & (MobileSyncExecution | MobileSilentExecution);
+} & MobileSyncExecution;
 
 interface MobileCommandExecutorDependencies {
   invoke: (name: string, argumentsValue: Record<string, unknown>, user: CurrentUser) => Promise<any>;
   enqueueApproval: (input: ConvexCallArgs<typeof api.albatrossWork.enqueueApproval>) => Promise<string>;
-  capture: typeof captureWork;
-  captureFromChat: typeof captureFromChat;
-  resyncCalendar: typeof startCalendarResync;
   setWorkHorizon: (input: {
     userId: string;
     workId: string;
@@ -62,9 +48,6 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
   enqueueApproval(input) {
     return convexMutation<string>(api.albatrossWork.enqueueApproval, input);
   },
-  capture: captureWork,
-  captureFromChat,
-  resyncCalendar: startCalendarResync,
   setWorkHorizon(input) {
     return convexMutation(api.albatrossWorkV2.setHorizon, input);
   },
@@ -114,8 +97,6 @@ export function mobileCommandDomain(command: MobileCommand): MobileDomain {
       return 'tasks';
     case 'work':
       return 'work';
-    case 'approval':
-      return 'activity';
     default:
       throw new Error(`Unsupported mobile command domain: ${prefix}`);
   }
@@ -127,6 +108,27 @@ function resultMetadata(result: any) {
       typeof result?.operationId === 'string' && result.operationId ? result.operationId : undefined,
     undoExpiresAt: typeof result?.undoExpiresAt === 'number' ? result.undoExpiresAt : undefined,
   };
+}
+
+// The newest message of a thread. A list row knows only its thread, so a
+// star or unread change from the list acts on the newest message, as the
+// native list did before these actions moved to the command outbox.
+async function newestMessageID(
+  dependencies: MobileCommandExecutorDependencies,
+  accountID: string,
+  threadID: string,
+  user: CurrentUser,
+): Promise<string> {
+  const thread = await dependencies.invoke('get_thread', { account: accountID, threadId: threadID }, user);
+  let newest: { id: string; at: number } | undefined;
+  for (const message of Array.isArray(thread?.messages) ? thread.messages : []) {
+    const id = String(message?._id || message?.id || '');
+    if (!id) continue;
+    const at = Number(message?.date) || 0;
+    if (!newest || at >= newest.at) newest = { id, at };
+  }
+  if (!newest) throw new MobileNotFoundError('This conversation has no message to change.');
+  return newest.id;
 }
 
 export async function executeMobileCommand(
@@ -185,9 +187,12 @@ export async function executeMobileCommand(
     case 'mail.unstar': {
       const toolName =
         command.kind === 'mail.markUnread' ? 'mark_unread' : command.kind === 'mail.star' ? 'star' : 'unstar';
+      const messageID =
+        command.payload.messageID ||
+        (await newestMessageID(dependencies, command.payload.accountID, command.payload.threadID, user));
       const result = await dependencies.invoke(
         toolName,
-        { account: command.payload.accountID, messageId: command.payload.messageID },
+        { account: command.payload.accountID, messageId: messageID },
         user,
       );
       return {
@@ -195,36 +200,12 @@ export async function executeMobileCommand(
         ...resultMetadata(result),
         syncDomain: 'mail',
         entityKind: 'message',
-        entityID: command.payload.messageID,
+        entityID: messageID,
         syncPayload: {
           accountID: command.payload.accountID,
           ...(command.kind === 'mail.markUnread'
             ? { unread: true }
             : { starred: command.kind === 'mail.star' }),
-        },
-      };
-    }
-    case 'mail.addLabel':
-    case 'mail.removeLabel': {
-      const adding = command.kind === 'mail.addLabel';
-      const result = await dependencies.invoke(
-        adding ? 'add_label' : 'remove_label',
-        {
-          account: command.payload.accountID,
-          messageId: command.payload.messageID,
-          label: command.payload.label,
-        },
-        user,
-      );
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'mail',
-        entityKind: 'message',
-        entityID: command.payload.messageID,
-        syncPayload: {
-          accountID: command.payload.accountID,
-          ...(adding ? { labelsAdded: [command.payload.label] } : { labelsRemoved: [command.payload.label] }),
         },
       };
     }
@@ -268,21 +249,6 @@ export async function executeMobileCommand(
         syncPayload: { accountID: command.payload.accountID, snoozeCleared: true },
       };
     }
-    case 'mail.mute': {
-      const result = await dependencies.invoke(
-        'mute_thread',
-        { account: command.payload.accountID, threadId: command.payload.threadID },
-        user,
-      );
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'mail',
-        entityKind: 'thread',
-        entityID: command.payload.threadID,
-        syncPayload: { accountID: command.payload.accountID, muted: true },
-      };
-    }
     case 'mail.restore': {
       const result = await dependencies.invoke(
         'restore_from_trash',
@@ -296,145 +262,6 @@ export async function executeMobileCommand(
         entityKind: 'thread',
         entityID: command.payload.threadID,
         syncPayload: { accountID: command.payload.accountID, archived: false, trashed: false },
-      };
-    }
-    case 'mail.send': {
-      const payload = command.payload;
-      const result =
-        payload.mode === 'new'
-          ? await dependencies.invoke(
-              'send_message',
-              {
-                account: payload.accountID,
-                to: payload.to,
-                cc: payload.cc,
-                bcc: payload.bcc,
-                subject: payload.subject ?? '',
-                body: payload.bodyText,
-                html: payload.bodyHTML,
-              },
-              user,
-            )
-          : payload.mode === 'forward'
-            ? await dependencies.invoke(
-                'forward',
-                {
-                  account: payload.accountID,
-                  messageId: payload.messageID,
-                  to: payload.to,
-                  cc: payload.cc,
-                  bcc: payload.bcc,
-                  body: payload.bodyText,
-                  html: payload.bodyHTML,
-                },
-                user,
-              )
-            : await dependencies.invoke(
-                payload.mode === 'reply' ? 'reply' : 'reply_all',
-                {
-                  account: payload.accountID,
-                  messageId: payload.messageID,
-                  threadId: payload.threadID,
-                  // Recipients and subject the user edited in the composer
-                  // win over the ones the server derives from the anchor.
-                  to: payload.to?.trim() || undefined,
-                  cc: payload.cc?.trim() || undefined,
-                  bcc: payload.bcc?.trim() || undefined,
-                  subject: payload.subject?.trim() || undefined,
-                  body: payload.bodyText,
-                  html: payload.bodyHTML,
-                },
-                user,
-              );
-      // A brand-new send has no client-side thread; the provider's thread id
-      // is the real identity, and only failing that does the idempotency key
-      // stand in so the sync change still has a stable key.
-      const providerThreadID =
-        typeof result?.threadId === 'string' && result.threadId ? String(result.threadId) : undefined;
-      const threadID = payload.threadID || providerThreadID || command.idempotencyKey;
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'mail',
-        entityKind: 'thread',
-        entityID: threadID,
-        syncPayload: { accountID: payload.accountID },
-      };
-    }
-    case 'mail.saveDraft': {
-      const payload = command.payload;
-      // Tri-state, like snooze: an ISO time schedules, `scheduleCleared`
-      // unschedules (explicit null in the patch), absent leaves it alone.
-      const scheduledFor = payload.scheduleCleared
-        ? null
-        : payload.scheduledFor
-          ? Date.parse(payload.scheduledFor)
-          : undefined;
-      if (payload.draftID) {
-        const result = await dependencies.invoke(
-          'update_draft',
-          {
-            id: payload.draftID,
-            patch: {
-              to: payload.to,
-              cc: payload.cc,
-              bcc: payload.bcc,
-              subject: payload.subject,
-              body: payload.bodyText,
-              html: payload.bodyHTML,
-              scheduledFor,
-            },
-          },
-          user,
-        );
-        return {
-          status: 'applied',
-          ...resultMetadata(result),
-          syncDomain: 'mail',
-          entityKind: 'draft',
-          entityID: payload.draftID,
-          syncPayload: { accountID: payload.accountID, draftID: payload.draftID },
-        };
-      }
-      const result = await dependencies.invoke(
-        'save_draft',
-        {
-          account: payload.accountID,
-          threadId: payload.threadID,
-          inReplyToMessageId: payload.inReplyToMessageID,
-          to: payload.to,
-          cc: payload.cc,
-          bcc: payload.bcc,
-          subject: payload.subject,
-          body: payload.bodyText,
-          html: payload.bodyHTML,
-          scheduledFor: scheduledFor ?? undefined,
-        },
-        user,
-      );
-      const draftID = String(result?.draft?._id || command.idempotencyKey);
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'mail',
-        entityKind: 'draft',
-        entityID: draftID,
-        syncPayload: { accountID: payload.accountID, draftID },
-      };
-    }
-    case 'mail.deleteDraft': {
-      const result = await dependencies.invoke('delete_draft', { id: command.payload.draftID }, user);
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'mail',
-        entityKind: 'draft',
-        entityID: command.payload.draftID,
-        syncPayload: {
-          accountID: command.payload.accountID,
-          draftID: command.payload.draftID,
-          deleted: true,
-        },
       };
     }
     case 'calendar.create': {
@@ -483,38 +310,6 @@ export async function executeMobileCommand(
         syncPayload: { accountID: command.payload.accountID, eventID: entityID },
       };
     }
-    case 'calendar.resync': {
-      await dependencies.resyncCalendar({
-        userId: user.userId,
-        accountId: command.payload.accountID,
-        reason: command.payload.reason,
-      });
-      return { status: 'applied', syncDomain: 'calendar' };
-    }
-    case 'task.create': {
-      const result = await dependencies.invoke(
-        'tasks_create_card',
-        {
-          boardId: command.payload.boardID,
-          column: command.payload.column,
-          title: command.payload.title,
-          description: command.payload.description,
-          priority: command.payload.priority,
-          dueIso: command.payload.dueAt,
-          source: { kind: 'manual' },
-        },
-        user,
-      );
-      const entityID = String(result?.cardId || command.idempotencyKey);
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'tasks',
-        entityKind: 'task',
-        entityID,
-        syncPayload: { cardID: entityID, title: command.payload.title },
-      };
-    }
     case 'task.setCompleted': {
       const result = await dependencies.invoke(
         'tasks_update_card',
@@ -528,48 +323,6 @@ export async function executeMobileCommand(
         entityKind: 'task',
         entityID: command.payload.cardID,
         syncPayload: { cardID: command.payload.cardID, completed: command.payload.completed },
-      };
-    }
-    case 'work.capture': {
-      const result = await dependencies.capture(
-        {
-          rawText: command.payload.rawText,
-          transcript: command.payload.transcript,
-          source: command.payload.source,
-          areaId: command.payload.areaID,
-        },
-        user,
-      );
-      const entityID = result.workIds[0] || result.captureId;
-      return {
-        status: 'applied',
-        syncDomain: 'work',
-        entityKind: 'work',
-        entityID,
-        syncPayload: {
-          captureID: result.captureId,
-          workIDs: result.workIds,
-          fallback: result.fallback ?? false,
-        },
-      };
-    }
-    case 'work.captureFromChat': {
-      const result = await dependencies.captureFromChat(
-        {
-          text: command.payload.text,
-          replyText: command.payload.replyText,
-          conversationId: command.payload.conversationID,
-          sourceMessageId: command.payload.sourceMessageID,
-        },
-        user,
-      );
-      const entityID = result.workIds[0] || result.captureId || command.idempotencyKey;
-      return {
-        status: 'applied',
-        syncDomain: 'work',
-        entityKind: 'workCaptured',
-        entityID,
-        syncPayload: { workIDs: result.workIds, existing: result.existing },
       };
     }
     case 'work.setHorizon': {
@@ -684,42 +437,6 @@ export async function executeMobileCommand(
         entityKind: 'workShape',
         entityID: command.payload.workID,
         syncPayload: { workID: command.payload.workID, shape: result?.shape ?? command.payload.shape },
-      };
-    }
-    case 'approval.approve': {
-      const result = await dependencies.invoke(
-        'albatross_approve_action',
-        {
-          approvalId: command.payload.approvalID,
-          editedArgs: command.payload.editedArguments,
-        },
-        user,
-      );
-      const operationID = result?.result?.operationId || result?.operationId;
-      return {
-        status: 'applied',
-        operationID: typeof operationID === 'string' && operationID ? operationID : undefined,
-        undoExpiresAt:
-          typeof result?.approval?.undoExpiresAt === 'number' ? result.approval.undoExpiresAt : undefined,
-        syncDomain: 'activity',
-        entityKind: 'approval',
-        entityID: command.payload.approvalID,
-        syncPayload: { approvalID: command.payload.approvalID, status: 'approved' },
-      };
-    }
-    case 'approval.reject': {
-      const result = await dependencies.invoke(
-        'albatross_reject_action',
-        { approvalId: command.payload.approvalID, reason: command.payload.reason },
-        user,
-      );
-      return {
-        status: 'applied',
-        ...resultMetadata(result),
-        syncDomain: 'activity',
-        entityKind: 'approval',
-        entityID: command.payload.approvalID,
-        syncPayload: { approvalID: command.payload.approvalID, status: 'rejected' },
       };
     }
   }

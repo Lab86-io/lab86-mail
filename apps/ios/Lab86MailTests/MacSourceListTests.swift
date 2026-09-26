@@ -57,6 +57,36 @@ struct MacSourceListTests {
         #expect(navigation.pendingMailCategory == "custom:l1")
     }
 
+    // MARK: - Snoozed
+
+    @Test
+    func theSnoozedRowOwnsTheSelectionWhileMailShowsSnoozed() {
+        #expect(MacSourceSelection.isSnoozedSelected(selectedTab: .mail, mailbox: .snoozed))
+        #expect(!MacSourceSelection.isSnoozedSelected(selectedTab: .mail, mailbox: .inbox))
+        #expect(!MacSourceSelection.isSnoozedSelected(selectedTab: .today, mailbox: .snoozed))
+        #expect(!MacSourceSelection.isPrimarySelected(.mail, selectedTab: .mail, areaID: nil, mailLabelID: nil, mailbox: .snoozed))
+        #expect(MacSourceSelection.isPrimarySelected(.mail, selectedTab: .mail, areaID: nil, mailLabelID: nil, mailbox: .unread))
+    }
+
+    @Test
+    func theMailRowGoesBackToMainFromSnoozed() {
+        #expect(MacSourceSelection.mailCategory(forPrimary: .mail, mailLabelID: nil, mailbox: .snoozed) == "main")
+        #expect(MacSourceSelection.mailCategory(forPrimary: .mail, mailLabelID: nil, mailbox: .inbox) == nil)
+        #expect(MacSourceSelection.mailCategory(forPrimary: .calendar, mailLabelID: nil, mailbox: .snoozed) == nil)
+    }
+
+    @Test
+    @MainActor
+    func aSnoozedRowTapLeavesTheOpenThreadAndAsksMailForSnoozed() {
+        let navigation = NavigationModel()
+        navigation.openThread(accountID: "a1", threadID: "t1")
+        navigation.selectPrimary(.mail)
+        navigation.pendingMailbox = .snoozed
+        #expect(navigation.selectedTab == .mail)
+        #expect(navigation.threadRoute == nil)
+        #expect(navigation.pendingMailbox == .snoozed)
+    }
+
     // MARK: - New Area (NAT-9)
 
     @Test

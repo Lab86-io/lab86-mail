@@ -54,6 +54,8 @@ struct AppShellView: View {
             environment.navigation.consumeAppIntentRequests()
             BackgroundRefreshCoordinator.shared.schedule()
             Task {
+                // Mail actions saved while offline go out on return (NAT-10).
+                _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
                 await environment.notifications.retryPendingTextResponses()
                 await consumeMailNotificationAction()
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)

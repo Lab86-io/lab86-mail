@@ -4,12 +4,7 @@ import path from 'node:path';
 import { canonicalJSON, mobileCommandPayloadHash } from '../lib/mobile/v1/canonical';
 import { capabilitiesForProvider } from '../lib/mobile/v1/capabilities';
 import { executeMobileCommand, mobileCommandDomain } from '../lib/mobile/v1/command-executor';
-import {
-  CommandReceiptSchema,
-  MobileBootstrapSchema,
-  MobileCommandSchema,
-  SyncEnvelopeSchema,
-} from '../lib/mobile/v1/contract';
+import { CommandReceiptSchema, MobileBootstrapSchema, MobileCommandSchema } from '../lib/mobile/v1/contract';
 import { mobileOpenAPIV1 } from '../lib/mobile/v1/openapi';
 import { commandReceiptFromRow } from '../lib/mobile/v1/receipt';
 
@@ -26,7 +21,6 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   return {
     invoke: async () => ({ ok: true }),
     enqueueApproval: async () => 'approval-1',
-    capture: async () => ({ captureId: 'capture-1', status: 'split' as const, workIds: ['work-1'] }),
     ...overrides,
   } as any;
 }
@@ -51,44 +45,7 @@ describe('MobileContractV1 schemas', () => {
     ).toThrow();
   });
 
-  test('saveDraft treats scheduleCleared as an explicit, exclusive unschedule', () => {
-    const base = {
-      idempotencyKey: 'draft-command-1',
-      kind: 'mail.saveDraft',
-      baseRevision: 1,
-      clientCreatedAt: createdAt,
-    };
-    const draft = { accountID: 'account-1', to: 'sam@example.com', subject: 'Later', bodyText: 'Body' };
-
-    const cleared = MobileCommandSchema.parse({
-      ...base,
-      payload: { ...draft, draftID: 'draft-12', scheduleCleared: true },
-    });
-    expect(cleared.kind).toBe('mail.saveDraft');
-
-    // Clearing and scheduling in one command is contradictory.
-    expect(() =>
-      MobileCommandSchema.parse({
-        ...base,
-        payload: { ...draft, draftID: 'draft-12', scheduleCleared: true, scheduledFor: createdAt },
-      }),
-    ).toThrow('scheduleCleared cannot be combined with scheduledFor');
-
-    // A brand-new draft has no schedule to clear.
-    expect(() =>
-      MobileCommandSchema.parse({ ...base, payload: { ...draft, scheduleCleared: true } }),
-    ).toThrow('scheduleCleared requires an existing draftID');
-
-    // `false` is not a valid value; the flag is a literal true or absent.
-    expect(() =>
-      MobileCommandSchema.parse({
-        ...base,
-        payload: { ...draft, draftID: 'draft-12', scheduleCleared: false },
-      }),
-    ).toThrow();
-  });
-
-  test('golden bootstrap and sync payloads decode without JSONValue-style guessing', () => {
+  test('the golden bootstrap decodes without JSONValue-style guessing', () => {
     const bootstrap = MobileBootstrapSchema.parse(
       JSON.parse(
         readFileSync(
@@ -100,30 +57,8 @@ describe('MobileContractV1 schemas', () => {
         ),
       ),
     );
-    const sync = SyncEnvelopeSchema.parse(
-      JSON.parse(
-        readFileSync(
-          path.join(
-            import.meta.dir,
-            '../apps/ios/Packages/MobileAPI/Tests/MobileAPITests/Fixtures/sync-v1.json',
-          ),
-          'utf8',
-        ),
-      ),
-    );
 
     expect(bootstrap.accounts[0].sync.itemsSynced).toBe(42);
-    expect(sync.items[0]).toMatchObject({
-      domain: 'tasks',
-      entityKind: 'task',
-      payload: { cardID: 'card-1', completed: true },
-    });
-    expect(() =>
-      SyncEnvelopeSchema.parse({
-        ...sync,
-        items: [{ ...sync.items[0], payload: { completed: true, dynamic: 'not typed' } }],
-      }),
-    ).toThrow();
   });
 
   test('shared golden receipt decodes through the public Zod contract', () => {
@@ -146,6 +81,7 @@ describe('MobileContractV1 schemas', () => {
   test('provider capability differences are explicit instead of broken controls', () => {
     expect(capabilitiesForProvider('google').calendar).toBe(true);
     expect(capabilitiesForProvider('microsoft').labels).toBe(false);
+    expect(capabilitiesForProvider('icloud')).toMatchObject({ mail: true, contacts: false, labels: false });
     expect(capabilitiesForProvider('imap')).toMatchObject({
       mail: true,
       calendar: false,
@@ -284,10 +220,17 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(document.components.schemas.MobileCommand.oneOf).toContainEqual({
       $ref: '#/components/schemas/TaskSetCompletedCommand',
     });
-    expect((document.components.schemas.SyncChange as any).discriminator.propertyName).toBe('entityKind');
-    expect((document.components.schemas.SyncEnvelope as any).properties.items.items).toEqual({
-      $ref: '#/components/schemas/SyncChange',
-    });
+    // Native never pulled changes, polled a command, undid one, or read the
+    // typed thread detail, so those endpoints are gone (NAT-10).
+    expect(Object.keys(document.paths).sort()).toEqual([
+      '/api/mobile/v1/assistant/route',
+      '/api/mobile/v1/bootstrap',
+      '/api/mobile/v1/commands',
+      '/api/mobile/v1/mail/threads',
+      '/api/mobile/v1/today/summary',
+    ]);
+    expect(document.components.schemas).not.toHaveProperty('SyncChange');
+    expect(document.components.schemas).not.toHaveProperty('SyncEnvelope');
     expect(checkedIn).toEqual(document);
   });
 
@@ -306,7 +249,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(receipt.recoverableError?.retryable).toBe(true);
   });
 
-  test('schema and routes retain idempotency, sync revisions, and tombstones', () => {
+  test('schema and routes retain idempotency and sync revisions', () => {
     const schema = readFileSync(path.join(import.meta.dir, '../convex/schema.ts'), 'utf8');
     const mobile = readFileSync(path.join(import.meta.dir, '../convex/mobile.ts'), 'utf8');
     const route = readFileSync(path.join(import.meta.dir, '../app/api/mobile/v1/commands/route.ts'), 'utf8');
@@ -315,8 +258,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(schema).toContain('mobileCommands: defineTable');
     expect(schema).toContain('mobileSyncTombstones: defineTable');
     expect(schema).toContain(".index('by_user_idempotency'");
-    expect(mobile).toContain(".query('mobileSyncTombstones')");
-    expect(mobile).toContain('if (command.undoneAt) return command;');
+    expect(mobile).toContain("insert('mobileSyncChanges'");
     expect(route).toContain('claimCommand');
     expect(accounts).toContain("'mobileCommands'");
     expect(accounts).toContain("'mobileSyncChanges'");

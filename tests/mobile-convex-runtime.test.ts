@@ -10,9 +10,9 @@ const convexModules = {
 
 type MobileDomain = 'mail' | 'tasks' | 'calendar';
 
-// Production no longer writes tombstones through a mutation, but listSync
-// and the stale-revision check still read them. Seed one the way the old
-// writer did: advance the domain head, then store the tombstone.
+// Production no longer writes tombstones through a mutation. The stale
+// revision check reads the domain head, so seed the head the way the old
+// writer did, together with its tombstone.
 async function seedTombstone(
   t: TestConvex<typeof schema>,
   input: { userId: string; domain: MobileDomain; entityKind: string; entityId: string },
@@ -148,6 +148,58 @@ describe('mobile Convex runtime', () => {
 
       const commands = await t.run((ctx) => ctx.db.query('mobileCommands').collect());
       expect(commands).toHaveLength(1);
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
+  test('beginCommand queues a retryable failure again and keeps a final one', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-retry-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const begin = (idempotencyKey: string, payloadHash = 'hash_retry') =>
+        t.mutation(api.mobile.beginCommand, {
+          internalSecret: 'mobile-retry-secret',
+          userId: 'retry_user',
+          idempotencyKey,
+          payloadHash,
+          domain: 'mail',
+          kind: 'mail.archive',
+          payload: { accountID: 'account-1', threadID: 'thread-1' },
+          clientCreatedAt: '2026-09-26T12:00:00Z',
+        });
+      const fail = (commandId: any, errorRetryable: boolean) =>
+        t.run((ctx) =>
+          ctx.db.patch(commandId, {
+            status: 'failed',
+            errorCode: 'SERVER_ERROR',
+            errorMessage: 'The server could not complete the request.',
+            errorRetryable,
+            attemptCount: 1,
+          }),
+        );
+
+      const retryable = await begin('retry_key');
+      await fail(retryable.command?._id, true);
+      const again = await begin('retry_key');
+      expect(again.created).toBe(false);
+      expect(again.keyReused).toBe(false);
+      expect(again.command).toMatchObject({ status: 'queued', attemptCount: 1 });
+      expect(again.command?.errorCode).toBeUndefined();
+      expect(again.command?.errorRetryable).toBeUndefined();
+
+      // A different payload under the same key is still a reused key, not a retry.
+      await fail(retryable.command?._id, true);
+      const reused = await begin('retry_key', 'hash_other');
+      expect(reused.keyReused).toBe(true);
+      expect(reused.command?.status).toBe('failed');
+
+      const final = await begin('final_key');
+      await fail(final.command?._id, false);
+      const replay = await begin('final_key');
+      expect(replay.command).toMatchObject({ status: 'failed', errorRetryable: false });
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
@@ -373,312 +425,6 @@ describe('mobile Convex runtime', () => {
           status: 'applied',
         }),
       ).rejects.toThrow('Mobile command not found.');
-    } finally {
-      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
-      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
-    }
-  });
-
-  test('getCommand returns the owner view and null for other users', async () => {
-    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-get-secret';
-    try {
-      const t = convexTest(schema, convexModules);
-      const begun = await t.mutation(api.mobile.beginCommand, {
-        internalSecret: 'mobile-get-secret',
-        userId: 'get_user',
-        idempotencyKey: 'get_key',
-        payloadHash: 'hash',
-        domain: 'assistant',
-        kind: 'chat.send',
-        payload: { text: 'hi' },
-        clientCreatedAt: '2026-07-20T12:00:00Z',
-      });
-      const commandId = begun.command?._id;
-      if (!commandId) throw new Error('expected a queued command');
-
-      const mine = await t.query(api.mobile.getCommand, {
-        internalSecret: 'mobile-get-secret',
-        userId: 'get_user',
-        commandId,
-      });
-      expect(mine).toMatchObject({ kind: 'chat.send', status: 'queued' });
-
-      const theirs = await t.query(api.mobile.getCommand, {
-        internalSecret: 'mobile-get-secret',
-        userId: 'other_user',
-        commandId,
-      });
-      expect(theirs).toBeNull();
-    } finally {
-      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
-      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
-    }
-  });
-
-  test('listSync interleaves changes and tombstones by revision with pagination', async () => {
-    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-sync-secret';
-    try {
-      const t = convexTest(schema, convexModules);
-      const caller = { internalSecret: 'mobile-sync-secret', userId: 'sync_user' };
-      const applyChange = async (idempotencyKey: string, entityId: string) => {
-        const begun = await t.mutation(api.mobile.beginCommand, {
-          ...caller,
-          idempotencyKey,
-          payloadHash: 'hash',
-          domain: 'mail',
-          kind: 'thread.update',
-          payload: {},
-          clientCreatedAt: '2026-07-20T12:00:00Z',
-        });
-        const commandId = begun.command?._id;
-        if (!commandId) throw new Error('expected a queued command');
-        await t.mutation(api.mobile.claimCommand, {
-          ...caller,
-          commandId,
-          claimToken: 'lease',
-          leaseMs: 5_000,
-        });
-        const completed = await t.mutation(api.mobile.completeCommand, {
-          ...caller,
-          commandId,
-          claimToken: 'lease',
-          status: 'applied',
-          entityKind: 'thread',
-          entityId,
-          syncPayload: { entityId },
-        });
-        return completed?.entityRevision;
-      };
-
-      const rev1 = await applyChange('sync_key_1', 'thread_a');
-      const rev2 = await seedTombstone(t, {
-        ...caller,
-        domain: 'mail',
-        entityKind: 'thread',
-        entityId: 'thread_b',
-      });
-      const rev3 = await applyChange('sync_key_2', 'thread_c');
-      expect([rev1, rev2, rev3]).toEqual([1, 2, 3]);
-      // A different domain keeps its own revision counter.
-      expect(
-        await seedTombstone(t, {
-          ...caller,
-          domain: 'tasks',
-          entityKind: 'card',
-          entityId: 'card_a',
-        }),
-      ).toBe(1);
-
-      const full = await t.query(api.mobile.listSync, {
-        ...caller,
-        domain: 'mail',
-        afterRevision: 0,
-        limit: 10,
-      });
-      expect(full.serverRevision).toBe(3);
-      expect(full.hasMore).toBe(false);
-      expect(full.page.map((entry) => [entry.type, entry.revision])).toEqual([
-        ['change', 1],
-        ['tombstone', 2],
-        ['change', 3],
-      ]);
-      expect(full.page[1]?.row).toMatchObject({ entityId: 'thread_b' });
-
-      const paged = await t.query(api.mobile.listSync, {
-        ...caller,
-        domain: 'mail',
-        afterRevision: 0,
-        limit: 2,
-      });
-      expect(paged.page.map((entry) => entry.revision)).toEqual([1, 2]);
-      expect(paged.hasMore).toBe(true);
-
-      const resumed = await t.query(api.mobile.listSync, {
-        ...caller,
-        domain: 'mail',
-        afterRevision: 2,
-        limit: 10,
-      });
-      expect(resumed.page.map((entry) => entry.revision)).toEqual([3]);
-      expect(resumed.hasMore).toBe(false);
-
-      // limit is clamped to at least one entry.
-      const clamped = await t.query(api.mobile.listSync, {
-        ...caller,
-        domain: 'mail',
-        afterRevision: 0,
-        limit: 0,
-      });
-      expect(clamped.page).toHaveLength(1);
-      expect(clamped.hasMore).toBe(true);
-
-      const untouched = await t.query(api.mobile.listSync, {
-        ...caller,
-        domain: 'calendar',
-        afterRevision: 0,
-        limit: 10,
-      });
-      expect(untouched).toMatchObject({ page: [], hasMore: false, serverRevision: 0 });
-    } finally {
-      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
-      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
-    }
-  });
-
-  test('undo claims serialize concurrent requests and enforce the server expiry window', async () => {
-    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-undo-claim-secret';
-    try {
-      const t = convexTest(schema, convexModules);
-      const begin = async (idempotencyKey: string, undoExpiresAt?: number) => {
-        const operationId = await t.run((ctx) =>
-          ctx.db.insert('aiOperations', {
-            userId: 'undo_claim_user',
-            agent: 'user',
-            tool: 'test_create',
-            surface: 'tasks',
-            summary: `Created ${idempotencyKey}`,
-            target: { id: idempotencyKey },
-            inverse: { kind: 'test.delete', payload: { id: idempotencyKey } },
-            status: 'applied',
-            createdAt: Date.now(),
-          }),
-        );
-        const begun = await t.mutation(api.mobile.beginCommand, {
-          internalSecret: 'mobile-undo-claim-secret',
-          userId: 'undo_claim_user',
-          idempotencyKey,
-          payloadHash: 'hash',
-          domain: 'tasks',
-          kind: 'card.create',
-          payload: {},
-          clientCreatedAt: '2026-07-23T12:00:00Z',
-        });
-        const commandId = begun.command?._id;
-        if (!commandId) throw new Error('expected a queued command');
-        await t.mutation(api.mobile.claimCommand, {
-          internalSecret: 'mobile-undo-claim-secret',
-          userId: 'undo_claim_user',
-          commandId,
-          claimToken: 'execute-lease',
-          leaseMs: 5_000,
-        });
-        await t.mutation(api.mobile.completeCommand, {
-          internalSecret: 'mobile-undo-claim-secret',
-          userId: 'undo_claim_user',
-          commandId,
-          claimToken: 'execute-lease',
-          status: 'applied',
-          operationId: String(operationId),
-          undoExpiresAt,
-        });
-        return { commandId, operationId };
-      };
-
-      const { commandId: expiredId } = await begin('expired', Date.now() - 1);
-      const expired = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId: expiredId,
-        claimToken: 'undo-expired',
-        leaseMs: 60_000,
-      });
-      expect(expired).toMatchObject({ claimed: false, reason: 'expired' });
-
-      const { commandId, operationId } = await begin('valid', Date.now() + 60_000);
-      const first = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-1',
-        leaseMs: 60_000,
-      });
-      expect(first).toMatchObject({ claimed: true, reason: 'claimed' });
-      const concurrent = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-2',
-        leaseMs: 1_000,
-      });
-      expect(concurrent).toMatchObject({ claimed: false, reason: 'in_progress' });
-
-      await t.run(async (ctx) => {
-        await ctx.db.patch(commandId, { undoClaimExpiresAt: Date.now() - 1 });
-        await ctx.db.patch(operationId, {
-          status: 'undoing',
-          undoClaimToken: 'provider-undo',
-          undoClaimExpiresAt: Date.now() + 60_000,
-        });
-      });
-      const blockedByProvider = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-reclaimed',
-        leaseMs: 60_000,
-      });
-      expect(blockedByProvider).toMatchObject({ claimed: false, reason: 'in_progress' });
-
-      await t.run(async (ctx) => {
-        await ctx.db.patch(operationId, {
-          status: 'undo_failed',
-          undoClaimToken: undefined,
-          undoClaimExpiresAt: undefined,
-        });
-      });
-      const reclaimed = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-reclaimed',
-        leaseMs: 60_000,
-      });
-      expect(reclaimed).toMatchObject({ claimed: true, reason: 'claimed' });
-
-      await t.mutation(api.mobile.releaseCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-reclaimed',
-      });
-      const retry = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-3',
-        leaseMs: 60_000,
-      });
-      expect(retry.claimed).toBe(true);
-      await t.run(async (ctx) => {
-        await ctx.db.patch(commandId, { undoClaimExpiresAt: Date.now() - 1 });
-        await ctx.db.patch(operationId, {
-          status: 'undone',
-          undoneAt: Date.now(),
-          undoClaimToken: undefined,
-          undoClaimExpiresAt: undefined,
-        });
-      });
-      const completed = await t.mutation(api.mobile.completeCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-3',
-      });
-      expect(completed?.undoneAt).toBeGreaterThan(0);
-
-      const repeated = await t.mutation(api.mobile.claimCommandUndo, {
-        internalSecret: 'mobile-undo-claim-secret',
-        userId: 'undo_claim_user',
-        commandId,
-        claimToken: 'undo-5',
-        leaseMs: 60_000,
-      });
-      expect(repeated).toMatchObject({ claimed: false, reason: 'already_undone' });
-      const changes = await t.run((ctx) => ctx.db.query('mobileSyncChanges').collect());
-      expect(changes.filter((row) => row.entityId === String(operationId))).toHaveLength(1);
     } finally {
       if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
       else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;

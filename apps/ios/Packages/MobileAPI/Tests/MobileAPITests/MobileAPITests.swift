@@ -194,9 +194,6 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     let receiptURL = try #require(
         Bundle.module.url(forResource: "command-receipt-v1", withExtension: "json")
     )
-    let syncURL = try #require(
-        Bundle.module.url(forResource: "sync-v1", withExtension: "json")
-    )
 
     let bootstrap = try decoder.decode(
         Components.Schemas.MobileBootstrap.self,
@@ -206,10 +203,6 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
         Components.Schemas.CommandReceipt.self,
         from: Data(contentsOf: receiptURL)
     )
-    let sync = try decoder.decode(
-        Components.Schemas.SyncEnvelope.self,
-        from: Data(contentsOf: syncURL)
-    )
 
     #expect(bootstrap.user.id == "user-fixture-1")
     #expect(bootstrap.accounts.first?.provider == .google)
@@ -217,49 +210,12 @@ func generatedSwiftTypesDecodeSharedGoldenFixtures() throws {
     #expect(bootstrap.cursors.mail == "12")
     #expect(receipt.status == .failed)
     #expect(receipt.recoverableError?.retryable == true)
-    #expect(sync.cursor == "2")
-    switch try #require(sync.items.first) {
-    case .task(let change):
-        #expect(change.payload.cardID == "card-1")
-        #expect(change.payload.completed == true)
-    default:
-        Issue.record("The typed sync fixture did not decode as a task change.")
-    }
 }
 
 @Test
-func generatedTypesCarryTheWorkHorizonContract() throws {
+func generatedTypesCarryTheWorkHorizonCommand() throws {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-
-    let change = try decoder.decode(
-        Components.Schemas.SyncChange.self,
-        from: Data(
-            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-1","revision":4,"operation":"upsert","payload":{"workID":"work-1","horizon":{"kind":"later","notBefore":1793509200000,"label":"not before November"}}}"#.utf8
-        )
-    )
-    switch change {
-    case .workHorizon(let horizon):
-        #expect(horizon.payload.workID == "work-1")
-        #expect(horizon.payload.horizon?.kind == .later)
-        #expect(horizon.payload.horizon?.notBefore == 1_793_509_200_000)
-        #expect(horizon.payload.horizonCleared == nil)
-    default:
-        Issue.record("The workHorizon change did not decode as a workHorizon case.")
-    }
-
-    let cleared = try decoder.decode(
-        Components.Schemas.SyncChange.self,
-        from: Data(
-            #"{"domain":"work","entityKind":"workHorizon","entityID":"work-2","revision":5,"operation":"upsert","payload":{"workID":"work-2","horizonCleared":true}}"#.utf8
-        )
-    )
-    if case .workHorizon(let horizon) = cleared {
-        #expect(horizon.payload.horizon == nil)
-        #expect(horizon.payload.horizonCleared == true)
-    } else {
-        Issue.record("The cleared change did not decode as a workHorizon case.")
-    }
 
     let command = try decoder.decode(
         Components.Schemas.MobileCommand.self,

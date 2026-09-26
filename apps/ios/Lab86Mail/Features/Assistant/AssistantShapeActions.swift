@@ -195,15 +195,8 @@ struct AssistantShapeActions: View {
             return try await submit(.mailArchive(.init(accountID: account, threadID: threadID)), action: action, success: "Archived")
         case .completeTask(let cardID):
             return try await submit(.taskSetCompleted(.init(cardID: cardID, completed: true)), action: action, success: "Completed")
-        case .snoozeThread(let account, let threadID, let suppliedID):
-            var messageID = suppliedID
-            if messageID == nil {
-                let result = try await environment.tools.invoke("get_thread", arguments: ["account": .string(account), "threadId": .string(threadID)])
-                messageID = (result["messages"]?.arrayValue ?? []).sorted {
-                    (CalendarDateParser.date($0["date"]) ?? .distantPast) > (CalendarDateParser.date($1["date"]) ?? .distantPast)
-                }.first?["_id"]?.stringValue
-            }
-            guard let messageID else { throw BackendError.server(status: 400, message: "Could not find the message to snooze.") }
+        case .snoozeThread(let account, let threadID, let messageID):
+            // Snooze acts on the whole thread; the message is optional.
             return try await submit(.mailSnooze(.init(accountID: account, threadID: threadID, messageID: messageID, untilAt: snoozeDate)), action: action, success: "Snoozed")
         case .holdSlot(let suppliedAccount, let startISO, let endISO, let title):
             guard let account = suppliedAccount ?? environment.store.accounts.first(where: \.isPrimary)?.id ?? environment.store.accounts.first?.id,

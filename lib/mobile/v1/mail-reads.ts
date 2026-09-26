@@ -1,10 +1,10 @@
 import { emailFromHeader } from '@/lib/shared/format';
 import { stripLoneSurrogates, truncateText } from '@/lib/shared/text';
-import { MailThreadDetailSchema, MailThreadSummarySchema } from './contract';
+import { MailThreadSummarySchema } from './contract';
 import { MobileInputError } from './http';
 
-// Mapping boundary between the untyped corpus/tool rows and the strict v1
-// read schemas. Every field is defensively coerced and capped here so a
+// Mapping boundary between the untyped corpus rows and the strict v1 read
+// schema. Every field is defensively coerced and capped here so a
 // malformed corpus row becomes a 500 with context, never a leaked `any`.
 
 function cap(value: unknown, max: number, fallback = ''): string {
@@ -63,59 +63,6 @@ export function mailThreadSummaryFromCorpus(item: any) {
     smartCategory: smartPrimary(item?.smartCategory),
     smartSecondary: smartList(item?.smartCategory?.secondary, 80, 16),
     smartLabels: smartList(item?.smartCategory?.customLabels, 240, 50),
-  });
-}
-
-function mailAttachment(value: any) {
-  const id = cap(value?.id || value?.attachmentId, 240);
-  if (!id) return null;
-  const size = Math.floor(Number(value?.size));
-  return {
-    id,
-    name: cap(value?.filename || value?.name, 500) || 'attachment',
-    contentType: cap(value?.contentType || value?.content_type, 200) || 'application/octet-stream',
-    size: Number.isFinite(size) && size >= 0 ? size : undefined,
-  };
-}
-
-function mailMessage(message: any, accountID: string, threadID: string) {
-  return {
-    id: cap(message?._id || message?.id, 240),
-    threadID,
-    accountID,
-    subject: cap(message?.subject, 2_000, '(no subject)') || '(no subject)',
-    fromHeader: cap(message?.from, 1_000),
-    fromEmail: emailFromHeader(message?.from || null) ?? undefined,
-    to: cap(message?.to, 20_000),
-    cc: cap(message?.cc, 20_000),
-    bcc: cap(message?.bcc, 20_000),
-    sentAt: epochMs(message?.date),
-    snippet: cap(message?.snippet, 500),
-    bodyText: cap(message?.textBody, 500_000),
-    bodyHTML: message?.htmlBody == null ? undefined : cap(message.htmlBody, 1_000_000),
-    labels: labelList(message?.labels),
-    unread: Boolean(message?.unread),
-    starred: Boolean(message?.starred),
-    attachments: (Array.isArray(message?.attachments) ? message.attachments : [])
-      .map(mailAttachment)
-      .filter(Boolean)
-      .slice(0, 100),
-  };
-}
-
-export function mailThreadDetailFromTool(thread: any, accountID: string, threadID: string) {
-  const messages = (Array.isArray(thread?.messages) ? thread.messages : [])
-    .map((message: any) => mailMessage(message, accountID, threadID))
-    .filter((message: any) => message.id)
-    // The contract promises ordered messages; enforce it at the boundary so
-    // the response never depends on the tool's own ordering.
-    .sort((left: any, right: any) => left.sentAt - right.sentAt);
-  return MailThreadDetailSchema.parse({
-    threadID,
-    accountID,
-    subject: cap(thread?.subject, 2_000, '(no subject)') || '(no subject)',
-    messages,
-    summary: typeof thread?.summary === 'string' ? cap(thread.summary, 20_000) : undefined,
   });
 }
 

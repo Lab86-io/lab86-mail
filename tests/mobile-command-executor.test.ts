@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { executeMobileCommand, mobileCommandDomain } from '../lib/mobile/v1/command-executor';
 import { type MobileCommand, MobileCommandSchema } from '../lib/mobile/v1/contract';
+import { MobileNotFoundError } from '../lib/mobile/v1/http';
 
 const user = {
   userId: 'user_mobile_executor',
@@ -19,7 +20,6 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   return {
     invoke: async () => ({ ok: true }),
     enqueueApproval: async () => 'approval-1',
-    capture: async () => ({ captureId: 'capture-1', status: 'split' as const, workIds: ['work-1'] }),
     ...overrides,
   } as any;
 }
@@ -51,9 +51,29 @@ describe('mobileCommandDomain', () => {
         }),
       ),
     ).toBe('calendar');
-    expect(mobileCommandDomain(command('task.create', { title: 'Ship' }))).toBe('tasks');
-    expect(mobileCommandDomain(command('work.capture', { rawText: 'note', source: 'text' }))).toBe('work');
-    expect(mobileCommandDomain(command('approval.approve', { approvalID: 'ap-1' }))).toBe('activity');
+    expect(mobileCommandDomain(command('task.setCompleted', { cardID: 'c', completed: true }))).toBe('tasks');
+    expect(mobileCommandDomain(command('work.setShape', { workID: 'w', shape: 'list' }))).toBe('work');
+  });
+
+  test('commands native never sends are not part of the contract', () => {
+    for (const kind of [
+      'mail.addLabel',
+      'mail.removeLabel',
+      'mail.mute',
+      'mail.send',
+      'mail.saveDraft',
+      'mail.deleteDraft',
+      'calendar.resync',
+      'task.create',
+      'work.capture',
+      'work.captureFromChat',
+      'approval.approve',
+      'approval.reject',
+    ])
+      expect(() => command(kind, {})).toThrow();
+    expect(() => mobileCommandDomain({ kind: 'approval.approve' } as unknown as MobileCommand)).toThrow(
+      /Unsupported mobile command domain: approval/,
+    );
   });
 
   test('rejects unknown command domains instead of guessing', () => {
@@ -123,7 +143,7 @@ describe('mail commands', () => {
     const { calls, deps } = recordingDependencies();
 
     const result = await executeMobileCommand(
-      command('mail.markUnread', { accountID: 'account-1', messageID: 'message-1' }),
+      command('mail.markUnread', { accountID: 'account-1', threadID: 'thread-1', messageID: 'message-1' }),
       user,
       deps,
     );
@@ -140,7 +160,7 @@ describe('mail commands', () => {
   test('star and unstar report the resulting starred state, not the action name', async () => {
     const star = recordingDependencies();
     const starred = await executeMobileCommand(
-      command('mail.star', { accountID: 'account-1', messageID: 'message-2' }),
+      command('mail.star', { accountID: 'account-1', threadID: 'thread-2', messageID: 'message-2' }),
       user,
       star.deps,
     );
@@ -149,12 +169,74 @@ describe('mail commands', () => {
 
     const unstar = recordingDependencies();
     const unstarred = await executeMobileCommand(
-      command('mail.unstar', { accountID: 'account-1', messageID: 'message-2' }),
+      command('mail.unstar', { accountID: 'account-1', threadID: 'thread-2', messageID: 'message-2' }),
       user,
       unstar.deps,
     );
     expect(unstar.calls[0].name).toBe('unstar');
     expect(unstarred.syncPayload).toEqual({ accountID: 'account-1', starred: false });
+  });
+
+  test('a thread-only star or unread change acts on the newest message of the thread', async () => {
+    for (const [kind, tool] of [
+      ['mail.star', 'star'],
+      ['mail.unstar', 'unstar'],
+      ['mail.markUnread', 'mark_unread'],
+    ] as const) {
+      const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+      const deps = dependencies({
+        invoke: async (name: string, args: Record<string, unknown>) => {
+          calls.push({ name, args });
+          if (name !== 'get_thread') return { ok: true };
+          // The tool order is not trusted: the newest date wins.
+          return {
+            messages: [
+              { _id: 'message-new', date: 3_000 },
+              { _id: 'message-old', date: 1_000 },
+              { id: 'message-mid', date: 2_000 },
+              { date: 4_000 },
+            ],
+          };
+        },
+      });
+
+      const result = await executeMobileCommand(
+        command(kind, { accountID: 'account-1', threadID: 'thread-9' }),
+        user,
+        deps,
+      );
+
+      expect(calls).toEqual([
+        { name: 'get_thread', args: { account: 'account-1', threadId: 'thread-9' } },
+        { name: tool, args: { account: 'account-1', messageId: 'message-new' } },
+      ]);
+      expect(result).toMatchObject({ entityKind: 'message', entityID: 'message-new' });
+    }
+  });
+
+  test('a thread-only change on a thread without messages fails as not found, not as a retry', async () => {
+    const deps = dependencies({ invoke: async () => ({ messages: [{ date: 1 }] }) });
+
+    await expect(
+      executeMobileCommand(
+        command('mail.star', { accountID: 'account-1', threadID: 'thread-0' }),
+        user,
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(MobileNotFoundError);
+
+    const empty = dependencies({ invoke: async () => ({}) });
+    await expect(
+      executeMobileCommand(
+        command('mail.unstar', { accountID: 'account-1', threadID: 'thread-0' }),
+        user,
+        empty,
+      ),
+    ).rejects.toThrow('This conversation has no message to change.');
+  });
+
+  test('message targets need their thread', () => {
+    expect(() => command('mail.star', { accountID: 'account-1', messageID: 'message-1' })).toThrow();
   });
 
   test('provider failures propagate instead of being swallowed as applied', async () => {
@@ -175,42 +257,6 @@ describe('mail commands', () => {
 });
 
 describe('expanded mail commands', () => {
-  test('addLabel and removeLabel target the message and report the label delta', async () => {
-    const add = recordingDependencies();
-    const added = await executeMobileCommand(
-      command('mail.addLabel', {
-        accountID: 'account-1',
-        threadID: 'thread-1',
-        messageID: 'message-1',
-        label: 'MailOS/Receipts',
-      }),
-      user,
-      add.deps,
-    );
-    expect(add.calls).toEqual([
-      { name: 'add_label', args: { account: 'account-1', messageId: 'message-1', label: 'MailOS/Receipts' } },
-    ]);
-    expect(added).toMatchObject({
-      entityKind: 'message',
-      entityID: 'message-1',
-      syncPayload: { accountID: 'account-1', labelsAdded: ['MailOS/Receipts'] },
-    });
-
-    const remove = recordingDependencies();
-    const removed = await executeMobileCommand(
-      command('mail.removeLabel', {
-        accountID: 'account-1',
-        threadID: 'thread-1',
-        messageID: 'message-1',
-        label: 'MailOS/Receipts',
-      }),
-      user,
-      remove.deps,
-    );
-    expect(remove.calls[0].name).toBe('remove_label');
-    expect(removed.syncPayload).toEqual({ accountID: 'account-1', labelsRemoved: ['MailOS/Receipts'] });
-  });
-
   test('snooze converts the ISO deadline to epoch ms for the tool and the sync payload', async () => {
     const { calls, deps } = recordingDependencies();
     const untilAt = '2026-08-21T09:00:00.000Z';
@@ -244,6 +290,35 @@ describe('expanded mail commands', () => {
     });
   });
 
+  test('snooze and unsnooze need no message: the tool acts on the whole thread', async () => {
+    const { calls, deps } = recordingDependencies();
+    const untilAt = '2026-08-21T09:00:00.000Z';
+
+    await executeMobileCommand(
+      command('mail.snooze', { accountID: 'account-1', threadID: 'thread-7', untilAt }),
+      user,
+      deps,
+    );
+    await executeMobileCommand(
+      command('mail.unsnooze', { accountID: 'account-1', threadID: 'thread-7' }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([
+      {
+        name: 'snooze_thread',
+        args: {
+          account: 'account-1',
+          messageId: undefined,
+          threadId: 'thread-7',
+          untilTs: Date.parse(untilAt),
+        },
+      },
+      { name: 'unsnooze_thread', args: { account: 'account-1', messageId: undefined, threadId: 'thread-7' } },
+    ]);
+  });
+
   test('unsnooze clears the snooze with the explicit snoozeCleared flag', async () => {
     const { calls, deps } = recordingDependencies();
 
@@ -262,318 +337,17 @@ describe('expanded mail commands', () => {
     expect(result.syncPayload).toEqual({ accountID: 'account-1', snoozeCleared: true });
   });
 
-  test('mute and restore route through their thread tools', async () => {
-    const mute = recordingDependencies();
-    const muted = await executeMobileCommand(
-      command('mail.mute', { accountID: 'account-1', threadID: 'thread-5' }),
-      user,
-      mute.deps,
-    );
-    expect(mute.calls).toEqual([
-      { name: 'mute_thread', args: { account: 'account-1', threadId: 'thread-5' } },
-    ]);
-    expect(muted.syncPayload).toEqual({ accountID: 'account-1', muted: true });
-
+  test('restore routes through restore_from_trash and clears archived and trashed', async () => {
     const restore = recordingDependencies();
     const restored = await executeMobileCommand(
       command('mail.restore', { accountID: 'account-1', threadID: 'thread-6' }),
       user,
       restore.deps,
     );
-    expect(restore.calls[0].name).toBe('restore_from_trash');
-    expect(restored.syncPayload).toEqual({ accountID: 'account-1', archived: false, trashed: false });
-  });
-
-  test('send maps each mode onto its compose tool', async () => {
-    const fresh = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.send', {
-        accountID: 'account-1',
-        mode: 'new',
-        to: 'sam@example.com',
-        subject: 'Hello',
-        bodyText: 'Plain body',
-        bodyHTML: '<p>Plain body</p>',
-      }),
-      user,
-      fresh.deps,
-    );
-    expect(fresh.calls).toEqual([
-      {
-        name: 'send_message',
-        args: {
-          account: 'account-1',
-          to: 'sam@example.com',
-          cc: undefined,
-          bcc: undefined,
-          subject: 'Hello',
-          body: 'Plain body',
-          html: '<p>Plain body</p>',
-        },
-      },
+    expect(restore.calls).toEqual([
+      { name: 'restore_from_trash', args: { account: 'account-1', threadId: 'thread-6' } },
     ]);
-
-    const reply = recordingDependencies();
-    const replied = await executeMobileCommand(
-      command('mail.send', {
-        accountID: 'account-1',
-        mode: 'reply',
-        bodyText: 'Sounds good',
-        threadID: 'thread-7',
-        messageID: 'message-7',
-      }),
-      user,
-      reply.deps,
-    );
-    expect(reply.calls[0]).toEqual({
-      name: 'reply',
-      args: {
-        account: 'account-1',
-        messageId: 'message-7',
-        threadId: 'thread-7',
-        to: undefined,
-        cc: undefined,
-        bcc: undefined,
-        subject: undefined,
-        body: 'Sounds good',
-        html: undefined,
-      },
-    });
-    expect(replied).toMatchObject({ entityKind: 'thread', entityID: 'thread-7' });
-
-    const replyAll = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.send', {
-        accountID: 'account-1',
-        mode: 'replyAll',
-        to: ' kim@example.com ',
-        cc: 'lee@example.com',
-        bcc: '  ',
-        subject: 'Re: Plan',
-        bodyText: 'Everyone',
-        messageID: 'message-8',
-      }),
-      user,
-      replyAll.deps,
-    );
-    expect(replyAll.calls[0].name).toBe('reply_all');
-    // SEND-4: recipients the user edited on mobile reach the reply tool.
-    expect(replyAll.calls[0].args).toMatchObject({
-      to: 'kim@example.com',
-      cc: 'lee@example.com',
-      bcc: undefined,
-      subject: 'Re: Plan',
-    });
-
-    const forward = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.send', {
-        accountID: 'account-1',
-        mode: 'forward',
-        to: 'ari@example.com',
-        bodyText: 'FYI',
-        messageID: 'message-9',
-      }),
-      user,
-      forward.deps,
-    );
-    expect(forward.calls[0]).toEqual({
-      name: 'forward',
-      args: {
-        account: 'account-1',
-        messageId: 'message-9',
-        to: 'ari@example.com',
-        cc: undefined,
-        bcc: undefined,
-        body: 'FYI',
-        html: undefined,
-      },
-    });
-  });
-
-  test('send without a thread falls back to the idempotency key as identity', async () => {
-    const { deps } = recordingDependencies();
-    const result = await executeMobileCommand(
-      command(
-        'mail.send',
-        { accountID: 'account-1', mode: 'new', to: 'sam@example.com', subject: 'Hi', bodyText: 'Body' },
-        'send-key-1',
-      ),
-      user,
-      deps,
-    );
-    expect(result.entityID).toBe('send-key-1');
-    expect(result.syncPayload).toEqual({ accountID: 'account-1' });
-  });
-
-  test('send keys the sync change on the provider thread id when the tool reports one', async () => {
-    const { deps } = recordingDependencies({ ok: true, messageId: 'msg-9', threadId: 'thread-9' });
-    const result = await executeMobileCommand(
-      command(
-        'mail.send',
-        { accountID: 'account-1', mode: 'new', to: 'sam@example.com', subject: 'Hi', bodyText: 'Body' },
-        'send-key-2',
-      ),
-      user,
-      deps,
-    );
-    expect(result.entityID).toBe('thread-9');
-    expect(result.syncPayload).toEqual({ accountID: 'account-1' });
-  });
-
-  test('send prefers the thread the client already knows over the provider id', async () => {
-    const { deps } = recordingDependencies({ ok: true, threadId: 'provider-thread' });
-    const result = await executeMobileCommand(
-      command('mail.send', {
-        accountID: 'account-1',
-        mode: 'reply',
-        messageID: 'msg-1',
-        threadID: 'thread-1',
-        bodyText: 'Body',
-      }),
-      user,
-      deps,
-    );
-    expect(result.entityID).toBe('thread-1');
-  });
-
-  test('saveDraft converts scheduledFor to epoch ms on the create path', async () => {
-    const { calls, deps } = recordingDependencies({ ok: true, draft: { _id: 'draft-30' } });
-    await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        to: 'sam@example.com',
-        subject: 'Later',
-        bodyText: 'Body',
-        scheduledFor: '2026-08-20T09:00:00.000Z',
-      }),
-      user,
-      deps,
-    );
-    expect(calls[0].name).toBe('save_draft');
-    expect(calls[0].args.scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
-  });
-
-  test('saveDraft converts scheduledFor to epoch ms inside the update patch', async () => {
-    const { calls, deps } = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        draftID: 'draft-12',
-        to: 'sam@example.com',
-        subject: 'Later',
-        bodyText: 'Body',
-        scheduledFor: '2026-08-20T09:00:00.000Z',
-      }),
-      user,
-      deps,
-    );
-    expect(calls[0].name).toBe('update_draft');
-    expect((calls[0].args.patch as any).scheduledFor).toBe(Date.parse('2026-08-20T09:00:00.000Z'));
-  });
-
-  test('saveDraft leaves an existing schedule alone when scheduledFor is omitted', async () => {
-    const { calls, deps } = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        draftID: 'draft-12',
-        to: 'sam@example.com',
-        subject: 'Edited',
-        bodyText: 'Body',
-      }),
-      user,
-      deps,
-    );
-    expect('scheduledFor' in (calls[0].args.patch as any)).toBe(true);
-    expect((calls[0].args.patch as any).scheduledFor).toBeUndefined();
-  });
-
-  test('saveDraft with scheduleCleared sends an explicit null so the draft unschedules', async () => {
-    const { calls, deps } = recordingDependencies();
-    await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        draftID: 'draft-12',
-        to: 'sam@example.com',
-        subject: 'Now',
-        bodyText: 'Body',
-        scheduleCleared: true,
-      }),
-      user,
-      deps,
-    );
-    expect(calls[0].name).toBe('update_draft');
-    expect((calls[0].args.patch as any).scheduledFor).toBeNull();
-  });
-
-  test('saveDraft creates through save_draft and reports the stored draft id', async () => {
-    const { calls, deps } = recordingDependencies({
-      ok: true,
-      draft: { _id: 'draft-11' },
-      operationId: 'op-draft-11',
-    });
-
-    const result = await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        to: 'sam@example.com',
-        subject: 'Draft subject',
-        bodyText: 'Draft body',
-      }),
-      user,
-      deps,
-    );
-
-    expect(calls[0].name).toBe('save_draft');
-    expect(calls[0].args).toMatchObject({
-      account: 'account-1',
-      to: 'sam@example.com',
-      subject: 'Draft subject',
-      body: 'Draft body',
-    });
-    expect(result).toMatchObject({
-      operationID: 'op-draft-11',
-      entityKind: 'draft',
-      entityID: 'draft-11',
-      syncPayload: { accountID: 'account-1', draftID: 'draft-11' },
-    });
-  });
-
-  test('saveDraft with an existing id updates in place', async () => {
-    const { calls, deps } = recordingDependencies();
-
-    const result = await executeMobileCommand(
-      command('mail.saveDraft', {
-        accountID: 'account-1',
-        draftID: 'draft-12',
-        to: 'sam@example.com',
-        subject: 'Edited',
-        bodyText: 'Edited body',
-      }),
-      user,
-      deps,
-    );
-
-    expect(calls[0].name).toBe('update_draft');
-    expect(calls[0].args).toMatchObject({
-      id: 'draft-12',
-      patch: { subject: 'Edited', body: 'Edited body' },
-    });
-    expect(result.entityID).toBe('draft-12');
-  });
-
-  test('deleteDraft reports the deletion in the sync payload', async () => {
-    const { calls, deps } = recordingDependencies();
-
-    const result = await executeMobileCommand(
-      command('mail.deleteDraft', { accountID: 'account-1', draftID: 'draft-13' }),
-      user,
-      deps,
-    );
-
-    expect(calls).toEqual([{ name: 'delete_draft', args: { id: 'draft-13' } }]);
-    expect(result.syncPayload).toEqual({ accountID: 'account-1', draftID: 'draft-13', deleted: true });
+    expect(restored.syncPayload).toEqual({ accountID: 'account-1', archived: false, trashed: false });
   });
 });
 
@@ -674,88 +448,9 @@ describe('calendar commands', () => {
 
     expect(approvalInput?.detail).toBe('2 attendees will be notified.');
   });
-
-  test('calendar.resync hands the reason to the shared resync helper without a sync change', async () => {
-    const calls: Array<Record<string, unknown>> = [];
-    const deps = dependencies({
-      resyncCalendar: async (input: Record<string, unknown>) => {
-        calls.push(input);
-        return { started: true, lastSyncedAt: null };
-      },
-    });
-
-    const result = await executeMobileCommand(
-      command('calendar.resync', { accountID: 'account-1', reason: 'pull' }),
-      user,
-      deps,
-    );
-
-    expect(calls).toEqual([{ userId: user.userId, accountId: 'account-1', reason: 'pull' }]);
-    expect(result).toEqual({ status: 'applied', syncDomain: 'calendar' });
-    expect(mobileCommandDomain(command('calendar.resync', { reason: 'view_open' }))).toBe('calendar');
-  });
-
-  test('calendar.resync accepts the three client reasons only', () => {
-    expect(() => command('calendar.resync', { reason: 'post_mutation' })).toThrow();
-    expect(() => command('calendar.resync', { reason: 'view_open', extra: true })).toThrow();
-    expect(command('calendar.resync', { reason: 'manual_http' }).payload).toEqual({ reason: 'manual_http' });
-  });
 });
 
 describe('task commands', () => {
-  test('task.create maps mobile fields onto the audited card tool', async () => {
-    const { calls, deps } = recordingDependencies({ cardId: 'card-9', operationId: 'op-card-9' });
-
-    const result = await executeMobileCommand(
-      command('task.create', {
-        boardID: 'board-1',
-        column: 'Today',
-        title: 'Ship mobile tests',
-        description: 'Add coverage',
-        priority: 'high',
-        dueAt: '2026-07-22T12:00:00.000Z',
-      }),
-      user,
-      deps,
-    );
-
-    expect(calls).toEqual([
-      {
-        name: 'tasks_create_card',
-        args: {
-          boardId: 'board-1',
-          column: 'Today',
-          title: 'Ship mobile tests',
-          description: 'Add coverage',
-          priority: 'high',
-          dueIso: '2026-07-22T12:00:00.000Z',
-          source: { kind: 'manual' },
-        },
-      },
-    ]);
-    expect(result).toMatchObject({
-      status: 'applied',
-      operationID: 'op-card-9',
-      syncDomain: 'tasks',
-      entityKind: 'task',
-      entityID: 'card-9',
-      syncPayload: { cardID: 'card-9', title: 'Ship mobile tests' },
-    });
-  });
-
-  test('task.create falls back to the idempotency key when the tool returns no card id', async () => {
-    const { deps } = recordingDependencies({ ok: true });
-
-    const result = await executeMobileCommand(
-      command('task.create', { title: 'Untracked' }, 'task-key-1'),
-      user,
-      deps,
-    );
-
-    expect(result.entityID).toBe('task-key-1');
-    expect(result.syncPayload).toEqual({ cardID: 'task-key-1', title: 'Untracked' });
-  });
-
   test('task.setCompleted round-trips the completion state', async () => {
     const { calls, deps } = recordingDependencies({ operationId: 'op-complete' });
 
@@ -774,44 +469,7 @@ describe('task commands', () => {
   });
 });
 
-describe('work capture command', () => {
-  test('delegates to captureWork and surfaces split results', async () => {
-    const captures: Array<Record<string, unknown>> = [];
-    const deps = dependencies({
-      capture: async (input: Record<string, unknown>) => {
-        captures.push(input);
-        return { captureId: 'capture-7', status: 'split' as const, workIds: ['work-7', 'work-8'] };
-      },
-    });
-
-    const result = await executeMobileCommand(
-      command('work.capture', {
-        rawText: 'renew passport and file taxes',
-        transcript: 'renew passport and file taxes',
-        source: 'voice',
-        areaID: 'area-1',
-      }),
-      user,
-      deps,
-    );
-
-    expect(captures).toEqual([
-      {
-        rawText: 'renew passport and file taxes',
-        transcript: 'renew passport and file taxes',
-        source: 'voice',
-        areaId: 'area-1',
-      },
-    ]);
-    expect(result).toEqual({
-      status: 'applied',
-      syncDomain: 'work',
-      entityKind: 'work',
-      entityID: 'work-7',
-      syncPayload: { captureID: 'capture-7', workIDs: ['work-7', 'work-8'], fallback: false },
-    });
-  });
-
+describe('work horizon command', () => {
   test('work.setHorizon converts ISO dates to epoch ms and reports the stored horizon', async () => {
     const calls: Array<Record<string, unknown>> = [];
     const deps = dependencies({
@@ -888,97 +546,6 @@ describe('work capture command', () => {
     expect(command('work.setHorizon', { workID: 'w', horizon: { kind: 'someday' } }).payload).toEqual({
       workID: 'w',
       horizon: { kind: 'someday' },
-    });
-  });
-
-  test('a fallback capture keeps the capture id as identity and reports the fallback', async () => {
-    const deps = dependencies({
-      capture: async () => ({
-        captureId: 'capture-8',
-        status: 'split' as const,
-        workIds: [],
-        fallback: true,
-      }),
-    });
-
-    const result = await executeMobileCommand(
-      command('work.capture', { rawText: 'note', source: 'text' }),
-      user,
-      deps,
-    );
-
-    expect(result.entityID).toBe('capture-8');
-    expect(result.syncPayload).toMatchObject({ fallback: true, workIDs: [] });
-  });
-});
-
-describe('approval commands', () => {
-  test('approve prefers the nested execution operation id and undo window', async () => {
-    const { calls, deps } = recordingDependencies({
-      result: { operationId: 'op-nested' },
-      approval: { undoExpiresAt: 2_400 },
-    });
-
-    const result = await executeMobileCommand(
-      command('approval.approve', { approvalID: 'approval-3', editedArguments: { title: 'Edited' } }),
-      user,
-      deps,
-    );
-
-    expect(calls).toEqual([
-      {
-        name: 'albatross_approve_action',
-        args: { approvalId: 'approval-3', editedArgs: { title: 'Edited' } },
-      },
-    ]);
-    expect(result).toEqual({
-      status: 'applied',
-      operationID: 'op-nested',
-      undoExpiresAt: 2_400,
-      syncDomain: 'activity',
-      entityKind: 'approval',
-      entityID: 'approval-3',
-      syncPayload: { approvalID: 'approval-3', status: 'approved' },
-    });
-  });
-
-  test('approve falls back to a top-level operation id and tolerates junk metadata', async () => {
-    const { deps } = recordingDependencies({ operationId: 'op-top', approval: { undoExpiresAt: 'soon' } });
-
-    const result = await executeMobileCommand(
-      command('approval.approve', { approvalID: 'approval-4' }),
-      user,
-      deps,
-    );
-
-    expect(result.operationID).toBe('op-top');
-    expect(result.undoExpiresAt).toBeUndefined();
-
-    const junk = recordingDependencies({ result: { operationId: 42 } });
-    const junkResult = await executeMobileCommand(
-      command('approval.approve', { approvalID: 'approval-5' }),
-      user,
-      junk.deps,
-    );
-    expect(junkResult.operationID).toBeUndefined();
-  });
-
-  test('reject records the rejection with its reason', async () => {
-    const { calls, deps } = recordingDependencies({ ok: true });
-
-    const result = await executeMobileCommand(
-      command('approval.reject', { approvalID: 'approval-6', reason: 'Wrong time.' }),
-      user,
-      deps,
-    );
-
-    expect(calls).toEqual([
-      { name: 'albatross_reject_action', args: { approvalId: 'approval-6', reason: 'Wrong time.' } },
-    ]);
-    expect(result).toMatchObject({
-      status: 'applied',
-      entityID: 'approval-6',
-      syncPayload: { approvalID: 'approval-6', status: 'rejected' },
     });
   });
 });

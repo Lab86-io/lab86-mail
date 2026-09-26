@@ -50,59 +50,63 @@ struct MailView: View {
     var body: some View {
         @Bindable var navigation = environment.navigation
         List(selection: $selectedThreadKeys) {
-            // The category strip is the list's first (non-pinned) row so the
-            // inbox starts immediately beneath the navigation bar — no stacked
-            // large-title/top-inset blank band. Date groups stay pinned.
-            Section {
-                categoryPills
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                // A mailbox whose sign-in ended is not a mail scope until it
-                // reconnects. Say so where the mail would be.
-                ForEach(environment.store.reconnectAccounts) { account in
-                    reconnectRow(account)
-                }
-            }
-            if filteredThreads.isEmpty {
-                if Self.showsLoadMoreRow(
-                    hasMore: environment.store.hasMoreMail(in: listScope)
-                        || environment.store.isLoadingMail(in: listScope),
-                    accountScope: accountScope,
-                    query: effectiveQuery
-                ) {
-                    // Older pages may still hold this scope's mail. Keep
-                    // asking instead of calling the view empty.
-                    loadMoreRow
-                } else {
-                    ContentUnavailableView(
-                        searchText.isEmpty ? "No mail here" : "No matching mail",
-                        systemImage: searchText.isEmpty ? "tray" : "magnifyingglass",
-                        description: Text(searchText.isEmpty
-                            ? "Try another account or category, or pull to refresh."
-                            : "Try a different search.")
-                    )
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                }
+            if mailboxScope == .snoozed {
+                snoozedSection(navigation: navigation)
             } else {
-                ForEach(groupedThreads) { group in
-                    Section {
-                        ForEach(group.threads) { thread in
-                            threadRow(thread, navigation: navigation)
-                        }
-                    } header: {
-                        MailDateline(label: group.label)
+                // The category strip is the list's first (non-pinned) row so the
+                // inbox starts immediately beneath the navigation bar — no stacked
+                // large-title/top-inset blank band. Date groups stay pinned.
+                Section {
+                    categoryPills
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    // A mailbox whose sign-in ended is not a mail scope until it
+                    // reconnects. Say so where the mail would be.
+                    ForEach(environment.store.reconnectAccounts) { account in
+                        reconnectRow(account)
                     }
                 }
-                // Older pages stream in beneath the list as this row scrolls
-                // into view; the unified cursor comes from the typed v1 reads.
-                if Self.showsLoadMoreRow(
-                    hasMore: environment.store.hasMoreMail(in: listScope),
-                    accountScope: accountScope,
-                    query: effectiveQuery
-                ) {
-                    loadMoreRow
+                if filteredThreads.isEmpty {
+                    if Self.showsLoadMoreRow(
+                        hasMore: environment.store.hasMoreMail(in: listScope)
+                            || environment.store.isLoadingMail(in: listScope),
+                        accountScope: accountScope,
+                        query: effectiveQuery
+                    ) {
+                        // Older pages may still hold this scope's mail. Keep
+                        // asking instead of calling the view empty.
+                        loadMoreRow
+                    } else {
+                        ContentUnavailableView(
+                            searchText.isEmpty ? "No mail here" : "No matching mail",
+                            systemImage: searchText.isEmpty ? "tray" : "magnifyingglass",
+                            description: Text(searchText.isEmpty
+                                ? "Try another account or category, or pull to refresh."
+                                : "Try a different search.")
+                        )
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
+                } else {
+                    ForEach(groupedThreads) { group in
+                        Section {
+                            ForEach(group.threads) { thread in
+                                threadRow(thread, navigation: navigation)
+                            }
+                        } header: {
+                            MailDateline(label: group.label)
+                        }
+                    }
+                    // Older pages stream in beneath the list as this row scrolls
+                    // into view; the unified cursor comes from the typed v1 reads.
+                    if Self.showsLoadMoreRow(
+                        hasMore: environment.store.hasMoreMail(in: listScope),
+                        accountScope: accountScope,
+                        query: effectiveQuery
+                    ) {
+                        loadMoreRow
+                    }
                 }
             }
         }
@@ -196,11 +200,13 @@ struct MailView: View {
                     Label(scopeTitle, systemImage: "line.3.horizontal.decrease.circle")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(editMode.isEditing ? "Done" : "Select") {
-                    withAnimation {
-                        editMode = editMode.isEditing ? .inactive : .active
-                        if !editMode.isEditing { selectedThreadKeys.removeAll() }
+            if mailboxScope != .snoozed {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(editMode.isEditing ? "Done" : "Select") {
+                        withAnimation {
+                            editMode = editMode.isEditing ? .inactive : .active
+                            if !editMode.isEditing { selectedThreadKeys.removeAll() }
+                        }
                     }
                 }
             }
@@ -228,8 +234,10 @@ struct MailView: View {
                 isSearchFocused = true
             }
             if let raw = environment.navigation.pendingMailCategory {
-                selection = MailScopeSelection.from(raw: raw)
-                environment.navigation.pendingMailCategory = nil
+                showCategory(raw)
+            }
+            if let mailbox = environment.navigation.pendingMailbox {
+                showMailbox(mailbox)
             }
         }
         .onChange(of: environment.navigation.pendingMailSearch) { _, _ in
@@ -239,11 +247,25 @@ struct MailView: View {
         }
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }
-            selection = MailScopeSelection.from(raw: raw)
-            environment.navigation.pendingMailCategory = nil
+            showCategory(raw)
+        }
+        .onChange(of: environment.navigation.pendingMailbox) { _, mailbox in
+            guard let mailbox else { return }
+            showMailbox(mailbox)
         }
         .onChange(of: selection, initial: true) { _, value in
             environment.navigation.mailLabelID = value.labelID
+        }
+        .onChange(of: mailboxScope, initial: true) { _, value in
+            environment.navigation.mailbox = value
+            if value == .snoozed {
+                editMode = .inactive
+                selectedThreadKeys.removeAll()
+            }
+        }
+        .task(id: mailboxScope) {
+            guard mailboxScope == .snoozed else { return }
+            await environment.store.refreshSnoozed()
         }
         .task(id: effectiveQuery) {
             let query = effectiveQuery
@@ -306,7 +328,13 @@ struct MailView: View {
         .task(id: "\(listScope.key)|\(environment.store.mailScopeGeneration)") {
             await environment.store.loadMailScope(listScope)
         }
-        .refreshable { await environment.store.refreshMail() }
+        .refreshable {
+            if mailboxScope == .snoozed {
+                await environment.store.refreshSnoozed()
+            } else {
+                await environment.store.refreshMail()
+            }
+        }
         .alert(
             "Mail couldn’t finish that",
             isPresented: Binding(
@@ -412,6 +440,91 @@ struct MailView: View {
             }
             }
         }
+    }
+
+    // A category or label request from the sidebar leaves the Snoozed mailbox.
+    private func showCategory(_ raw: String) {
+        selection = MailScopeSelection.from(raw: raw)
+        if mailboxScope == .snoozed { mailboxScope = .inbox }
+        environment.navigation.pendingMailCategory = nil
+    }
+
+    private func showMailbox(_ mailbox: MailboxScope) {
+        mailboxScope = mailbox
+        environment.navigation.pendingMailbox = nil
+    }
+
+    // The Snoozed mailbox: mail that comes back to the inbox later. No search
+    // or label finds it, so the rows come from `list_snoozed`.
+    @ViewBuilder
+    private func snoozedSection(navigation: NavigationModel) -> some View {
+        let rows = visibleSnoozedThreads
+        if rows.isEmpty {
+            if environment.store.isLoadingSnoozed && !environment.store.snoozedDidLoad {
+                HStack {
+                    Spacer()
+                    ProgressView("Loading snoozed mail…")
+                    Spacer()
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            } else if let error = environment.store.snoozedError, !environment.store.snoozedDidLoad {
+                ContentUnavailableView {
+                    Label("Could not load snoozed mail", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try Again") { Task { await environment.store.refreshSnoozed() } }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } else {
+                ContentUnavailableView(
+                    "Nothing is snoozed",
+                    systemImage: "clock",
+                    description: Text(searchText.isEmpty
+                        ? "Snoozed mail comes back to the inbox at its time."
+                        : "Try a different search.")
+                )
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        } else {
+            Section {
+                ForEach(rows) { row in
+                    MailSnoozedRow(
+                        row: row,
+                        showsAccount: environment.store.accounts.count > 1,
+                        onOpen: {
+                            navigation.threadRoute = ThreadRoute(accountID: row.accountID, threadID: row.threadID)
+                        },
+                        onUnsnooze: {
+                            Task { await environment.store.unsnooze(row) }
+                        }
+                    )
+                    .listRowBackground(Color.clear)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button("Unsnooze", systemImage: "clock.arrow.circlepath") {
+                            Task { await environment.store.unsnooze(row) }
+                        }
+                        .tint(.indigo)
+                    }
+                    .contextMenu {
+                        Button("Unsnooze", systemImage: "clock.arrow.circlepath") {
+                            Task { await environment.store.unsnooze(row) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var visibleSnoozedThreads: [MailSnoozedThread] {
+        MailSnoozedThread.filter(
+            environment.store.snoozedThreads,
+            accounts: accountScope,
+            query: searchText
+        )
     }
 
     // Smart categories as a scrolling row of text pills — the desktop rail's
@@ -649,9 +762,7 @@ struct MailView: View {
                 let threads = recentlyRemoved
                 recentlyRemoved = []
                 bulkActionLabel = nil
-                Task {
-                    for thread in threads { await environment.store.restore(thread) }
-                }
+                Task { await environment.store.bulkRestore(threads) }
             }
             .buttonStyle(.borderedProminent)
         }
@@ -889,9 +1000,10 @@ struct MailScopeSelection: Hashable {
 }
 
 enum MailboxScope: String, CaseIterable, Identifiable {
-    // No Snoozed scope: a snoozed thread is archived now and comes back by
-    // itself, and no search finds the active snoozes (audit MUT-1).
-    case inbox, unread, starred, important, attachments, thisWeek, sent, drafts, allMail, trash
+    // Snoozed has no query: a snoozed thread is archived now and comes back
+    // by itself, so no search finds it (audit MUT-1). Its rows come from
+    // `list_snoozed` instead.
+    case inbox, unread, starred, important, attachments, thisWeek, snoozed, sent, drafts, allMail, trash
     var id: Self { self }
     var title: String {
         switch self {
@@ -901,6 +1013,7 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .important: "Important"
         case .attachments: "Attachments"
         case .thisWeek: "This Week"
+        case .snoozed: "Snoozed"
         case .sent: "Sent"
         case .drafts: "Drafts"
         case .allMail: "All Mail"
@@ -915,6 +1028,7 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .important: "tag"
         case .attachments: "paperclip"
         case .thisWeek: "calendar"
+        case .snoozed: "clock"
         case .sent: "paperplane"
         case .drafts: "doc"
         case .allMail: "tray.full"
@@ -929,6 +1043,7 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .important: "label:IMPORTANT"
         case .attachments: "has:attachment"
         case .thisWeek: "newer_than:7d"
+        case .snoozed: nil
         case .sent: "in:sent"
         case .drafts: "in:drafts"
         case .allMail: "-in:trash"
@@ -1067,6 +1182,55 @@ private struct MailThreadRow: View {
         } else {
             InitialsAvatar(name: thread.sender, size: 40)
         }
+    }
+}
+
+// One snoozed thread: who and what, when it comes back, and Unsnooze.
+private struct MailSnoozedRow: View {
+    @Environment(AppEnvironment.self) private var environment
+    let row: MailSnoozedThread
+    let showsAccount: Bool
+    let onOpen: () -> Void
+    let onUnsnooze: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(senderLine)
+                        .font(environment.theme.displayType.displayFont(size: 16, weight: .regular))
+                        .lineLimit(1)
+                    Text(row.subject)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                    if !row.snippet.isEmpty {
+                        Text(row.snippet)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(row.subject)")
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(row.returnLabel())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                Button("Unsnooze", action: onUnsnooze)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var senderLine: String {
+        guard showsAccount, let email = row.accountEmail else { return row.senderDisplayName }
+        return "\(row.senderDisplayName) · \(email)"
     }
 }
 

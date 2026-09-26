@@ -9,7 +9,7 @@ import { documentPreviewPages } from '../lib/documents/preview';
 import { __setDocumentServiceDepsForTest, createDocument } from '../lib/documents/service';
 import type { SyncConnectionDeps } from '../lib/mcp/sync';
 import { syncConnection } from '../lib/mcp/sync';
-import { mailThreadDetailFromTool, mailThreadSummaryFromCorpus } from '../lib/mobile/v1/mail-reads';
+import { mailThreadSummaryFromCorpus } from '../lib/mobile/v1/mail-reads';
 import { buildAPNsPayload } from '../lib/notifications/apns';
 import { dispatchNativeNotification } from '../lib/notifications/native-delivery';
 import { searchIndexedContent } from '../lib/search/global-search';
@@ -109,17 +109,6 @@ describe('native payloads keep whole emoji at their caps', () => {
       subject: `Hi ${EMOJI}`,
       snippet: 'ok',
     });
-
-    const detail = mailThreadDetailFromTool(
-      {
-        subject: 'Trip',
-        messages: [{ _id: 'm1', date: 1, from: 'A <a@example.com>', textBody: `Body ${HIGH}` }],
-      },
-      'account-1',
-      'thread-1',
-    );
-    expect(detail.messages[0].bodyText).toBe('Body \uFFFD');
-    expectValidJson(detail);
   });
 });
 

@@ -251,12 +251,6 @@ struct Lab86MailTests {
         }
     }
 
-    private actor FailingMailTools: ToolInvoking {
-        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
-            throw StubMailError.failed
-        }
-    }
-
     private actor UnauthorizedMailTools: ToolInvoking {
         func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
             throw BackendError.unauthorized
@@ -1395,9 +1389,13 @@ struct Lab86MailTests {
             from: Data(#"{"providerThreadId":"thread-1","accountId":"account-1","subject":"Keep me","fromAddress":"ari@example.com","snippet":"Important","lastDate":1752600000000}"#.utf8)
         )
         let thread = try #require(MailThreadSummary(json: value))
+        // The outbox reports a final failure from the provider (NAT-10).
+        let queue = FakeMailCommandQueue()
+        queue.flushResult = (.failed, false, "Provider rejected the action.")
         let store = ProductStore(
-            tools: FailingMailTools(),
-            backend: BackendClient(baseURL: nil)
+            tools: RecordingTools(),
+            backend: BackendClient(baseURL: nil),
+            mailCommands: queue
         )
         store.threads = [thread]
         store.searchedThreads = [thread]
@@ -2019,13 +2017,8 @@ struct Lab86MailTests {
         let outbox = CommandOutbox(modelContainer: container)
         _ = try await outbox.enqueue(
             ownerID: "user-one",
-            command: .workCapture(
-                WorkCaptureCommandPayload(
-                    rawText: "Prepare the release",
-                    transcript: nil,
-                    source: .text,
-                    areaID: nil
-                )
+            command: .workListAdd(
+                WorkListAddCommandPayload(workID: "work-1", text: "Prepare the release")
             ),
             idempotencyKey: "capture-retry"
         )
@@ -2058,8 +2051,8 @@ struct Lab86MailTests {
         let outbox = CommandOutbox(modelContainer: container)
         _ = try await outbox.enqueue(
             ownerID: "user-one",
-            command: .approvalReject(
-                ApprovalRejectCommandPayload(approvalID: "approval-1", reason: nil)
+            command: .mailUnsnooze(
+                MailUnsnoozeCommandPayload(accountID: "account-1", threadID: "thread-1")
             ),
             idempotencyKey: "reject-failed"
         )
@@ -2149,36 +2142,6 @@ struct Lab86MailTests {
         }
         #expect(try await repository.cachedAccounts(ownerID: "user-one").isEmpty)
         #expect(try await repository.cachedAccounts(ownerID: "user-two").isEmpty)
-    }
-
-    @Test
-    func generatedSyncEnvelopeMapsToTypedDomainChangesAndRejectsDomainDrift() throws {
-        let envelope = try JSONDecoder().decode(
-            Components.Schemas.SyncEnvelope.self,
-            from: Data(
-                #"{"items":[{"domain":"tasks","entityKind":"task","entityID":"card-1","revision":2,"operation":"upsert","payload":{"cardID":"card-1","completed":true}}],"deletedIDs":[],"cursor":"2","serverRevision":2,"hasMore":false}"#.utf8
-            )
-        )
-
-        let page = try MobileV1Client.syncPage(from: envelope, requestedDomain: .tasks)
-        #expect(page.domain == .tasks)
-        #expect(page.cursor == "2")
-        #expect(page.serverRevision == 2)
-        #expect(page.changes == [
-            .task(
-                TaskSyncPatch(
-                    entityID: "card-1",
-                    revision: 2,
-                    cardID: "card-1",
-                    title: nil,
-                    completed: true
-                )
-            ),
-        ])
-
-        #expect(throws: MobileV1ClientError.invalidSyncPayload) {
-            try MobileV1Client.syncPage(from: envelope, requestedDomain: .calendar)
-        }
     }
 
     @Test @MainActor

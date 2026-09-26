@@ -33,6 +33,17 @@ private struct AreaIndexStatusPayload: Decodable, Sendable {
 @MainActor
 @Observable
 final class ProductStore {
+    private struct PendingMailCommand {
+        let command: DurableMobileCommand
+        let rollBack: @MainActor () -> Void
+    }
+
+    // One mail list action and the row it came from, when there is one.
+    private struct MailAction {
+        let command: DurableMobileCommand
+        let thread: MailThreadSummary?
+    }
+
     private struct MailStateOverride {
         var unread: Bool? = nil
         var starred: Bool? = nil
@@ -47,6 +58,12 @@ final class ProductStore {
     private let convex: ConvexClientWithAuth<String>?
     // Typed v1 paged mail reads; nil keeps the legacy per-account tool path.
     private let mailPages: (any MailPageFetching)?
+    // The durable path for mail list actions (NAT-10). Nil where nothing acts
+    // on mail (previews and some tests); an action there reports an error.
+    private let mailCommands: (any MailCommandQueueing)?
+    // Mail list actions not settled yet, by idempotency key, with what
+    // undoes their change on screen after a final failure.
+    private var pendingMailCommands: [String: PendingMailCommand] = [:]
     private var cacheOwner: String?
     private var liveMailTask: Task<Void, Never>?
     private var mailStateOverrides: [String: MailStateOverride] = [:]
@@ -73,6 +90,11 @@ final class ProductStore {
     private(set) var mailScopeGeneration = 0
     // Enabled custom labels the user shows in the sidebar (NAT-4).
     var mailLabels: [MailLabelSummary] = []
+    // The Snoozed mailbox: active snoozes from `list_snoozed`, newest first.
+    var snoozedThreads: [MailSnoozedThread] = []
+    var isLoadingSnoozed = false
+    var snoozedDidLoad = false
+    var snoozedError: String?
     var searchedThreads: [MailThreadSummary] = []
     var completedMailSearchQuery: String?
     var isSearchingMail = false
@@ -169,7 +191,8 @@ final class ProductStore {
         convex: ConvexClientWithAuth<String>? = nil,
         cache: ProductCache = .shared,
         spotlight: any MailSpotlightIndexing = MailSpotlightIndexer.shared,
-        mailPages: (any MailPageFetching)? = nil
+        mailPages: (any MailPageFetching)? = nil,
+        mailCommands: (any MailCommandQueueing)? = nil
     ) {
         self.tools = tools
         self.backend = backend
@@ -177,6 +200,7 @@ final class ProductStore {
         self.cache = cache
         self.spotlight = spotlight
         self.mailPages = mailPages
+        self.mailCommands = mailCommands
     }
 
     func bootstrap(cacheOwner: String? = nil) async {
@@ -1714,6 +1738,23 @@ final class ProductStore {
         }
     }
 
+    /// "Not related" on a mail proof offer. The server keeps each Work and
+    /// thread pair, and the proof matches leave them out on every device
+    /// after that. True when the server saved them.
+    @discardableResult
+    func dismissProofOffer(accountID: String, threadID: String, workIDs: [String]) async -> Bool {
+        guard let body = ProofDismissalRequest.body(accountID: accountID, threadID: threadID, workIDs: workIDs) else {
+            return true
+        }
+        do {
+            let result = try await backend.post(path: ProofDismissalRequest.path, body: body)
+            return result["ok"]?.boolValue == true
+        } catch {
+            // The offer stays hidden in this view; it can come back later.
+            return false
+        }
+    }
+
     func attachMailProof(
         _ candidate: WorkProofCandidate,
         route: ThreadRoute,
@@ -1817,78 +1858,283 @@ final class ProductStore {
         return MailThreadDetail(json: result)
     }
 
-    func archive(_ thread: MailThreadSummary) async {
-        suppressedMailThreads.insert(mailKey(thread))
-        let removed = removeThreadOptimistically(thread)
-        do {
-            _ = try await tools.invoke(
-                "archive_thread",
-                arguments: ["account": .string(thread.accountID), "threadId": .string(thread.id)]
-            )
-            await persistCache()
-            await syncMailIndex()
-        } catch {
-            suppressedMailThreads.remove(mailKey(thread))
-            restoreThread(removed)
-            recordMail(error)
-        }
-    }
+    // MARK: - Mail list actions (NAT-10)
 
-    func markRead(_ thread: MailThreadSummary) async {
-        setMailOverride(thread: thread, unread: false)
-        let changed = setUnread(false, thread: thread)
-        do {
-            _ = try await tools.invoke(
-                "mark_thread_read",
-                arguments: ["account": .string(thread.accountID), "threadId": .string(thread.id)]
-            )
-            await persistCache()
-        } catch {
-            clearMailOverride(thread)
-            if changed { _ = setUnread(thread.unread, thread: thread) }
-            recordMail(error)
-        }
+    // Each action goes through the command outbox, so it survives going
+    // offline and a relaunch. The change shows at once; a final failure
+    // rolls it back and says why.
+
+    func archive(_ thread: MailThreadSummary) async {
+        await dispatchMail([MailAction(command: .mailArchive(Self.target(thread)), thread: thread)])
     }
 
     func trash(_ thread: MailThreadSummary) async {
-        suppressedMailThreads.insert(mailKey(thread))
-        let removed = removeThreadOptimistically(thread)
-        do {
-            _ = try await tools.invoke(
-                "trash_thread",
-                arguments: ["account": .string(thread.accountID), "threadId": .string(thread.id)]
-            )
-            await persistCache()
-            await syncMailIndex()
-        } catch {
-            suppressedMailThreads.remove(mailKey(thread))
-            restoreThread(removed)
-            recordMail(error)
-        }
+        await dispatchMail([MailAction(command: .mailTrash(Self.target(thread)), thread: thread)])
     }
 
     func restore(_ thread: MailThreadSummary) async {
-        do {
-            _ = try await tools.invoke(
-                "restore_from_trash",
-                arguments: ["account": .string(thread.accountID), "threadId": .string(thread.id)]
-            )
-            if !threads.contains(where: { mailKey($0) == mailKey(thread) }) {
-                threads.insert(thread, at: 0)
-            }
-            suppressedMailThreads.remove(mailKey(thread))
-            await persistCache()
-        } catch {
-            recordMail(error)
-        }
+        await dispatchMail([MailAction(command: .mailRestore(Self.target(thread)), thread: thread)])
     }
 
     func bulkArchive(_ selected: [MailThreadSummary]) async {
-        for thread in selected { await archive(thread) }
+        await dispatchMail(selected.map { MailAction(command: .mailArchive(Self.target($0)), thread: $0) })
     }
 
     func bulkTrash(_ selected: [MailThreadSummary]) async {
-        for thread in selected { await trash(thread) }
+        await dispatchMail(selected.map { MailAction(command: .mailTrash(Self.target($0)), thread: $0) })
+    }
+
+    func bulkRestore(_ selected: [MailThreadSummary]) async {
+        await dispatchMail(selected.map { MailAction(command: .mailRestore(Self.target($0)), thread: $0) })
+    }
+
+    func markRead(_ thread: MailThreadSummary) async {
+        await dispatchMail([MailAction(command: .mailMarkRead(Self.target(thread)), thread: thread)])
+    }
+
+    // The server marks the newest message of the thread unread.
+    func markUnread(_ thread: MailThreadSummary) async {
+        await dispatchMail([MailAction(command: .mailMarkUnread(Self.messageTarget(thread)), thread: thread)])
+    }
+
+    // The server stars or unstars the newest message of the thread.
+    func setStarred(_ starred: Bool, thread: MailThreadSummary) async {
+        let target = Self.messageTarget(thread)
+        await dispatchMail([MailAction(command: starred ? .mailStar(target) : .mailUnstar(target), thread: thread)])
+    }
+
+    // Snooze archives the thread now; the server brings it back at `until`.
+    func snooze(_ thread: MailThreadSummary, until: Date) async {
+        let payload = MailSnoozeCommandPayload(accountID: thread.accountID, threadID: thread.id, untilAt: until)
+        await dispatchMail([MailAction(command: .mailSnooze(payload), thread: thread)])
+    }
+
+    // Brings a snoozed thread back to the inbox now.
+    func unsnooze(_ snoozed: MailSnoozedThread) async {
+        let payload = MailUnsnoozeCommandPayload(
+            accountID: snoozed.accountID,
+            threadID: snoozed.threadID,
+            messageID: snoozed.messageID
+        )
+        await dispatchMail([MailAction(command: .mailUnsnooze(payload), thread: snoozed.summary)])
+    }
+
+    func performMailNotificationAction(action: String, accountID: String, threadID: String) async {
+        let target = MailThreadCommandTarget(accountID: accountID, threadID: threadID)
+        switch action {
+        case "mark_read": await dispatchMail([MailAction(command: .mailMarkRead(target), thread: nil)])
+        case "archive": await dispatchMail([MailAction(command: .mailArchive(target), thread: nil)])
+        default: return
+        }
+    }
+
+    /// Loads the Snoozed mailbox. A thread whose wake the outbox has not
+    /// settled stays off the list.
+    func refreshSnoozed() async {
+        isLoadingSnoozed = true
+        defer { isLoadingSnoozed = false }
+        do {
+            let result = try await tools.invoke("list_snoozed", arguments: ["limit": .number(200)])
+            let waking = Set(pendingMailCommands.values.compactMap { pending -> String? in
+                guard case .mailUnsnooze(let payload) = pending.command else { return nil }
+                return mailKey(accountID: payload.accountID, threadID: payload.threadID)
+            })
+            snoozedThreads = (result["snoozed"]?.arrayValue ?? [])
+                .compactMap(MailSnoozedThread.init(json:))
+                .filter { !waking.contains($0.threadKey) }
+            snoozedDidLoad = true
+            snoozedError = nil
+        } catch {
+            snoozedError = error.localizedDescription
+        }
+    }
+
+    /// Brings the lists in line with the outbox. A confirmed action keeps
+    /// its change. A final failure rolls its change back and says why. An
+    /// action that still waits keeps its change, also after a relaunch.
+    func reconcileMailCommands(_ commands: [PendingCommandSnapshot]) async {
+        var changed = false
+        var failures: [PendingMailCommand] = []
+        for command in commands {
+            let key = command.idempotencyKey
+            switch MailCommandPhase(command) {
+            case .waiting:
+                guard pendingMailCommands[key] == nil else { continue }
+                // The app relaunched while this action waited: show it again.
+                pendingMailCommands[key] = PendingMailCommand(
+                    command: command.command,
+                    rollBack: applyMailChange(command.command, thread: nil)
+                )
+                changed = true
+            case .confirmed:
+                guard pendingMailCommands.removeValue(forKey: key) != nil else { continue }
+                changed = true
+            case .failed(let message):
+                guard let pending = pendingMailCommands.removeValue(forKey: key) else { continue }
+                failures.append(pending)
+                if mailErrorMessage == nil { mailErrorMessage = message }
+                changed = true
+            }
+        }
+        // Newest first, so two changes to one thread undo in the right order.
+        for failure in failures.reversed() { failure.rollBack() }
+        guard changed else { return }
+        await persistCache()
+        await syncMailIndex()
+    }
+
+    private func dispatchMail(_ actions: [MailAction]) async {
+        guard let mailCommands else {
+            recordMail(BackendError.configuration)
+            return
+        }
+        var sent = false
+        for action in actions {
+            let key = MailCommandKey.make()
+            let rollBack = applyMailChange(action.command, thread: action.thread)
+            // Tracked before the first await, so a drain that runs meanwhile
+            // does not apply the same change a second time.
+            pendingMailCommands[key] = PendingMailCommand(command: action.command, rollBack: rollBack)
+            do {
+                try await mailCommands.enqueue(action.command, idempotencyKey: key)
+                sent = true
+            } catch {
+                pendingMailCommands.removeValue(forKey: key)
+                rollBack()
+                recordMail(error)
+            }
+        }
+        guard sent else { return }
+        await reconcileMailCommands(await mailCommands.flush())
+    }
+
+    /// Shows one mail action at once and returns what undoes it.
+    private func applyMailChange(
+        _ command: DurableMobileCommand,
+        thread: MailThreadSummary?
+    ) -> @MainActor () -> Void {
+        switch command {
+        case .mailArchive(let target), .mailTrash(let target):
+            return hideThread(accountID: target.accountID, threadID: target.threadID, snoozedUntil: nil)
+        case .mailSnooze(let payload):
+            return hideThread(accountID: payload.accountID, threadID: payload.threadID, snoozedUntil: payload.untilAt)
+        case .mailRestore(let target):
+            return showThread(accountID: target.accountID, threadID: target.threadID, summary: thread)
+        case .mailUnsnooze(let payload):
+            return wakeThread(accountID: payload.accountID, threadID: payload.threadID, summary: thread)
+        case .mailMarkRead(let target):
+            return setMailFlags(accountID: target.accountID, threadID: target.threadID, unread: false, current: thread)
+        case .mailMarkUnread(let target):
+            return setMailFlags(accountID: target.accountID, threadID: target.threadID, unread: true, current: thread)
+        case .mailStar(let target):
+            return setMailFlags(accountID: target.accountID, threadID: target.threadID, starred: true, current: thread)
+        case .mailUnstar(let target):
+            return setMailFlags(accountID: target.accountID, threadID: target.threadID, starred: false, current: thread)
+        default:
+            return {}
+        }
+    }
+
+    // Archive, trash, and snooze take the thread off every list.
+    private func hideThread(accountID: String, threadID: String, snoozedUntil: Date?) -> @MainActor () -> Void {
+        let key = mailKey(accountID: accountID, threadID: threadID)
+        let wasSuppressed = suppressedMailThreads.contains(key)
+        let previousSnooze = snoozedMailThreads[key]
+        if let snoozedUntil {
+            snoozedMailThreads[key] = snoozedUntil
+        } else {
+            suppressedMailThreads.insert(key)
+        }
+        let removed = removeThreadOptimistically(accountID: accountID, threadID: threadID)
+        return { [weak self] in
+            guard let self else { return }
+            if snoozedUntil != nil {
+                self.snoozedMailThreads[key] = previousSnooze
+            } else if !wasSuppressed {
+                self.suppressedMailThreads.remove(key)
+            }
+            self.restoreThread(removed)
+        }
+    }
+
+    // Restore puts the thread back in the inbox.
+    private func showThread(accountID: String, threadID: String, summary: MailThreadSummary?) -> @MainActor () -> Void {
+        let key = mailKey(accountID: accountID, threadID: threadID)
+        let wasSuppressed = suppressedMailThreads.remove(key) != nil
+        let inserted = insertThread(summary, key: key)
+        return { [weak self] in
+            guard let self else { return }
+            if wasSuppressed { self.suppressedMailThreads.insert(key) }
+            if inserted { self.threads.removeAll { self.mailKey($0) == key } }
+        }
+    }
+
+    // Unsnooze takes the thread off the Snoozed list and puts it back in the inbox.
+    private func wakeThread(accountID: String, threadID: String, summary: MailThreadSummary?) -> @MainActor () -> Void {
+        let key = mailKey(accountID: accountID, threadID: threadID)
+        let previousSnooze = snoozedMailThreads.removeValue(forKey: key)
+        let index = snoozedThreads.firstIndex { $0.threadKey == key }
+        let row = index.map { snoozedThreads.remove(at: $0) }
+        let inserted = insertThread(summary, key: key)
+        return { [weak self] in
+            guard let self else { return }
+            if let previousSnooze { self.snoozedMailThreads[key] = previousSnooze }
+            if let row, let index, !self.snoozedThreads.contains(where: { $0.threadKey == key }) {
+                self.snoozedThreads.insert(row, at: min(index, self.snoozedThreads.endIndex))
+            }
+            if inserted { self.threads.removeAll { self.mailKey($0) == key } }
+        }
+    }
+
+    // Read and star state show at once. The override keeps the change while
+    // a server copy still has the old state.
+    private func setMailFlags(
+        accountID: String,
+        threadID: String,
+        unread: Bool? = nil,
+        starred: Bool? = nil,
+        current thread: MailThreadSummary?
+    ) -> @MainActor () -> Void {
+        let key = mailKey(accountID: accountID, threadID: threadID)
+        let current = thread
+            ?? threads.first(where: { mailKey($0) == key })
+            ?? searchedThreads.first(where: { mailKey($0) == key })
+        let previousUnread = unread.map { current?.unread ?? !$0 }
+        let previousStarred = starred.map { current?.starred ?? !$0 }
+        var override = mailStateOverrides[key] ?? MailStateOverride()
+        let previousUnreadOverride = override.unread
+        let previousStarredOverride = override.starred
+        if let unread { override.unread = unread }
+        if let starred { override.starred = starred }
+        mailStateOverrides[key] = override
+        if let unread { setUnread(unread, accountID: accountID, threadID: threadID) }
+        if let starred { setStarredLocally(starred, accountID: accountID, threadID: threadID) }
+        return { [weak self] in
+            guard let self else { return }
+            // Only the field this action set goes back; another action may
+            // own the other one.
+            var restored = self.mailStateOverrides[key] ?? MailStateOverride()
+            if unread != nil { restored.unread = previousUnreadOverride }
+            if starred != nil { restored.starred = previousStarredOverride }
+            self.mailStateOverrides[key] = restored.isEmpty ? nil : restored
+            if let previousUnread { self.setUnread(previousUnread, accountID: accountID, threadID: threadID) }
+            if let previousStarred { self.setStarredLocally(previousStarred, accountID: accountID, threadID: threadID) }
+        }
+    }
+
+    // Adds a thread the list does not show yet, in date order. True when it did.
+    private func insertThread(_ summary: MailThreadSummary?, key: String) -> Bool {
+        guard let summary, !threads.contains(where: { mailKey($0) == key }) else { return false }
+        threads = (threads + [summary]).sorted { $0.date > $1.date }
+        return true
+    }
+
+    private static func target(_ thread: MailThreadSummary) -> MailThreadCommandTarget {
+        MailThreadCommandTarget(accountID: thread.accountID, threadID: thread.id)
+    }
+
+    private static func messageTarget(_ thread: MailThreadSummary) -> MailThreadMessageCommandTarget {
+        MailThreadMessageCommandTarget(accountID: thread.accountID, threadID: thread.id)
     }
 
     func bulkTriage(_ selected: [MailThreadSummary]) async -> [BulkTriageVerdict] {
@@ -1925,65 +2171,6 @@ final class ProductStore {
             recordMail(error)
             return false
         }
-    }
-
-    func markUnread(_ thread: MailThreadSummary) async {
-        setMailOverride(thread: thread, unread: true)
-        let changed = setUnread(true, thread: thread)
-        do {
-            let messageID = try await latestMessageID(accountID: thread.accountID, threadID: thread.id)
-            _ = try await tools.invoke(
-                "mark_unread",
-                arguments: ["account": .string(thread.accountID), "messageId": .string(messageID)]
-            )
-            await persistCache()
-        } catch {
-            clearMailOverride(thread)
-            if changed { _ = setUnread(thread.unread, thread: thread) }
-            recordMail(error)
-        }
-    }
-
-    func setStarred(_ starred: Bool, thread: MailThreadSummary) async {
-        setMailOverride(thread: thread, starred: starred)
-        let changed = setStarredLocally(starred, thread: thread)
-        do {
-            let messageID = try await latestMessageID(accountID: thread.accountID, threadID: thread.id)
-            _ = try await tools.invoke(
-                starred ? "star" : "unstar",
-                arguments: ["account": .string(thread.accountID), "messageId": .string(messageID)]
-            )
-            await persistCache()
-        } catch {
-            clearMailOverride(thread)
-            if changed { _ = setStarredLocally(thread.starred, thread: thread) }
-            recordMail(error)
-        }
-    }
-
-    func performMailNotificationAction(action: String, accountID: String, threadID: String) async {
-        do {
-            switch action {
-            case "mark_read":
-                _ = try await tools.invoke(
-                    "mark_thread_read",
-                    arguments: ["account": .string(accountID), "threadId": .string(threadID)]
-                )
-                if let index = threads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
-                    threads[index].unread = false
-                }
-            case "archive":
-                _ = try await tools.invoke(
-                    "archive_thread",
-                    arguments: ["account": .string(accountID), "threadId": .string(threadID)]
-                )
-                threads.removeAll { $0.id == threadID && $0.accountID == accountID }
-            default:
-                return
-            }
-            await persistCache()
-            if action == "archive" { await syncMailIndex() }
-        } catch { recordMail(error) }
     }
 
     func sendMail(accountID: String, to: String, subject: String, body: String) async throws {
@@ -2224,20 +2411,6 @@ final class ProductStore {
         return draft
     }
 
-    private func latestMessageID(accountID: String, threadID: String) async throws -> String {
-        let result = try await tools.invoke(
-            "get_thread",
-            arguments: ["account": .string(accountID), "threadId": .string(threadID)]
-        )
-        guard let message = result["messages"]?.arrayValue?.last,
-              let messageID = message["providerMessageId"]?.stringValue
-                ?? message["id"]?.stringValue
-                ?? message["_id"]?.stringValue else {
-            throw BackendError.server(status: 404, message: "The latest message could not be found.")
-        }
-        return messageID
-    }
-
     func createEvent(accountID: String, title: String, start: Date, end: Date, sourceThread: ThreadRoute?) async throws {
         let iso = ISO8601DateFormatter()
         var arguments: [String: JSONValue] = [
@@ -2443,29 +2616,6 @@ final class ProductStore {
             ]
         )
         await refreshCalendar(sync: false)
-    }
-
-    // Snooze resurfaces the thread later via the MailOS/Snoozed label pipeline.
-    func snooze(_ thread: MailThreadSummary, until: Date) async {
-        do {
-            let messageID = try await latestMessageID(accountID: thread.accountID, threadID: thread.id)
-            _ = try await tools.invoke(
-                "snooze_thread",
-                arguments: [
-                    "account": .string(thread.accountID),
-                    "messageId": .string(messageID),
-                    "threadId": .string(thread.id),
-                    "untilTs": .number(until.timeIntervalSince1970 * 1_000),
-                ]
-            )
-            // The key must match `applyPendingMailState`, which reads
-            // `account:thread`; a bare thread id never matched (MUT-1).
-            snoozedMailThreads[mailKey(thread)] = until
-            threads.removeAll { mailKey($0) == mailKey(thread) }
-            searchedThreads.removeAll { mailKey($0) == mailKey(thread) }
-        } catch {
-            mailErrorMessage = error.localizedDescription
-        }
     }
 
     // Queue a living-brief regeneration and follow the authoritative Convex
@@ -2927,6 +3077,11 @@ final class ProductStore {
         mailStateOverrides = [:]
         suppressedMailThreads = []
         snoozedMailThreads = [:]
+        pendingMailCommands = [:]
+        snoozedThreads = []
+        isLoadingSnoozed = false
+        snoozedDidLoad = false
+        snoozedError = nil
         lastRefresh = nil
         undoNotice = nil
     }
@@ -2995,23 +3150,19 @@ final class ProductStore {
     }
 
     private func mailKey(_ thread: MailThreadSummary) -> String {
-        "\(thread.accountID):\(thread.id)"
+        mailKey(accountID: thread.accountID, threadID: thread.id)
     }
 
-    private func clearMailOverride(_ thread: MailThreadSummary) {
-        mailStateOverrides.removeValue(forKey: mailKey(thread))
+    private func mailKey(accountID: String, threadID: String) -> String {
+        "\(accountID):\(threadID)"
     }
 
-    private func setMailOverride(
-        thread: MailThreadSummary,
-        unread: Bool? = nil,
-        starred: Bool? = nil
-    ) {
+    // True while a pending archive, trash, or snooze keeps the thread off the lists.
+    private func isHiddenByMailAction(_ thread: MailThreadSummary) -> Bool {
         let key = mailKey(thread)
-        var override = mailStateOverrides[key] ?? MailStateOverride()
-        if let unread { override.unread = unread }
-        if let starred { override.starred = starred }
-        mailStateOverrides[key] = override
+        if suppressedMailThreads.contains(key) { return true }
+        if let until = snoozedMailThreads[key] { return until > Date.now }
+        return false
     }
 
     private func applyPendingMailState(_ incoming: MailThreadSummary) -> MailThreadSummary? {
@@ -3036,43 +3187,34 @@ final class ProductStore {
         return result
     }
 
-    @discardableResult
-    private func setUnread(_ unread: Bool, thread: MailThreadSummary) -> Bool {
-        var changed = false
-        if let index = threads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+    private func setUnread(_ unread: Bool, accountID: String, threadID: String) {
+        if let index = threads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             threads[index].unread = unread
-            changed = true
         }
-        if let index = searchedThreads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+        if let index = searchedThreads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             searchedThreads[index].unread = unread
-            changed = true
         }
-        return changed
     }
 
-    @discardableResult
-    private func setStarredLocally(_ starred: Bool, thread: MailThreadSummary) -> Bool {
-        var changed = false
-        if let index = threads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+    private func setStarredLocally(_ starred: Bool, accountID: String, threadID: String) {
+        if let index = threads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             threads[index].starred = starred
-            changed = true
         }
-        if let index = searchedThreads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+        if let index = searchedThreads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             searchedThreads[index].starred = starred
-            changed = true
         }
-        return changed
     }
 
     private func removeThreadOptimistically(
-        _ thread: MailThreadSummary
+        accountID: String,
+        threadID: String
     ) -> (inbox: (index: Int, thread: MailThreadSummary)?, search: (index: Int, thread: MailThreadSummary)?) {
         var inbox: (index: Int, thread: MailThreadSummary)?
         var search: (index: Int, thread: MailThreadSummary)?
-        if let index = threads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+        if let index = threads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             inbox = (index, threads.remove(at: index))
         }
-        if let index = searchedThreads.firstIndex(where: { $0.id == thread.id && $0.accountID == thread.accountID }) {
+        if let index = searchedThreads.firstIndex(where: { $0.id == threadID && $0.accountID == accountID }) {
             search = (index, searchedThreads.remove(at: index))
         }
         return (inbox, search)
@@ -3094,7 +3236,8 @@ final class ProductStore {
     private func restoreCache(owner: String) async {
         guard let snapshot = try? await cache.load(owner: owner) else { return }
         accounts = snapshot.accounts
-        threads = snapshot.threads
+        // A mail action still in the outbox keeps its thread off the list.
+        threads = snapshot.threads.filter { !isHiddenByMailAction($0) }
         events = snapshot.events
         tasks = snapshot.tasks
         areas = snapshot.areas
@@ -3153,6 +3296,29 @@ final class ProductStore {
     }
 }
 
+
+// The body of `POST /api/albatross/proof-matches/dismissals`: one pair for
+// each Work the offer showed, at most one batch.
+enum ProofDismissalRequest {
+    static let path = "/api/albatross/proof-matches/dismissals"
+    static let batchLimit = 100
+
+    static func body(accountID: String, threadID: String, workIDs: [String]) -> JSONValue? {
+        guard let account = accountID.nilIfBlank, let thread = threadID.nilIfBlank else { return nil }
+        var seen = Set<String>()
+        let ids = workIDs.compactMap(\.nilIfBlank).filter { seen.insert($0).inserted }.prefix(batchLimit)
+        guard !ids.isEmpty else { return nil }
+        return .object([
+            "dismissals": .array(ids.map { workID in
+                JSONValue.object([
+                    "accountId": .string(account),
+                    "providerThreadId": .string(thread),
+                    "workId": .string(workID),
+                ])
+            }),
+        ])
+    }
+}
 
 // Pure rule for the "latest edition" state (brief round 2026-09-22). No
 // known latest id means the app has not asked yet; the shown edition then

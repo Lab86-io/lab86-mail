@@ -19,6 +19,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 const EXECUTION_LEASE_MS = 5 * 60_000;
+// A retryable failure runs again when the client sends the command again.
+// After this many runs the failure is final, so the client stops and rolls
+// back its optimistic change.
+export const MAX_EXECUTION_ATTEMPTS = 5;
 
 interface MobileCommandDependencies {
   requireCurrentUser: typeof requireCurrentUser;
@@ -99,6 +103,7 @@ export function createMobileCommandPost(deps: MobileCommandDependencies = defaul
         return mobileJSON(commandReceiptFromRow(completed), undefined, requestID);
       } catch (error) {
         const mapped = mapMobileHTTPError(error);
+        const attempts = Number(claimed.command?.attemptCount) || 1;
         const failed = await deps.completeCommand({
           userId: user.userId,
           commandId: begun.command._id,
@@ -106,7 +111,7 @@ export function createMobileCommandPost(deps: MobileCommandDependencies = defaul
           status: 'failed',
           errorCode: mapped.code.slice(0, 100),
           errorMessage: mapped.message.slice(0, 1_000),
-          errorRetryable: mapped.retryable,
+          errorRetryable: mapped.retryable && attempts < MAX_EXECUTION_ATTEMPTS,
         });
         return mobileJSON(commandReceiptFromRow(failed), undefined, requestID);
       }

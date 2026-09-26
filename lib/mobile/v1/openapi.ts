@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MobileCommandVariantSchemas, MobileContractV1, MobileSyncChangeVariantSchemas } from './contract';
+import { MobileCommandVariantSchemas, MobileContractV1 } from './contract';
 
 function schemaFor(schema: z.ZodType) {
   const json = z.toJSONSchema(schema, {
@@ -41,64 +41,19 @@ export function mobileOpenAPIV1() {
         'mail.markUnread': '#/components/schemas/MailMarkUnreadCommand',
         'mail.star': '#/components/schemas/MailStarCommand',
         'mail.unstar': '#/components/schemas/MailUnstarCommand',
-        'mail.addLabel': '#/components/schemas/MailAddLabelCommand',
-        'mail.removeLabel': '#/components/schemas/MailRemoveLabelCommand',
         'mail.snooze': '#/components/schemas/MailSnoozeCommand',
         'mail.unsnooze': '#/components/schemas/MailUnsnoozeCommand',
-        'mail.mute': '#/components/schemas/MailMuteCommand',
         'mail.restore': '#/components/schemas/MailRestoreCommand',
-        'mail.send': '#/components/schemas/MailSendCommand',
-        'mail.saveDraft': '#/components/schemas/MailSaveDraftCommand',
-        'mail.deleteDraft': '#/components/schemas/MailDeleteDraftCommand',
         'calendar.create': '#/components/schemas/CalendarCreateCommand',
-        'calendar.resync': '#/components/schemas/CalendarResyncCommand',
-        'task.create': '#/components/schemas/TaskCreateCommand',
         'task.setCompleted': '#/components/schemas/TaskSetCompletedCommand',
-        'work.capture': '#/components/schemas/WorkCaptureCommand',
         'work.setHorizon': '#/components/schemas/WorkSetHorizonCommand',
-        'work.captureFromChat': '#/components/schemas/WorkCaptureFromChatCommand',
         'work.listAdd': '#/components/schemas/WorkListAddCommand',
         'work.listToggle': '#/components/schemas/WorkListToggleCommand',
         'work.listRemove': '#/components/schemas/WorkListRemoveCommand',
         'work.metricLog': '#/components/schemas/WorkMetricLogCommand',
         'work.milestoneToggle': '#/components/schemas/WorkMilestoneToggleCommand',
         'work.setShape': '#/components/schemas/WorkSetShapeCommand',
-        'approval.approve': '#/components/schemas/ApprovalApproveCommand',
-        'approval.reject': '#/components/schemas/ApprovalRejectCommand',
       },
-    },
-  };
-  components.SyncChange = {
-    oneOf: Object.keys(MobileSyncChangeVariantSchemas).map((name) => ({
-      $ref: `#/components/schemas/${name}`,
-    })),
-    discriminator: {
-      propertyName: 'entityKind',
-      mapping: {
-        thread: '#/components/schemas/MailThreadSyncChange',
-        message: '#/components/schemas/MailMessageSyncChange',
-        draft: '#/components/schemas/MailDraftSyncChange',
-        event: '#/components/schemas/CalendarEventSyncChange',
-        task: '#/components/schemas/TaskSyncChange',
-        work: '#/components/schemas/WorkSyncChange',
-        workHorizon: '#/components/schemas/WorkHorizonSyncChange',
-        workCaptured: '#/components/schemas/WorkCapturedSyncChange',
-        workShape: '#/components/schemas/WorkShapeSyncChange',
-        approval: '#/components/schemas/ApprovalSyncChange',
-        operation: '#/components/schemas/OperationSyncChange',
-      },
-    },
-  };
-  components.SyncEnvelope = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['items', 'deletedIDs', 'cursor', 'serverRevision', 'hasMore'],
-    properties: {
-      items: { type: 'array', items: { $ref: '#/components/schemas/SyncChange' } },
-      deletedIDs: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 240 } },
-      cursor: { type: 'string' },
-      serverRevision: { type: 'integer', minimum: 0 },
-      hasMore: { type: 'boolean' },
     },
   };
   return {
@@ -117,32 +72,6 @@ export function mobileOpenAPIV1() {
           operationId: 'getMobileBootstrap',
           responses: {
             '200': { description: 'Initial authenticated state', content: jsonContent('MobileBootstrap') },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/sync': {
-        get: {
-          operationId: 'getMobileSync',
-          parameters: [
-            {
-              name: 'domain',
-              in: 'query',
-              required: true,
-              schema: schemaFor(
-                z.enum(['accounts', 'mail', 'calendar', 'tasks', 'today', 'work', 'assistant', 'activity']),
-              ),
-            },
-            { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
-            {
-              name: 'limit',
-              in: 'query',
-              required: false,
-              schema: { type: 'integer', minimum: 1, maximum: 500 },
-            },
-          ],
-          responses: {
-            '200': { description: 'One domain change page', content: jsonContent('SyncEnvelope') },
             ...errorResponses,
           },
         },
@@ -178,38 +107,12 @@ export function mobileOpenAPIV1() {
           },
         },
       },
-      '/api/mobile/v1/mail/threads/{threadID}': {
-        get: {
-          operationId: 'getMobileMailThread',
-          parameters: [
-            { name: 'threadID', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'accountID', in: 'query', required: true, schema: { type: 'string' } },
-          ],
-          responses: {
-            '200': {
-              description: 'A full thread with ordered messages',
-              content: jsonContent('MailThreadDetail'),
-            },
-            ...errorResponses,
-          },
-        },
-      },
       '/api/mobile/v1/commands': {
         post: {
           operationId: 'postMobileCommand',
           requestBody: { required: true, content: jsonContent('MobileCommand') },
           responses: {
             '200': { description: 'Durable command receipt', content: jsonContent('CommandReceipt') },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/commands/{id}': {
-        get: {
-          operationId: 'getMobileCommand',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            '200': { description: 'Current durable command receipt', content: jsonContent('CommandReceipt') },
             ...errorResponses,
           },
         },
@@ -235,16 +138,6 @@ export function mobileOpenAPIV1() {
               description: 'Lead line, next move, next meeting, and edition time, for widgets',
               content: jsonContent('TodaySummary'),
             },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/commands/{id}/undo': {
-        post: {
-          operationId: 'undoMobileCommand',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            '200': { description: 'Receipt after undo completes', content: jsonContent('CommandReceipt') },
             ...errorResponses,
           },
         },
