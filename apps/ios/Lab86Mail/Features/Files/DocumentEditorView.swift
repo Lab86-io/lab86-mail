@@ -83,7 +83,7 @@ struct DocumentEditorView: View {
                 Button {
                     showsAI = true
                 } label: {
-                    Label("Albatross", systemImage: "sparkles")
+                    Label("Albatross", systemImage: "text.bubble")
                 }
                 .disabled(draft?.model.requiresWebEditor == true)
                 Button("All editing tools", systemImage: "rectangle.expand.vertical") { Task { await openFullEditor() } }
@@ -417,7 +417,7 @@ struct GoogleDocumentEditorView: View {
                 Button {
                     showsAI = true
                 } label: {
-                    Label("Albatross", systemImage: "sparkles")
+                    Label("Albatross", systemImage: "text.bubble")
                 }
                 .disabled(draft?.model.requiresWebEditor == true)
             }
@@ -604,7 +604,7 @@ private struct GoogleDocumentAISheet: View {
                 Section {
                     TextField("Describe the change", text: $instruction, axis: .vertical)
                         .lineLimit(3 ... 8)
-                    Button("Propose changes", systemImage: "sparkles") {
+                    Button("Propose changes", systemImage: "square.and.pencil") {
                         Task { await propose() }
                     }
                     .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
@@ -1241,7 +1241,7 @@ private struct DocumentAISheet: View {
                 Section("Ask Albatross") {
                     TextEditor(text: $instruction)
                         .frame(minHeight: 110)
-                    Button("Suggest changes", systemImage: "sparkles") {
+                    Button("Suggest changes", systemImage: "square.and.pencil") {
                         Task { await suggest() }
                     }
                     .disabled(instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)

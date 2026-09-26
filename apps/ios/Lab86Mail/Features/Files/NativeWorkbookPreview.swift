@@ -17,7 +17,7 @@ struct NativeWorkbookPreview: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Workbook preview", systemImage: "tablecells")
                     .font(.headline)
-                Text("Stored cell values and formulas are shown here. Use the full editor for charts, layout, calculated results, AI edits and export options. Your workbook is preserved unchanged.")
+                Text("Stored cell values and formulas are shown here. Use the full editor for charts, layout, calculated results, Albatross edits, and export options. Your workbook is preserved unchanged.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if let webEditorURL {
