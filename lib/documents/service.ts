@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { getAiRequestContext } from '../ai/context';
 import {
   type AlbatrossDocumentModel,
@@ -67,10 +68,7 @@ export async function createDocument(input: {
     userId: input.userId,
     documentId,
     kind: input.kind,
-    title:
-      String(input.title || '')
-        .trim()
-        .slice(0, 500) || 'Untitled',
+    title: truncateText(String(input.title || '').trim(), 500) || 'Untitled',
     model,
     sourceRefs: input.sourceRefs || [],
     reason: input.reason,
@@ -225,7 +223,7 @@ export async function updateDocument(input: {
     userId: input.userId,
     documentId: input.documentId,
     expectedRevision: input.expectedRevision,
-    title: input.title === undefined ? undefined : input.title.trim().slice(0, 500) || 'Untitled',
+    title: input.title === undefined ? undefined : truncateText(input.title.trim(), 500) || 'Untitled',
     model,
     sourceRefs: input.sourceRefs,
     reason: input.reason,

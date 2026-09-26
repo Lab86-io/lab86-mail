@@ -1,3 +1,4 @@
+import { truncateText } from '../shared/text';
 import { type DeckSlideV2, type DeckTheme, deckModelV2Schema } from './model';
 
 export type PreviewPage =
@@ -37,7 +38,7 @@ function records(value: unknown) {
 }
 
 function text(value: unknown, limit = 400) {
-  return ['string', 'number', 'boolean'].includes(typeof value) ? String(value).slice(0, limit) : '';
+  return ['string', 'number', 'boolean'].includes(typeof value) ? truncateText(String(value), limit) : '';
 }
 
 function bounded(value: unknown, fallback: number, maximum = 100) {

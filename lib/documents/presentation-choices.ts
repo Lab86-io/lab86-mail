@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { truncateText } from '../shared/text';
 import { FONT_PAIR_NAMES, PALETTE_NAMES } from './presentation-compositions';
 import { briefChartSchema, briefTableSchema, type PresentationBriefV2 } from './presentation-design';
 
@@ -449,8 +450,8 @@ export function applyPresentationChoices(
       throw new Error(
         `The confirmed counts require ${session.brief.contentSlides + session.brief.sectionBreaks + 2} slides (${session.brief.contentSlides} content, ${session.brief.sectionBreaks} section breaks, opening and close); received ${next.slides.length}. Repair the draft to match the confirmed storyboard. Keep the existing user confirmation; do not ask again.`,
       );
-    next.audience = session.brief.audience.slice(0, 200);
-    next.purpose = session.brief.purpose.slice(0, 300);
+    next.audience = truncateText(session.brief.audience, 200);
+    next.purpose = truncateText(session.brief.purpose, 300);
   }
   if (session.design) {
     next.palette = session.design.theme;
