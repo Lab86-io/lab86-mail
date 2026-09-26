@@ -51,6 +51,11 @@ struct SettingsView: View {
                     NavigationLink("Delivery and schedule") { NotificationSettingsView() }
                 }
 
+                Section("Mail") {
+                    NavigationLink("Signatures") { SignaturesSettingsView() }
+                    NavigationLink("Saved replies") { SavedRepliesSettingsView() }
+                }
+
                 Section("Personalization") {
                     Button("All settings") { showsAllSettings = true }
                     NavigationLink("Appearance") { AppearanceSettingsView() }

@@ -2325,15 +2325,48 @@ final class ProductStore {
         sendAt: Date? = nil,
         undoSeconds: Int = 0
     ) async throws -> ComposeSubmission {
-        var fields = [
-            "mode": mode,
-            "account": accountID,
-            "to": to,
-            "cc": cc,
-            "bcc": bcc,
-            "subject": subject,
-            "body": body,
-        ]
+        try await sendCompose(
+            mode: mode,
+            accountID: accountID,
+            threadID: threadID,
+            messageID: messageID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            attachments: attachments,
+            sendAt: sendAt,
+            undoSeconds: undoSeconds,
+            includeSignature: true
+        )
+    }
+
+    func sendCompose(
+        mode: String,
+        accountID: String,
+        threadID: String?,
+        messageID: String?,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        attachments: [ComposeAttachment],
+        sendAt: Date?,
+        undoSeconds: Int,
+        includeSignature: Bool
+    ) async throws -> ComposeSubmission {
+        var fields = Self.composeFields(
+            mode: mode,
+            accountID: accountID,
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: subject,
+            body: body,
+            includeSignature: includeSignature
+        )
         if let threadID { fields["threadId"] = threadID }
         if let messageID { fields["messageId"] = messageID }
         if let sendAt { fields["sendAt"] = String(Int(sendAt.timeIntervalSince1970 * 1_000)) }
@@ -2358,6 +2391,31 @@ final class ProductStore {
             await refreshMail()
         }
         return submission
+    }
+
+    /// The text fields of `POST /api/compose`. The mailbox signature goes on
+    /// by default; `signature=0` leaves it off for this one message.
+    static func composeFields(
+        mode: String,
+        accountID: String,
+        to: String,
+        cc: String,
+        bcc: String,
+        subject: String,
+        body: String,
+        includeSignature: Bool
+    ) -> [String: String] {
+        var fields = [
+            "mode": mode,
+            "account": accountID,
+            "to": to,
+            "cc": cc,
+            "bcc": bcc,
+            "subject": subject,
+            "body": body,
+        ]
+        if !includeSignature { fields["signature"] = "0" }
+        return fields
     }
 
     func saveDraft(
