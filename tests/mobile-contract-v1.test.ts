@@ -81,6 +81,7 @@ describe('MobileContractV1 schemas', () => {
   test('provider capability differences are explicit instead of broken controls', () => {
     expect(capabilitiesForProvider('google').calendar).toBe(true);
     expect(capabilitiesForProvider('microsoft').labels).toBe(false);
+    expect(capabilitiesForProvider('icloud')).toMatchObject({ mail: true, contacts: false, labels: false });
     expect(capabilitiesForProvider('imap')).toMatchObject({
       mail: true,
       calendar: false,
