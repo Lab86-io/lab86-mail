@@ -205,3 +205,48 @@ describe('smartRuleMatches', () => {
     expect(smartRuleMatches({ enabled: false, scope: 'domain', match: 'apple.com' }, row)).toBe(false);
   });
 });
+
+describe('baseline classifier branches', () => {
+  test('trash and spam labels are noise', () => {
+    const verdict = classifyThreadWithContext({
+      fromAddress: 'Alex <alex@example.test>',
+      subject: 'hello',
+      labels: ['TRASH'],
+    } as any);
+    expect(verdict.primary).toBe('noise');
+    expect(verdict.reason).toBe('Trash or spam label.');
+  });
+
+  test('LinkedIn mail is platform noise', () => {
+    const verdict = classifyThreadWithContext({
+      fromAddress: 'LinkedIn <messages@linkedin.com>',
+      subject: 'You appeared in 4 searches',
+      labels: [],
+    } as any);
+    expect(verdict.primary).toBe('noise');
+    expect(verdict.signals).toContain('platform_noise');
+  });
+
+  test('an urgent triage verdict from a person lands in Main', () => {
+    const verdict = classifyThreadWithContext({
+      fromAddress: 'Alex <alex@example.test>',
+      subject: 'Quick question',
+      labels: [],
+      unread: false,
+      triage: { priority: 1, action: 'wait', reason: 'waiting on Alex' },
+    } as any);
+    expect(verdict.primary).toBe('main');
+    expect(verdict.suggestedAction).toBe('wait');
+    expect(verdict.signals).toContain('triage_attention');
+  });
+
+  test('unclear mail is Review when unread and Noise when read', () => {
+    const unclear = { fromAddress: 'Help <support@vendor.test>', subject: 'Following up', labels: [] };
+    const unread = classifyThreadWithContext({ ...unclear, unread: true } as any);
+    expect(unread.primary).toBe('review');
+    expect(unread.needsAttention).toBe(true);
+    const read = classifyThreadWithContext({ ...unclear, unread: false } as any);
+    expect(read.primary).toBe('noise');
+    expect(read.signals).toContain('uncertain');
+  });
+});
