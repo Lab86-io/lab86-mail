@@ -3,6 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
+import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
 import { QUICK_SEARCH_QUERIES } from '@/lib/mail/search/constants';
@@ -106,8 +107,13 @@ export function ShortcutsBinding() {
           if (selectedThreadId) {
             e.preventDefault();
             try {
-              await callTool('archive_thread', { account, threadId: selectedThreadId });
-              toast.success('Archived');
+              const result = await callTool<{ operationId?: string }>('archive_thread', {
+                account,
+                threadId: selectedThreadId,
+              });
+              toastWithUndo('Archived', result?.operationId, {
+                onUndone: () => qc.invalidateQueries({ queryKey: ['search'] }),
+              });
               setSelectedThread(null);
               qc.invalidateQueries({ queryKey: ['search'] });
             } catch {
@@ -119,8 +125,13 @@ export function ShortcutsBinding() {
           if (selectedThreadId) {
             e.preventDefault();
             try {
-              await callTool('trash_thread', { account, threadId: selectedThreadId });
-              toast.success('Trashed');
+              const result = await callTool<{ operationId?: string }>('trash_thread', {
+                account,
+                threadId: selectedThreadId,
+              });
+              toastWithUndo('Moved to Trash', result?.operationId, {
+                onUndone: () => qc.invalidateQueries({ queryKey: ['search'] }),
+              });
               setSelectedThread(null);
               qc.invalidateQueries({ queryKey: ['search'] });
             } catch {

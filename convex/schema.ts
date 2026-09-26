@@ -2278,6 +2278,9 @@ export default defineSchema({
     tool: v.string(),
     surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks'), v.literal('albatross')),
     summary: v.string(),
+    // Why it happened, in one plain sentence ("Blocked sender", "Snoozed
+    // until Fri 9:00"). Activity shows it under the summary.
+    reason: v.optional(v.string()),
     batchId: v.optional(v.string()),
     chatId: v.optional(v.string()),
     // What was touched: { kind, id, accountId?, ... } — shape owned by the

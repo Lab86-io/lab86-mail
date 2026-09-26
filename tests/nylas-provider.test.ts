@@ -758,7 +758,12 @@ describe('thread and message updates', () => {
         createMissing: true,
       });
 
-      expect(result).toEqual({ ok: true });
+      // The before and after folders let undo take back exactly this change.
+      expect(result).toEqual({
+        ok: true,
+        before: ['INBOX', 'Label_old'],
+        after: ['INBOX', 'Label_new', 'ARCHIVE'],
+      });
       const update = h.nylasCalls.find((call) => call.method === 'PUT');
       // Old Label removed by resolved id, Projects created, ARCHIVE passed as a
       // system folder id without creating anything.
@@ -794,7 +799,7 @@ describe('thread and message updates', () => {
         add: ['Done'],
       });
 
-      expect(result).toEqual({ ok: true });
+      expect(result).toEqual({ ok: true, before: ['INBOX'], after: ['INBOX', 'Label_done'] });
       expect(findAttempts).toBe(2);
       const update = h.nylasCalls.find((call) => call.method === 'PUT');
       expect(update?.body).toEqual({ folders: ['INBOX', 'Label_done'] });

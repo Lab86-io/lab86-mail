@@ -29,6 +29,7 @@ export const listRecentOperationsTool = defineTool({
         tool: row.tool,
         surface: row.surface,
         summary: row.summary,
+        reason: row.reason,
         agent: row.agent,
         batchId: row.batchId,
         target: row.target,

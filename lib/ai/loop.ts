@@ -104,6 +104,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'list_attachments',
   'archive_thread',
   'trash_thread',
+  'bulk_move_threads',
   'mark_read',
   'mark_unread',
   'star',

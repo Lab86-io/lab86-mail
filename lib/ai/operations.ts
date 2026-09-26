@@ -23,6 +23,8 @@ export interface RecordOperationInput {
   tool: string;
   surface: OperationSurface;
   summary: string;
+  /** Why it happened, in one plain sentence. Shown under the summary in Activity. */
+  reason?: string;
   target: Record<string, unknown>;
   inverse?: InverseOp;
   batchId?: string;

@@ -62,6 +62,8 @@ describe('provider-aware moves (MUT-2)', () => {
         await moveNylasThread({ userId: 'user_1', account: 'acct_ms', threadId: 't1', to: 'trash' }),
       ).toEqual({
         ok: true,
+        before: ['AAMk-inbox'],
+        after: ['AAMk-deleted'],
       });
       const update = h.nylasCalls.find((c) => c.method === 'PUT');
       expect(update?.body).toEqual({ folders: ['AAMk-deleted'] });

@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { describeProvider } from '../ai/client';
 import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
+import {
+  MAIL_UNDO,
+  mailOperationReason,
+  pluralThreads,
+  recordMailOperation,
+  type TriageChange,
+} from '../mail/mail-operations';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
 import { recallSender } from '../store/memories';
@@ -230,9 +237,10 @@ export const BULK_TRIAGE_LIMIT = 40;
 
 export const bulkTriage = defineTool({
   name: 'bulk_triage',
-  description: 'Triage many threads in a single AI call. Returns verdicts keyed by thread id.',
+  description:
+    'Triage many threads in a single call and save each verdict on its thread. Returns verdicts keyed by thread id. The saved verdicts show in Activity with Undo.',
   category: 'ai',
-  mutating: false,
+  mutating: true,
   input: z.object({
     items: z
       .array(
@@ -259,8 +267,9 @@ export const bulkTriage = defineTool({
     model: z.string(),
     /** How many verdicts were saved on their threads. */
     saved: z.number().optional(),
+    operationId: z.string().optional(),
   }),
-  async handler({ items }) {
+  async handler({ items }, ctx) {
     if (!items.length) return { verdicts: [], model: 'none' };
     if (!(await hasAiForCurrentUser())) {
       return {
@@ -307,14 +316,26 @@ export const bulkTriage = defineTool({
           });
       } catch {}
     }
-    const saved = await saveBulkTriageVerdicts(items, verdicts);
+    const changes: TriageChange[] = [];
+    const saved = await saveBulkTriageVerdicts(items, verdicts, changes);
+    const operationId = changes.length
+      ? await recordMailOperation({
+          userId: ctx?.userId,
+          tool: 'bulk_triage',
+          summary: `Triaged ${pluralThreads(changes.length)}`,
+          reason: mailOperationReason(ctx ?? {}, 'Each thread got a priority and a suggested next step.'),
+          target: { kind: 'threads', count: changes.length },
+          inverse: { kind: MAIL_UNDO.restoreTriage, payload: { items: changes } },
+          batchId: ctx?.operationBatchId,
+        })
+      : undefined;
     // Fill in missing ids with defaults so the UI never has gaps.
     for (const it of items) {
       if (!verdicts.find((v) => v.id === it.id)) {
         verdicts.push({ id: it.id, priority: 2 as const, action: 'read', reason: 'no verdict returned' });
       }
     }
-    return { verdicts, model: 'fast', saved };
+    return { verdicts, model: 'fast', saved, operationId };
   },
 });
 
@@ -326,22 +347,31 @@ export const bulkTriage = defineTool({
 export async function saveBulkTriageVerdicts(
   items: Array<{ id: string; account?: string }>,
   verdicts: Array<{ id: string; priority: 1 | 2 | 3; action: string; reason: string }>,
+  /** Filled with the verdict each saved thread had before, for Undo. */
+  changes?: TriageChange[],
 ): Promise<number> {
   const accounts = new Map(items.filter((it) => it.account).map((it) => [it.id, it.account as string]));
   const at = Date.now();
   const writes = verdicts
     .filter((verdict) => accounts.has(verdict.id))
-    .map((verdict) =>
-      setThreadTriage(accounts.get(verdict.id) as string, verdict.id, {
+    .map(async (verdict) => {
+      const account = accounts.get(verdict.id) as string;
+      const previous = changes
+        ? ((await getThreadRecord(account, verdict.id).catch(() => null))?.triage ?? null)
+        : null;
+      return setThreadTriage(account, verdict.id, {
         priority: verdict.priority,
         action: verdict.action,
         reason: verdict.reason.slice(0, 240),
         at,
       }).then(
-        () => true,
+        () => {
+          changes?.push({ account, threadId: verdict.id, previous });
+          return true;
+        },
         () => false,
-      ),
-    );
+      );
+    });
   return (await Promise.all(writes)).filter(Boolean).length;
 }
 

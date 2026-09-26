@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
+import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
@@ -183,22 +184,23 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     });
   }, [account, threadId, liveData]);
 
+  const refetchSearch = () => queryClient.invalidateQueries({ queryKey: ['search'] });
   const archive = useMutation({
-    mutationFn: async () => callTool('archive_thread', { account, threadId }),
-    onSuccess: () => {
-      toast.success('Archived');
+    mutationFn: async () => callTool<{ operationId?: string }>('archive_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Archived', result?.operationId, { onUndone: refetchSearch });
       setSelectedThread(null);
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+      refetchSearch();
     },
     onError: () => toast.error('Could not archive this thread. Try again.'),
   });
 
   const trash = useMutation({
-    mutationFn: async () => callTool('trash_thread', { account, threadId }),
-    onSuccess: () => {
-      toast.success('Moved to Trash');
+    mutationFn: async () => callTool<{ operationId?: string }>('trash_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Moved to Trash', result?.operationId, { onUndone: refetchSearch });
       setSelectedThread(null);
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+      refetchSearch();
     },
     onError: () => toast.error('Could not move this thread to Trash. Try again.'),
   });

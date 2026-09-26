@@ -1,5 +1,18 @@
 import { z } from 'zod';
 import {
+  changedFolders,
+  formatWakeTime,
+  MAIL_UNDO,
+  type MessageFolderChange,
+  mailOperationReason,
+  mapLimit,
+  pluralThreads,
+  quotedSubject,
+  recordMailOperation,
+  type ThreadFolderChange,
+  threadSubject,
+} from '../mail/mail-operations';
+import {
   createNylasFolder,
   moveNylasThread,
   updateNylasMessage,
@@ -11,7 +24,7 @@ import {
 } from '../nylas/provider';
 import { snoozeThread, unsnoozeThread } from '../store/snooze';
 import { getThread, setThreadGmailLabelSync, setThreadReadState, upsertThread } from '../store/threads';
-import { defineTool } from './registry';
+import { defineTool, type ToolContext } from './registry';
 
 const BasicMutate = z.object({
   account: z.string(),
@@ -23,60 +36,164 @@ const ThreadMutate = z.object({
   threadId: z.string(),
 });
 
+// Why the change happened, in one short sentence. Activity shows it under the
+// summary, so the user can see why Albatross moved their mail.
+const Reason = z
+  .string()
+  .max(300)
+  .optional()
+  .describe('One short sentence on why you are doing this. Shown to the user in Activity.');
+
+// Every mail change reports its operation, so a toast (web) or a command
+// receipt (native) can offer Undo right away.
+const MutateOutput = z.object({ ok: z.boolean(), operationId: z.string().optional() });
+
+type ThreadMove = 'archive' | 'trash' | 'inbox';
+
+function moveSummary(to: ThreadMove, subject: string | null, count = 1) {
+  if (count > 1) {
+    const threads = pluralThreads(count);
+    return to === 'archive'
+      ? `Archived ${threads}`
+      : to === 'trash'
+        ? `Moved ${threads} to Trash`
+        : `Moved ${threads} back to the inbox`;
+  }
+  const quoted = quotedSubject(subject);
+  return to === 'archive'
+    ? `Archived ${quoted}`
+    : to === 'trash'
+      ? `Moved ${quoted} to Trash`
+      : `Moved ${quoted} back to the inbox`;
+}
+
+/** Records one undoable operation for thread moves that changed something. */
+export async function recordThreadMoves(
+  ctx: Pick<ToolContext, 'userId' | 'agent' | 'operationBatchId'>,
+  input: { tool: string; to: ThreadMove; changes: ThreadFolderChange[]; reason?: string },
+) {
+  const changes = input.changes.filter(changedFolders);
+  if (!changes.length) return undefined;
+  const single = changes.length === 1 ? changes[0] : null;
+  const subject = single ? await threadSubject(single.account, single.threadId) : null;
+  return recordMailOperation({
+    userId: ctx.userId,
+    tool: input.tool,
+    summary: moveSummary(input.to, subject, changes.length),
+    reason: mailOperationReason(ctx, input.reason),
+    target: single
+      ? { kind: 'thread', id: single.threadId, accountId: single.account }
+      : {
+          kind: 'threads',
+          count: changes.length,
+          ids: changes.slice(0, 50).map((change) => `${change.account}:${change.threadId}`),
+        },
+    inverse: { kind: MAIL_UNDO.threadFolders, payload: { threads: changes } },
+    batchId: ctx.operationBatchId,
+  });
+}
+
+async function moveOneThread(
+  ctx: ToolContext,
+  tool: string,
+  input: { account: string; threadId: string; reason?: string },
+  to: ThreadMove,
+) {
+  const change = await requireNylasResult(
+    moveNylasThread({ userId: ctx.userId, account: input.account, threadId: input.threadId, to }),
+  );
+  const operationId = await recordThreadMoves(ctx, {
+    tool,
+    to,
+    reason: input.reason,
+    changes: [
+      { account: input.account, threadId: input.threadId, before: change.before, after: change.after },
+    ],
+  });
+  return { ok: true, operationId };
+}
+
 export const archiveThread = defineTool({
   name: 'archive_thread',
-  description: 'Archive a thread.',
+  description: 'Archive a thread. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: ThreadMutate,
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }, ctx) {
-    return await requireNylasResult(
-      moveNylasThread({
-        userId: ctx.userId,
-        account,
-        threadId,
-        to: 'archive',
-      }),
-    );
+  input: ThreadMutate.extend({ reason: Reason }),
+  output: MutateOutput,
+  async handler(args, ctx) {
+    return await moveOneThread(ctx, 'archive_thread', args, 'archive');
   },
 });
 
 export const trashThread = defineTool({
   name: 'trash_thread',
-  description: 'Move a thread to Trash.',
+  description: 'Move a thread to Trash. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: ThreadMutate,
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }, ctx) {
-    return await requireNylasResult(
-      moveNylasThread({
-        userId: ctx.userId,
-        account,
-        threadId,
-        to: 'trash',
-      }),
-    );
+  input: ThreadMutate.extend({ reason: Reason }),
+  output: MutateOutput,
+  async handler(args, ctx) {
+    return await moveOneThread(ctx, 'trash_thread', args, 'trash');
   },
 });
 
 export const restoreFromTrash = defineTool({
   name: 'restore_from_trash',
-  description: 'Restore a thread from Trash.',
+  description: 'Restore a thread from Trash or Archive to the inbox. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: ThreadMutate,
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }, ctx) {
-    return await requireNylasResult(
-      moveNylasThread({
-        userId: ctx.userId,
-        account,
-        threadId,
-        to: 'inbox',
-      }),
+  input: ThreadMutate.extend({ reason: Reason }),
+  output: MutateOutput,
+  async handler(args, ctx) {
+    return await moveOneThread(ctx, 'restore_from_trash', args, 'inbox');
+  },
+});
+
+/** The most threads one bulk move takes. */
+export const BULK_MOVE_LIMIT = 100;
+
+export const bulkMoveThreads = defineTool({
+  name: 'bulk_move_threads',
+  description:
+    'Archive, trash, or restore many threads at once. Records one Activity entry with Undo for the whole selection.',
+  category: 'mail',
+  mutating: true,
+  input: z.object({
+    items: z
+      .array(z.object({ account: z.string(), threadId: z.string() }))
+      .min(1)
+      .max(BULK_MOVE_LIMIT),
+    to: z.enum(['archive', 'trash', 'inbox']),
+    reason: Reason,
+  }),
+  output: z.object({
+    ok: z.boolean(),
+    moved: z.array(z.object({ account: z.string(), threadId: z.string() })),
+    failed: z.array(z.object({ account: z.string(), threadId: z.string(), error: z.string() })),
+    operationId: z.string().optional(),
+  }),
+  async handler({ items, to, reason }, ctx) {
+    const unique = [...new Map(items.map((item) => [`${item.account}:${item.threadId}`, item])).values()];
+    const results = await mapLimit(unique, 4, async (item) =>
+      requireNylasResult(
+        moveNylasThread({ userId: ctx.userId, account: item.account, threadId: item.threadId, to }),
+      ),
     );
+    const moved: Array<{ account: string; threadId: string }> = [];
+    const failed: Array<{ account: string; threadId: string; error: string }> = [];
+    const changes: ThreadFolderChange[] = [];
+    results.forEach((result, index) => {
+      const item = unique[index];
+      if (result.status === 'fulfilled') {
+        moved.push(item);
+        changes.push({ ...item, before: result.value.before, after: result.value.after });
+      } else {
+        const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        failed.push({ ...item, error: error.slice(0, 300) });
+      }
+    });
+    const operationId = await recordThreadMoves(ctx, { tool: 'bulk_move_threads', to, changes, reason });
+    return { ok: failed.length === 0, moved, failed, operationId };
   },
 });
 
@@ -192,15 +309,32 @@ export const unstarMessage = defineTool({
   },
 });
 
+async function recordMessageLabelChange(
+  ctx: ToolContext,
+  input: { tool: string; label: string; adding: boolean; change: MessageFolderChange; reason?: string },
+) {
+  if (!changedFolders(input.change)) return undefined;
+  const label = input.label.trim().slice(0, 80);
+  return recordMailOperation({
+    userId: ctx.userId,
+    tool: input.tool,
+    summary: input.adding ? `Added the label "${label}" to a message` : `Removed the label "${label}"`,
+    reason: mailOperationReason(ctx, input.reason),
+    target: { kind: 'message', id: input.change.messageId, accountId: input.change.account },
+    inverse: { kind: MAIL_UNDO.messageFolders, payload: input.change },
+    batchId: ctx.operationBatchId,
+  });
+}
+
 export const addLabel = defineTool({
   name: 'add_label',
-  description: 'Add a folder/label to a message.',
+  description: 'Add a folder/label to a message. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: BasicMutate.extend({ label: z.string() }),
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, label }, ctx) {
-    return await requireNylasResult(
+  input: BasicMutate.extend({ label: z.string(), reason: Reason }),
+  output: MutateOutput,
+  async handler({ account, messageId, label, reason }, ctx) {
+    const change = await requireNylasResult(
       updateNylasMessageFolders({
         userId: ctx.userId,
         account,
@@ -209,18 +343,26 @@ export const addLabel = defineTool({
         createMissing: true,
       }),
     );
+    const operationId = await recordMessageLabelChange(ctx, {
+      tool: 'add_label',
+      label,
+      adding: true,
+      reason,
+      change: { account, messageId, before: change.before, after: change.after },
+    });
+    return { ok: true, operationId };
   },
 });
 
 export const removeLabel = defineTool({
   name: 'remove_label',
-  description: 'Remove a folder/label from a message.',
+  description: 'Remove a folder/label from a message. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: BasicMutate.extend({ label: z.string() }),
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId, label }, ctx) {
-    return await requireNylasResult(
+  input: BasicMutate.extend({ label: z.string(), reason: Reason }),
+  output: MutateOutput,
+  async handler({ account, messageId, label, reason }, ctx) {
+    const change = await requireNylasResult(
       updateNylasMessageFolders({
         userId: ctx.userId,
         account,
@@ -228,6 +370,14 @@ export const removeLabel = defineTool({
         remove: [label],
       }),
     );
+    const operationId = await recordMessageLabelChange(ctx, {
+      tool: 'remove_label',
+      label,
+      adding: false,
+      reason,
+      change: { account, messageId, before: change.before, after: change.after },
+    });
+    return { ok: true, operationId };
   },
 });
 
@@ -268,8 +418,10 @@ export const applySmartLabels = defineTool({
       .min(1)
       .max(80),
   }),
-  output: z.object({ ok: z.boolean(), applied: z.number() }),
+  output: z.object({ ok: z.boolean(), applied: z.number(), operationId: z.string().optional() }),
   async handler({ account, items }, ctx) {
+    const threadChanges: ThreadFolderChange[] = [];
+    const messageChanges: MessageFolderChange[] = [];
     const uniqueLabels = [
       ...new Set(items.flatMap((item) => item.labels).filter((label) => label.startsWith('MailOS/'))),
     ];
@@ -282,7 +434,7 @@ export const applySmartLabels = defineTool({
     for (const item of items) {
       const labels = [...new Set(item.labels)];
       if (item.messageId) {
-        await requireNylasResult(
+        const change = await requireNylasResult(
           updateNylasMessageFoldersWithRetry({
             userId: ctx.userId,
             account,
@@ -292,8 +444,14 @@ export const applySmartLabels = defineTool({
             retries: 5,
           }),
         );
+        messageChanges.push({
+          account,
+          messageId: item.messageId,
+          before: change.before,
+          after: change.after,
+        });
       } else {
-        await requireNylasResult(
+        const change = await requireNylasResult(
           updateNylasThreadFoldersWithRetry({
             userId: ctx.userId,
             account,
@@ -303,6 +461,7 @@ export const applySmartLabels = defineTool({
             retries: 5,
           }),
         );
+        threadChanges.push({ account, threadId: item.threadId, before: change.before, after: change.after });
       }
       applied += labels.length;
 
@@ -315,19 +474,33 @@ export const applySmartLabels = defineTool({
       }).catch(() => undefined);
       await delay(500);
     }
-    return { ok: true, applied };
+    const threads = threadChanges.filter(changedFolders);
+    const messages = messageChanges.filter(changedFolders);
+    const touched = threads.length + messages.length;
+    const operationId = touched
+      ? await recordMailOperation({
+          userId: ctx.userId,
+          tool: 'apply_smart_labels',
+          summary: `Applied labels to ${touched === 1 ? 'one thread' : pluralThreads(touched)}`,
+          reason: mailOperationReason(ctx, `Labels: ${uniqueLabels.join(', ') || 'smart labels'}`),
+          target: { kind: 'threads', count: touched, accountId: account },
+          inverse: { kind: MAIL_UNDO.threadFolders, payload: { threads, messages } },
+          batchId: ctx.operationBatchId,
+        })
+      : undefined;
+    return { ok: true, applied, operationId };
   },
 });
 
 export const muteThread = defineTool({
   name: 'mute_thread',
-  description: 'Mute a thread so future replies bypass the inbox.',
+  description: 'Mute a thread so future replies bypass the inbox. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
-  input: ThreadMutate,
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId }, ctx) {
-    return await requireNylasResult(
+  input: ThreadMutate.extend({ reason: Reason }),
+  output: MutateOutput,
+  async handler({ account, threadId, reason }, ctx) {
+    const change = await requireNylasResult(
       updateNylasThreadFolders({
         userId: ctx.userId,
         account,
@@ -335,6 +508,19 @@ export const muteThread = defineTool({
         add: ['MUTE'],
       }),
     );
+    const threadChange = { account, threadId, before: change.before, after: change.after };
+    const operationId = changedFolders(threadChange)
+      ? await recordMailOperation({
+          userId: ctx.userId,
+          tool: 'mute_thread',
+          summary: `Muted ${quotedSubject(await threadSubject(account, threadId))}`,
+          reason: mailOperationReason(ctx, reason),
+          target: { kind: 'thread', id: threadId, accountId: account },
+          inverse: { kind: MAIL_UNDO.threadFolders, payload: { threads: [threadChange] } },
+          batchId: ctx.operationBatchId,
+        })
+      : undefined;
+    return { ok: true, operationId };
   },
 });
 
@@ -349,12 +535,25 @@ export const snoozeThreadTool = defineTool({
     messageId: z.string().optional(),
     threadId: z.string(),
     untilTs: z.number().describe('Epoch ms when the thread should come back'),
+    reason: Reason,
   }),
-  output: z.object({ ok: z.boolean(), untilIso: z.string() }),
-  async handler({ account, messageId, threadId, untilTs }, ctx) {
+  output: z.object({ ok: z.boolean(), untilIso: z.string(), operationId: z.string().optional() }),
+  async handler({ account, messageId, threadId, untilTs, reason }, ctx) {
     if (!ctx.userId) throw new Error('Sign in required to snooze mail.');
     await snoozeThread({ userId: ctx.userId, account, threadId, messageId, untilTs });
-    return { ok: true, untilIso: new Date(untilTs).toISOString() };
+    const operationId = await recordMailOperation({
+      userId: ctx.userId,
+      tool: 'snooze_thread',
+      summary: `Snoozed ${quotedSubject(await threadSubject(account, threadId))} until ${formatWakeTime(
+        untilTs,
+        ctx.userTimezone,
+      )}`,
+      reason: mailOperationReason(ctx, reason),
+      target: { kind: 'thread', id: threadId, accountId: account },
+      inverse: { kind: MAIL_UNDO.unsnooze, payload: { account, threadId } },
+      batchId: ctx.operationBatchId,
+    });
+    return { ok: true, untilIso: new Date(untilTs).toISOString(), operationId };
   },
 });
 

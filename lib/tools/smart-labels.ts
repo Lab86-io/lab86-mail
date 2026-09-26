@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { api, convexMutation } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
+import { MAIL_UNDO, mailOperationReason, quotedSubject, recordMailOperation } from '../mail/mail-operations';
 import {
   classifyThreadWithContext,
   SMART_CATEGORY_IDS,
+  SMART_CATEGORY_LABELS,
   SMART_GMAIL_LABEL_PREFIX,
 } from '../mail/smart-categories';
 import { emailFromHeader } from '../shared/format';
@@ -42,6 +44,59 @@ async function reclassifyRuleMatches(rule: Pick<SmartRule, 'scope' | 'match'>) {
   } catch {
     // Best-effort: the scheduled reclassify sweep converges regardless.
   }
+}
+
+/** "mail from ann@example.com goes to Noise": what a new rule does, in words. */
+export function describeSmartRule(
+  rule: Pick<SmartRule, 'scope' | 'match' | 'effect' | 'category'>,
+  labelName?: string | null,
+) {
+  const match = rule.match.trim();
+  const who =
+    rule.scope === 'sender'
+      ? `mail from ${match}`
+      : rule.scope === 'domain'
+        ? `mail from ${match.startsWith('@') ? match : `@${match}`}`
+        : rule.scope === 'thread'
+          ? 'this thread'
+          : rule.scope === 'subject_pattern'
+            ? `mail with "${match.slice(0, 60)}" in the subject`
+            : `mail with the header ${match.slice(0, 60)}`;
+  const label = labelName ? `"${labelName}"` : 'a custom label';
+  const what =
+    rule.effect === 'never_main'
+      ? 'stays out of Main'
+      : rule.effect === 'always_noise'
+        ? 'goes to Noise'
+        : rule.effect === 'always_category'
+          ? `goes to ${rule.category ? SMART_CATEGORY_LABELS[rule.category] : 'a category'}`
+          : rule.effect === 'always_custom_label'
+            ? `gets the label ${label}`
+            : `never gets the label ${label}`;
+  return `${who} ${what}`;
+}
+
+/** One undoable Activity entry for a new smart rule. Undo turns the rule off. */
+async function recordSmartRuleOperation(
+  ctx: { userId?: string | null; agent?: 'user' | 'ai' | 'codex'; operationBatchId?: string },
+  input: { tool: string; rule: SmartRule; labelName?: string | null; reason?: string; threadId?: string },
+) {
+  return recordMailOperation({
+    userId: ctx.userId,
+    tool: input.tool,
+    summary: `New rule: ${describeSmartRule(input.rule, input.labelName)}`,
+    reason: mailOperationReason(ctx, input.reason),
+    target: {
+      kind: 'smartRule',
+      id: input.rule._id,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+    },
+    inverse: {
+      kind: MAIL_UNDO.disableRule,
+      payload: { ruleId: input.rule._id, scope: input.rule.scope, match: input.rule.match },
+    },
+    batchId: ctx.operationBatchId,
+  });
 }
 
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
@@ -225,13 +280,19 @@ export const createSmartRule = defineTool({
     reason: z.string().optional(),
     source: z.enum(['quick_fix', 'agent', 'settings']).optional(),
   }),
-  output: z.object({ rule: z.any() }),
+  output: z.object({ rule: z.any(), operationId: z.string().optional() }),
   async handler(args, ctx) {
     const rule = await createSmartRuleRecord({
       ...args,
       source: args.source || (ctx.agent === 'ai' ? 'agent' : 'settings'),
     });
-    return { rule };
+    await reclassifyRuleMatches(rule);
+    const operationId = await recordSmartRuleOperation(ctx, {
+      tool: 'create_smart_rule',
+      rule,
+      reason: args.reason,
+    });
+    return { rule, operationId };
   },
 });
 
@@ -270,7 +331,12 @@ export const applySmartCorrection = defineTool({
       })
       .optional(),
   }),
-  output: z.object({ ok: z.boolean(), rule: z.any().optional(), label: z.any().optional() }),
+  output: z.object({
+    ok: z.boolean(),
+    rule: z.any().optional(),
+    label: z.any().optional(),
+    operationId: z.string().optional(),
+  }),
   async handler({ account, threadId, action, scope = 'sender', category, customLabelId, newLabel }, ctx) {
     const thread = await resolveThread(account, threadId);
     if (!thread) throw new Error('Thread not found');
@@ -325,6 +391,16 @@ export const applySmartCorrection = defineTool({
       ruleId: rule._id,
       action,
     });
-    return { ok: true, rule, label: label || undefined };
+    const labelName =
+      label?.name || (targetCustomLabelId ? labels.find((l) => l._id === targetCustomLabelId)?.name : null);
+    const operationId = await recordSmartRuleOperation(ctx, {
+      tool: 'apply_smart_correction',
+      rule,
+      labelName,
+      threadId,
+      reason:
+        ctx.agent === 'ai' ? undefined : `You corrected where ${quotedSubject(thread.subject)} belongs.`,
+    });
+    return { ok: true, rule, label: label || undefined, operationId };
   },
 });

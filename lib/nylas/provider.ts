@@ -633,6 +633,100 @@ export async function folderIdsAfterMove(
   return [target];
 }
 
+/**
+ * The folder ids before and after one change. Undo (lib/mail/mail-operations)
+ * keeps both, so it can take back exactly this change later.
+ */
+export interface FolderChange {
+  ok: true;
+  before: string[];
+  after: string[];
+}
+
+function folderChange(before: string[], after: string[]): FolderChange {
+  return { ok: true, before: [...before], after: [...after] };
+}
+
+/**
+ * The folders after one recorded change is taken back. Gmail labels stack, so
+ * undo removes only what the change added and adds back only what it removed;
+ * labels the user changed later stay. Other providers keep a message in one
+ * folder, so undo puts it back in the folder it left (the Inbox first).
+ */
+export function revertedFolderIds(
+  provider: NylasAccountRow['provider'],
+  current: string[],
+  change: { before: string[]; after: string[] },
+  inboxId?: string | null,
+): string[] {
+  const added = change.after.filter((id) => !change.before.includes(id));
+  const removed = change.before.filter((id) => !change.after.includes(id));
+  if (provider === 'google') {
+    const next = [...new Set(current.filter(Boolean))].filter((id) => !added.includes(id));
+    for (const id of removed) if (!next.includes(id)) next.push(id);
+    return next;
+  }
+  if (!removed.length) return current.filter((id) => !added.includes(id));
+  const target = (inboxId && removed.includes(inboxId) ? inboxId : removed[0]) as string;
+  return [target];
+}
+
+/** Take back one recorded thread folder change (archive, trash, label, mute). */
+export async function revertNylasThreadFolders({
+  userId,
+  account,
+  threadId,
+  before,
+  after,
+}: {
+  userId?: string | null;
+  account: string;
+  threadId: string;
+  before: string[];
+  after: string[];
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().threads.find({ identifier: row.grantId, threadId }),
+  );
+  const now = current.data.folders || [];
+  const inboxId = row.provider === 'google' ? 'INBOX' : await resolveProviderFolderId(row, 'INBOX');
+  const folders = revertedFolderIds(row.provider, now, { before, after }, inboxId);
+  await withNylasRetry(() =>
+    requireNylas().threads.update({ identifier: row.grantId, threadId, requestBody: { folders } }),
+  );
+  return folderChange(now, folders);
+}
+
+/** Take back one recorded message folder change (a label added or removed). */
+export async function revertNylasMessageFolders({
+  userId,
+  account,
+  messageId,
+  before,
+  after,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+  before: string[];
+  after: string[];
+}) {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const current = await withNylasRetry(() =>
+    requireNylas().messages.find({ identifier: row.grantId, messageId }),
+  );
+  const now = current.data.folders || [];
+  const inboxId = row.provider === 'google' ? 'INBOX' : await resolveProviderFolderId(row, 'INBOX');
+  const folders = revertedFolderIds(row.provider, now, { before, after }, inboxId);
+  await withNylasRetry(() =>
+    requireNylas().messages.update({ identifier: row.grantId, messageId, requestBody: { folders } }),
+  );
+  return folderChange(now, folders);
+}
+
 /** Move a whole thread to Archive, Trash, or the Inbox for any provider. */
 export async function moveNylasThread({
   userId,
@@ -650,13 +744,14 @@ export async function moveNylasThread({
   const current = await withNylasRetry(() =>
     requireNylas().threads.find({ identifier: row.grantId, threadId }),
   );
-  const folders = await folderIdsAfterMove(row.provider, current.data.folders || [], to, (folder) =>
+  const before = current.data.folders || [];
+  const folders = await folderIdsAfterMove(row.provider, before, to, (folder) =>
     resolveProviderFolderId(row, folder),
   );
   await withNylasRetry(() =>
     requireNylas().threads.update({ identifier: row.grantId, threadId, requestBody: { folders } }),
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 /** Move one message to Archive, Trash, or the Inbox for any provider. */
@@ -676,13 +771,14 @@ export async function moveNylasMessage({
   const current = await withNylasRetry(() =>
     requireNylas().messages.find({ identifier: row.grantId, messageId }),
   );
-  const folders = await folderIdsAfterMove(row.provider, current.data.folders || [], to, (folder) =>
+  const before = current.data.folders || [];
+  const folders = await folderIdsAfterMove(row.provider, before, to, (folder) =>
     resolveProviderFolderId(row, folder),
   );
   await withNylasRetry(() =>
     requireNylas().messages.update({ identifier: row.grantId, messageId, requestBody: { folders } }),
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 export async function updateNylasMessage({
@@ -744,7 +840,8 @@ async function updateNylasMessageFoldersInternal({
     () => requireNylas().messages.find({ identifier: row.grantId, messageId }),
     retryRequests,
   );
-  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+  const before = current.data.folders || [];
+  const folders = await applyFolderDelta(row.grantId, before, {
     add,
     remove,
     createMissing,
@@ -758,7 +855,7 @@ async function updateNylasMessageFoldersInternal({
       }),
     retryRequests,
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 export async function updateNylasMessageFoldersWithRetry({
@@ -843,7 +940,8 @@ async function updateNylasThreadFoldersInternal({
     () => requireNylas().threads.find({ identifier: row.grantId, threadId }),
     retryRequests,
   );
-  const folders = await applyFolderDelta(row.grantId, current.data.folders || [], {
+  const before = current.data.folders || [];
+  const folders = await applyFolderDelta(row.grantId, before, {
     add,
     remove,
     createMissing,
@@ -857,7 +955,7 @@ async function updateNylasThreadFoldersInternal({
       }),
     retryRequests,
   );
-  return { ok: true };
+  return folderChange(before, folders);
 }
 
 export async function sendNylasMessage({
