@@ -91,6 +91,7 @@ import {
   inboxDateGroupLabel,
   shortFrom,
 } from '@/lib/shared/format';
+import { bulkMailMessages, settleBulk } from '@/lib/shell/bulk-mail';
 import { type BulkTriageResponse, bulkTriageMessage, runBulkTriage } from '@/lib/shell/bulk-triage';
 import { cn } from '@/lib/utils';
 
@@ -672,45 +673,49 @@ export function Inbox() {
   };
 
   const bulkArchive = useMutation({
-    mutationFn: async (ids: string[]) => {
-      const results = await Promise.allSettled(
-        ids.map((id) =>
-          callTool('archive_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
-        ),
-      );
-      const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length) throw new Error(`Failed to archive ${failures.length} thread(s).`);
-    },
+    mutationFn: async (ids: string[]) =>
+      settleBulk(ids, (id) =>
+        callTool('archive_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
+      ),
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
       clearSelected();
     },
-    onSuccess: (_data, ids) => {
-      toast.success(`Archived ${ids.length}`);
+    onSuccess: (outcome) => {
+      const messages = bulkMailMessages('archive', outcome);
+      if (messages.success) toast.success(messages.success);
+      if (messages.error) {
+        toast.error(messages.error);
+        // Bring back only the rows that did not move.
+        queryClient.invalidateQueries({ queryKey: ['search'] });
+      }
     },
     onError: () => {
-      toast.error('Archive failed — restoring');
+      toast.error('Archive failed. The threads are back in the list.');
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
 
   const bulkTrash = useMutation({
-    mutationFn: async (ids: string[]) => {
-      const results = await Promise.allSettled(
-        ids.map((id) => callTool('trash_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) })),
-      );
-      const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length) throw new Error(`Failed to trash ${failures.length} thread(s).`);
-    },
+    mutationFn: async (ids: string[]) =>
+      settleBulk(ids, (id) =>
+        callTool('trash_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
+      ),
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
       clearSelected();
     },
-    onSuccess: (_data, ids) => {
-      toast.success(`Trashed ${ids.length}`);
+    onSuccess: (outcome) => {
+      const messages = bulkMailMessages('trash', outcome);
+      if (messages.success) toast.success(messages.success);
+      if (messages.error) {
+        toast.error(messages.error);
+        // Bring back only the rows that did not move.
+        queryClient.invalidateQueries({ queryKey: ['search'] });
+      }
     },
     onError: () => {
-      toast.error('Trash failed — restoring');
+      toast.error('Trash failed. The threads are back in the list.');
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
   });
