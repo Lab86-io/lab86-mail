@@ -138,3 +138,95 @@ export function billingPlanView(
 function pick(plan: PaidPlan) {
   return { name: plan.name, monthlyUsd: plan.monthlyUsd, annualUsd: plan.annualUsd };
 }
+
+/** One row of the plan table on the pricing page: a feature and what each plan gives. */
+export interface PlanTableRow {
+  feature: string;
+  free: string;
+  pro: string;
+  byok: string;
+}
+
+export function planTableRows(): PlanTableRow[] {
+  return [
+    {
+      feature: 'Price',
+      free: '$0',
+      pro: planPriceLine('pro'),
+      byok: planPriceLine('byok'),
+    },
+    {
+      feature: 'Daily Brief',
+      free: 'A plain edition, built without models',
+      pro: 'Written every morning',
+      byok: 'Written every morning',
+    },
+    {
+      feature: 'Mail, calendar, and search',
+      free: 'Included',
+      pro: 'Included, with sorting and drafts',
+      byok: 'Included, with sorting and drafts',
+    },
+    {
+      feature: 'Chat and Albatrosses',
+      free: 'Not included',
+      pro: 'Included, with a monthly budget',
+      byok: 'Included, paid to your provider',
+    },
+    {
+      feature: 'Models',
+      free: 'None',
+      pro: 'Hosted by Lab86',
+      byok: 'Your OpenRouter, OpenAI, or Anthropic key',
+    },
+    {
+      feature: 'Standing orders, Activity, and Undo',
+      free: 'Included',
+      pro: 'Included',
+      byok: 'Included',
+    },
+    {
+      feature: 'Export and deletion',
+      free: 'Any time',
+      pro: 'Any time',
+      byok: 'Any time',
+    },
+  ];
+}
+
+/** "500 credits a month, worth $5 of model use." */
+export function monthlyBudgetText(monthlyCredits: number, creditValueUsd: number): string {
+  const worth = formatUsd(Math.round(monthlyCredits * creditValueUsd * 100) / 100);
+  return `${monthlyCredits} credits a month, worth ${worth} of model use`;
+}
+
+/** The pricing page questions, from the same constants. */
+export function pricingFaq(): Array<{ question: string; answer: string }> {
+  return [
+    {
+      question: 'What happens when the trial ends?',
+      answer: `A new account gets ${TRIAL_DAYS} days of ${PAID_PLANS.pro.name} with no card. When the trial ends, the account moves to ${FREE_PLAN_NAME}. Nothing is charged, and nothing is deleted.`,
+    },
+    {
+      question: 'Can I cancel at any time?',
+      answer: `Yes. Open Settings, Intelligence, and choose Manage. Your plan stays until the end of the period you paid for.`,
+    },
+    {
+      question: `What is ${PAID_PLANS.byok.name}?`,
+      answer: `Everything in ${PAID_PLANS.pro.name}, with your own OpenRouter, OpenAI, or Anthropic key. You pay your provider for model use, and ${PAID_PLANS.byok.name} costs ${planPriceLine('byok')} for ${PRODUCT_NAME}.`,
+    },
+    {
+      question: `Does ${PRODUCT_NAME} send email for me?`,
+      answer: `Only after you approve it. Sending, invitations, and changes that cannot be undone always ask you first. Other changes show in Activity, and Settings, Standing orders can pause any of them.`,
+    },
+    {
+      question: 'Which mail accounts work?',
+      answer: 'Gmail and Google Workspace, Microsoft 365 and Outlook, iCloud, and other IMAP mail.',
+    },
+    {
+      question: 'Can I take my data with me?',
+      answer:
+        'Yes. Settings, Account, Export my data downloads everything as a ZIP. Deleting your account removes it from our systems; the mail in your provider stays where it is.',
+    },
+  ];
+}

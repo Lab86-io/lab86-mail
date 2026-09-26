@@ -14,10 +14,13 @@ import {
 import {
   DAY_MS,
   formatUsd,
+  monthlyBudgetText,
   PAID_PLANS,
   PRODUCT_NAME,
   planPriceLine,
   planPriceShort,
+  planTableRows,
+  pricingFaq,
   TRIAL_DAYS,
   trialNoteText,
   trialState,
@@ -77,6 +80,44 @@ describe('one price and one name', () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('the pricing page', () => {
+  test('it leads with the outcome, then the plans, the budget, the data promise, and questions', () => {
+    const html = renderToStaticMarkup(<PricingPage />);
+    const order = [
+      'Start each morning knowing what needs you.',
+      'Try Pro free for 14 days. No card.',
+      '>Plans<',
+      'What Pro pays for',
+      'Your data stays yours',
+      'does not train models on your mail',
+      '>Questions<',
+      'Choose a plan',
+    ].map((text) => html.indexOf(text));
+    for (const index of order) expect(index).toBeGreaterThan(-1);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    for (const row of planTableRows()) expect(html).toContain(row.feature);
+    for (const entry of pricingFaq()) expect(html).toContain(entry.question.replace(/'/g, '&#x27;'));
+    expect(html).toContain('500 credits a month, worth $5 of model use');
+    expect(html).not.toMatch(/\bAI\b/);
+  });
+
+  test('the table and the questions read the plan constants', () => {
+    const rows = planTableRows();
+    expect(rows[0]).toEqual({
+      feature: 'Price',
+      free: '$0',
+      pro: '$15/month or $150/year',
+      byok: '$12/month or $50.40/year',
+    });
+    expect(new Set(rows.map((row) => row.feature)).size).toBe(rows.length);
+    const faq = pricingFaq();
+    expect(faq.find((entry) => entry.question === 'What is Own key?')?.answer).toContain('$12/month');
+    expect(faq[0].answer).toContain('14 days of Pro with no card');
+    for (const entry of faq) expect(`${entry.question} ${entry.answer}`).not.toMatch(/\bAI\b/);
+    expect(monthlyBudgetText(250, 0.01)).toBe('250 credits a month, worth $2.50 of model use');
   });
 });
 
