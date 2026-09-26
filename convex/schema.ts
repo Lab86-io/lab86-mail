@@ -1875,6 +1875,9 @@ export default defineSchema({
     scopes: v.array(v.string()),
     lastAccessedAt: v.optional(v.number()),
     error: v.optional(v.string()),
+    // The last provider error that does not need a reconnect (a missing
+    // folder, a rate limit). It never changes `status`.
+    lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

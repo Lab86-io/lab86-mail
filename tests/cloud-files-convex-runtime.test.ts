@@ -116,6 +116,93 @@ describe('cloud file Convex lifecycle', () => {
     expect(recovered.lastAccessedAt).toBeNumber();
   });
 
+  test('only a reconnect error marks the connection broken (DOC-2)', async () => {
+    const t = newHarness();
+    await connect(t);
+    await t.mutation(api.cloudFiles.markAccessed, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: 'google_drive_connection',
+      error: 'This Google Drive folder no longer exists.',
+    });
+    let [row] = await t.query(api.cloudFiles.listConnections, { internalSecret: SECRET, userId: USER });
+    expect(row.status).toBe('connected');
+    expect(row.error).toBeUndefined();
+    expect(row.lastError).toBe('This Google Drive folder no longer exists.');
+
+    await t.mutation(api.cloudFiles.markAccessed, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: 'google_drive_connection',
+      error: 'Google Drive access expired. Reconnect this account.',
+      reconnect: true,
+    });
+    [row] = await t.query(api.cloudFiles.listConnections, { internalSecret: SECRET, userId: USER });
+    expect(row.status).toBe('error');
+    expect(row.error).toContain('Reconnect');
+  });
+
+  test('disconnect purges the indexed content of that connection only (CAL-10)', async () => {
+    const t = newHarness();
+    await connect(t);
+    const seed = (connectionId: string, externalId: string) =>
+      t.run(async (ctx) => {
+        const itemId = await ctx.db.insert('contentItems', {
+          userId: USER,
+          key: `google_drive:${connectionId}:${externalId}`,
+          connectionId,
+          source: 'google_drive',
+          externalId,
+          title: externalId,
+          text: 'secret plan',
+          version: '1',
+          modifiedAt: 1,
+          indexedAt: 1,
+          partial: false,
+          deleted: false,
+          status: 'ready',
+          attempts: 0,
+          nextAttemptAt: 0,
+        });
+        await ctx.db.insert('contentChunks', {
+          userId: USER,
+          itemId,
+          version: '1',
+          text: 'secret plan',
+          embedding: new Array(1536).fill(0),
+        });
+      });
+    for (let index = 0; index < 30; index += 1) await seed('google_drive_connection', `file-${index}`);
+    await seed('other_connection', 'keep');
+    await t.run((ctx) =>
+      ctx.db.insert('contentSync', {
+        userId: USER,
+        connectionId: 'google_drive_connection',
+        status: 'idle',
+        indexed: 30,
+        skipped: 0,
+        updatedAt: 1,
+      }),
+    );
+
+    await t.mutation(api.cloudFiles.disconnect, {
+      internalSecret: SECRET,
+      userId: USER,
+      connectionId: 'google_drive_connection',
+    });
+    // The purge runs in batches of 25, so it schedules itself once more.
+    for (let round = 0; round < 3; round += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await t.finishInProgressScheduledFunctions();
+    }
+    const left = await t.run(async (ctx) => ({
+      items: (await ctx.db.query('contentItems').collect()).map((row) => row.connectionId),
+      chunks: (await ctx.db.query('contentChunks').collect()).length,
+      sync: (await ctx.db.query('contentSync').collect()).length,
+    }));
+    expect(left).toEqual({ items: ['other_connection'], chunks: 1, sync: 0 });
+  });
+
   test('OAuth state is user-bound and single-use, and disconnect removes both rows', async () => {
     const t = newHarness();
     await t.mutation(api.cloudFiles.saveOAuthState, {

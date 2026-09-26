@@ -339,17 +339,62 @@ export async function getCloudFileAccess(input: { userId: string; connectionId: 
   return { connection: row.connection, accessToken };
 }
 
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
+
+// Disconnect revokes the grant at the provider first, so the stored refresh
+// token stops working even if a copy of it exists (CAL-10). Convex then
+// deletes the rows and purges the indexed content of this connection.
 export async function disconnectCloudFileConnection(userId: string, connectionId: string) {
+  const row = await dependencies
+    .convexQuery<StoredCloudFileConnection | null>(cloudFilesApi.getConnectionWithCredentials, {
+      userId,
+      connectionId,
+    })
+    .catch(() => null);
+  let revoked = false;
+  if (row?.connection && row.credentials) {
+    revoked = await revokeCloudFileGrant(row).catch((error) => {
+      console.warn('[cloud-files] token revoke failed', {
+        provider: row.connection.provider,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    });
+  }
   await dependencies.convexMutation(cloudFilesApi.disconnect, {
     userId,
     connectionId,
   });
+  return { revoked };
 }
 
-export async function markCloudFileConnectionAccess(userId: string, connectionId: string, error?: string) {
+async function revokeCloudFileGrant(row: StoredCloudFileConnection): Promise<boolean> {
+  // Microsoft has no endpoint that revokes one delegated refresh token; the
+  // only option signs the user out of every app. OneDrive tokens expire on
+  // their own after the rows are deleted.
+  if (row.connection.provider !== 'google_drive') return false;
+  const encrypted = row.credentials.refreshTokenEncrypted || row.credentials.accessTokenEncrypted;
+  const token = dependencies.decryptSecret(encrypted);
+  const response = await fetchCloudFileProvider(dependencies.fetch, GOOGLE_REVOKE_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token }).toString(),
+  });
+  // 400 invalid_token: the grant is already gone, which is the goal.
+  if (response.ok || response.status === 400) return true;
+  throw new Error(`Google revoke returned ${response.status}`);
+}
+
+export async function markCloudFileConnectionAccess(
+  userId: string,
+  connectionId: string,
+  error?: string,
+  options: { reconnect?: boolean } = {},
+) {
   await dependencies.convexMutation(cloudFilesApi.markAccessed, {
     userId,
     connectionId,
     error,
+    ...(error && options.reconnect ? { reconnect: true } : {}),
   });
 }

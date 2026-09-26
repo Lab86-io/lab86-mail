@@ -306,6 +306,8 @@ export const markAccessed = mutation({
     userId: v.string(),
     connectionId: v.string(),
     error: v.optional(v.string()),
+    // True only when the user must reconnect (expired or revoked access).
+    reconnect: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -316,9 +318,16 @@ export const markAccessed = mutation({
       )
       .unique();
     if (!connection) return { ok: false };
+    if (args.error && !args.reconnect) {
+      // A missing folder or a rate limit is not a broken connection. Content
+      // sync and the Brief keep using it; the text stays in lastError.
+      await ctx.db.patch(connection._id, { lastError: args.error, updatedAt: now() });
+      return { ok: true };
+    }
     await ctx.db.patch(connection._id, {
       status: args.error ? 'error' : 'connected',
       error: args.error,
+      lastError: args.error,
       lastAccessedAt: args.error ? connection.lastAccessedAt : now(),
       updatedAt: now(),
     });
@@ -350,6 +359,47 @@ export const disconnect = mutation({
     ]);
     if (credentials) await ctx.db.delete(credentials._id);
     if (connection) await ctx.db.delete(connection._id);
+    // Text extracted from this account must not stay searchable (CAL-10).
+    await ctx.scheduler.runAfter(0, internal.cloudFiles.purgeConnectionContent, {
+      userId: args.userId,
+      connectionId: args.connectionId,
+    });
     return { ok: true };
+  },
+});
+
+const PURGE_BATCH_SIZE = 25;
+
+// Deletes the indexed content of a disconnected account in bounded batches:
+// the items, their embedding chunks, and the sync cursor.
+export const purgeConnectionContent = internalMutation({
+  args: { userId: v.string(), connectionId: v.string() },
+  handler: async (ctx, args) => {
+    const items = await ctx.db
+      .query('contentItems')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .take(PURGE_BATCH_SIZE);
+    for (const item of items) {
+      const chunks = await ctx.db
+        .query('contentChunks')
+        .withIndex('by_item', (q) => q.eq('itemId', item._id))
+        .collect();
+      for (const chunk of chunks) await ctx.db.delete(chunk._id);
+      await ctx.db.delete(item._id);
+    }
+    if (items.length === PURGE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cloudFiles.purgeConnectionContent, args);
+      return { deleted: items.length, done: false };
+    }
+    const syncRows = await ctx.db
+      .query('contentSync')
+      .withIndex('by_user_connection', (q) =>
+        q.eq('userId', args.userId).eq('connectionId', args.connectionId),
+      )
+      .collect();
+    for (const row of syncRows) await ctx.db.delete(row._id);
+    return { deleted: items.length, done: true };
   },
 });
