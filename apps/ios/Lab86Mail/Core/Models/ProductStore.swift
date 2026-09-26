@@ -576,7 +576,9 @@ final class ProductStore {
         do {
             let result = try await tools.invoke(
                 "list_daily_reports",
-                arguments: ["limit": .number(30)]
+                // The sheet shows only titles and dates; a tap loads the full
+                // edition. Full rows here cost about 20 MB.
+                arguments: ["limit": .number(30), "summaryOnly": .bool(true)]
             )
             dailyReportHistory = (result["reports"]?.arrayValue ?? []).compactMap(DailyReportModel.init)
         } catch {

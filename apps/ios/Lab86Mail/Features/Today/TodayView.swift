@@ -208,8 +208,10 @@ struct TodayView: View {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     DailyBriefMasthead(generatedAt: report.generatedAt, art: report.art)
-                    NarrativeBriefView(memory: narrative, backend: environment.backend)
-                    if narrative.entry == nil {
+                    if BriefOwnerMounts.mountsNarrative(document) {
+                        NarrativeBriefView(memory: narrative, backend: environment.backend)
+                    }
+                    if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
                         DailyBriefLede(text: document.summary)
                     }
                     BriefDocumentView(
@@ -218,9 +220,18 @@ struct TodayView: View {
                         surface: .daily,
                         reportID: report.id,
                         hideInactive: store.showsLatestDailyReport,
+                        liveSections: BriefOwnerMounts.liveSections(
+                            showsLatest: store.showsLatestDailyReport,
+                            narrative: narrative,
+                            backend: environment.backend
+                        ),
                         onReview: { artifactReview = $0 }
                     )
-                    if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                    if BriefOwnerMounts.mountsPreparedWork(
+                        document,
+                        hasArtifact: report.hasArtifact,
+                        showsLatest: store.showsLatestDailyReport
+                    ) {
                         PreparedWorkSection()
                     }
                     BriefMailBacklog(items: report.overflow) { item in
@@ -422,21 +433,37 @@ struct TodayView: View {
 
     @ViewBuilder
     private func briefContent(_ report: DailyReportModel?) -> some View {
-        NarrativeBriefView(memory: narrative, backend: environment.backend)
+        // An editorial edition places the narrative in its own body.
+        if BriefOwnerMounts.mountsNarrative(
+            report.flatMap { Self.rendersNativeDocument($0) ? $0.document : nil }
+        ) {
+            NarrativeBriefView(memory: narrative, backend: environment.backend)
+        }
         if let report, report.hasArtifact {
             if let document = report.document, Self.rendersNativeDocument(report) {
                 // Today has already given the date, so the brief brings no
                 // masthead of its own into the same scroll.
-                if narrative.entry == nil { DailyBriefLede(text: document.summary) }
+                if BriefOwnerMounts.mountsLede(document, narrativeLoaded: narrative.entry != nil) {
+                    DailyBriefLede(text: document.summary)
+                }
                 BriefDocumentView(
                     document: document,
                     isComposing: report.artifactStatus == "composing",
                     surface: .daily,
                     reportID: report.id,
                     hideInactive: store.showsLatestDailyReport,
+                    liveSections: BriefOwnerMounts.liveSections(
+                        showsLatest: store.showsLatestDailyReport,
+                        narrative: narrative,
+                        backend: environment.backend
+                    ),
                     onReview: { artifactReview = $0 }
                 )
-                if PreparedWorkPolicy.mounts(hasArtifact: report.hasArtifact, showsLatest: store.showsLatestDailyReport) {
+                if BriefOwnerMounts.mountsPreparedWork(
+                    document,
+                    hasArtifact: report.hasArtifact,
+                    showsLatest: store.showsLatestDailyReport
+                ) {
                     PreparedWorkSection()
                 }
                 BriefMailBacklog(items: report.overflow) { item in
