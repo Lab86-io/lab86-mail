@@ -310,6 +310,9 @@ export default defineSchema({
     smartCategory: v.optional(v.any()),
     smartPrimary: v.optional(v.string()),
     smartCustomKeys: v.optional(v.array(v.string())),
+    // SMART_CLASSIFIER_VERSION of the code that wrote the verdict. The backlog
+    // cron sorts rows with an older number again.
+    smartClassifierVersion: v.optional(v.number()),
     classifiedAt: v.optional(v.number()),
     // Every latest message gets one lightweight Smart Category model verdict.
     // A changed latestMessageId clears the old verdict and reopens llmPending;
@@ -372,7 +375,8 @@ export default defineSchema({
     .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
     .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
-    .index('by_smart_primary', ['smartPrimary']),
+    .index('by_smart_primary', ['smartPrimary'])
+    .index('by_smart_classifier_version', ['smartClassifierVersion']),
 
   mailCorpusMessages: defineTable({
     userId: v.string(),

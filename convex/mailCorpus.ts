@@ -5,9 +5,10 @@ import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
+  classifierContent,
   classifyCorpusThread,
   computeCategoryUnreadCounts,
-  latestThreadBody,
+  latestThreadContent,
   loadSmartContext,
   normalizeCorpusThread,
   queryCategoryThreads,
@@ -303,7 +304,7 @@ export const upsertCorpusBatch = mutation({
       if (!stored.length) continue;
       const windowCapped = stored.length >= AGGREGATE_WINDOW;
       const latest = stored.reduce(latestCorpusMessage);
-      let classifyBody = String(latest.textBody || latest.searchText || '').slice(0, 4000);
+      let classifyBody = classifierContent(latest);
       const labels = [...new Set(stored.flatMap((message) => message.labels || []))];
       const patch = {
         userId: args.userId,
@@ -341,8 +342,8 @@ export const upsertCorpusBatch = mutation({
         patch.fromAddress = fullLatest.from || patch.fromAddress;
         patch.snippet = fullLatest.snippet || patch.snippet;
         patch.yearMonth = yearMonth(fullLatest.receivedAt);
-        classifyBody =
-          String(fullLatest.textBody || fullLatest.searchText || '').slice(0, 4000) || classifyBody;
+        const fullContent = classifierContent(fullLatest);
+        classifyBody = fullContent.bodyText ? fullContent : classifyBody;
       }
       const existing = await ctx.db
         .query('mailCorpusThreads')
@@ -993,7 +994,7 @@ export const storeLlmVerdicts = mutation({
           llmClassifiedMessageId: item.messageId,
         },
         context,
-        await latestThreadBody(ctx, row),
+        await latestThreadContent(ctx, row),
       );
       await ctx.db.patch(row._id, {
         llmCategory,

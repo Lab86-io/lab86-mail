@@ -265,6 +265,9 @@ describe('computeCategoryUnreadCounts', () => {
       providerThreadId: 'main_reply',
       smartPrimary: 'main',
       smartCategory: { primary: 'main', secondary: ['needs_reply'], needsAttention: true },
+      latestMessageId: 'm1',
+      jev: assessment(),
+      jevNeedsReply: true,
     });
     await seedThread(t, {
       providerThreadId: 'main_order',

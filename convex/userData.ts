@@ -1,21 +1,21 @@
 import { v } from 'convex/values';
-import { internal } from './_generated/api';
 import { mutation, query } from './_generated/server';
 import { assertBriefJobOwner, briefJobFence } from './briefJobState';
 import { now, requireInternalSecret } from './lib';
+import { requestSmartReclassify } from './smart';
 
 // Backing store for all per-user app state (see schema.ts userDocs). Every
 // access path is scoped by userId — this is the tenancy boundary that the old
 // NeDB file store did not have.
 
 // Smart rules/labels feed the write-time thread classifier; editing one makes
-// every stored verdict for that user stale, so changes schedule a background
-// re-sweep of their corpus. Slight delay batches rapid consecutive edits.
+// every stored verdict for that user stale, so changes ask for a background
+// re-sweep of their corpus. Each user has at most one sweep chain at a time.
 const RECLASSIFY_KINDS = new Set(['smartRule', 'smartLabel']);
 
 async function maybeScheduleReclassify(ctx: any, kind: string, userId: string) {
   if (!RECLASSIFY_KINDS.has(kind)) return;
-  await ctx.scheduler.runAfter(5_000, internal.smart.reclassifyUserThreads, { userId });
+  await requestSmartReclassify(ctx, userId);
 }
 
 export const getDoc = query({
