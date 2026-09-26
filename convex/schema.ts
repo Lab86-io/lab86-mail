@@ -202,7 +202,7 @@ export default defineSchema({
 
   aiEntitlements: defineTable({
     userId: v.string(),
-    plan: v.union(v.literal('free'), v.literal('pro'), v.literal('admin')),
+    plan: v.union(v.literal('free'), v.literal('byok'), v.literal('pro'), v.literal('admin')),
     status: v.union(
       v.literal('inactive'),
       v.literal('active'),

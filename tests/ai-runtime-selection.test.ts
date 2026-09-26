@@ -35,8 +35,12 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
     convexQuery: async () => state,
     convexMutation: async () => ({}),
   }));
+  const billingCalls: any[] = [];
   mock.module('../lib/hosted/billing', () => ({
-    getAiBillingEntitlement: async () => ({ plan: 'pro', status: 'active', monthlyCredits: 100000 }),
+    getAiBillingEntitlement: async (options?: unknown) => {
+      billingCalls.push(options);
+      return { plan: 'pro', status: 'active', monthlyCredits: 100000 };
+    },
   }));
   const controls = await import('../lib/hosted/controls');
   mock.module('../lib/hosted/controls', () => ({
@@ -120,6 +124,21 @@ if (process.env.CHAT_RUNTIME_SELECTION_TEST !== '1') {
       expect(normal.model.modelId).toBe(normal.modelName);
       const fast = await resolveAiRuntime({ userId: 'fixture-user', speed: 'fast', feature: 'agent' });
       expect(fast.modelName).toBe('openai/gpt-5.5');
+    });
+    test('a background BYOK call reads the stored plan snapshot for its user', async () => {
+      const entitlement = { plan: 'byok', status: 'active', monthlyCredits: 0, updatedAt: 1 };
+      state = {
+        settings: { enabled: true, mode: 'byok', provider: 'openrouter' },
+        key: { provider: 'openrouter', encryptedKey: 'fixture' },
+        entitlement,
+      };
+      billingCalls.length = 0;
+      await resolveAiRuntime({ userId: 'fixture-user', speed: 'primary', feature: 'daily_brief_layout' });
+      expect(billingCalls).toEqual([{ userId: 'fixture-user', snapshot: entitlement }]);
+      state = { settings: { enabled: true, mode: 'lab86' }, lab86Usage: { creditsUsed: 0 } };
+      billingCalls.length = 0;
+      await resolveAiRuntime({ userId: 'fixture-user', speed: 'primary', feature: 'daily_brief_layout' });
+      expect(billingCalls).toEqual([{ userId: 'fixture-user', snapshot: null }]);
     });
     test('required OpenRouter mode uses the key route despite stale direct-provider settings', async () => {
       required = true;

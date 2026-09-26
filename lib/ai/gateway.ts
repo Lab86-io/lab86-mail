@@ -21,6 +21,7 @@ import {
   findCatalogModel,
   loadRuntimeModelCatalog,
   resolveSavedModelId,
+  staticModelCatalog,
 } from './model-catalog';
 import { classifyModel, toDirectModelId, toOpenRouterModelId } from './model-router';
 
@@ -39,8 +40,11 @@ const AGENT_REASONING_EFFORT = (process.env.LAB86_MAIL_AGENT_REASONING_EFFORT ||
   | 'high';
 
 // Brief quality is controlled by evidence selection, not by sharing a small
-// output allowance between mandatory reasoning and the finished page. Omitting
-// the SDK limit lets each provider apply its model's supported output limit.
+// output allowance between mandatory reasoning and the finished page. Brief and
+// narrative writers still get an explicit, high ceiling: with no limit the
+// provider assumes the model maximum, and OpenRouter then reserves credits for
+// it and answers 402 before the call starts.
+export const BRIEF_MAX_OUTPUT_TOKENS = 32_000;
 
 // Other product features retain their existing request ceilings.
 const FEATURE_MAX_TOKENS: Record<string, number> = {
@@ -83,9 +87,35 @@ const DEFAULT_AGENT_FALLBACKS = [
 // was silently degrading it to the plain native renderer.
 const FAILOVER_FEATURES = new Set(['agent', ...BRIEF_GENERATION_FEATURES]);
 
-function capForFeature(feature: string, explicit: number | undefined, fallback: number): number | undefined {
-  if (BRIEF_GENERATION_FEATURES.has(feature)) return undefined;
+function capForFeature(feature: string, explicit: number | undefined, fallback: number): number {
+  // Brief writers ignore small per-call ceilings: a shared reasoning and page
+  // allowance truncates the page. They always get the one high, explicit cap.
+  if (BRIEF_GENERATION_FEATURES.has(feature)) return BRIEF_MAX_OUTPUT_TOKENS;
   return explicit ?? FEATURE_MAX_TOKENS[feature] ?? fallback;
+}
+
+/**
+ * A model call that cannot succeed by trying again: the user has no plan, no
+ * key, or no budget for it. Background writers treat it as final.
+ */
+export class AiAccessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiAccessError';
+  }
+}
+
+/** True when another attempt of the same call cannot succeed (access, key, plan, or credit errors). */
+export function isTerminalAiError(err: unknown, depth = 0): boolean {
+  const value = err as any;
+  if (!value || depth > 3) return false;
+  if (value.name === 'AiAccessError') return true;
+  const status = Number(value.statusCode ?? value.status);
+  if (status === 401 || status === 402 || status === 403) return true;
+  // The AI SDK wraps provider failures (RetryError.lastError, errors[]).
+  if (value.lastError && isTerminalAiError(value.lastError, depth + 1)) return true;
+  if (value.cause && isTerminalAiError(value.cause, depth + 1)) return true;
+  return false;
 }
 type PlatformPreference = {
   provider?: AiProvider;
@@ -161,9 +191,10 @@ interface RuntimeState {
     encryptedKey: string;
   } | null;
   entitlement?: {
-    plan: 'free' | 'pro' | 'admin';
+    plan: 'free' | 'byok' | 'pro' | 'admin';
     status: 'inactive' | 'active' | 'trialing' | 'past_due' | 'canceled';
     monthlyCredits: number;
+    updatedAt?: number;
   } | null;
   lab86Usage?: {
     creditsUsed: number;
@@ -204,18 +235,20 @@ export async function resolveJevRuntime(
   const state = await dependencies.query<RuntimeState>(api.ai.getRuntimeState, { userId });
   const wantsOwnKey =
     dependencies.requiresOwnKey() || (state.settings?.enabled !== false && state.settings?.mode === 'byok');
+  // Jev runs from sync and cron with no session: read the stored plan by user.
+  const entitlement = () => dependencies.entitlement({ userId, snapshot: state.entitlement ?? null });
   if (wantsOwnKey) {
     if (state.key?.provider !== 'openrouter')
-      throw new Error('Jev requires an OpenRouter key in Intelligence settings.');
+      throw new AiAccessError('Jev requires an OpenRouter key in Intelligence settings.');
     if (!dependencies.requiresOwnKey()) {
-      const entitlement = await dependencies.entitlement();
-      if (entitlement.plan === 'free') throw new Error('Your own API key requires an eligible plan.');
+      if ((await entitlement()).plan === 'free')
+        throw new AiAccessError('Your own API key requires an eligible plan.');
     }
     return { userId, source: 'byok', apiKey: dependencies.decrypt(state.key.encryptedKey) };
   }
-  dependencies.assertBudget(state, await dependencies.entitlement(), 'jev_mail');
+  dependencies.assertBudget(state, await entitlement(), 'jev_mail');
   const apiKey = dependencies.platformKey();
-  if (!apiKey) throw new Error('Jev is not configured for this deployment.');
+  if (!apiKey) throw new AiAccessError('Jev is not configured for this deployment.');
   return { userId, source: 'lab86', apiKey };
 }
 
@@ -269,21 +302,25 @@ export async function resolveAiRuntime(input: {
           model: modelFromKey('openrouter', apiKey, modelName),
         };
       }
-      throw new Error('Add your OpenRouter API key in Accounts and AI before using AI features.');
+      throw new AiAccessError('Add your OpenRouter API key in Intelligence settings to continue.');
     }
     if (mode === 'byok' && state.key) {
       // BYOK AI is part of the paid tiers ($5 BYOK or $15 Pro). The
-      // subscriptions-paused escape hatch above stays unmetered.
-      const entitlement = await getAiBillingEntitlement().catch(() => null);
+      // subscriptions-paused escape hatch above stays unmetered. Background
+      // work has no session, so the plan comes from the stored snapshot.
+      const entitlement = await getAiBillingEntitlement({
+        userId,
+        snapshot: state.entitlement ?? null,
+      }).catch(() => null);
       if (entitlement && entitlement.plan === 'free') {
-        throw new Error(
+        throw new AiAccessError(
           `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from Settings.`,
         );
       }
       const apiKey = decryptSecret(state.key.encryptedKey);
       const provider = state.key.provider;
       if (narrativeModel && provider !== 'openrouter')
-        throw new Error(
+        throw new AiAccessError(
           'The selected narrative model requires an OpenRouter key. Choose Current model in Narrative settings to use your existing provider.',
         );
       const modelName =
@@ -299,7 +336,7 @@ export async function resolveAiRuntime(input: {
       };
     }
 
-    const entitlement = await getAiBillingEntitlement();
+    const entitlement = await getAiBillingEntitlement({ userId, snapshot: state.entitlement ?? null });
     const budgetPolicy = assertLab86Budget(state, entitlement, input.feature);
     if (budgetPolicy.forceFastModel && speed === 'primary') speed = 'fast';
     platformPreference = {
@@ -309,11 +346,11 @@ export async function resolveAiRuntime(input: {
   }
 
   if (isUserOpenRouterKeyRequired()) {
-    throw new Error('Sign in and add your OpenRouter API key before using AI features.');
+    throw new AiAccessError('Sign in and add your OpenRouter API key in Intelligence settings to continue.');
   }
 
   if (narrativeModel && !openrouter)
-    throw new Error('GLM narrative generation requires a configured OpenRouter route.');
+    throw new AiAccessError('GLM narrative generation requires a configured OpenRouter route.');
   const platform = platformRuntime(
     speed,
     narrativeModel ? { provider: 'openrouter', modelName: narrativeModel } : platformPreference,
@@ -325,8 +362,8 @@ export async function resolveAiRuntime(input: {
       ...platform,
     };
   }
-  throw new Error(
-    'No AI provider configured. Add a user API key or configure OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.',
+  throw new AiAccessError(
+    'No model provider is configured. Add your own API key, or configure OPENROUTER_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.',
   );
 }
 
@@ -380,7 +417,7 @@ export async function generateTextForCurrentUser(
             const result = await dependencies.generateText({
               ...rest,
               ...(toolsForAttempt ? { tools: toolsForAttempt() } : {}),
-              // Brief writers omit application ceilings; other features keep their budgets.
+              // Brief writers share one high ceiling; other features keep their budgets.
               maxOutputTokens: capForFeature(feature, maxOutputTokens, DEFAULT_GENERATE_MAX_TOKENS),
               model: activeRuntime.model,
             });
@@ -590,13 +627,13 @@ function agentFallbackRuntimes(runtime: ResolvedAiRuntime, feature: string): Res
   // OpenRouter-prefixed ("openai/gpt-5.5") while routePlatformModel returns the
   // direct form ("gpt-5.5") when a direct key is set — comparing raw strings
   // would miss that and retry the same underlying model.
-  const seen = new Set([toDirectModelId(runtime.modelName)]);
+  const seen = new Set([directModelIdFor(runtime.modelName)]);
   const out: ResolvedAiRuntime[] = [];
   for (const name of configured) {
     const trimmed = name?.trim();
     if (!trimmed) continue;
     const routed = routePlatformModel(trimmed);
-    const key = routed ? toDirectModelId(routed.modelName) : '';
+    const key = routed ? directModelIdFor(routed.modelName) : '';
     // Skip anything we can't route or already tried (incl. the primary model).
     if (!routed || seen.has(key)) continue;
     seen.add(key);
@@ -642,6 +679,19 @@ function sleep(ms: number) {
 
 type RoutedModel = { provider: AiProvider; modelName: string; model: any };
 
+/**
+ * The id a direct vendor key expects. Anthropic's direct ids use dashes where
+ * the canonical ids use dots (claude-sonnet-4.6 -> claude-sonnet-4-6), so the
+ * catalog's directId wins over a plain prefix strip.
+ */
+export function directModelIdFor(modelName: string): string {
+  const stripped = toDirectModelId(modelName);
+  if (!stripped.includes('.')) return stripped;
+  const known = findCatalogModel(staticModelCatalog(), modelName);
+  if (known?.directId) return known.directId;
+  return classifyModel(modelName) === 'anthropic' ? stripped.replace(/(\d)\.(\d)/g, '$1-$2') : stripped;
+}
+
 // Route a model id to the best AVAILABLE provider for it: the model's own
 // direct key (OpenAI key for OpenAI models, Anthropic key for Anthropic models)
 // when configured — most reliable, no passthrough — otherwise OpenRouter as the
@@ -651,13 +701,13 @@ function routePlatformModel(modelName: string): RoutedModel | null {
   if (!name) return null;
   const vendor = classifyModel(name);
   if (vendor === 'openai' && openai) {
-    const id = toDirectModelId(name);
+    const id = directModelIdFor(name);
     // Responses API: reasoning plus function tools plus prompt caching. Chat
     // Completions rejects tools together with any reasoning effort on GPT-5.5.
     return { provider: 'openai', modelName: id, model: openai.responses(id) };
   }
   if (vendor === 'anthropic' && anthropic) {
-    const id = toDirectModelId(name);
+    const id = directModelIdFor(name);
     return { provider: 'anthropic', modelName: id, model: anthropic(id) };
   }
   if (openrouter) {
@@ -666,11 +716,11 @@ function routePlatformModel(modelName: string): RoutedModel | null {
   }
   // No OpenRouter — last resort is a direct key that can serve this vendor.
   if (vendor === 'openai' && openai) {
-    const id = toDirectModelId(name);
+    const id = directModelIdFor(name);
     return { provider: 'openai', modelName: id, model: openai.responses(id) };
   }
   if (vendor === 'anthropic' && anthropic) {
-    const id = toDirectModelId(name);
+    const id = directModelIdFor(name);
     return { provider: 'anthropic', modelName: id, model: anthropic(id) };
   }
   return null;
@@ -683,11 +733,11 @@ function platformRuntime(speed: AiSpeed, preference?: PlatformPreference): Route
   // An explicit provider preference with a matching configured key is honored
   // as the user chose it (BYOK-style platform preference).
   if (preference?.provider === 'openai' && openai) {
-    const id = toDirectModelId(requested || modelFor('openai', speed));
+    const id = directModelIdFor(requested || modelFor('openai', speed));
     return { provider: 'openai', modelName: id, model: openai.chat(id) };
   }
   if (preference?.provider === 'anthropic' && anthropic) {
-    const id = toDirectModelId(requested || modelFor('anthropic', speed));
+    const id = directModelIdFor(requested || modelFor('anthropic', speed));
     return { provider: 'anthropic', modelName: id, model: anthropic(id) };
   }
   if (preference?.provider === 'openrouter' && openrouter) {
@@ -712,8 +762,8 @@ function modelFromKey(provider: AiProvider, apiKey: string, modelName: string) {
       },
     }).chat(toOpenRouterModelId(modelName));
   }
-  if (provider === 'openai') return createOpenAI({ apiKey })(toDirectModelId(modelName));
-  return createAnthropic({ apiKey })(toDirectModelId(modelName));
+  if (provider === 'openai') return createOpenAI({ apiKey })(directModelIdFor(modelName));
+  return createAnthropic({ apiKey })(directModelIdFor(modelName));
 }
 
 function modelFor(provider: AiProvider, speed: AiSpeed) {
@@ -721,7 +771,7 @@ function modelFor(provider: AiProvider, speed: AiSpeed) {
   // Hosted defaults may use GLM or another OpenRouter vendor. A direct key
   // must still receive a model that its own provider can serve.
   if (provider !== 'openrouter' && classifyModel(chosen) !== provider)
-    return toDirectModelId(defaultModelsFor(provider)[speed === 'primary' ? 'normal' : 'fast']);
+    return directModelIdFor(defaultModelsFor(provider)[speed === 'primary' ? 'normal' : 'fast']);
   return chosen;
 }
 
@@ -739,7 +789,7 @@ function assertLab86Budget(
   feature = 'agent',
 ) {
   if (isLab86AiDisabled()) {
-    throw new Error('Lab86 AI is temporarily disabled. Switch to your own API key to continue.');
+    throw new AiAccessError('Lab86 Intelligence is paused. Switch to your own API key to continue.');
   }
   const defaults = aiCreditDefaults();
   const entitlement = clerkEntitlement || state.entitlement;
@@ -750,11 +800,13 @@ function assertLab86Budget(
   const used = state.lab86Usage?.creditsUsed || 0;
   const policy = resolveAiBudgetPolicy({ monthlyCredits, creditsUsed: used, feature });
   if (!policy.subscribed) {
-    throw new Error('Choose the Lab86 Mail paid plan or switch to your own API key before using Lab86 AI.');
+    throw new AiAccessError(
+      'Choose the Lab86 Mail paid plan, or switch to your own API key, to use Lab86 Intelligence.',
+    );
   }
   if (policy.hardStopped) {
-    throw new Error(
-      'Lab86 AI chat budget is exhausted for this month. Core mail automation will continue in reduced-cost mode, or you can switch to your own API key.',
+    throw new AiAccessError(
+      'This month’s Lab86 Intelligence chat budget is used up. Mail sorting continues at a reduced cost, or you can switch to your own API key.',
     );
   }
   return policy;
