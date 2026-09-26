@@ -7,10 +7,7 @@ import {
   ExternalLink,
   Eye,
   Forward as ForwardIcon,
-  Paperclip,
-  PenLine,
   Reply as ReplyIcon,
-  Send as SendIcon,
   X,
 } from 'lucide-react';
 import { marked } from 'marked';
@@ -32,6 +29,7 @@ import { fireSendEffect } from '@/lib/effects/send-effect';
 import { sanitizeOutgoingHtml } from '@/lib/sanitize';
 import { formatBytes } from '@/lib/shared/files';
 import { DEFAULT_UNDO_SEND_SECONDS } from '@/lib/shared/sending';
+import { applyDraftReply } from '@/lib/shell/draft-reply';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 import { attachmentPreviewKind, buildAttachmentPreviewItem } from './attachment-preview';
@@ -474,9 +472,14 @@ export function InlineComposer({
   const aiDraft = useMutation({
     mutationFn: async () => {
       if (!threadId) throw new Error('no thread');
-      return callTool<{ draft: string }>('draft_reply', { account, threadId });
+      return callTool<{ draft: string; model?: string }>('draft_reply', { account, threadId });
     },
-    onSuccess: (res) => setBody((b) => (b.trim() ? b : res.draft)),
+    onSuccess: (res) => {
+      const next = applyDraftReply(body, res);
+      if (next.body !== body) setBody(next.body);
+      if (next.notice?.kind === 'error') toast.error(next.notice.text);
+      else if (next.notice) toast.message(next.notice.text);
+    },
     onError: (err: any) => toast.error(err?.message || 'Draft failed'),
   });
 
@@ -758,7 +761,6 @@ export function InlineComposer({
             className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             title="Attach files"
           >
-            <Paperclip className="h-3 w-3" />
             Attach
           </button>
           {isReply ? (
@@ -767,10 +769,9 @@ export function InlineComposer({
               onClick={() => aiDraft.mutate()}
               disabled={aiDraft.isPending || !threadId}
               className="flex h-8 items-center gap-1 rounded-md border border-[var(--color-control-border)] bg-[var(--color-control)] px-2 text-[11.5px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)] disabled:opacity-50"
-              title="Ask AI to draft a reply"
+              title="Draft a reply"
             >
-              <PenLine className="h-3 w-3 text-[var(--color-accent)]" />
-              {aiDraft.isPending ? 'Drafting…' : 'AI draft'}
+              {aiDraft.isPending ? 'Drafting…' : 'Draft a reply'}
             </button>
           ) : null}
         </div>
@@ -832,7 +833,6 @@ export function InlineComposer({
               'disabled:opacity-50',
             )}
           >
-            <SendIcon className={cn('h-3 w-3', phase === 'sending' && 'animate-pulse')} />
             {phase === 'sending' ? 'Sending…' : phase === 'sent' ? 'Sent' : 'Send'}
           </button>
         </div>
