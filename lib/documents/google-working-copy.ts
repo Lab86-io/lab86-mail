@@ -111,6 +111,45 @@ export async function downloadGoogleWorkingCopy(input: {
   }
   throw new OfficeError('The file is still changing in Google. Try opening it again shortly.', 409);
 }
+const SESSION_TTL_MS = 7 * 86400_000;
+
+/** True when a stored working-copy session is past its expiry. */
+export function googleWorkingCopyExpired(session: string): boolean {
+  try {
+    return sessionSchema.parse(JSON.parse(deps.decryptSecret(session))).expiresAt < Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extends an expired session when the Google original is still the version
+ * the copy came from (OFF-2). A changed original keeps the conflict error, so
+ * a renewal can never hide an edit made in Google.
+ */
+export async function renewGoogleWorkingCopy(input: { userId: string; session: string }) {
+  let session: z.infer<typeof sessionSchema>;
+  try {
+    session = sessionSchema.parse(JSON.parse(deps.decryptSecret(input.session)));
+  } catch {
+    throw new OfficeError('Download a working copy before saving changes.', 400);
+  }
+  if (session.userId !== input.userId)
+    throw new OfficeError('This working copy belongs to another user.', 403);
+  const token = await access(input.userId, session.connectionId);
+  const current = await metadata(token, session.fileId);
+  if (
+    current.etag !== session.etag ||
+    current.version !== session.version ||
+    current.mimeType !== session.mimeType
+  )
+    throw new OfficeError(
+      'The original changed in Google. Download its latest version before saving your edits.',
+      409,
+    );
+  return deps.encryptSecret(JSON.stringify({ ...session, expiresAt: Date.now() + SESSION_TTL_MS }));
+}
+
 export async function saveGoogleWorkingCopy(input: {
   userId: string;
   session: string;
