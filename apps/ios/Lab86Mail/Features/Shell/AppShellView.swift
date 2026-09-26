@@ -285,12 +285,16 @@ private struct SourceList: View {
     let onSelect: () -> Void
 
     @State private var model = SidebarWheelModel()
+    @State private var showsNewArea = false
+    @State private var newAreaName = ""
+    @State private var isCreatingArea = false
 
     @State private var measurementSequence = SidebarMeasurementSequence()
     @State private var wheelFrame: CGRect = .zero
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
     private var areas: [AreaSummary] { environment.store.areas }
+    private var labels: [MailLabelSummary] { environment.store.mailLabels }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -393,6 +397,23 @@ private struct SourceList: View {
                 .sidebarPage(engagement: engagement, focusY: focus)
         }
 
+        // Custom labels the user shows in the sidebar (NAT-4). Mail a
+        // label-move rule files leaves Main, so its view must be reachable.
+        if !labels.isEmpty {
+            Divider()
+                .padding(.vertical, 12)
+                .sidebarPage(engagement: engagement, focusY: focus)
+
+            sectionHeader("Labels")
+                .sidebarPage(engagement: engagement, focusY: focus)
+
+            ForEach(Array(labels.enumerated()), id: \.element.id) { offset, label in
+                labelButton(label)
+                    .sidebarWheelDetent(primaries.count + offset)
+                    .sidebarPage(engagement: engagement, focusY: focus)
+            }
+        }
+
         Divider()
             .padding(.vertical, 12)
             .sidebarPage(engagement: engagement, focusY: focus)
@@ -406,10 +427,13 @@ private struct SourceList: View {
         } else {
             ForEach(Array(areas.enumerated()), id: \.element.id) { offset, area in
                 areaButton(area)
-                    .sidebarWheelDetent(primaries.count + offset)
+                    .sidebarWheelDetent(primaries.count + labels.count + offset)
                     .sidebarPage(engagement: engagement, focusY: focus)
             }
         }
+
+        newAreaButton
+            .sidebarPage(engagement: engagement, focusY: focus)
 
     }
 
@@ -426,14 +450,16 @@ private struct SourceList: View {
     // MARK: - Wiring
 
     private var areaIdentity: [String] {
-        areas.map { "\($0.id):\($0.name)" }
+        areas.map { "\($0.id):\($0.name)" } + labels.map { "label:\($0.id):\($0.name)" }
     }
 
     private func refresh() {
         model.destinations = primaries.map(SidebarDestination.primary)
+            + labels.map { SidebarDestination.mailLabel(id: $0.id, name: $0.name) }
             + areas.map { SidebarDestination.area(id: $0.id, name: $0.name) }
-        // The seam between product sources and the user's contextual hierarchy.
-        model.boundaryIndices = [primaries.count]
+        // The seams between product sources, labels, and the user's
+        // contextual hierarchy.
+        model.boundaryIndices = [primaries.count, primaries.count + labels.count]
         model.reduceMotion = reduceMotion
         model.currentIndex = { [weak model] in
             guard let model else { return nil }
@@ -463,6 +489,10 @@ private struct SourceList: View {
         case .mail(let scope):
             environment.navigation.selectPrimary(.mail)
             environment.navigation.pendingMailCategory = scope.rawValue
+            onSelect()
+        case .mailLabel(let id, _):
+            environment.navigation.selectPrimary(.mail)
+            environment.navigation.pendingMailCategory = "custom:\(id)"
             onSelect()
         case .area(let id, let name):
             environment.navigation.openArea(id: id, name: name)
@@ -506,6 +536,75 @@ private struct SourceList: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func labelButton(_ label: MailLabelSummary) -> some View {
+        let destination = SidebarDestination.mailLabel(id: label.id, name: label.name)
+        return Button {
+            guard !model.suppressesRowTaps else { return }
+            commit(destination)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "tag")
+                    .font(.body)
+                    .frame(width: 20)
+                SidebarRowTitle(
+                    text: label.name,
+                    font: .body,
+                    model: model,
+                    destination: destination,
+                    restingWeight: .regular
+                )
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
+            .background {
+                SidebarRowBackground(selected: false, model: model)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // NAT-9: an Area can be created from the sidebar, as on the web.
+    private var newAreaButton: some View {
+        Button {
+            guard !model.suppressesRowTaps else { return }
+            newAreaName = ""
+            showsNewArea = true
+        } label: {
+            Text(isCreatingArea ? "Creating area…" : "New Area")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(isCreatingArea)
+        .alert("New Area", isPresented: $showsNewArea) {
+            TextField("Name", text: $newAreaName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") {
+                let name = newAreaName
+                isCreatingArea = true
+                Task {
+                    defer { isCreatingArea = false }
+                    if let areaID = await environment.store.createArea(name: name) {
+                        environment.navigation.openArea(
+                            id: areaID,
+                            name: name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                        onSelect()
+                    }
+                }
+            }
+            .disabled(newAreaName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Name one part of your life that Albatross should keep track of.")
+        }
     }
 
     private func areaButton(_ area: AreaSummary) -> some View {

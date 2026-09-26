@@ -1288,6 +1288,22 @@
                 "smartCategory": {
                   "type": "string",
                   "maxLength": 240
+                },
+                "smartSecondary": {
+                  "maxItems": 16,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                },
+                "smartLabels": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 240
+                  }
                 }
               },
               "required": [
@@ -1376,6 +1392,22 @@
           "smartCategory": {
             "type": "string",
             "maxLength": 240
+          },
+          "smartSecondary": {
+            "maxItems": 16,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "smartLabels": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 240
+            }
           }
         },
         "required": [

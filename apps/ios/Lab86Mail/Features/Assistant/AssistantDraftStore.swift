@@ -38,6 +38,11 @@ struct AssistantDraftSeed: Hashable, Codable, Sendable {
     var bcc: String
     var subject: String
     var body: String
+    // The thread this draft answers, from the `draft_reply` call of the same
+    // turn. `show_message_draft` has no thread id, so without this a reply
+    // went out as new mail.
+    var replyAccountID: String? = nil
+    var replyThreadID: String? = nil
 
     var fingerprint: String {
         AssistantDraftRecord.fingerprint(to: to, cc: cc, bcc: bcc, subject: subject, body: body)
@@ -96,6 +101,15 @@ struct AssistantDraftRecord: Identifiable, Hashable, Codable, Sendable {
     /// A short line about the last delivery outcome, such as an undo.
     var note: String?
     var updatedAt: Date
+    var replyAccountID: String? = nil
+    var replyThreadID: String? = nil
+
+    /// The thread a send answers. A draft moved to another mailbox is new
+    /// mail from there, because the thread belongs to the first mailbox.
+    var replyTarget: String? {
+        guard let replyThreadID, let replyAccountID, replyAccountID == accountID else { return nil }
+        return replyThreadID
+    }
 
     var id: String { key.storageID }
 
@@ -281,10 +295,10 @@ final class AssistantDraftStore {
             persist()
             return existing
         }
-        let record = AssistantDraftRecord(
+        var record = AssistantDraftRecord(
             key: key,
             ownerID: ownerID,
-            accountID: "",
+            accountID: seed.replyAccountID ?? "",
             fromHint: seed.fromEmail?.nilIfBlank,
             to: seed.to,
             cc: seed.cc,
@@ -301,6 +315,8 @@ final class AssistantDraftStore {
             note: nil,
             updatedAt: now()
         )
+        record.replyAccountID = seed.replyAccountID
+        record.replyThreadID = seed.replyThreadID
         records[id] = record
         persist()
         return record
@@ -516,7 +532,7 @@ final class AssistantDraftStore {
             let draftID = try await transport.saveDraft(
                 id: record.serverDraftID,
                 accountID: record.accountID,
-                threadID: nil,
+                threadID: record.replyTarget,
                 messageID: nil,
                 to: record.to,
                 cc: record.cc,
@@ -611,9 +627,9 @@ final class AssistantDraftStore {
         let submission: ComposeSubmission
         do {
             submission = try await transport.sendCompose(
-                mode: "new",
+                mode: submitted.replyTarget == nil ? "new" : "reply",
                 accountID: submitted.accountID,
-                threadID: nil,
+                threadID: submitted.replyTarget,
                 messageID: nil,
                 to: submitted.to,
                 cc: submitted.cc,
@@ -654,9 +670,9 @@ final class AssistantDraftStore {
                     bcc: submitted.bcc,
                     subject: submitted.subject,
                     body: submitted.body,
-                    mode: "new",
+                    mode: submitted.replyTarget == nil ? "new" : "reply",
                     accountID: submitted.accountID,
-                    threadID: nil,
+                    threadID: submitted.replyTarget,
                     messageID: nil,
                     replyAll: false,
                     attachmentsKey: submitted.attachmentsKey,

@@ -40,7 +40,7 @@ struct SmartLabelsSettingsView: View {
                     ContentUnavailableView(
                         "No custom labels",
                         systemImage: "tag",
-                        description: Text("Describe a useful category and teach it with examples.")
+                        description: Text("Name a label and list the words it looks for. Mail that contains those words gets the label.")
                     )
                 } else {
                     ForEach(labels) { label in
@@ -163,7 +163,7 @@ struct SmartLabelsSettingsView: View {
                 } header: {
                     Text("Positive examples")
                 } footer: {
-                    Text("Concrete messages that should match.")
+                    Text("Mail that contains these words gets this label. The label name counts as a word too.")
                 }
                 Section {
                     TextField(

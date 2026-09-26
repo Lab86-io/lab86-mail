@@ -5,7 +5,8 @@ struct MailView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var searchText = ""
     @State private var accountScope: Set<String> = []
-    @State private var categoryScope = MailCategoryScope.main
+    @State private var selection = MailScopeSelection()
+    @State private var reconnectingID: String?
     @State private var mailboxScope = MailboxScope.inbox
     @State private var selectedThreadKeys: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -57,17 +58,33 @@ struct MailView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                // A mailbox whose sign-in ended is not a mail scope until it
+                // reconnects. Say so where the mail would be.
+                ForEach(environment.store.reconnectAccounts) { account in
+                    reconnectRow(account)
+                }
             }
             if filteredThreads.isEmpty {
-                ContentUnavailableView(
-                    searchText.isEmpty ? "No mail here" : "No matching mail",
-                    systemImage: searchText.isEmpty ? "tray" : "magnifyingglass",
-                    description: Text(searchText.isEmpty
-                        ? "Try another account or category, or pull to refresh."
-                        : "Try a different search.")
-                )
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
+                if Self.showsLoadMoreRow(
+                    hasMore: environment.store.hasMoreMail(in: listScope)
+                        || environment.store.isLoadingMail(in: listScope),
+                    accountScope: accountScope,
+                    query: effectiveQuery
+                ) {
+                    // Older pages may still hold this scope's mail. Keep
+                    // asking instead of calling the view empty.
+                    loadMoreRow
+                } else {
+                    ContentUnavailableView(
+                        searchText.isEmpty ? "No mail here" : "No matching mail",
+                        systemImage: searchText.isEmpty ? "tray" : "magnifyingglass",
+                        description: Text(searchText.isEmpty
+                            ? "Try another account or category, or pull to refresh."
+                            : "Try a different search.")
+                    )
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
             } else {
                 ForEach(groupedThreads) { group in
                     Section {
@@ -81,22 +98,11 @@ struct MailView: View {
                 // Older pages stream in beneath the list as this row scrolls
                 // into view; the unified cursor comes from the typed v1 reads.
                 if Self.showsLoadMoreRow(
-                    hasMore: environment.store.hasMoreMail,
+                    hasMore: environment.store.hasMoreMail(in: listScope),
                     accountScope: accountScope,
                     query: effectiveQuery
                 ) {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                            .controlSize(.small)
-                        Spacer()
-                    }
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .onAppear {
-                        Task { await environment.store.loadMoreMail() }
-                    }
-                    .accessibilityLabel("Loading older mail")
+                    loadMoreRow
                 }
             }
         }
@@ -222,7 +228,7 @@ struct MailView: View {
                 isSearchFocused = true
             }
             if let raw = environment.navigation.pendingMailCategory {
-                categoryScope = MailCategoryScope.from(raw: raw)
+                selection = MailScopeSelection.from(raw: raw)
                 environment.navigation.pendingMailCategory = nil
             }
         }
@@ -233,7 +239,7 @@ struct MailView: View {
         }
         .onChange(of: environment.navigation.pendingMailCategory) { _, raw in
             guard let raw else { return }
-            categoryScope = MailCategoryScope.from(raw: raw)
+            selection = MailScopeSelection.from(raw: raw)
             environment.navigation.pendingMailCategory = nil
         }
         .task(id: effectiveQuery) {
@@ -261,9 +267,9 @@ struct MailView: View {
             await environment.mailIdentity.resolve(entries: entries)
         }
         .sheet(item: $categoryInfoThread) { thread in
-            CategoryExplanationSheet(thread: thread) { category in
+            CategoryExplanationSheet(thread: thread) { correction in
                 Task {
-                    if await environment.store.correctCategory(thread, category: category) {
+                    if await environment.store.correctCategory(thread, to: correction) {
                         categoryInfoThread = nil
                     }
                 }
@@ -292,6 +298,10 @@ struct MailView: View {
                     }
                 }
             }
+        }
+        // Each scope pages from the server with its own cursor (NAT-2).
+        .task(id: "\(listScope.key)|\(environment.store.mailScopeGeneration)") {
+            await environment.store.loadMailScope(listScope)
         }
         .refreshable { await environment.store.refreshMail() }
         .alert(
@@ -384,9 +394,9 @@ struct MailView: View {
                 Task { await environment.store.archive(thread) }
             }
             Menu("Correct category") {
-                ForEach(MailCategoryScope.feedbackCases) { category in
-                    Button(category.title) {
-                        Task { _ = await environment.store.correctCategory(thread, category: category.rawValue) }
+                ForEach(MailCategoryCorrection.allCases) { correction in
+                    Button(correction.title) {
+                        Task { _ = await environment.store.correctCategory(thread, to: correction) }
                     }
                 }
             }
@@ -407,31 +417,25 @@ struct MailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(MailCategoryScope.allCases) { category in
-                    let selected = categoryScope == category
-                    Button {
-                        categoryScope = category
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: selected ? category.selectedSymbol : category.symbol)
-                                .font(.footnote)
-                            Text(category.title)
-                                .font(.subheadline.weight(selected ? .semibold : .regular))
-                        }
-                        .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
-                        )
-                        .overlay {
-                            if !selected {
-                                Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
-                            }
-                        }
-                        .contentShape(Capsule())
+                    let selected = selection.labelID == nil && selection.category == category
+                    categoryPill(
+                        title: category.title,
+                        symbol: selected ? category.selectedSymbol : category.symbol,
+                        selected: selected
+                    ) {
+                        selection = MailScopeSelection(category: category)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                }
+                // Custom labels the user shows in the sidebar (NAT-4).
+                ForEach(environment.store.mailLabels) { label in
+                    let selected = selection.labelID == label.id
+                    categoryPill(
+                        title: label.name,
+                        symbol: selected ? "tag.fill" : "tag",
+                        selected: selected
+                    ) {
+                        selection = MailScopeSelection.from(raw: label.rawCategory)
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -439,6 +443,94 @@ struct MailView: View {
             .padding(.bottom, 6)
         }
         .background(environment.theme.paperColor.opacity(0.01))
+    }
+
+    private func reconnectRow(_ account: AccountSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Reconnect needed")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(account.email) stopped syncing. Sign in again to get its mail.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(reconnectingID == account.id ? "Reconnecting…" : "Reconnect") {
+                Task { await reconnect(account) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(reconnectingID != nil)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+    }
+
+    private func reconnect(_ account: AccountSummary) async {
+        reconnectingID = account.id
+        defer { reconnectingID = nil }
+        do {
+            try await environment.webAuthentication.connectMailbox(provider: account.provider)
+            await environment.store.refreshMail()
+        } catch {
+            // The sign-in sheet reports its own failure; the row stays.
+        }
+    }
+
+    private func categoryPill(
+        title: String,
+        symbol: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.footnote)
+                Text(title)
+                    .font(.subheadline.weight(selected ? .semibold : .regular))
+            }
+            .foregroundStyle(selected ? environment.theme.accentColor : .secondary)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(selected ? environment.theme.accentSoftColor : .clear)
+            )
+            .overlay {
+                if !selected {
+                    Capsule().strokeBorder(environment.theme.hairlineColor, lineWidth: 1)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // The scope this view pages from the server.
+    private var listScope: MailListScope {
+        selection.listScope(accountScope: accountScope)
+    }
+
+    // Older pages stream in beneath the list as this row comes on screen.
+    // The task re-runs each time the cursor moves, so a row that stays on
+    // screen (an empty scope) keeps asking until the scope has no more.
+    private var loadMoreRow: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+            Spacer()
+        }
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .task(id: environment.store.mailCursorToken(in: listScope)) {
+            await environment.store.loadMoreMail(in: listScope)
+        }
+        .accessibilityLabel("Loading older mail")
     }
 
     private struct ThreadGroup: Identifiable {
@@ -509,7 +601,7 @@ struct MailView: View {
         }
         return candidates.filter { thread in
             (accountScope.isEmpty || accountScope.contains(thread.accountID))
-                && categoryScope.includes(storedCategory: thread.category)
+                && selection.includes(thread)
         }
     }
 
@@ -527,13 +619,12 @@ struct MailView: View {
         return mailboxScope == .inbox ? accountLabel : "\(mailboxScope.title) · \(accountLabel)"
     }
 
-    // The cursor pages the unified inbox. An account filter or a mailbox
-    // query (Unread, Starred, search) narrows the list locally, so a fetched
-    // page could add nothing visible and the row would just keep requesting
-    // pages; those views stay on what is loaded. Category pills are a view
-    // over the same unified list and keep paging.
+    // Each scope has its own server cursor: the unified inbox, one account,
+    // a category, or a label. Several accounts at once, or a mailbox query
+    // (Unread, Starred, search), narrow the list locally, so a fetched page
+    // could add nothing visible; those views stay on what is loaded.
     nonisolated static func showsLoadMoreRow(hasMore: Bool, accountScope: Set<String>, query: String) -> Bool {
-        hasMore && accountScope.isEmpty && query.isEmpty
+        hasMore && accountScope.count <= 1 && query.isEmpty
     }
 
     private var effectiveQuery: String {
@@ -666,10 +757,14 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
         }
     }
 
-    // Categories a thread can be corrected INTO. All Mail is a viewing scope,
-    // not a classifier destination.
-    static var feedbackCases: [MailCategoryScope] {
-        [.main, .codes, .orders]
+    // The server category a scope pages by. Main folds in the retired
+    // labels on the device, so it pages the unified list instead.
+    var serverCategory: String? {
+        switch self {
+        case .codes: "codes"
+        case .orders: "orders"
+        case .main, .all: nil
+        }
     }
 
     // Maps any raw category string — including the retired stored labels and
@@ -689,19 +784,28 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
     // the catch-all for everything that isn't codes/orders/noise (including
     // unclassified mail and the folded-in legacy labels). Mail that a
     // label-move rule filed arrives as `custom:<labelId>` and shows only in
-    // All Mail.
+    // All Mail and in its label view.
     func includes(storedCategory: String?) -> Bool {
+        includes(storedCategory: storedCategory, secondary: nil)
+    }
+
+    // Codes and Orders follow the web rule: the primary or a secondary
+    // category matches, and the thread is not filed under a label.
+    func includes(storedCategory: String?, secondary: [String]?) -> Bool {
         switch self {
         case .all:
             return true
-        case .codes:
-            return storedCategory == "codes"
-        case .orders:
-            return storedCategory == "orders"
+        case .codes, .orders:
+            guard !Self.isFiled(storedCategory) else { return false }
+            return storedCategory == rawValue || (secondary ?? []).contains(rawValue)
         case .main:
             return storedCategory != "codes" && storedCategory != "orders" && storedCategory != "noise"
                 && !Self.isFiled(storedCategory)
         }
+    }
+
+    func includes(_ thread: MailThreadSummary) -> Bool {
+        includes(storedCategory: thread.category, secondary: thread.secondaryCategories)
     }
 
     static func isFiled(_ storedCategory: String?) -> Bool {
@@ -716,8 +820,75 @@ enum MailCategoryScope: String, CaseIterable, Identifiable {
     }
 }
 
+// Where a thread can be corrected TO (CLS-9). All Mail is a viewing scope,
+// not a classifier destination; Noise is a destination with no view.
+enum MailCategoryCorrection: String, CaseIterable, Identifiable {
+    case main
+    case codes
+    case orders
+    case noise
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .main: "Main"
+        case .codes: "Codes"
+        case .orders: "Orders"
+        case .noise: "Noise"
+        }
+    }
+
+    // The `apply_smart_correction` arguments for this choice.
+    func arguments(accountID: String, threadID: String) -> [String: JSONValue] {
+        var arguments: [String: JSONValue] = [
+            "account": .string(accountID),
+            "threadId": .string(threadID),
+            "scope": .string("sender"),
+        ]
+        if self == .noise {
+            arguments["action"] = .string("always_noise")
+        } else {
+            arguments["action"] = .string("move_to")
+            arguments["category"] = .string(rawValue)
+        }
+        return arguments
+    }
+}
+
+// What the mail list shows: a built-in scope, or a custom label (NAT-4).
+struct MailScopeSelection: Hashable {
+    var category: MailCategoryScope = .main
+    var labelID: String? = nil
+
+    static func from(raw: String?) -> MailScopeSelection {
+        if let raw, raw.hasPrefix("custom:") {
+            let id = String(raw.dropFirst("custom:".count))
+            if !id.isEmpty { return MailScopeSelection(category: .all, labelID: id) }
+        }
+        return MailScopeSelection(category: MailCategoryScope.from(raw: raw))
+    }
+
+    func includes(_ thread: MailThreadSummary) -> Bool {
+        if let labelID {
+            return thread.category == "custom:\(labelID)" || (thread.labelIDs ?? []).contains(labelID)
+        }
+        return category.includes(thread)
+    }
+
+    // The server list this view pages (NAT-2). One account goes to the
+    // server; several accounts stay a filter over the unified list.
+    func listScope(accountScope: Set<String>) -> MailListScope {
+        let accountID = accountScope.count == 1 ? accountScope.first : nil
+        let serverCategory = labelID.map { "custom:\($0)" } ?? category.serverCategory
+        return MailListScope(accountID: accountID, category: serverCategory)
+    }
+}
+
 enum MailboxScope: String, CaseIterable, Identifiable {
-    case inbox, unread, starred, important, attachments, thisWeek, sent, drafts, allMail, snoozed, trash
+    // No Snoozed scope: a snoozed thread is archived now and comes back by
+    // itself, and no search finds the active snoozes (audit MUT-1).
+    case inbox, unread, starred, important, attachments, thisWeek, sent, drafts, allMail, trash
     var id: Self { self }
     var title: String {
         switch self {
@@ -730,7 +901,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "Sent"
         case .drafts: "Drafts"
         case .allMail: "All Mail"
-        case .snoozed: "Snoozed"
         case .trash: "Trash"
         }
     }
@@ -745,7 +915,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "paperplane"
         case .drafts: "doc"
         case .allMail: "tray.full"
-        case .snoozed: "clock"
         case .trash: "trash"
         }
     }
@@ -760,7 +929,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "in:sent"
         case .drafts: "in:drafts"
         case .allMail: "-in:trash"
-        case .snoozed: "label:SNOOZED"
         case .trash: "in:trash"
         }
     }
@@ -768,7 +936,7 @@ enum MailboxScope: String, CaseIterable, Identifiable {
 
 private struct CategoryExplanationSheet: View {
     let thread: MailThreadSummary
-    let onCorrect: (String) -> Void
+    let onCorrect: (MailCategoryCorrection) -> Void
 
     var body: some View {
         NavigationStack {
@@ -782,8 +950,8 @@ private struct CategoryExplanationSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("Correct category") {
-                    ForEach(MailCategoryScope.feedbackCases) { category in
-                        Button(category.title) { onCorrect(category.rawValue) }
+                    ForEach(MailCategoryCorrection.allCases) { correction in
+                        Button(correction.title) { onCorrect(correction) }
                     }
                 }
             }

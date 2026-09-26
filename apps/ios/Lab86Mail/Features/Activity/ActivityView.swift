@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// What the Activity badge counts. The sheet shows every kind it counts.
+enum ActivityInbox {
+    static func needsAttention(approvals: Int, suggestions: Int, questions: Int) -> Bool {
+        approvals + suggestions + questions > 0
+    }
+}
+
 struct ActivityView: View {
     @Environment(AppEnvironment.self) private var environment
     @Environment(\.dismiss) private var dismiss
@@ -30,6 +37,12 @@ struct ActivityView: View {
         }
     }
 
+    private var visibleSuggestions: [SuggestionSummary] {
+        environment.store.suggestions.filter {
+            archivedIDs.contains("suggestion:\($0.id)") == showsArchived
+        }
+    }
+
     private var visibleQuestions: [PendingWorkQuestionSummary] {
         environment.store.pendingQuestions.filter {
             archivedIDs.contains("question:\($0.id)") == showsArchived
@@ -41,12 +54,13 @@ struct ActivityView: View {
             List {
                 if visibleApprovals.isEmpty
                     && visibleQuestions.isEmpty
+                    && visibleSuggestions.isEmpty
                     && (environment.store.workExecution.currentMove == nil || showsArchived)
                     && (environment.store.checkin == nil || showsArchived) {
                     ContentUnavailableView(
                         "Nothing needs your approval",
                         systemImage: "checkmark.shield",
-                        description: Text("Check-ins, questions, and actions that need a decision will appear here.")
+                        description: Text("Check-ins, questions, suggestions, and actions that need a decision will appear here.")
                     )
                 } else {
                     if !showsArchived, let move = environment.store.workExecution.currentMove {
@@ -157,6 +171,28 @@ struct ActivityView: View {
                                     Text(item.workTitle)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    if !showsArchived {
+                                        // NAT-12: answer with the options
+                                        // here, not only in chat.
+                                        WorkQuestionOptionsView(
+                                            question: item.question,
+                                            onAnswered: { await environment.store.refreshToday() },
+                                            onAnswerInChat: {
+                                                dismiss()
+                                                if let workID = item.workID {
+                                                    environment.startAssistantChat(
+                                                        scope: AssistantChatScope(
+                                                            kind: .work,
+                                                            contextID: workID,
+                                                            label: item.workTitle
+                                                        )
+                                                    )
+                                                } else {
+                                                    environment.startAssistantChat()
+                                                }
+                                            }
+                                        )
+                                    }
                                     HStack {
                                         Button(showsArchived ? "Restore" : "Archive") {
                                             setArchived("question:\(item.id)", archived: !showsArchived)
@@ -169,26 +205,47 @@ struct ActivityView: View {
                                             }
                                             .buttonStyle(.bordered)
                                         }
-                                        Spacer()
-                                        Button("Answer in chat") {
-                                            dismiss()
-                                            if let workID = item.workID {
-                                                environment.startAssistantChat(
-                                                    scope: AssistantChatScope(
-                                                        kind: .work,
-                                                        contextID: workID,
-                                                        label: item.workTitle
-                                                    )
-                                                )
-                                            } else {
-                                                environment.startAssistantChat()
-                                            }
-                                        }
-                                            .buttonStyle(.borderedProminent)
                                     }
                                 }
                                 .contextMenu {
                                     readButton("question:\(item.id)")
+                                }
+                            }
+                        }
+                    }
+                    // NAT-5: the badge counts these, so the sheet shows them.
+                    if !visibleSuggestions.isEmpty {
+                        Section("Found in your mail") {
+                            ForEach(visibleSuggestions) { suggestion in
+                                VStack(alignment: .leading, spacing: 10) {
+                                    activityTitle(suggestion.title, id: "suggestion:\(suggestion.id)")
+                                    Text(suggestion.sender)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    if let start = suggestion.start {
+                                        Text(start.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    HStack {
+                                        Button(showsArchived ? "Restore" : "Archive") {
+                                            setArchived("suggestion:\(suggestion.id)", archived: !showsArchived)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        Button("Dismiss", role: .destructive) {
+                                            Task { await environment.store.actOnSuggestion(id: suggestion.id, action: "dismiss") }
+                                        }
+                                        .buttonStyle(.bordered)
+                                        Spacer()
+                                        Button("Add to Calendar") {
+                                            Task { await environment.store.actOnSuggestion(id: suggestion.id, action: "accept") }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                    }
+                                }
+                                .padding(.vertical, 5)
+                                .contextMenu {
+                                    readButton("suggestion:\(suggestion.id)")
                                 }
                             }
                         }
@@ -286,6 +343,7 @@ struct ActivityView: View {
         var ids = readIDs
         ids.formUnion(visibleApprovals.map { "approval:\($0.id)" })
         ids.formUnion(visibleQuestions.map { "question:\($0.id)" })
+        ids.formUnion(visibleSuggestions.map { "suggestion:\($0.id)" })
         readRaw = ids.sorted().joined(separator: "\n")
         persistLocalState()
     }

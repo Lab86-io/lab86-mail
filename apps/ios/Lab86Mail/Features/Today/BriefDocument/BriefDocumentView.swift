@@ -20,6 +20,9 @@ struct BriefDocumentView: View {
     // On only for the latest daily edition and for an area brief; never
     // while browsing history. This matches the web's `hideInactive`.
     var hideInactive: Bool = false
+    // The live personal modules an editorial edition places in its body
+    // (`live_section`). Nil keeps them off, as on the web for history.
+    var liveSections: BriefLiveSections? = nil
     let onReview: (ArtifactReviewRequest) -> Void
 
     @Environment(AppEnvironment.self) private var environment
@@ -43,6 +46,16 @@ struct BriefDocumentView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 18)
+        .environment(
+            \.briefRenderContext,
+            BriefRenderContext(
+                liveSections: liveSections,
+                webURL: BriefRenderContext.webURL(
+                    base: environment.configuration.apiBaseURL,
+                    reportID: reportID
+                )
+            )
+        )
         .task(id: document.generatedAt) { await hydratePinnedRefs() }
         .task(id: BriefInactivePolling.key(hideInactive: hideInactive, generatedAt: document.generatedAt)) {
             await pollInactiveRefs()
@@ -253,6 +266,7 @@ extension BriefDocumentView {
                 $0.handoff?.recommendations.forEach { add($0.ref) }
                 $0.handoff?.evidence.forEach { add($0.ref) }
             }
+            node.toolSources?.forEach { add($0.ref) }
             node.timelineItems?.forEach { add($0.ref) }
             node.checklistItems?.forEach { add($0.ref) }
             node.collectionItems?.forEach { add($0.ref) }
@@ -348,10 +362,7 @@ extension BriefDocumentView {
             if completed {
                 _ = try? await environment.tools.invoke(
                     "dismiss_daily_report_task",
-                    arguments: [
-                        "cardId": .string(cardID),
-                        "title": payload.title.map(JSONValue.string) ?? .null,
-                    ]
+                    arguments: BriefToolArguments.dismissTask(cardID: cardID, title: payload.title)
                 )
             } else {
                 _ = try? await environment.tools.invoke(
@@ -366,10 +377,7 @@ extension BriefDocumentView {
             }
             _ = try await environment.tools.invoke(
                 "dismiss_daily_report_task",
-                arguments: [
-                    "cardId": .string(cardID),
-                    "title": payload.title.map(JSONValue.string) ?? .null,
-                ]
+                arguments: BriefToolArguments.dismissTask(cardID: cardID, title: payload.title)
             )
         case "resolve_thread", "dismiss_thread":
             try await dismissThread(payload, resolved: action == "resolve_thread")
@@ -404,13 +412,13 @@ extension BriefDocumentView {
         }
         _ = try await environment.tools.invoke(
             "dismiss_daily_report_thread",
-            arguments: [
-                "account": .string(account),
-                "threadId": .string(threadID),
-                "subject": payload.subject.map(JSONValue.string) ?? .null,
-                "receivedAt": payload.receivedAt.map(JSONValue.number) ?? .null,
-                "action": .string(resolved ? "resolved" : "dismissed"),
-            ]
+            arguments: BriefToolArguments.dismissThread(
+                account: account,
+                threadID: threadID,
+                subject: payload.subject,
+                receivedAt: payload.receivedAt,
+                resolved: resolved
+            )
         )
     }
 
@@ -544,6 +552,33 @@ extension BriefDocumentView {
     }
 }
 
+// Tool arguments for the brief's dismiss calls. The server schemas accept a
+// string or no key, never JSON null, so a missing value leaves the key out.
+enum BriefToolArguments {
+    static func dismissTask(cardID: String, title: String?) -> [String: JSONValue] {
+        var arguments: [String: JSONValue] = ["cardId": .string(cardID)]
+        if let title { arguments["title"] = .string(title) }
+        return arguments
+    }
+
+    static func dismissThread(
+        account: String,
+        threadID: String,
+        subject: String?,
+        receivedAt: Double?,
+        resolved: Bool
+    ) -> [String: JSONValue] {
+        var arguments: [String: JSONValue] = [
+            "account": .string(account),
+            "threadId": .string(threadID),
+            "action": .string(resolved ? "resolved" : "dismissed"),
+        ]
+        if let subject { arguments["subject"] = .string(subject) }
+        if let receivedAt { arguments["receivedAt"] = .number(receivedAt) }
+        return arguments
+    }
+}
+
 private struct BriefUndo: Identifiable {
     let id = UUID()
     let action: String
@@ -672,6 +707,10 @@ private struct BriefNodeView: View {
             BriefCollectionView(node: node, onAction: onAction)
         case "canvas":
             BriefCanvasNodeView(node: node, regionSummary: regionSummary, onAction: onAction)
+        case "tool_ui":
+            BriefToolUINodeView(node: node, hiddenRefs: hiddenRefs, onAction: onAction)
+        case "live_section":
+            BriefLiveSectionNodeView(node: node)
         default:
             Text(node.fallbackText ?? regionSummary)
                 .font(.body)

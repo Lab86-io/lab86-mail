@@ -56,13 +56,58 @@ struct AssistantInlineApproval: Identifiable, Equatable, Sendable {
     let toolName: String
     let input: JSONValue
     let usesApprovalResponse: Bool
-    let title: String
-    let description: String?
-    let metadata: [Metadata]
-    let confirmLabel: String
-    let denyLabel: String
-    let destructive: Bool
+    var title: String
+    var description: String?
+    var metadata: [Metadata]
+    var confirmLabel: String
+    var denyLabel: String
+    var destructive: Bool
     var decision: Bool?
+    /// What happened after the answer, such as a declined call.
+    var outcome: String? = nil
+
+    /// Tools the server stops for approval (lib/ai/approval.ts). Their input
+    /// is the tool's own input, so the card text comes from the server's
+    /// `data-tool-approval` chunk, or from `gatedTitle` before it arrives.
+    static let gatedTools: Set<String> = [
+        "schedule_send", "calendar_create_event", "calendar_update_event",
+        "calendar_delete_event", "calendar_delete_recurring_series",
+    ]
+
+    static let declinedOutcome = "Declined. Albatross did not run this step."
+
+    /// Reads a `data-tool-approval` chunk's data into the card.
+    mutating func apply(summary data: JSONValue) {
+        if let title = data["title"]?.stringValue?.nilIfBlank { self.title = title }
+        description = data["description"]?.stringValue?.nilIfBlank
+        metadata = (data["metadata"]?.arrayValue ?? []).compactMap { row in
+            guard let label = row["label"]?.stringValue, let value = row["value"]?.stringValue else { return nil }
+            return Metadata(label: label, value: value)
+        }
+        if let confirm = data["confirmLabel"]?.stringValue?.nilIfBlank { confirmLabel = confirm }
+        if let deny = data["denyLabel"]?.stringValue?.nilIfBlank { denyLabel = deny }
+        destructive = data["intent"]?.stringValue == "destructive"
+    }
+
+    /// A short card title for a gated call, used until the server summary
+    /// arrives and when a saved conversation reopens.
+    static func gatedTitle(toolName: String, input: JSONValue) -> String {
+        let event = input["title"]?.stringValue?.nilIfBlank
+            ?? input["matchTitle"]?.stringValue?.nilIfBlank
+            ?? "this event"
+        switch toolName {
+        case "schedule_send":
+            return "Schedule this email to \(input["to"]?.stringValue?.nilIfBlank ?? "the recipient")"
+        case "calendar_create_event":
+            return "Send invitations for “\(event)”"
+        case "calendar_update_event":
+            return "Update “\(event)”"
+        case "calendar_delete_recurring_series":
+            return "Delete the series “\(event)”"
+        default:
+            return "Delete “\(event)”"
+        }
+    }
 }
 
 struct AssistantChatSessionSummary: Identifiable, Sendable {
@@ -178,6 +223,10 @@ final class AssistantChatModel {
     private var uploadContext = ""
     private var currentApprovalContinuationID: String?
     private var lastFailedApprovalID: String?
+    // True while the current turn resumes the last user message (Continue or
+    // Retry). The server then reuses that message's run, so its step dedupe
+    // keeps completed actions from running again (AI-1).
+    private(set) var resumesLastTurn = false
     /// Wall clock for row and reasoning timestamps. Tests pin it.
     var clock: @MainActor () -> Date = { Date() }
 
@@ -224,6 +273,7 @@ final class AssistantChatModel {
         lastFailedUserText = nil
         lastFailedApprovalID = nil
         currentApprovalContinuationID = nil
+        resumesLastTurn = false
         canContinue = false
         messages.append(AssistantChatMessage(id: Self.newMessageID(), role: .user, text: text))
         let replyID = appendAssistantReply()
@@ -237,14 +287,31 @@ final class AssistantChatModel {
         errorMessage = nil
         if let approvalID = lastFailedApprovalID {
             beginApprovalContinuation(approvalID: approvalID)
-        } else if let text = lastFailedUserText {
-            beginSend(text)
+        } else if lastFailedUserText != nil {
+            // The failed user message is still the last one. Send it again
+            // as a continuation; a second copy would start a new run.
+            beginContinuation()
         }
     }
 
     func continueResponse() {
         guard !isStreaming, !isUploading else { return }
-        beginSend("Continue from where you stopped. Do not repeat completed work.")
+        beginContinuation()
+    }
+
+    /// Resumes the turn of the last user message without adding a new one.
+    private func beginContinuation() {
+        guard messages.contains(where: { $0.role == .user }) else { return }
+        errorMessage = nil
+        lastFailedUserText = nil
+        lastFailedApprovalID = nil
+        currentApprovalContinuationID = nil
+        resumesLastTurn = true
+        canContinue = false
+        let replyID = appendAssistantReply()
+        streamTask = Task { [weak self] in
+            await self?.streamReply(into: replyID)
+        }
     }
 
     func answerApproval(_ approvalID: String, approved: Bool) {
@@ -282,6 +349,7 @@ final class AssistantChatModel {
         errorMessage = nil
         lastFailedUserText = nil
         lastFailedApprovalID = nil
+        resumesLastTurn = false
         currentApprovalContinuationID = approvalID
         canContinue = false
         let replyID = appendAssistantReply()
@@ -513,10 +581,15 @@ final class AssistantChatModel {
             let name = toolNamesByCallID[callID] ?? "tool"
             guard !name.hasPrefix("ask_") else { return }
             let output = event["output"] ?? .null
-            let card = name.hasPrefix("show_") ? AssistantToolCard.parse(toolName: name, output: output, toolCallID: callID) : nil
+            var card = name.hasPrefix("show_") ? AssistantToolCard.parse(toolName: name, output: output, toolCallID: callID) : nil
+            if name == "show_message_draft",
+               output["payload"]?["subject"]?.stringValue?.lowercased().hasPrefix("re:") == true {
+                // A reply draft answers the thread `draft_reply` drafted for.
+                card = card?.replying(to: Self.replyContext(in: messages[index].parts))
+            }
             if let partIndex = rowIndex(in: index, callID: callID),
                case .toolRow(var row) = messages[index].parts[partIndex] {
-                row.state = output["ok"]?.boolValue == false ? .failed : .done
+                row.state = AssistantToolRow.outcomeState(output: output)
                 row.errorText = output["error"]?.stringValue
                 row.output = output
                 row.card = card
@@ -527,7 +600,7 @@ final class AssistantChatModel {
                     .toolRow(AssistantToolRow(
                         callID: callID,
                         toolName: name,
-                        state: .done,
+                        state: AssistantToolRow.outcomeState(output: output),
                         input: approvalInputsByCallID[callID],
                         output: output,
                         card: card,
@@ -537,9 +610,11 @@ final class AssistantChatModel {
                 )
             }
             if let card { ingestDraft(card) }
-        case "tool-output-error":
+        case "tool-output-error", "tool-input-error":
+            // An input error means the model sent arguments the tool refused;
+            // its text is the real reason, not "Did not finish" (NAT-11).
             guard let callID = event["toolCallId"]?.stringValue else { return }
-            let name = toolNamesByCallID[callID] ?? "tool"
+            let name = event["toolName"]?.stringValue ?? toolNamesByCallID[callID] ?? "tool"
             let errorText = event["errorText"]?.stringValue?.nilIfBlank ?? "The step failed."
             if let partIndex = rowIndex(in: index, callID: callID),
                case .toolRow(var row) = messages[index].parts[partIndex] {
@@ -559,6 +634,18 @@ final class AssistantChatModel {
                         endedAt: clock()
                     ))
                 )
+            }
+        case "data-tool-approval":
+            // The server's card text for a gated call. The chunk id is the
+            // tool call id.
+            guard let callID = event["id"]?.stringValue, let data = event["data"] else { return }
+            updateApproval(callID: callID) { $0.apply(summary: data) }
+        case "tool-output-denied":
+            // The user declined a gated call, so the server did not run it.
+            guard let callID = event["toolCallId"]?.stringValue else { return }
+            updateApproval(callID: callID) { approval in
+                approval.decision = false
+                approval.outcome = AssistantInlineApproval.declinedOutcome
             }
         case "data-tool-shape":
             guard let callID = event["id"]?.stringValue, let data = event["data"],
@@ -587,6 +674,30 @@ final class AssistantChatModel {
         default:
             break
         }
+    }
+
+    /// Changes the approval card of one call, in whichever turn holds it.
+    private func updateApproval(callID: String, _ change: (inout AssistantInlineApproval) -> Void) {
+        for messageIndex in messages.indices.reversed() {
+            for partIndex in messages[messageIndex].parts.indices {
+                guard case .approval(var approval) = messages[messageIndex].parts[partIndex],
+                      approval.toolCallID == callID else { continue }
+                change(&approval)
+                messages[messageIndex].parts[partIndex] = .approval(approval)
+                return
+            }
+        }
+    }
+
+    /// The thread a `draft_reply` call of this turn drafted for.
+    static func replyContext(in parts: [AssistantChatPart]) -> (accountID: String, threadID: String)? {
+        for part in parts.reversed() {
+            guard case .toolRow(let row) = part, row.toolName == "draft_reply", row.state == .done,
+                  let account = row.input?["account"]?.stringValue?.nilIfBlank,
+                  let thread = row.input?["threadId"]?.stringValue?.nilIfBlank else { continue }
+            return (account, thread)
+        }
+        return nil
     }
 
     private func rowIndex(in messageIndex: Int, callID: String) -> Int? {
@@ -634,11 +745,23 @@ final class AssistantChatModel {
         }
     }
 
-    private func requestBody() throws -> JSONValue {
+    /// The platform this client names to the agent, so the server can use
+    /// the native tool set and prompt (AI-11).
+    static var clientPlatform: String {
+        #if os(macOS)
+        "macos"
+        #else
+        "ios"
+        #endif
+    }
+
+    func requestBody() throws -> JSONValue {
         var body: [String: JSONValue] = [
             "messages": transcriptJSON(),
             "timezone": .string(TimeZone.current.identifier),
+            "clientPlatform": .string(Self.clientPlatform),
         ]
+        if resumesLastTurn { body["continuation"] = .bool(true) }
         let scopeLine: String?
         switch scope.kind {
         case .global:
@@ -740,7 +863,7 @@ final class AssistantChatModel {
         switch row.state {
         case .running:
             part["state"] = .string(row.input == nil ? "input-streaming" : "input-available")
-        case .done:
+        case .done, .needsInput:
             part["state"] = .string("output-available")
             part["output"] = row.output ?? .null
         case .failed:
@@ -843,6 +966,23 @@ final class AssistantChatModel {
         input: JSONValue,
         usesApprovalResponse: Bool
     ) -> AssistantInlineApproval {
+        if AssistantInlineApproval.gatedTools.contains(toolName) {
+            // The input is the tool's own input, not card text.
+            return AssistantInlineApproval(
+                id: id,
+                toolCallID: callID,
+                toolName: toolName,
+                input: input,
+                usesApprovalResponse: usesApprovalResponse,
+                title: AssistantInlineApproval.gatedTitle(toolName: toolName, input: input),
+                description: nil,
+                metadata: [],
+                confirmLabel: "Approve",
+                denyLabel: "Cancel",
+                destructive: toolName.contains("delete"),
+                decision: nil
+            )
+        }
         let metadata = (input["metadata"]?.arrayValue ?? []).compactMap {
             row -> AssistantInlineApproval.Metadata? in
             guard let label = row["label"]?.stringValue, let value = row["value"]?.stringValue else {
@@ -1190,8 +1330,9 @@ final class AssistantChatModel {
         guard let callID = callID ?? part["toolCallId"]?.stringValue else { return nil }
         let state = part["state"]?.stringValue ?? "output-available"
         let input = part["input"] ?? .object([:])
-        if toolName == "ask_approval" || state.hasPrefix("approval-") {
-            let usesApprovalResponse = state.hasPrefix("approval-")
+        if toolName == "ask_approval" || state.hasPrefix("approval-")
+            || (state == "output-denied" && part["approval"]?["id"]?.stringValue != nil) {
+            let usesApprovalResponse = state.hasPrefix("approval-") || state == "output-denied"
             var approval = makeApproval(
                 id: part["approval"]?["id"]?.stringValue ?? "approval-\(callID)",
                 callID: callID,
@@ -1203,6 +1344,10 @@ final class AssistantChatModel {
                 approval.decision = part["approval"]?["approved"]?.boolValue
             } else if state == "output-available", let decision = part["output"]?["decision"]?.stringValue {
                 approval.decision = decision == "approved"
+            }
+            if state == "output-denied" {
+                approval.decision = false
+                approval.outcome = AssistantInlineApproval.declinedOutcome
             }
             return .approval(approval)
         }
@@ -1222,8 +1367,8 @@ final class AssistantChatModel {
         )
         switch state {
         case "output-available":
-            row.state = .done
             row.output = part["output"] ?? .null
+            row.state = AssistantToolRow.outcomeState(output: row.output ?? .null)
             row.card = toolName.hasPrefix("show_") ? AssistantToolCard.parse(toolName: toolName, output: row.output ?? .null, toolCallID: callID) : nil
         case "output-error":
             row.state = .failed

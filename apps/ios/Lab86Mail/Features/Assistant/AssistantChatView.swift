@@ -436,8 +436,13 @@ private struct AssistantApprovalCard: View {
                     .font(.caption)
             }
             if let decision = approval.decision {
-                Label(decision ? "Approved" : "Rejected", systemImage: decision ? "checkmark.circle" : "xmark.circle")
+                Label(decision ? "Approved" : "Declined", systemImage: decision ? "checkmark.circle" : "xmark.circle")
                     .foregroundStyle(decision ? .green : .secondary)
+                if let outcome = approval.outcome {
+                    Text(outcome)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 HStack {
                     Button(approval.denyLabel) { onDecision(false) }

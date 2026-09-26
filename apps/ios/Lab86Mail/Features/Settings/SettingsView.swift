@@ -50,7 +50,7 @@ struct SettingsView: View {
                 Section("Personalization") {
                     Button("All settings") { showsAllSettings = true }
                     NavigationLink("Appearance") { AppearanceSettingsView() }
-                    NavigationLink("AI") { AISettingsView() }
+                    NavigationLink("Intelligence") { AISettingsView() }
                     NavigationLink("Smart Labels") { SmartLabelsSettingsView() }
                     NavigationLink("Keyboard Shortcuts") { ShortcutReferenceView() }
                 }

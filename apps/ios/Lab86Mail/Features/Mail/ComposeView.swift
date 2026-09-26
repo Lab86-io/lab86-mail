@@ -408,7 +408,7 @@ struct ComposeView: View {
                 if isDraftingWithAlbatross {
                     ProgressView()
                 } else {
-                    Image(systemName: "sparkles")
+                    Image(systemName: "square.and.pencil")
                 }
             }
             .buttonStyle(.plain)

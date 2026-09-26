@@ -24,6 +24,8 @@ struct AssistantShapeActions: View {
     @State private var outcomes: [String: String] = [:]
     @State private var error: String?
     @State private var notes = ""
+    // True once the field holds the saved note (or the sender has none).
+    @State private var noteLoaded = false
     @State private var snoozeDate = Date.now.addingTimeInterval(86_400)
     @State private var rsvp = "yes"
     @State private var thread: ThreadRoute?
@@ -87,7 +89,16 @@ struct AssistantShapeActions: View {
         Button(action.label, role: action.kind == "delete_event" ? .destructive : nil) {
             error = nil
             switch action {
-            case .deleteEvent, .rsvpEvent, .snoozeThread, .rememberSender:
+            case .rememberSender(let email, let saved):
+                pending = action
+                if let saved = saved?.nilIfBlank {
+                    // The shape carries the saved note.
+                    if notes.isEmpty { notes = saved }
+                    noteLoaded = true
+                } else {
+                    Task { await prefillSavedNote(email) }
+                }
+            case .deleteEvent, .rsvpEvent, .snoozeThread:
                 pending = action
             default: start(action)
             }
@@ -105,9 +116,12 @@ struct AssistantShapeActions: View {
             switch action {
             case .snoozeThread:
                 DatePicker("Snooze until", selection: $snoozeDate, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
-            case .rememberSender(let email):
+            case .rememberSender(let email, _):
                 TextField("Note about \(email)", text: $notes, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
+                Text("Saving replaces the saved note for this sender.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             case .rsvpEvent:
                 Text("Send your response to the organizer?").font(.caption)
                 Picker("Response", selection: $rsvp) {
@@ -226,12 +240,38 @@ struct AssistantShapeActions: View {
             guard let mimeType else { throw BackendError.server(status: 400, message: "Open Files to import this file. Its format is unavailable.") }
             try await invoke("google_file_import", ["connectionId": .string(connectionID), "fileId": .string(fileID), "mimeType": .string(mimeType)])
             return "Imported"
-        case .rememberSender(let email):
-            try await invoke("remember", ["email": .string(email), "notes": .string(notes.trimmingCharacters(in: .whitespacesAndNewlines))])
+        case .rememberSender(let email, _):
+            try await invoke("remember", Self.rememberArguments(email: email, notes: notes, savedNoteLoaded: noteLoaded))
             return "Note saved"
         case .unknown: throw BackendError.invalidResponse
         }
         return "Opened"
+    }
+
+    // AI-2: the field starts with the note already saved, so a save edits
+    // it instead of silently replacing it with a short new line.
+    @MainActor private func prefillSavedNote(_ email: String) async {
+        guard let result = try? await environment.tools.invoke("recall", arguments: ["email": .string(email)]) else {
+            return
+        }
+        noteLoaded = true
+        guard notes.isEmpty, let saved = Self.savedNote(from: result) else { return }
+        notes = saved
+    }
+
+    /// The field holds the whole note once the saved note loaded, so the
+    /// save replaces it. If the saved note did not load, the save adds to it
+    /// and cannot erase a note the person never saw.
+    static func rememberArguments(email: String, notes: String, savedNoteLoaded: Bool) -> [String: JSONValue] {
+        [
+            "email": .string(email),
+            "notes": .string(notes.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "mode": .string(savedNoteLoaded ? "replace" : "append"),
+        ]
+    }
+
+    static func savedNote(from result: JSONValue?) -> String? {
+        result?["memory"]?["notes"]?.stringValue?.nilIfBlank
     }
 
     private func invoke(_ name: String, _ arguments: [String: JSONValue]) async throws {

@@ -34,6 +34,15 @@ function smartPrimary(value: unknown): string | undefined {
   return typeof primary === 'string' && primary ? cap(primary, 240) : undefined;
 }
 
+function smartList(value: unknown, max: number, count: number): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    .map((entry) => cap(entry, max))
+    .slice(0, count);
+  return items.length ? items : undefined;
+}
+
 export function mailThreadSummaryFromCorpus(item: any) {
   return MailThreadSummarySchema.parse({
     id: cap(item?._id, 240),
@@ -48,6 +57,8 @@ export function mailThreadSummaryFromCorpus(item: any) {
     labels: labelList(item?.labels),
     messageCount: Math.max(0, Math.floor(Number(item?.messageCount) || 0)),
     smartCategory: smartPrimary(item?.smartCategory),
+    smartSecondary: smartList(item?.smartCategory?.secondary, 80, 16),
+    smartLabels: smartList(item?.smartCategory?.customLabels, 240, 50),
   });
 }
 

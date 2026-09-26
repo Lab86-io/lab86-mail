@@ -172,7 +172,9 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     unread: item.unread,
                     starred: item.starred,
                     category: item.smartCategory,
-                    senderEmail: item.senderEmail
+                    senderEmail: item.senderEmail,
+                    secondaryCategories: item.smartSecondary,
+                    labelIDs: item.smartLabels
                 )
             },
             nextCursor: value.nextCursor,
