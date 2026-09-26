@@ -98,6 +98,9 @@ export const MobileBootstrapSchema = z
   })
   .strict();
 
+// The change a command records with its receipt. The server keeps it with a
+// domain revision (mobileSyncChanges); no client reads it back, so it is not
+// part of the published contract.
 const syncChangeBase = {
   entityID: identifier,
   revision: z.number().int().nonnegative(),
@@ -120,7 +123,6 @@ export const MailThreadSyncChangeSchema = z
         // into absence keep the tri-state.
         snoozedUntil: z.number().int().nonnegative().optional(),
         snoozeCleared: z.literal(true).optional(),
-        muted: z.boolean().optional(),
       })
       .strict(),
   })
@@ -136,23 +138,6 @@ export const MailMessageSyncChangeSchema = z
         accountID: identifier,
         unread: z.boolean().optional(),
         starred: z.boolean().optional(),
-        labelsAdded: z.array(identifier).max(50).optional(),
-        labelsRemoved: z.array(identifier).max(50).optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-export const MailDraftSyncChangeSchema = z
-  .object({
-    ...syncChangeBase,
-    domain: z.literal('mail'),
-    entityKind: z.literal('draft'),
-    payload: z
-      .object({
-        accountID: identifier,
-        draftID: identifier,
-        deleted: z.literal(true).optional(),
       })
       .strict(),
   })
@@ -175,23 +160,7 @@ export const TaskSyncChangeSchema = z
     payload: z
       .object({
         cardID: identifier,
-        title: z.string().trim().min(1).max(500).optional(),
         completed: z.boolean().optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-export const WorkSyncChangeSchema = z
-  .object({
-    ...syncChangeBase,
-    domain: z.literal('work'),
-    entityKind: z.literal('work'),
-    payload: z
-      .object({
-        captureID: identifier,
-        workIDs: z.array(identifier).max(500),
-        fallback: z.boolean(),
       })
       .strict(),
   })
@@ -222,22 +191,6 @@ export const WorkHorizonSyncChangeSchema = z
         horizon: WorkHorizonSchema.optional(),
         // Explicit clear (mirrors `snoozeCleared`): the Work is back on "now".
         horizonCleared: z.literal(true).optional(),
-      })
-      .strict(),
-  })
-  .strict();
-
-// Work held from the chat bar or from one chat reply. `existing` is true
-// when the reply was already held and the server returned the first result.
-export const WorkCapturedSyncChangeSchema = z
-  .object({
-    ...syncChangeBase,
-    domain: z.literal('work'),
-    entityKind: z.literal('workCaptured'),
-    payload: z
-      .object({
-        workIDs: z.array(identifier).max(500),
-        existing: z.boolean().optional(),
       })
       .strict(),
   })
@@ -332,48 +285,28 @@ export const ApprovalSyncChangeSchema = z
     ...syncChangeBase,
     domain: z.literal('activity'),
     entityKind: z.literal('approval'),
-    payload: z.union([
-      z.object({ approvalID: identifier, commandKind: identifier }).strict(),
-      z.object({ approvalID: identifier, status: z.enum(['approved', 'rejected']) }).strict(),
-    ]),
-  })
-  .strict();
-
-export const OperationSyncChangeSchema = z
-  .object({
-    ...syncChangeBase,
-    domain: MobileDomainSchema,
-    entityKind: z.literal('operation'),
-    payload: z.object({ operationID: identifier, undone: z.literal(true) }).strict(),
+    payload: z.object({ approvalID: identifier, commandKind: identifier }).strict(),
   })
   .strict();
 
 export const MobileSyncChangeVariantSchemas = {
   MailThreadSyncChange: MailThreadSyncChangeSchema,
   MailMessageSyncChange: MailMessageSyncChangeSchema,
-  MailDraftSyncChange: MailDraftSyncChangeSchema,
   CalendarEventSyncChange: CalendarEventSyncChangeSchema,
   TaskSyncChange: TaskSyncChangeSchema,
-  WorkSyncChange: WorkSyncChangeSchema,
   WorkHorizonSyncChange: WorkHorizonSyncChangeSchema,
-  WorkCapturedSyncChange: WorkCapturedSyncChangeSchema,
   WorkShapeSyncChange: WorkShapeSyncChangeSchema,
   ApprovalSyncChange: ApprovalSyncChangeSchema,
-  OperationSyncChange: OperationSyncChangeSchema,
 } as const;
 
 export const SyncChangeSchema = z.discriminatedUnion('entityKind', [
   MobileSyncChangeVariantSchemas.MailThreadSyncChange,
   MobileSyncChangeVariantSchemas.MailMessageSyncChange,
-  MobileSyncChangeVariantSchemas.MailDraftSyncChange,
   MobileSyncChangeVariantSchemas.CalendarEventSyncChange,
   MobileSyncChangeVariantSchemas.TaskSyncChange,
-  MobileSyncChangeVariantSchemas.WorkSyncChange,
   MobileSyncChangeVariantSchemas.WorkHorizonSyncChange,
-  MobileSyncChangeVariantSchemas.WorkCapturedSyncChange,
   MobileSyncChangeVariantSchemas.WorkShapeSyncChange,
   MobileSyncChangeVariantSchemas.ApprovalSyncChange,
-  MobileSyncChangeVariantSchemas.OperationSyncChange,
 ]);
 
 export type MobileSyncChange = z.infer<typeof SyncChangeSchema>;
@@ -393,16 +326,6 @@ type MobileSyncExecutionFor<Change> = Change extends {
   : never;
 
 export type MobileSyncExecution = MobileSyncExecutionFor<MobileSyncChange>;
-
-export const SyncEnvelopeSchema = z
-  .object({
-    items: z.array(SyncChangeSchema),
-    deletedIDs: z.array(identifier),
-    cursor: z.string(),
-    serverRevision: z.number().int().nonnegative(),
-    hasMore: z.boolean(),
-  })
-  .strict();
 
 // Typed paged mail reads. Summaries come from the synced Convex corpus
 // (lastDate-cursor pages); detail reads reuse the corpus-first get_thread
@@ -806,16 +729,7 @@ export const MobileContractV1 = {
     MobileErrorEnvelope: MobileErrorEnvelopeSchema,
     ProviderCapabilitySet: ProviderCapabilitySetSchema,
     PushEnvelope: PushEnvelopeSchema,
-    SyncChange: SyncChangeSchema,
-    SyncEnvelope: SyncEnvelopeSchema,
-    WorkHorizon: WorkHorizonSchema,
     WorkShape: WorkShapeSchema,
-    WorkListItem: WorkListItemSchema,
-    WorkMetric: WorkMetricSchema,
-    WorkMetricEntry: WorkMetricEntrySchema,
-    WorkMetricSummary: WorkMetricSummarySchema,
-    WorkMilestone: WorkMilestoneSchema,
-    ...MobileSyncChangeVariantSchemas,
     ...MobileCommandVariantSchemas,
   },
 };

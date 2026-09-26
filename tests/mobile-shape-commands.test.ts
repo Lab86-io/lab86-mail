@@ -25,7 +25,6 @@ function recording(results: Record<string, unknown> = {}) {
   const deps = {
     invoke: async () => ({ ok: true }),
     enqueueApproval: async () => 'approval-1',
-    capture: async () => ({ captureId: 'c', status: 'split' as const, workIds: ['w'] }),
     workShapeMutation: async (name: string, input: Record<string, unknown>) => {
       calls.push({ name, input });
       return results[name] ?? null;
@@ -80,20 +79,12 @@ describe('the contract', () => {
     ).toBe(false);
   });
 
-  test('the shape schemas are published and the OpenAPI discriminators map every command', () => {
-    for (const name of [
-      'WorkShape',
-      'WorkListItem',
-      'WorkMetric',
-      'WorkMetricEntry',
-      'WorkMetricSummary',
-      'WorkMilestone',
-      'WorkShapeSyncChange',
-      'WorkListAddCommand',
-      'WorkSetShapeCommand',
-    ]) {
+  test('the shape commands are published and the OpenAPI discriminators map every command', () => {
+    for (const name of ['WorkShape', 'WorkListAddCommand', 'WorkSetShapeCommand', 'WorkMetricLogCommand']) {
       expect(MobileContractV1.schemas).toHaveProperty(name);
     }
+    // The recorded sync change stays on the server; no client reads it.
+    expect(MobileContractV1.schemas).not.toHaveProperty('WorkShapeSyncChange');
     const document = mobileOpenAPIV1() as any;
     const mapping = document.components.schemas.MobileCommand.discriminator.mapping;
     for (const kind of MobileContractV1.schemas.MobileCommand.options.map(
@@ -103,9 +94,6 @@ describe('the contract', () => {
     }
     // Every mapped kind is a command the contract still has.
     expect(Object.keys(mapping).length).toBe(MobileContractV1.schemas.MobileCommand.options.length);
-    expect(document.components.schemas.SyncChange.discriminator.mapping.workShape).toBe(
-      '#/components/schemas/WorkShapeSyncChange',
-    );
   });
 });
 

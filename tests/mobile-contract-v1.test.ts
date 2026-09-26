@@ -4,12 +4,7 @@ import path from 'node:path';
 import { canonicalJSON, mobileCommandPayloadHash } from '../lib/mobile/v1/canonical';
 import { capabilitiesForProvider } from '../lib/mobile/v1/capabilities';
 import { executeMobileCommand, mobileCommandDomain } from '../lib/mobile/v1/command-executor';
-import {
-  CommandReceiptSchema,
-  MobileBootstrapSchema,
-  MobileCommandSchema,
-  SyncEnvelopeSchema,
-} from '../lib/mobile/v1/contract';
+import { CommandReceiptSchema, MobileBootstrapSchema, MobileCommandSchema } from '../lib/mobile/v1/contract';
 import { mobileOpenAPIV1 } from '../lib/mobile/v1/openapi';
 import { commandReceiptFromRow } from '../lib/mobile/v1/receipt';
 
@@ -50,7 +45,7 @@ describe('MobileContractV1 schemas', () => {
     ).toThrow();
   });
 
-  test('golden bootstrap and sync payloads decode without JSONValue-style guessing', () => {
+  test('the golden bootstrap decodes without JSONValue-style guessing', () => {
     const bootstrap = MobileBootstrapSchema.parse(
       JSON.parse(
         readFileSync(
@@ -62,30 +57,8 @@ describe('MobileContractV1 schemas', () => {
         ),
       ),
     );
-    const sync = SyncEnvelopeSchema.parse(
-      JSON.parse(
-        readFileSync(
-          path.join(
-            import.meta.dir,
-            '../apps/ios/Packages/MobileAPI/Tests/MobileAPITests/Fixtures/sync-v1.json',
-          ),
-          'utf8',
-        ),
-      ),
-    );
 
     expect(bootstrap.accounts[0].sync.itemsSynced).toBe(42);
-    expect(sync.items[0]).toMatchObject({
-      domain: 'tasks',
-      entityKind: 'task',
-      payload: { cardID: 'card-1', completed: true },
-    });
-    expect(() =>
-      SyncEnvelopeSchema.parse({
-        ...sync,
-        items: [{ ...sync.items[0], payload: { completed: true, dynamic: 'not typed' } }],
-      }),
-    ).toThrow();
   });
 
   test('shared golden receipt decodes through the public Zod contract', () => {
@@ -246,10 +219,10 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(document.components.schemas.MobileCommand.oneOf).toContainEqual({
       $ref: '#/components/schemas/TaskSetCompletedCommand',
     });
-    expect(document.components.schemas.SyncChange.discriminator.propertyName).toBe('entityKind');
-    expect(document.components.schemas.SyncEnvelope.properties.items.items).toEqual({
-      $ref: '#/components/schemas/SyncChange',
-    });
+    // Native never pulled changes, so there is no sync endpoint (NAT-10).
+    expect(document.paths).not.toHaveProperty('/api/mobile/v1/sync');
+    expect(document.components.schemas).not.toHaveProperty('SyncChange');
+    expect(document.components.schemas).not.toHaveProperty('SyncEnvelope');
     expect(checkedIn).toEqual(document);
   });
 
@@ -268,7 +241,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(receipt.recoverableError?.retryable).toBe(true);
   });
 
-  test('schema and routes retain idempotency, sync revisions, and tombstones', () => {
+  test('schema and routes retain idempotency and sync revisions', () => {
     const schema = readFileSync(path.join(import.meta.dir, '../convex/schema.ts'), 'utf8');
     const mobile = readFileSync(path.join(import.meta.dir, '../convex/mobile.ts'), 'utf8');
     const route = readFileSync(path.join(import.meta.dir, '../app/api/mobile/v1/commands/route.ts'), 'utf8');
@@ -277,7 +250,7 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(schema).toContain('mobileCommands: defineTable');
     expect(schema).toContain('mobileSyncTombstones: defineTable');
     expect(schema).toContain(".index('by_user_idempotency'");
-    expect(mobile).toContain(".query('mobileSyncTombstones')");
+    expect(mobile).toContain("insert('mobileSyncChanges'");
     expect(mobile).toContain('if (command.undoneAt) return command;');
     expect(route).toContain('claimCommand');
     expect(accounts).toContain("'mobileCommands'");

@@ -2144,36 +2144,6 @@ struct Lab86MailTests {
         #expect(try await repository.cachedAccounts(ownerID: "user-two").isEmpty)
     }
 
-    @Test
-    func generatedSyncEnvelopeMapsToTypedDomainChangesAndRejectsDomainDrift() throws {
-        let envelope = try JSONDecoder().decode(
-            Components.Schemas.SyncEnvelope.self,
-            from: Data(
-                #"{"items":[{"domain":"tasks","entityKind":"task","entityID":"card-1","revision":2,"operation":"upsert","payload":{"cardID":"card-1","completed":true}}],"deletedIDs":[],"cursor":"2","serverRevision":2,"hasMore":false}"#.utf8
-            )
-        )
-
-        let page = try MobileV1Client.syncPage(from: envelope, requestedDomain: .tasks)
-        #expect(page.domain == .tasks)
-        #expect(page.cursor == "2")
-        #expect(page.serverRevision == 2)
-        #expect(page.changes == [
-            .task(
-                TaskSyncPatch(
-                    entityID: "card-1",
-                    revision: 2,
-                    cardID: "card-1",
-                    title: nil,
-                    completed: true
-                )
-            ),
-        ])
-
-        #expect(throws: MobileV1ClientError.invalidSyncPayload) {
-            try MobileV1Client.syncPage(from: envelope, requestedDomain: .calendar)
-        }
-    }
-
     @Test @MainActor
     func accountStoreKeepsUsefulCachedStateWhenRefreshIsOffline() async throws {
         let container = MobilePersistence.makeContainer(inMemory: true)

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MobileCommandVariantSchemas, MobileContractV1, MobileSyncChangeVariantSchemas } from './contract';
+import { MobileCommandVariantSchemas, MobileContractV1 } from './contract';
 
 function schemaFor(schema: z.ZodType) {
   const json = z.toJSONSchema(schema, {
@@ -56,39 +56,6 @@ export function mobileOpenAPIV1() {
       },
     },
   };
-  components.SyncChange = {
-    oneOf: Object.keys(MobileSyncChangeVariantSchemas).map((name) => ({
-      $ref: `#/components/schemas/${name}`,
-    })),
-    discriminator: {
-      propertyName: 'entityKind',
-      mapping: {
-        thread: '#/components/schemas/MailThreadSyncChange',
-        message: '#/components/schemas/MailMessageSyncChange',
-        draft: '#/components/schemas/MailDraftSyncChange',
-        event: '#/components/schemas/CalendarEventSyncChange',
-        task: '#/components/schemas/TaskSyncChange',
-        work: '#/components/schemas/WorkSyncChange',
-        workHorizon: '#/components/schemas/WorkHorizonSyncChange',
-        workCaptured: '#/components/schemas/WorkCapturedSyncChange',
-        workShape: '#/components/schemas/WorkShapeSyncChange',
-        approval: '#/components/schemas/ApprovalSyncChange',
-        operation: '#/components/schemas/OperationSyncChange',
-      },
-    },
-  };
-  components.SyncEnvelope = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['items', 'deletedIDs', 'cursor', 'serverRevision', 'hasMore'],
-    properties: {
-      items: { type: 'array', items: { $ref: '#/components/schemas/SyncChange' } },
-      deletedIDs: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 240 } },
-      cursor: { type: 'string' },
-      serverRevision: { type: 'integer', minimum: 0 },
-      hasMore: { type: 'boolean' },
-    },
-  };
   return {
     openapi: '3.1.0',
     info: {
@@ -105,32 +72,6 @@ export function mobileOpenAPIV1() {
           operationId: 'getMobileBootstrap',
           responses: {
             '200': { description: 'Initial authenticated state', content: jsonContent('MobileBootstrap') },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/sync': {
-        get: {
-          operationId: 'getMobileSync',
-          parameters: [
-            {
-              name: 'domain',
-              in: 'query',
-              required: true,
-              schema: schemaFor(
-                z.enum(['accounts', 'mail', 'calendar', 'tasks', 'today', 'work', 'assistant', 'activity']),
-              ),
-            },
-            { name: 'cursor', in: 'query', required: false, schema: { type: 'string' } },
-            {
-              name: 'limit',
-              in: 'query',
-              required: false,
-              schema: { type: 'integer', minimum: 1, maximum: 500 },
-            },
-          ],
-          responses: {
-            '200': { description: 'One domain change page', content: jsonContent('SyncEnvelope') },
             ...errorResponses,
           },
         },

@@ -522,52 +522,6 @@ export const getCommand = query({
   },
 });
 
-export const listSync = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    domain: domainValidator,
-    afterRevision: v.number(),
-    limit: v.number(),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const limit = Math.min(Math.max(Math.floor(args.limit), 1), 500);
-    const [changes, tombstones, head] = await Promise.all([
-      ctx.db
-        .query('mobileSyncChanges')
-        .withIndex('by_user_domain_revision', (q) =>
-          q.eq('userId', args.userId).eq('domain', args.domain).gt('revision', args.afterRevision),
-        )
-        .order('asc')
-        .take(limit + 1),
-      ctx.db
-        .query('mobileSyncTombstones')
-        .withIndex('by_user_domain_revision', (q) =>
-          q.eq('userId', args.userId).eq('domain', args.domain).gt('revision', args.afterRevision),
-        )
-        .order('asc')
-        .take(limit + 1),
-      syncHead(ctx, args.userId, args.domain),
-    ]);
-    const page = [
-      ...changes.map((change) => ({ type: 'change' as const, revision: change.revision, row: change })),
-      ...tombstones.map((tombstone) => ({
-        type: 'tombstone' as const,
-        revision: tombstone.revision,
-        row: tombstone,
-      })),
-    ]
-      .sort((left, right) => left.revision - right.revision)
-      .slice(0, limit + 1);
-    return {
-      page: page.slice(0, limit),
-      hasMore: page.length > limit,
-      serverRevision: head?.revision ?? 0,
-    };
-  },
-});
-
 export const claimCommandUndo = mutation({
   args: {
     internalSecret: v.optional(v.string()),

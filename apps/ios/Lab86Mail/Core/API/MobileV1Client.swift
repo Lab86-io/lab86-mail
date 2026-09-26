@@ -25,19 +25,16 @@ protocol MailPageFetching: Sendable {
 enum MobileV1ClientError: LocalizedError, Sendable, Equatable {
     case server(status: Int, code: String, message: String, retryable: Bool)
     case undocumented(status: Int)
-    case invalidSyncPayload
 
     var errorDescription: String? {
         switch self {
         case .server(_, _, let message, _): message
         case .undocumented(let status): "The server returned an unsupported response (\(status))."
-        case .invalidSyncPayload: "The server returned sync data for the wrong domain."
         }
     }
 }
 
-actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSyncFetching,
-    MailPageFetching {
+actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MailPageFetching {
     private let client: Client
 
     init(
@@ -79,37 +76,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
         switch output {
         case .ok(let response):
             return Self.bootstrap(from: try response.body.json)
-        case .badRequest(let response):
-            throw Self.error(from: try response.body.json, status: 400)
-        case .unauthorized(let response):
-            throw Self.error(from: try response.body.json, status: 401)
-        case .conflict(let response):
-            throw Self.error(from: try response.body.json, status: 409)
-        case .tooManyRequests(let response):
-            throw Self.error(from: try response.body.json, status: 429)
-        case .internalServerError(let response):
-            throw Self.error(from: try response.body.json, status: 500)
-        case .undocumented(let status, _):
-            throw MobileV1ClientError.undocumented(status: status)
-        }
-    }
-
-    func fetchSync(domain: MobileDomain, cursor: String?, limit: Int = 200) async throws -> MobileSyncPage {
-        let output = try await client.getMobileSync(
-            .init(
-                query: .init(
-                    domain: Self.generatedDomain(domain),
-                    cursor: cursor,
-                    limit: min(max(limit, 1), 500)
-                )
-            )
-        )
-        switch output {
-        case .ok(let response):
-            return try Self.syncPage(
-                from: response.body.json,
-                requestedDomain: domain
-            )
         case .badRequest(let response):
             throw Self.error(from: try response.body.json, status: 400)
         case .unauthorized(let response):
@@ -244,221 +210,6 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                 error: value.sync.error
             )
         )
-    }
-
-    static func syncPage(
-        from value: Components.Schemas.SyncEnvelope,
-        requestedDomain: MobileDomain
-    ) throws -> MobileSyncPage {
-        let changes = try value.items.map(syncChange)
-        guard changes.allSatisfy({ $0.domain == requestedDomain }) else {
-            throw MobileV1ClientError.invalidSyncPayload
-        }
-        return MobileSyncPage(
-            domain: requestedDomain,
-            changes: changes,
-            deletedIDs: value.deletedIDs,
-            cursor: value.cursor,
-            serverRevision: value.serverRevision,
-            hasMore: value.hasMore
-        )
-    }
-
-    private static func syncChange(
-        from value: Components.Schemas.SyncChange
-    ) throws -> MobileSyncChange {
-        switch value {
-        case .thread(let change):
-            return .mailThread(
-                MailThreadSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    accountID: change.payload.accountID,
-                    archived: change.payload.archived,
-                    trashed: change.payload.trashed,
-                    unread: change.payload.unread,
-                    snoozedUntil: change.payload.snoozedUntil,
-                    snoozeCleared: change.payload.snoozeCleared,
-                    muted: change.payload.muted
-                )
-            )
-        case .message(let change):
-            return .mailMessage(
-                MailMessageSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    accountID: change.payload.accountID,
-                    unread: change.payload.unread,
-                    starred: change.payload.starred,
-                    labelsAdded: change.payload.labelsAdded,
-                    labelsRemoved: change.payload.labelsRemoved
-                )
-            )
-        case .draft(let change):
-            return .mailDraft(
-                MailDraftSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    accountID: change.payload.accountID,
-                    draftID: change.payload.draftID,
-                    deleted: change.payload.deleted ?? false
-                )
-            )
-        case .event(let change):
-            return .calendarEvent(
-                CalendarEventSyncReference(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    accountID: change.payload.accountID,
-                    eventID: change.payload.eventID
-                )
-            )
-        case .task(let change):
-            return .task(
-                TaskSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    cardID: change.payload.cardID,
-                    title: change.payload.title,
-                    completed: change.payload.completed
-                )
-            )
-        case .work(let change):
-            return .work(
-                WorkSyncReference(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    captureID: change.payload.captureID,
-                    workIDs: change.payload.workIDs,
-                    fallback: change.payload.fallback
-                )
-            )
-        case .workHorizon(let change):
-            return .workHorizon(
-                WorkHorizonSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    workID: change.payload.workID,
-                    horizon: change.payload.horizon.map(workHorizon),
-                    horizonCleared: change.payload.horizonCleared ?? false
-                )
-            )
-        case .workCaptured(let change):
-            return .workCaptured(
-                WorkCapturedSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    workIDs: change.payload.workIDs,
-                    existing: change.payload.existing ?? false
-                )
-            )
-        case .workShape(let change):
-            return .workShape(
-                WorkShapeSyncPatch(
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    workID: change.payload.workID,
-                    shape: change.payload.shape.flatMap { WorkShape(rawValue: $0.rawValue) },
-                    listItems: change.payload.listItems.map { items in
-                        items.map { item in
-                            WorkListEntry(
-                                id: item.id,
-                                text: item.text,
-                                done: item.done,
-                                addedAt: Date(timeIntervalSince1970: Double(item.addedAt) / 1000),
-                                doneAt: item.doneAt.map { Date(timeIntervalSince1970: Double($0) / 1000) }
-                            )
-                        }
-                    },
-                    milestones: change.payload.milestones.map { rows in
-                        rows.enumerated().map { index, row in
-                            WorkMilestone(
-                                id: row.id,
-                                title: row.title,
-                                done: row.done,
-                                doneAt: row.doneAt.map { Date(timeIntervalSince1970: Double($0) / 1000) },
-                                order: row.order ?? index
-                            )
-                        }
-                    },
-                    metric: change.payload.metric.map { metric in
-                        WorkMetric(
-                            name: metric.name,
-                            unit: metric.unit,
-                            target: metric.target,
-                            direction: metric.direction.flatMap { WorkMetric.Direction(rawValue: $0.rawValue) }
-                        )
-                    },
-                    metricEntry: change.payload.metricEntry.map { entry in
-                        WorkMetricEntry(
-                            id: entry.id,
-                            at: Date(timeIntervalSince1970: Double(entry.at) / 1000),
-                            value: entry.value,
-                            note: entry.note
-                        )
-                    },
-                    metricSummary: change.payload.metricSummary.map { summary in
-                        WorkMetricSummary(
-                            latest: summary.latest,
-                            latestAt: summary.latestAt.map { Date(timeIntervalSince1970: Double($0) / 1000) },
-                            count: summary.count,
-                            weeksWithEntry: summary.weeksWithEntry
-                        )
-                    }
-                )
-            )
-        case .approval(let change):
-            if let requested = change.payload.value1 {
-                return .approval(
-                    ApprovalSyncPatch(
-                        entityID: change.entityID,
-                        revision: change.revision,
-                        approvalID: requested.approvalID,
-                        state: .requested(commandKind: requested.commandKind)
-                    )
-                )
-            }
-            if let resolved = change.payload.value2,
-               let status = ApprovalResolution(rawValue: resolved.status.rawValue) {
-                return .approval(
-                    ApprovalSyncPatch(
-                        entityID: change.entityID,
-                        revision: change.revision,
-                        approvalID: resolved.approvalID,
-                        state: .resolved(status: status)
-                    )
-                )
-            }
-            throw MobileV1ClientError.invalidSyncPayload
-        case .operation(let change):
-            guard let domain = MobileDomain(rawValue: change.domain.rawValue) else {
-                throw MobileV1ClientError.invalidSyncPayload
-            }
-            return .operation(
-                OperationSyncPatch(
-                    domain: domain,
-                    entityID: change.entityID,
-                    revision: change.revision,
-                    operationID: change.payload.operationID,
-                    undone: change.payload.undone
-                )
-            )
-        }
-    }
-
-    private static func generatedDomain(
-        _ domain: MobileDomain
-    ) -> Operations.GetMobileSync.Input.Query.DomainPayload {
-        switch domain {
-        case .accounts: .accounts
-        case .mail: .mail
-        case .calendar: .calendar
-        case .tasks: .tasks
-        case .today: .today
-        case .work: .work
-        case .assistant: .assistant
-        case .activity: .activity
-        }
     }
 
     private static func provider(
@@ -786,18 +537,5 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
         case .later: .later
         case .someday: .someday
         }
-    }
-
-    // Sync payloads carry epoch milliseconds, like every server-owned time.
-    private static func workHorizon(
-        _ value: Components.Schemas.WorkHorizonSyncChange.PayloadPayload.HorizonPayload
-    ) -> WorkHorizon {
-        WorkHorizon(
-            kind: WorkHorizonKind(rawValue: value.kind.rawValue) ?? .now,
-            notBefore: value.notBefore.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
-            by: value.by.flatMap { CalendarDateParser.date(fromNumber: Double($0)) },
-            label: value.label,
-            wokeAt: value.wokeAt.flatMap { CalendarDateParser.date(fromNumber: Double($0)) }
-        )
     }
 }

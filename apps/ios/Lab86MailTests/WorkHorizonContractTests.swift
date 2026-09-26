@@ -3,50 +3,10 @@ import MobileAPI
 import Testing
 @testable import Lab86Mail
 
-// The horizon on the mobile v1 wire: the `workHorizon` sync change and the
-// `work.setHorizon` durable command. `lib/mobile/v1/contract.ts` is the source.
+// The horizon on the mobile v1 wire: the `work.setHorizon` durable command.
+// `lib/mobile/v1/contract.ts` is the source.
 struct WorkHorizonContractTests {
     private let november = Date(timeIntervalSince1970: 1_793_509_200) // 2026-11-01T05:00:00Z
-
-    @Test
-    func workHorizonSyncChangeDecodesToATypedPatch() throws {
-        let millis = Int(november.timeIntervalSince1970 * 1_000)
-        let envelope = try JSONDecoder().decode(
-            Components.Schemas.SyncEnvelope.self,
-            from: Data(
-                """
-                {"items":[
-                  {"domain":"work","entityKind":"workHorizon","entityID":"work-1","revision":4,"operation":"upsert",
-                   "payload":{"workID":"work-1","horizon":{"kind":"later","notBefore":\(millis),"label":"not before November"}}},
-                  {"domain":"work","entityKind":"workHorizon","entityID":"work-2","revision":5,"operation":"upsert",
-                   "payload":{"workID":"work-2","horizonCleared":true}}
-                ],"deletedIDs":[],"cursor":"5","serverRevision":5,"hasMore":false}
-                """.utf8
-            )
-        )
-
-        let page = try MobileV1Client.syncPage(from: envelope, requestedDomain: .work)
-        #expect(page.domain == .work)
-        #expect(page.changes == [
-            .workHorizon(
-                WorkHorizonSyncPatch(
-                    entityID: "work-1",
-                    revision: 4,
-                    workID: "work-1",
-                    horizon: WorkHorizon(kind: .later, notBefore: november, label: "not before November"),
-                    horizonCleared: false
-                )
-            ),
-            .workHorizon(
-                WorkHorizonSyncPatch(entityID: "work-2", revision: 5, workID: "work-2", horizon: nil, horizonCleared: true)
-            ),
-        ])
-        #expect(page.changes.map(\.revision) == [4, 5])
-
-        #expect(throws: MobileV1ClientError.invalidSyncPayload) {
-            try MobileV1Client.syncPage(from: envelope, requestedDomain: .tasks)
-        }
-    }
 
     @Test
     func setHorizonCommandIsDurableAndCarriesExactlyOneShape() async throws {
