@@ -11,13 +11,15 @@ export function proofOfferAllowed(category: string | null | undefined): boolean 
   return !category || !PROOF_BLOCKED_CATEGORIES.has(category);
 }
 
-/** The strongest available classification verdict for a corpus thread row. */
+/**
+ * The current classification verdict for a corpus thread row. A legacy
+ * one-time model verdict (`llmCategory`) can be stale, so it never ranks here.
+ */
 export function threadPrimaryCategory(
   row:
     | {
         jev?: unknown;
         latestMessageId?: string;
-        llmCategory?: { primary?: unknown } | null;
         smartPrimary?: unknown;
         smartCategory?: { primary?: unknown; model?: unknown } | null;
       }
@@ -31,8 +33,6 @@ export function threadPrimaryCategory(
     current
   )
     return current;
-  const llm = row?.llmCategory?.primary;
-  if (typeof llm === 'string' && llm) return llm;
   const smartPrimary = row?.smartPrimary;
   if (typeof smartPrimary === 'string' && smartPrimary) return smartPrimary;
   const smart = row?.smartCategory?.primary;

@@ -13,13 +13,6 @@ function between(source: string, startMarker: string, endMarker: string) {
 }
 
 describe('Convex cost guardrails', () => {
-  test('Smart Category sweeps honor source continuation after orphan repair', () => {
-    const source = read('lib/mail/llm-classify.ts');
-    expect(source).toContain('export async function drainPendingSweepPages');
-    expect(source).toContain('if (page.items.length < batchSize) {');
-    expect(source).toContain('if (page.moreRemaining) continue;');
-  });
-
   test('mail messages keep only indexes used by runtime reads and deletion', () => {
     const schema = read('convex/schema.ts');
     const messages = between(schema, 'mailCorpusMessages: defineTable(', 'userDocs: defineTable(');

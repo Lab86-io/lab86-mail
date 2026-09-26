@@ -2,11 +2,9 @@ import { getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { isConvexConfigured } from '../hosted/env';
 import { runJevSweep } from '../jev/service';
 
-// Persisted Jev assessments, refreshed when message content changes. The
-// historical llmPending queue name is retained for compatibility. Leases and
-// bounded retries live in Convex, so concurrent servers cannot apply stale work.
-const SWEEP_BATCH = 40;
-const MAX_BATCHES_PER_KICK = 5;
+// Persisted Jev assessments, refreshed when message content changes. Jev keeps
+// the historical llmPending field as its queue flag. Leases and bounded
+// retries live in Convex, so concurrent servers cannot apply stale work.
 const KICK_DEBOUNCE_MS = 5_000;
 
 const sweeping = new Set<string>();
@@ -15,40 +13,6 @@ const pendingKicks = new Map<string, ReturnType<typeof setTimeout>>();
 // behind, or new rows landed during the run) are coalesced here and replayed
 // once the current sweep finishes, so the backlog always drains.
 const rerunRequested = new Set<string>();
-
-export async function drainPendingSweepPages<T>({
-  loadPage,
-  handleItems,
-  batchSize = SWEEP_BATCH,
-  maxBatches = MAX_BATCHES_PER_KICK,
-}: {
-  loadPage: () => Promise<{ items: T[]; moreRemaining: boolean }>;
-  handleItems: (items: T[]) => Promise<number>;
-  batchSize?: number;
-  maxBatches?: number;
-}) {
-  let classified = 0;
-  let moreRemaining = false;
-  for (let batch = 0; batch < maxBatches; batch += 1) {
-    const page = await loadPage();
-    if (!page.items.length) {
-      if (page.moreRemaining) {
-        if (batch === maxBatches - 1) moreRemaining = true;
-        continue;
-      }
-      break;
-    }
-    if (batch === maxBatches - 1 && (page.moreRemaining || page.items.length === batchSize)) {
-      moreRemaining = true;
-    }
-    classified += await handleItems(page.items);
-    if (page.items.length < batchSize) {
-      if (page.moreRemaining) continue;
-      break;
-    }
-  }
-  return { classified, moreRemaining };
-}
 
 export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEBOUNCE_MS) {
   const uid = userId || getAiRequestContext().userId;
@@ -69,12 +33,17 @@ export function kickLlmClassification(userId?: string | null, delayMs = KICK_DEB
   );
 }
 
-export async function runLlmClassificationSweep(userId: string) {
+type SweepResult = { classified: number; moreRemaining?: boolean };
+
+export async function runLlmClassificationSweep(
+  userId: string,
+  sweep: (userId: string) => Promise<SweepResult> = runJevSweep,
+) {
   if (sweeping.has(userId) || !isConvexConfigured()) return { classified: 0 };
   sweeping.add(userId);
-  let result: { classified: number; moreRemaining?: boolean } = { classified: 0 };
+  let result: SweepResult = { classified: 0 };
   try {
-    result = await runWithAiRequestContext({ userId, agent: 'ai' }, () => runJevSweep(userId));
+    result = await runWithAiRequestContext({ userId, agent: 'ai' }, () => sweep(userId));
     return result;
   } finally {
     sweeping.delete(userId);
