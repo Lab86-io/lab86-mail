@@ -5,6 +5,7 @@ import { isGrantGoneError, markGrantNeedsReconnect, noteGrantFailure } from '@/l
 import { normalizeNylasMessage } from '@/lib/nylas/normalize';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, retryAfterMs, withNylasRetry } from '@/lib/nylas/retry';
+import { stripLoneSurrogatesDeep } from '@/lib/shared/text';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { withFolderRoleLabels } from './search/folders';
@@ -856,9 +857,12 @@ function corpusMessageFromNylas(row: NylasAccountRow, raw: any): CorpusMessageIn
 }
 
 function corpusMessageFromNormalized(
-  message: Message,
+  provider: Message,
   flags: { unread?: boolean; starred?: boolean } = {},
 ): CorpusMessageInput {
+  // Provider text enters the system here; a lone surrogate would make Convex
+  // reject the whole batch.
+  const message = stripLoneSurrogatesDeep(provider);
   const labels = message.labels || [];
   return {
     providerMessageId: message._id,

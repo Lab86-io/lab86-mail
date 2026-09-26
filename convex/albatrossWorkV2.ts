@@ -31,6 +31,7 @@ import {
   stepVerification,
 } from '../lib/albatross/step-verification';
 import { assertWorkOpen, isTerminalWork, workLifecycle } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -95,7 +96,7 @@ async function requireArea(ctx: QueryCtx | MutationCtx, areaId: Id<'areas'>, use
 
 function bounded(value: string | undefined | null, max: number) {
   const clean = String(value || '').trim();
-  return clean ? clean.slice(0, max) : undefined;
+  return clean ? truncateText(clean, max) : undefined;
 }
 
 /** The patch every user-driven mutation adds. The conductor never writes it. */
@@ -127,9 +128,7 @@ function keyedPlanActions(plan: Doc<'albatrossIntentPlans'>) {
 }
 
 function preserveRaw(value: string, max = 20_000) {
-  return String(value || '')
-    .replace(/^\s+|\s+$/g, '')
-    .slice(0, max);
+  return truncateText(String(value || '').replace(/^\s+|\s+$/g, ''), max);
 }
 
 export const beginCapture = mutation({
@@ -821,7 +820,7 @@ export const completeStep = mutation({
             identity: selected.identity,
             actionKey: selected.actionKey,
             kind: selected.kind === 'physical' ? 'physical' : selected.action.kind || 'task',
-            title: selected.action.title!.trim().slice(0, 240),
+            title: truncateText(selected.action.title!.trim(), 240),
             cardId: selected.cardId,
             completedAt: ts,
             source,
@@ -870,9 +869,9 @@ export const completeStep = mutation({
         sourceKind: 'manual' as const,
         sourceId: dedupeKey,
         stepIdentity: bounded(selected.identity, 420),
-        title: `Noted on: ${selected.action.title!.trim()}`.slice(0, 300),
-        claim: note.slice(0, 400),
-        summary: note.slice(0, 600),
+        title: truncateText(`Noted on: ${selected.action.title!.trim()}`, 300),
+        claim: truncateText(note, 400),
+        summary: truncateText(note, 600),
         // The user's own words about their own step. That is honest evidence
         // of the step, but it is not an external receipt, so it must not read
         // as one when the contract weighs closure.
@@ -882,7 +881,7 @@ export const completeStep = mutation({
         confidence: 0.95,
         trust: 'observed' as const,
         dedupeKey,
-        searchText: [note, selected.action.title].filter(Boolean).join(' ').slice(0, 4000),
+        searchText: truncateText([note, selected.action.title].filter(Boolean).join(' '), 4000),
         updatedAt: ts,
       };
       if (existingNote) await ctx.db.patch(existingNote._id, noteRow);
@@ -939,7 +938,7 @@ export const completeStep = mutation({
         pendingStepEvidence: {
           planId: String(plan._id),
           stepIdentity: selected.identity,
-          stepTitle: selected.action.title!.trim().slice(0, 240),
+          stepTitle: truncateText(selected.action.title!.trim(), 240),
           cardId: applied?.cardId,
           requestedAt,
         },
@@ -1056,7 +1055,7 @@ export const attachProof = mutation({
       confidence: 0.95,
       trust,
       dedupeKey,
-      searchText: [args.claim, args.title, args.summary].filter(Boolean).join(' ').slice(0, 4000),
+      searchText: truncateText([args.claim, args.title, args.summary].filter(Boolean).join(' '), 4000),
       updatedAt: ts,
     };
     let evidenceId: Id<'albatrossEvidence'>;
@@ -1197,7 +1196,7 @@ export const openWorkForProof = query({
     }
     return rows.slice(0, wanted).map((row) => ({
       _id: String(row._id),
-      title: row.title || row.rawText.slice(0, 90),
+      title: row.title || truncateText(row.rawText, 90),
       contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
     }));
   },
@@ -1275,7 +1274,9 @@ export const finishCapture = mutation({
           status: 'candidate',
           confidence: areaId === item.primaryAreaId ? 0.8 : 0.65,
           reason: 'Inferred from the user capture; awaiting correction if needed.',
-          sourceRefs: [{ kind: 'capture', id: String(args.captureId), label: capture.rawText.slice(0, 140) }],
+          sourceRefs: [
+            { kind: 'capture', id: String(args.captureId), label: truncateText(capture.rawText, 140) },
+          ],
           confirmationRefs: [],
           createdAt: ts,
           updatedAt: ts,
@@ -1296,7 +1297,7 @@ export const failCapture = mutation({
     if (!capture || capture.userId !== userId) return;
     await ctx.db.patch(args.captureId, {
       status: 'error',
-      error: args.error.slice(0, 500),
+      error: truncateText(args.error, 500),
       updatedAt: now(),
     });
   },
@@ -1382,11 +1383,11 @@ export const upsertQuestion = mutation({
       const ts = now();
       const refreshed = {
         legacyQuestionId: bounded(args.legacyQuestionId, 80),
-        prompt: args.prompt.slice(0, 500),
+        prompt: truncateText(args.prompt, 500),
         reason: bounded(args.reason, 500),
         options: args.options?.slice(0, 6).map((option) => ({
           id: option.id.slice(0, 80),
-          label: option.label.slice(0, 180),
+          label: truncateText(option.label, 180),
           description: bounded(option.description, 400),
         })),
         sourceRefs: args.sourceRefs || duplicate.sourceRefs,
@@ -1460,11 +1461,11 @@ export const upsertQuestion = mutation({
       dedupeKey,
       legacyQuestionId: bounded(args.legacyQuestionId, 80),
       kind: args.kind,
-      prompt: args.prompt.slice(0, 500),
+      prompt: truncateText(args.prompt, 500),
       reason: bounded(args.reason, 500),
       options: args.options?.slice(0, 6).map((option) => ({
         id: option.id.slice(0, 80),
-        label: option.label.slice(0, 180),
+        label: truncateText(option.label, 180),
         description: bounded(option.description, 400),
       })),
       status: 'pending',
@@ -1583,14 +1584,14 @@ export const answerQuestion = mutation({
       targetId: targetId ? String(targetId) : undefined,
       sourceKind: 'question_answer' as const,
       sourceId: String(question._id),
-      title: question.prompt.slice(0, 500),
+      title: truncateText(question.prompt, 500),
       summary: answer,
       occurredAt: ts,
       weight: 1,
       confidence: 1,
       trust: 'confirmed' as const,
       dedupeKey: evidenceKey,
-      searchText: `${question.prompt} ${answer}`.slice(0, 4_000),
+      searchText: truncateText(`${question.prompt} ${answer}`, 4_000),
       metadata: { answeredOptionId: bounded(args.answeredOptionId, 80), kind: question.kind },
       updatedAt: ts,
     };
@@ -2008,7 +2009,7 @@ export const stalenessReviewCandidates = internalQuery({
         .map((row) => ({
           userId: row.userId,
           workId: String(row._id),
-          workTitle: row.title || row.rawText.slice(0, 180),
+          workTitle: row.title || truncateText(row.rawText, 180),
           updatedAt: row.updatedAt,
         }))
         .slice(0, 100)
@@ -2358,7 +2359,7 @@ export const horizonWakeCandidates = internalQuery({
       .map((row) => ({
         userId: row.userId,
         workId: String(row._id),
-        title: row.title || row.rawText.slice(0, 180),
+        title: row.title || truncateText(row.rawText, 180),
         notBefore: row.horizon?.notBefore ?? 0,
       }));
   },
@@ -2377,7 +2378,7 @@ export const wakeHorizon = internalMutation({
     return {
       userId: work.userId,
       workId: String(args.workId),
-      title: work.title || work.rawText.slice(0, 180),
+      title: work.title || truncateText(work.rawText, 180),
       notBefore: horizon.notBefore ?? 0,
     };
   },
@@ -2535,8 +2536,8 @@ export const saveAreaBrief = mutation({
       userId,
       areaId: args.areaId,
       status: args.status,
-      lede: args.lede.slice(0, 600),
-      summary: args.summary.slice(0, 2_000),
+      lede: truncateText(args.lede, 600),
+      summary: truncateText(args.summary, 2_000),
       artifactHtml,
       document: args.document ?? existing?.document,
       artifactSource: args.artifactSource ?? existing?.artifactSource,

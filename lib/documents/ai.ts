@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
+import { truncateText } from '@/lib/shared/text';
 import {
   artworksBySlideIndex,
   artworksForDeck,
@@ -150,7 +151,7 @@ async function generateSheetChangeSet(input: {
   input.abortSignal?.throwIfAborted();
   if (input.current.model.kind !== 'sheet') throw new Error('Expected a workbook.');
   const sources = input.sourceContext?.trim()
-    ? `\nGrounding material:\n${input.sourceContext.trim().slice(0, 40_000)}`
+    ? `\nGrounding material:\n${truncateText(input.sourceContext.trim(), 40_000)}`
     : '';
   const { object } = await dependencies.generateObjectForCurrentUser<
     z.infer<typeof sheetChangesOutputSchema>
@@ -164,7 +165,7 @@ async function generateSheetChangeSet(input: {
     maxOutputTokens: 14_000,
     schema: sheetChangesOutputSchema,
     system: `You are Albatross's spreadsheet assistant. Use the full Odoo workbook suite: real charts/graphs, styled tables, pivots, formatting, borders, conditional formats, validation, merges, sorting, and sheet structure. Return cell changes and/or commands using the exact JSON schemas below. For cell changes give the sheet ID or exact name, A1 reference, and content; Formulas start with "=". Put names of new sheets in newSheets, or CREATE_SHEET with an explicit ID before commands targeting it. Cell changes run before commands; use UPDATE_CELL commands when operation ordering matters. Use real CREATE_CHART figures for charts, never text bars. REPT is NOT a supported Odoo function. Never invent data that is not in the workbook or grounding material. Preserve all unrelated workbook features. Return a concise title and summary.\nCommand contracts:\n${JSON.stringify(spreadsheetCapabilities(spreadsheetCommandNames))}`,
-    prompt: `Current spreadsheet "${input.current.title}":\n${(isSheetWorkbookModel(input.current.model) ? workbookText(input.current.model) : JSON.stringify(input.current.model)).slice(0, 120_000)}\nWorkbook structure and existing features:\n${JSON.stringify(isSheetWorkbookModel(input.current.model) ? { ...input.current.model.workbook, sheets: input.current.model.workbook.sheets.map(({ cells: _cells, ...sheet }) => sheet) } : input.current.model).slice(0, 60_000)}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+    prompt: `Current spreadsheet "${input.current.title}":\n${truncateText(isSheetWorkbookModel(input.current.model) ? workbookText(input.current.model) : JSON.stringify(input.current.model), 120_000)}\nWorkbook structure and existing features:\n${truncateText(JSON.stringify(isSheetWorkbookModel(input.current.model) ? { ...input.current.model.workbook, sheets: input.current.model.workbook.sheets.map(({ cells: _cells, ...sheet }) => sheet) } : input.current.model), 60_000)}${sources}\n\nUser instruction:\n${truncateText(input.instruction.trim(), 20_000)}`,
   });
   let parsed: z.infer<typeof sheetChangesOutputSchema>;
   try {
@@ -381,11 +382,11 @@ async function generateDeckV2(input: DeckGenerationInput): Promise<DocumentPropo
     maxOutputTokens: 14_000,
     schema: presentationAuthoringV2Schema,
     system: PRESENTATION_DESIGN_GUIDANCE_V2,
-    prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}${
+    prompt: `Create a new presentation.\nGrounding material:\n${truncateText(input.sourceContext?.trim(), 40_000) || 'No sources supplied; do not invent personal activity.'}${
       input.assets?.length
         ? `\nOwned image assets (assetId: description):\n${input.assets.map((asset) => `${asset.assetId}: ${asset.alt || 'image'}`).join('\n')}`
         : ''
-    }\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+    }\nUser instruction:\n${truncateText(input.instruction.trim(), 20_000)}`,
   });
   let brief: PresentationBriefV2;
   try {
@@ -428,7 +429,7 @@ async function proposeDeckRestyle(input: {
     maxOutputTokens: 1_000,
     schema: restyleClassificationSchema,
     system: RESTYLE_CLASSIFIER_GUIDANCE,
-    prompt: `Presentation "${input.current.title}" with ${input.current.model.slides.length} slides.\nInstruction:\n${input.instruction.trim().slice(0, 4_000)}`,
+    prompt: `Presentation "${input.current.title}" with ${input.current.model.slides.length} slides.\nInstruction:\n${truncateText(input.instruction.trim(), 4_000)}`,
   });
   const classification = restyleClassificationSchema.safeParse(object);
   if (!classification.success) return null;
@@ -488,7 +489,7 @@ async function generateDocumentProposalDraft(input: {
       maxOutputTokens: 14_000,
       schema: presentationAuthoringSchema,
       system: PRESENTATION_DESIGN_GUIDANCE,
-      prompt: `Create a new presentation.\nGrounding material:\n${input.sourceContext?.trim().slice(0, 40_000) || 'No sources supplied; do not invent personal activity.'}\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+      prompt: `Create a new presentation.\nGrounding material:\n${truncateText(input.sourceContext?.trim(), 40_000) || 'No sources supplied; do not invent personal activity.'}\nUser instruction:\n${truncateText(input.instruction.trim(), 20_000)}`,
     });
     try {
       const brief = presentationAuthoringSchema.parse(object);
@@ -529,13 +530,16 @@ async function generateDocumentProposalDraft(input: {
   const schema = outputSchema(input.kind, input.current?.model);
   const modelSchema = modelSchemaFor(input.kind, input.current?.model);
   const current = input.current
-    ? `Current ${documentKindLabel(input.kind).toLowerCase()}:\n${JSON.stringify({
-        title: input.current.title,
-        model: input.current.model,
-      }).slice(0, 120_000)}`
+    ? `Current ${documentKindLabel(input.kind).toLowerCase()}:\n${truncateText(
+        JSON.stringify({
+          title: input.current.title,
+          model: input.current.model,
+        }),
+        120_000,
+      )}`
     : `Create a new ${documentKindLabel(input.kind).toLowerCase()}.`;
   const sources = input.sourceContext?.trim()
-    ? `\nGrounding material:\n${input.sourceContext.trim().slice(0, 40_000)}`
+    ? `\nGrounding material:\n${truncateText(input.sourceContext.trim(), 40_000)}`
     : '';
   const { object } = await dependencies.generateObjectForCurrentUser<z.infer<typeof schema>>({
     userId: input.userId,
@@ -550,7 +554,7 @@ async function generateDocumentProposalDraft(input: {
 ${modelGuidance(input.kind, input.current?.model)}
 ${input.kind === 'deck' ? 'Preserve the existing art direction, background and text colors, spacing and visual hierarchy. Add real slide content with varied layouts; never put editing instructions into slides. All elements must fit within the 0–100 canvas. Never invent numbers; use metrics only when the grounding material supplies them.' : ''}
 Preserve accurate supplied facts, never invent citations or claim provider-side changes, and make the result useful without extra cleanup. Return the full model, a concise title, and a one-sentence summary of what changed.`,
-    prompt: `${current}${sources}\n\nUser instruction:\n${input.instruction.trim().slice(0, 20_000)}`,
+    prompt: `${current}${sources}\n\nUser instruction:\n${truncateText(input.instruction.trim(), 20_000)}`,
   });
   try {
     const parsed = schema.parse(object);

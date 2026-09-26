@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { redactExportRow } from '../lib/hosted/export-redaction';
 import { pickAccountForGrant } from '../lib/mail/grant-account';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -251,7 +252,7 @@ export const markGrantReconnectNeeded = mutation({
     const ts = now();
     for (const row of rows) {
       if (row.status !== 'connected') continue;
-      await ctx.db.patch(row._id, { status: 'error', error: args.reason.slice(0, 300), updatedAt: ts });
+      await ctx.db.patch(row._id, { status: 'error', error: truncateText(args.reason, 300), updatedAt: ts });
       updated += 1;
     }
     return { updated };
@@ -272,7 +273,7 @@ export const updateConnectedAccountAlias = mutation({
       .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
       .unique();
     if (!row) throw new Error('Connected account not found');
-    const displayName = (args.displayName || '').trim().slice(0, 80) || undefined;
+    const displayName = truncateText((args.displayName || '').trim(), 80) || undefined;
     await ctx.db.patch(row._id, {
       displayName,
       updatedAt: now(),

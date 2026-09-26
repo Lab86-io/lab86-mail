@@ -1,5 +1,6 @@
 import { convert } from 'html-to-text';
 import JSZip from 'jszip';
+import { stripLoneSurrogates, truncateText } from '../shared/text';
 import { MAX_CONTENT_CHARS } from './contract';
 
 export const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024;
@@ -95,5 +96,8 @@ export async function extractContent(
     const decoded = new TextDecoder().decode(bytes);
     text = /html/.test(mime) ? convert(decoded, { wordwrap: false }) : decoded;
   }
-  return { text: text.slice(0, MAX_CONTENT_CHARS), partial: partial || text.length > MAX_CONTENT_CHARS };
+  return {
+    text: truncateText(stripLoneSurrogates(text), MAX_CONTENT_CHARS),
+    partial: partial || text.length > MAX_CONTENT_CHARS,
+  };
 }

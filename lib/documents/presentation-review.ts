@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { generateObjectForCurrentUser } from '@/lib/ai/gateway';
 import { withToolTimeout } from '@/lib/ai/tool-timeout';
+import { truncateText } from '@/lib/shared/text';
 import {
   fitsPresentationPreservationBudget,
   PRESENTATION_PRESERVATION_BUDGET_MESSAGE,
@@ -125,7 +126,7 @@ export function replaceSlideCopy(slide: Slide, field: string, text: string) {
 /** Extract at a sentence/word boundary. Full original text stays in notes. */
 export function excerpt(text: string, limit: number) {
   if (text.length <= limit) return text;
-  const head = text.slice(0, Math.max(1, limit - 1));
+  const head = truncateText(text, Math.max(1, limit - 1));
   const sentence = Math.max(head.lastIndexOf('. '), head.lastIndexOf('? '), head.lastIndexOf('! '));
   if (sentence >= limit / 3) return head.slice(0, sentence + 1);
   const space = head.lastIndexOf(' ');
@@ -181,7 +182,7 @@ export async function reviewPresentation<T extends Brief>(
               instruction: input.instruction,
               audience: 'audience' in brief ? brief.audience : '',
               purpose: 'purpose' in brief ? brief.purpose : brief.summary,
-              grounding: input.sourceContext?.slice(0, 40000),
+              grounding: truncateText(input.sourceContext, 40000),
               narrative: brief.slides.map((slide, index) => ({
                 slideId: `slide-${index + 1}`,
                 title: slide.title,

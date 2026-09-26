@@ -31,6 +31,7 @@ import {
 } from '../lib/albatross/area-reindex';
 import { type EvidenceSourceKind, evidenceWeight } from '../lib/albatross/evidence-index';
 import { isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -175,7 +176,7 @@ async function ensureAreaBoard(
 }
 
 function cleanOptionalUrl(value: string | undefined) {
-  const raw = normalizeText(value || '').slice(0, 800);
+  const raw = truncateText(normalizeText(value || ''), 800);
   return /^https?:\/\//i.test(raw) ? raw : undefined;
 }
 
@@ -222,14 +223,14 @@ async function upsertAreaEvidence(
     targetId: String(input.areaId),
     sourceKind: input.sourceKind,
     sourceId: input.sourceId,
-    title: input.title.slice(0, 500),
-    summary: input.summary?.slice(0, 2_000),
+    title: truncateText(input.title, 500),
+    summary: truncateText(input.summary, 2_000),
     occurredAt: input.occurredAt,
     weight: evidenceWeight(input.sourceKind, input.trust, confidence),
     confidence,
     trust: input.trust,
     dedupeKey: input.dedupeKey,
-    searchText: `${input.title} ${input.summary || ''}`.trim().slice(0, 4_000),
+    searchText: truncateText(`${input.title} ${input.summary || ''}`.trim(), 4_000),
     metadata: input.metadata,
     updatedAt: now(),
   };
@@ -260,7 +261,7 @@ async function scheduleAreaReindex(
   if (running) {
     await ctx.db.patch(running._id, {
       rerunRequestedAt: ts,
-      reason: input.reason ? normalizeText(input.reason).slice(0, 160) : running.reason,
+      reason: input.reason ? truncateText(normalizeText(input.reason), 160) : running.reason,
       updatedAt: ts,
     });
     return running._id;
@@ -271,7 +272,7 @@ async function scheduleAreaReindex(
     .first();
   if (queued) {
     await ctx.db.patch(queued._id, {
-      reason: input.reason ? normalizeText(input.reason).slice(0, 160) : queued.reason,
+      reason: input.reason ? truncateText(normalizeText(input.reason), 160) : queued.reason,
       updatedAt: ts,
     });
     return queued._id;
@@ -280,7 +281,7 @@ async function scheduleAreaReindex(
     userId,
     areaId: input.areaId ? String(input.areaId) : undefined,
     status: 'queued',
-    reason: input.reason ? normalizeText(input.reason).slice(0, 160) : undefined,
+    reason: input.reason ? truncateText(normalizeText(input.reason), 160) : undefined,
     scanned: 0,
     inserted: 0,
     matched: 0,
@@ -398,7 +399,7 @@ export const createArea = mutation({
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
     const externalId = args.externalId ? normalizeText(args.externalId) : undefined;
-    const name = normalizeText(args.name, 'Untitled area').slice(0, 120);
+    const name = truncateText(normalizeText(args.name, 'Untitled area'), 120);
     const ts = now();
     // Re-creating an area the user already named (active OR archived) revives
     // the existing row instead of spawning a duplicate — and therefore reuses
@@ -414,8 +415,8 @@ export const createArea = mutation({
         status: 'active',
         archivedAt: undefined,
         ...(externalId ? { externalId } : {}),
-        ...(args.kind ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
-        ...(args.description ? { description: normalizeText(args.description).slice(0, 600) } : {}),
+        ...(args.kind ? { kind: truncateText(normalizeText(args.kind, 'general'), 80) } : {}),
+        ...(args.description ? { description: truncateText(normalizeText(args.description), 600) } : {}),
         ...(args.priority !== undefined ? { priority: args.priority } : {}),
         ...areaBrandingPatch(args),
         updatedAt: ts,
@@ -429,9 +430,9 @@ export const createArea = mutation({
       userId,
       externalId,
       name,
-      kind: normalizeText(args.kind || 'general', 'general').slice(0, 80),
+      kind: truncateText(normalizeText(args.kind || 'general', 'general'), 80),
       status: 'active',
-      description: args.description ? normalizeText(args.description).slice(0, 600) : undefined,
+      description: args.description ? truncateText(normalizeText(args.description), 600) : undefined,
       priority: args.priority,
       ...areaBrandingPatch(args),
       createdAt: ts,
@@ -529,10 +530,12 @@ export const updateArea = mutation({
     const area = await requireArea(ctx, args.areaId, userId);
     const ts = now();
     await ctx.db.patch(args.areaId, {
-      ...(args.name !== undefined ? { name: normalizeText(args.name, 'Untitled area').slice(0, 120) } : {}),
-      ...(args.kind !== undefined ? { kind: normalizeText(args.kind, 'general').slice(0, 80) } : {}),
+      ...(args.name !== undefined
+        ? { name: truncateText(normalizeText(args.name, 'Untitled area'), 120) }
+        : {}),
+      ...(args.kind !== undefined ? { kind: truncateText(normalizeText(args.kind, 'general'), 80) } : {}),
       ...(args.description !== undefined
-        ? { description: normalizeText(args.description).slice(0, 600) || undefined }
+        ? { description: truncateText(normalizeText(args.description), 600) || undefined }
         : {}),
       ...(args.priority !== undefined ? { priority: args.priority } : {}),
       ...areaBrandingPatch(args),
@@ -677,8 +680,8 @@ export const addAreaFact = mutation({
       userId,
       areaId: args.areaId,
       externalId: args.externalId ? normalizeText(args.externalId) : undefined,
-      kind: normalizeText(args.kind, 'note').slice(0, 80),
-      value: normalizeText(args.value).slice(0, 1200),
+      kind: truncateText(normalizeText(args.kind, 'note'), 80),
+      value: truncateText(normalizeText(args.value), 1200),
       status,
       sourceRefs: refs.sourceRefs,
       confirmationRefs: refs.confirmationRefs,
@@ -686,8 +689,8 @@ export const addAreaFact = mutation({
       createdAt: ts,
       updatedAt: ts,
     });
-    const factKind = normalizeText(args.kind, 'note').slice(0, 80);
-    const factValue = normalizeText(args.value).slice(0, 1200);
+    const factKind = truncateText(normalizeText(args.kind, 'note'), 80);
+    const factValue = truncateText(normalizeText(args.value), 1200);
     await upsertAreaEvidence(ctx, {
       userId,
       areaId: args.areaId,
@@ -754,7 +757,7 @@ export const rejectAreaFact = mutation({
     const ts = now();
     await ctx.db.patch(args.factId, {
       status: 'rejected',
-      rejectedReason: args.reason ? normalizeText(args.reason).slice(0, 500) : undefined,
+      rejectedReason: args.reason ? truncateText(normalizeText(args.reason), 500) : undefined,
       rejectedAt: ts,
       updatedAt: ts,
     });
@@ -808,8 +811,8 @@ export const supersedeAreaFact = mutation({
         userId,
         areaId: fact.areaId,
         externalId: args.replacement.externalId ? normalizeText(args.replacement.externalId) : undefined,
-        kind: normalizeText(args.replacement.kind || fact.kind, fact.kind).slice(0, 80),
-        value: normalizeText(args.replacement.value).slice(0, 1200),
+        kind: truncateText(normalizeText(args.replacement.kind || fact.kind, fact.kind), 80),
+        value: truncateText(normalizeText(args.replacement.value), 1200),
         status: replacementStatus,
         sourceRefs: refs.sourceRefs,
         confirmationRefs: refs.confirmationRefs,
@@ -1023,9 +1026,9 @@ export const setAreaArtifactLinkStatus = mutation({
     const confirmationRefs =
       args.status === 'verified' ? normalizeConfirmationRefs(args.confirmationRefs) : [];
     assertVerifiedArtifactLinkAllowed(args.status, confirmationRefs);
-    const userReason = args.reason ? normalizeText(args.reason).slice(0, 300) : '';
+    const userReason = args.reason ? truncateText(normalizeText(args.reason), 300) : '';
     const reason = userReason
-      ? `${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`.slice(0, 700)
+      ? truncateText(`${link.reason ? `${link.reason}; ` : ''}user response: ${userReason}`, 700)
       : link.reason;
     const ts = now();
     await ctx.db.patch(link._id, {
@@ -2039,16 +2042,18 @@ export const unclassifiedAreaArtifacts = query({
         accountId: row.accountId,
         source: 'calendar',
         title: row.title || '(untitled event)',
-        text: [
-          row.title,
-          row.description,
-          row.location,
-          JSON.stringify(row.participants || []),
-          JSON.stringify(row.organizer || {}),
-        ]
-          .filter(Boolean)
-          .join('\n')
-          .slice(0, 8_000),
+        text: truncateText(
+          [
+            row.title,
+            row.description,
+            row.location,
+            JSON.stringify(row.participants || []),
+            JSON.stringify(row.organizer || {}),
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          8_000,
+        ),
         occurredAt: row.startAt,
       })),
       ...cards.map((row) => ({
@@ -2056,10 +2061,12 @@ export const unclassifiedAreaArtifacts = query({
         artifactId: String(row._id),
         source: 'tasks',
         title: row.title,
-        text: [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
-          .filter(Boolean)
-          .join('\n')
-          .slice(0, 8_000),
+        text: truncateText(
+          [row.title, row.description, ...(row.labels || []), JSON.stringify(row.source || {})]
+            .filter(Boolean)
+            .join('\n'),
+          8_000,
+        ),
         occurredAt: row.updatedAt,
       })),
       ...mcp.map((row) => ({
@@ -2069,7 +2076,7 @@ export const unclassifiedAreaArtifacts = query({
         accountId: row.connectionId,
         source: row.server,
         title: row.title,
-        text: row.searchText.slice(0, 8_000),
+        text: truncateText(row.searchText, 8_000),
         occurredAt: row.updatedAtSource ?? row.updatedAt,
       })),
     ].sort((left, right) => right.occurredAt - left.occurredAt);
@@ -2228,7 +2235,7 @@ export const unclassifiedThreads = query({
         toAddress: latest?.to,
         lastDate: row.lastDate,
         snippet: row.snippet,
-        bodyText: latest?.textBody ? latest.textBody.slice(0, CLASSIFY_BODY_CHARS) : undefined,
+        bodyText: latest?.textBody ? truncateText(latest.textBody, CLASSIFY_BODY_CHARS) : undefined,
         messageId,
       });
     }
@@ -2403,7 +2410,7 @@ export const recordAreaVerdicts = mutation({
         }
         const refs = normalizedRefs(link);
         assertVerifiedArtifactLinkAllowed(link.status, refs.confirmationRefs);
-        const reason = link.reason ? normalizeText(link.reason).slice(0, 700) : undefined;
+        const reason = link.reason ? truncateText(normalizeText(link.reason), 700) : undefined;
         keptAreaIds.add(areaKey);
         if (prior) {
           await ctx.db.patch(prior._id, {
@@ -2534,7 +2541,7 @@ export const recordAreaLinks = mutation({
         role: link.role ?? 'supporting',
         status: link.status,
         confidence: link.confidence,
-        reason: link.reason ? normalizeText(link.reason).slice(0, 700) : undefined,
+        reason: link.reason ? truncateText(normalizeText(link.reason), 700) : undefined,
         sourceRefs: refs.sourceRefs,
         confirmationRefs: refs.confirmationRefs,
         createdAt: ts,
@@ -2753,7 +2760,7 @@ export const reindexUserAreaArtifacts = internalMutation({
             {
               kind: match.fact._id.startsWith('area-domain:') ? 'area' : 'areaFact',
               id: match.fact._id,
-              label: `${match.fact.kind}: ${match.fact.value}`.slice(0, 200),
+              label: truncateText(`${match.fact.kind}: ${match.fact.value}`, 200),
             },
           ]),
           confirmationRefs: normalizeConfirmationRefs(confirmationRefs),
@@ -2847,7 +2854,7 @@ export const reindexUserAreaArtifacts = internalMutation({
         matched: trackedRun.matched + matched,
         retired: (trackedRun.retired ?? 0) + retired,
         skipped: trackedRun.skipped + skipped,
-        error: message.slice(0, 1000),
+        error: truncateText(message, 1000),
         finishedAt: now(),
         updatedAt: now(),
       });

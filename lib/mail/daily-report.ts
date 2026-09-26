@@ -27,6 +27,7 @@ import { loadJevPolicy } from '../jev/service';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type {
   BriefEditionKind,
   DailyReport,
@@ -989,8 +990,8 @@ async function buildThreadInsight(
       });
       const parsed = parseJson(aiText);
       if (parsed) {
-        summary = stripEmoji(String(parsed.summary || summary)).slice(0, 500);
-        reason = stripEmoji(String(parsed.reason || reason)).slice(0, 280);
+        summary = truncateText(stripEmoji(String(parsed.summary || summary)), 500);
+        reason = truncateText(stripEmoji(String(parsed.reason || reason)), 280);
         if (Array.isArray(parsed.openLoops) && parsed.openLoops.length) {
           openLoops = parsed.openLoops
             .map((v: unknown) => stripEmoji(String(v)))
@@ -1386,7 +1387,7 @@ async function loadMcpContext(userId: string | null | undefined): Promise<DailyR
       updatedAt: row.updatedAtSource ?? null,
       assignedToUser: Boolean(row.assignedToUser),
       repository: row.repository ?? null,
-      summary: row.summary ? String(row.summary).slice(0, 400) : null,
+      summary: row.summary ? truncateText(String(row.summary), 400) : null,
     }));
   } catch {
     return [];
@@ -1448,7 +1449,9 @@ async function loadTaskContext(
             boardTitle: card.boardTitle,
             columnName: card.columnName,
             title: stripEmoji(String(card.title || 'Untitled task')),
-            description: card.description ? stripEmoji(String(card.description)).slice(0, 500) : undefined,
+            description: card.description
+              ? truncateText(stripEmoji(String(card.description)), 500)
+              : undefined,
             dueAt: card.dueAt ?? null,
             completedAt: card.completedAt ?? null,
             priority: card.priority,
@@ -1540,7 +1543,7 @@ async function loadCalendarContext(
         allDay: Boolean(event.allDay),
         location: event.location ? stripEmoji(String(event.location)) : undefined,
         htmlLink: event.htmlLink,
-        description: event.description ? stripEmoji(String(event.description)).slice(0, 500) : undefined,
+        description: event.description ? truncateText(stripEmoji(String(event.description)), 500) : undefined,
         scope: contextScope(Number(event.startAt), now),
       }))
       .sort((a, b) => {
@@ -1555,7 +1558,9 @@ async function loadCalendarContext(
 
 async function loadMemoryContext() {
   const memories = await listMemories().catch(() => []);
-  return memories.slice(0, 80).map((memory) => `${memory.email}: ${stripEmoji(memory.notes).slice(0, 600)}`);
+  return memories
+    .slice(0, 80)
+    .map((memory) => `${memory.email}: ${truncateText(stripEmoji(memory.notes), 600)}`);
 }
 
 function threadText(thread: Thread, messages: Message[], maxChars: number) {
@@ -1566,9 +1571,12 @@ function threadText(thread: Thread, messages: Message[], maxChars: number) {
         `Message ${index + 1}\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(Number(m.date || 0)).toString()}\nSubject: ${m.subject}\n\n${m.textBody || m.snippet || ''}`,
     )
     .join('\n\n');
-  return [`Thread: ${thread.subject}`, `From: ${thread.fromAddress}`, `Snippet: ${thread.snippet}`, msgText]
-    .join('\n\n')
-    .slice(0, maxChars);
+  return truncateText(
+    [`Thread: ${thread.subject}`, `From: ${thread.fromAddress}`, `Snippet: ${thread.snippet}`, msgText].join(
+      '\n\n',
+    ),
+    maxChars,
+  );
 }
 
 function extractPeople(thread: Thread, messages: Message[], self: Set<string>) {
@@ -1607,11 +1615,12 @@ function personName(raw: string): string {
 }
 
 function subjectClause(subject: string): string {
-  return stripEmoji(String(subject || ''))
-    .replace(/^(re|fwd|fw):\s*/i, '')
-    .trim()
-    .slice(0, 80)
-    .replace(/[\s,;:.-]+$/, '');
+  return truncateText(
+    stripEmoji(String(subject || ''))
+      .replace(/^(re|fwd|fw):\s*/i, '')
+      .trim(),
+    80,
+  ).replace(/[\s,;:.-]+$/, '');
 }
 
 function relativeDue(dueAt: number, now: number): string {
@@ -1676,7 +1685,7 @@ function localReason(input: {
         else line = 'Active conversation worth tracking.';
     }
   }
-  return stripEmoji(line).slice(0, 280);
+  return truncateText(stripEmoji(line), 280);
 }
 
 // Generic reasons we'd rather replace with a composed line for tracked items.
@@ -1685,26 +1694,32 @@ const GENERIC_REASON =
 
 function trackedReason(item: TrackedThread, now: number): string {
   const reason = stripEmoji(item.reason || '');
-  if (reason && !GENERIC_REASON.test(reason)) return reason.slice(0, 280);
+  if (reason && !GENERIC_REASON.test(reason)) return truncateText(reason, 280);
   const who = personName(item.participants[0] || '');
   const about = subjectClause(item.subject);
   if (item.dueAt && item.dueAt >= now) {
     const when = relativeDue(item.dueAt, now);
-    return stripEmoji(`${who ? `${who}: ` : ''}due ${when}${about ? ` — ${about}` : ''}.`).slice(0, 280);
+    return truncateText(stripEmoji(`${who ? `${who}: ` : ''}due ${when}${about ? ` — ${about}` : ''}.`), 280);
   }
   if (item.nextAction) {
-    return stripEmoji(`Next: ${item.nextAction}${who ? ` (with ${who})` : ''}.`).slice(0, 280);
+    return truncateText(stripEmoji(`Next: ${item.nextAction}${who ? ` (with ${who})` : ''}.`), 280);
   }
   if (item.status === 'waiting') {
-    return stripEmoji(
-      who
-        ? `Waiting on ${who}${about ? ` about ${about}` : ''}.`
-        : `Waiting on a reply${about ? ` about ${about}` : ''}.`,
-    ).slice(0, 280);
+    return truncateText(
+      stripEmoji(
+        who
+          ? `Waiting on ${who}${about ? ` about ${about}` : ''}.`
+          : `Waiting on a reply${about ? ` about ${about}` : ''}.`,
+      ),
+      280,
+    );
   }
-  return stripEmoji(
-    who ? `Tracking ${who}${about ? ` — ${about}` : ''}.` : `Tracking: ${about || 'open thread'}.`,
-  ).slice(0, 280);
+  return truncateText(
+    stripEmoji(
+      who ? `Tracking ${who}${about ? ` — ${about}` : ''}.` : `Tracking: ${about || 'open thread'}.`,
+    ),
+    280,
+  );
 }
 
 function extractCommitments(text: string, now: number) {
@@ -1718,7 +1733,7 @@ function extractCommitments(text: string, now: number) {
     );
   for (const line of lines.slice(0, 8)) {
     commitments.push({
-      text: line.trim().slice(0, 220),
+      text: truncateText(line.trim(), 220),
       dueAt: inferDueAt(line, now),
       confidence: 0.58,
     });

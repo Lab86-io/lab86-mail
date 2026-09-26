@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mapConcurrent } from '../classifier/client';
 import { getCloudFileAccess, listCloudFileConnections } from '../files/connections';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
+import { stripLoneSurrogates } from '../shared/text';
 import { boundedBytes, extractContent, MAX_DOWNLOAD_BYTES, supportedContent } from './extract';
 
 const ref = (api as any).content;
@@ -147,7 +148,7 @@ export async function syncCloudContent(userId: string, deps = defaults, connecti
         if (!file.id || file.folder || file.mimeType === 'application/vnd.google-apps.folder') continue;
         let deleted = Boolean(file.removed || file.deleted || file.trashed);
         const mime = file.mimeType || file.file?.mimeType || '';
-        const title = file.name || '(removed file)';
+        const title = stripLoneSurrogates(file.name || '(removed file)');
         let version = contentVersion([
           1,
           file.version || file.eTag || file.cTag || file.modifiedTime || file.lastModifiedDateTime,

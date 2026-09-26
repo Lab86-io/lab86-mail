@@ -1,6 +1,7 @@
 import { attentionMatches, isAttentionView } from '../jev/contract';
 import { explicitReplyRequested } from '../jev/fallback';
 import { emailFromHeader } from '../shared/format';
+import { safeSlice, truncateText } from '../shared/text';
 import type {
   SmartCategory,
   SmartCategoryId,
@@ -150,7 +151,7 @@ const BODY_TAIL_CHARS = 1500;
 export function clipClassifierBody(text: string | null | undefined) {
   const body = String(text || '');
   if (body.length <= BODY_HEAD_CHARS + BODY_TAIL_CHARS) return body;
-  return `${body.slice(0, BODY_HEAD_CHARS)} … ${body.slice(-BODY_TAIL_CHARS)}`;
+  return `${truncateText(body, BODY_HEAD_CHARS)} … ${safeSlice(body, -BODY_TAIL_CHARS)}`;
 }
 
 export function bodyExcerpt(thread: { bodyText?: string }) {

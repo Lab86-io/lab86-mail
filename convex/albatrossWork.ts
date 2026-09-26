@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { truncateText } from '../lib/shared/text';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
@@ -79,7 +80,7 @@ async function resolveUserId(
 
 function bounded(value: string | undefined, max: number, fallback = '') {
   if (value === undefined) return undefined;
-  return normalizeText(value, fallback).slice(0, max);
+  return truncateText(normalizeText(value, fallback), max);
 }
 
 // --- completion events (issue #87/#18) ---------------------------------------
@@ -1062,7 +1063,7 @@ export const completionsSince = query({
       rows.push({
         artifactKind: event.artifactKind,
         artifactId: event.artifactId,
-        title: String(title).slice(0, 240),
+        title: truncateText(String(title), 240),
         areaId: event.areaId,
         completedAt: event.completedAt,
         shape: event.shape,

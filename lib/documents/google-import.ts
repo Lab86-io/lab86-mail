@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getCloudFileAccess } from '@/lib/files/connections';
+import { truncateText } from '@/lib/shared/text';
 import { googleDocBlockType, googleFileEditability } from './google-fidelity';
 import {
   type AlbatrossDocumentModel,
@@ -244,9 +245,10 @@ function importGoogleDeck(payload: any): AlbatrossDocumentModel {
       const elements = (Array.isArray(source.pageElements) ? source.pageElements : [])
         .map((element: any, elementIndex: number) => importSlideElement(element, slideIndex, elementIndex))
         .filter(Boolean) as DeckElement[];
-      const title = (
-        elements.find((element) => element.role === 'title')?.text || `Slide ${slideIndex + 1}`
-      ).slice(0, 500);
+      const title = truncateText(
+        elements.find((element) => element.role === 'title')?.text || `Slide ${slideIndex + 1}`,
+        500,
+      );
       return {
         id: String(source.objectId || `google-slide-${slideIndex + 1}`),
         title,

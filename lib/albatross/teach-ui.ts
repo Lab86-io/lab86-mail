@@ -2,6 +2,8 @@
 // TeachAreas.tsx) and the tabbed settings page (app/settings/page.tsx).
 // No React, no DOM — everything here is bun:test-able.
 
+import { truncateText } from '../shared/text';
+
 // ---------------------------------------------------------------------------
 // Settings tabs
 // ---------------------------------------------------------------------------
@@ -228,7 +230,7 @@ function str(value: unknown): string {
 
 function clip(value: string, max = 120): string {
   const line = value.split('\n')[0].trim();
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return line.length > max ? `${truncateText(line, max - 1)}…` : line;
 }
 
 function resultCount(output: unknown): number | null {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolRisk } from '../ai/approval';
 import { runWithAiRequestContext } from '../ai/context';
+import { truncateText } from '../shared/text';
 import { writeAudit } from '../store/audit';
 
 export type { ToolRisk } from '../ai/approval';
@@ -153,7 +154,7 @@ export class ToolValidationError extends Error {
 function safeSummary(value: unknown): string {
   try {
     const s = JSON.stringify(value);
-    return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+    return s.length > 200 ? `${truncateText(s, 200)}…` : s;
   } catch {
     return String(value);
   }

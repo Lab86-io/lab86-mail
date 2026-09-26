@@ -1,3 +1,4 @@
+import { truncateText } from '../shared/text';
 import { buildAuthorizationHeader } from './auth';
 import type { NormalizedMcpItem } from './servers';
 
@@ -99,7 +100,7 @@ async function fetchJson<T>(
     });
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      const detail = body.trim() ? `: ${body.trim().slice(0, 500)}` : '';
+      const detail = body.trim() ? `: ${truncateText(body.trim(), 500)}` : '';
       throw new Error(`Bitbucket ${operation} failed with HTTP ${response.status}${detail}`);
     }
     return (await response.json()) as T;

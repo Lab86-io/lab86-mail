@@ -4,6 +4,7 @@ import { DOCUMENT_KINDS } from '@/lib/documents/model';
 import { createAndLinkGoogleDocument, findDocumentByGoogleFile } from '@/lib/documents/service';
 import { browseCloudFiles } from '@/lib/files/browse';
 import { listCloudFileConnections } from '@/lib/files/connections';
+import { truncateText } from '@/lib/shared/text';
 import { defineTool } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
@@ -102,7 +103,7 @@ export const cloudFileSearch = defineTool({
               connectionId: targets[index].connectionId,
               error:
                 result.reason instanceof Error
-                  ? result.reason.message.slice(0, 500)
+                  ? truncateText(result.reason.message, 500)
                   : 'The file connection could not be searched.',
             },
           ]

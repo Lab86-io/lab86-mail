@@ -3,6 +3,7 @@ import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
 import { wakeLine } from '../lib/albatross/horizon';
 import { checkinRetryDelayMs } from '../lib/albatross/retry';
 import { briefReadyFallbackBody } from '../lib/notifications/brief-ready-copy';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
@@ -676,8 +677,8 @@ export const queueSuggestionNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'event_suggestion',
-        title: args.title.slice(0, 180),
-        body: args.body.slice(0, 1_000),
+        title: truncateText(args.title, 180),
+        body: truncateText(args.body, 1_000),
         entityKind: 'suggestion',
         entityId: String(args.suggestionId),
         deepLink: `/mail/thread?${query.toString()}`,
@@ -731,8 +732,8 @@ export const queueMailNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'mail_message',
-        title: (args.sender.trim() || 'New email').slice(0, 180),
-        body: (args.subject.trim() || args.snippet.trim() || 'New message').slice(0, 1_000),
+        title: truncateText(args.sender.trim() || 'New email', 180),
+        body: truncateText(args.subject.trim() || args.snippet.trim() || 'New message', 1_000),
         entityKind: 'thread',
         entityId: args.threadId,
         deepLink: `/mail/thread?${query.toString()}`,
@@ -793,10 +794,10 @@ export const queueUrgentMailNotification = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'urgent_mail',
-        title: (args.sender.trim() || 'Urgent email').slice(0, 180),
+        title: truncateText(args.sender.trim() || 'Urgent email', 180),
         // The reason is why this one interrupted, so it earns its place in the
         // body rather than being hidden behind a tap.
-        body: [subject, reason].filter(Boolean).join(' — ').slice(0, 1_000) || 'Needs your attention',
+        body: truncateText([subject, reason].filter(Boolean).join(' — '), 1_000) || 'Needs your attention',
         entityKind: 'thread',
         entityId: args.threadId,
         deepLink: `/mail/thread?${query.toString()}`,
@@ -870,13 +871,8 @@ export const queueBriefReady = mutation({
       notificationPayload({
         userId: args.userId,
         type: 'brief_ready',
-        title: String(args.title || 'Your Daily Brief is ready')
-          .trim()
-          .slice(0, 180),
-        body:
-          String(args.body || '')
-            .trim()
-            .slice(0, 180) || briefReadyFallbackBody(args.parts),
+        title: truncateText(String(args.title || 'Your Daily Brief is ready').trim(), 180),
+        body: truncateText(String(args.body || '').trim(), 180) || briefReadyFallbackBody(args.parts),
         deepLink: `/brief?id=${encodeURIComponent(args.reportId)}`,
         dedupeKey,
         scheduledFor: ts,
@@ -939,7 +935,7 @@ export const answerCheckin = mutation({
     const row = await ctx.db.get(args.checkinId);
     if (!row || row.userId !== userId) throw new Error('Check-in not found.');
     const promptKind = args.promptKind ?? 'reflection';
-    const responseText = args.responseText.trim().slice(0, 10_000);
+    const responseText = truncateText(args.responseText.trim(), 10_000);
     if (!responseText && !args.completed?.length) throw new Error('Tell Albatross what happened.');
     const inferredCompleted =
       promptKind === 'reflection' ? matchReflectionCandidates(responseText, row.candidateItems) : [];
@@ -1196,7 +1192,7 @@ export const failReflectionReconcile = mutation({
       reflectionReconcileStatus: 'failed',
       reflectionReconcileClaimedAt: undefined,
       reflectionReconcileNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
-      reflectionReconcileError: args.error.trim().slice(0, 500),
+      reflectionReconcileError: truncateText(args.error.trim(), 500),
       updatedAt: ts,
     });
     return { retrying, stale: false };
@@ -1261,7 +1257,7 @@ export const failTomorrowPlan = mutation({
       tomorrowPlanStatus: 'failed',
       tomorrowPlanClaimedAt: undefined,
       tomorrowPlanNextAt: retrying ? ts + checkinRetryDelayMs(attempts) : undefined,
-      tomorrowPlanError: args.error.trim().slice(0, 500),
+      tomorrowPlanError: truncateText(args.error.trim(), 500),
       updatedAt: ts,
     });
     return { retrying, stale: false };
@@ -1376,8 +1372,8 @@ export const queueWorkConductorNotice = internalMutation({
       notificationPayload({
         userId: args.userId,
         type: 'work_question',
-        title: args.title.slice(0, 180),
-        body: args.body.slice(0, 1_000),
+        title: truncateText(args.title, 180),
+        body: truncateText(args.body, 1_000),
         entityKind: 'work',
         entityId: args.workId,
         deepLink: `/?view=albatrosses&work=${encodeURIComponent(args.workId)}`,
@@ -1420,7 +1416,7 @@ export const queueHorizonWake = internalMutation({
       notificationPayload({
         userId: args.userId,
         type: 'work_wake',
-        title: wakeLine(args.title).slice(0, 180),
+        title: truncateText(wakeLine(args.title), 180),
         body: 'Open it when you have time. Albatross did not move it.',
         entityKind: 'work',
         entityId: args.workId,
@@ -1617,7 +1613,7 @@ export const ensureCheckin = mutation({
       candidates.push({
         kind: 'work',
         id: String(work._id),
-        title: work.title || work.rawText.slice(0, 120),
+        title: work.title || truncateText(work.rawText, 120),
         suggestedState: 'moved',
         evidence: [{ kind: 'work', id: String(work._id), label: work.title }],
       });
@@ -1808,7 +1804,7 @@ export const recordDelivery = mutation({
         status: args.status,
         attemptCount: existing.attemptCount + 1,
         providerId: args.providerId,
-        error: args.error?.slice(0, 500),
+        error: truncateText(args.error, 500),
         sentAt: args.status === 'sent' ? ts : existing.sentAt,
         updatedAt: ts,
       });
@@ -1821,7 +1817,7 @@ export const recordDelivery = mutation({
       status: args.status,
       attemptCount: 1,
       providerId: args.providerId,
-      error: args.error?.slice(0, 500),
+      error: truncateText(args.error, 500),
       scheduledFor: ts,
       sentAt: args.status === 'sent' ? ts : undefined,
       createdAt: ts,
@@ -1875,7 +1871,7 @@ export const recordNativeDeviceDelivery = mutation({
       status: args.status,
       attemptCount: (existing?.attemptCount ?? 0) + 1,
       providerId: args.providerId,
-      error: args.error?.slice(0, 500),
+      error: truncateText(args.error, 500),
       updatedAt: ts,
     };
     if (existing) await ctx.db.patch(existing._id, receipt);

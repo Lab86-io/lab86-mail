@@ -204,6 +204,41 @@ describe('webhook ingest (SYNC-1, SYNC-2, SYNC-4)', () => {
     });
   });
 
+  test('ingest replaces lone surrogates in provider text and keeps whole emoji', async () => {
+    const emoji = '\u{1F600}';
+    const high = emoji[0];
+    const low = emoji[1];
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    await withHttpHarness(async (h) => {
+      h.convexFallback = () => ({});
+      const message = normalizeNylasMessage(
+        nylasMessage({
+          id: 'u1',
+          subject: `Trip ${emoji} plan ${high}`,
+          from: [{ name: `Bob ${low}`, email: 'bob@example.com' }],
+          snippet: `${low}hello`,
+          body: `<p>Body ${emoji} ${high}</p>`,
+          headers: [{ name: 'List-Id', value: `news ${high}` }],
+          attachments: [{ id: 'att', filename: `photo${high}.jpg`, content_type: 'image/jpeg', size: 1 }],
+        }) as any,
+        'acct_1',
+      );
+      await ingestThreadIntoCorpus(accountRow(), [message]);
+      const batch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
+      const [stored] = batch?.args.messages ?? [];
+      expect(stored.subject).toBe(`Trip ${emoji} plan \uFFFD`);
+      expect(stored.from).toBe('Bob \uFFFD <bob@example.com>');
+      expect(stored.snippet).toBe('\uFFFDhello');
+      expect(stored.textBody).toContain(`Body ${emoji} \uFFFD`);
+      expect(stored.headers['list-id']).toBe('news \uFFFD');
+      expect(stored.attachments[0].filename).toBe('photo\uFFFD.jpg');
+      expect(batch?.args.threads[0].subject).toBe(`Trip ${emoji} plan \uFFFD`);
+      expect(lone.test(JSON.stringify(batch?.args))).toBe(false);
+      for (const value of [stored.subject, stored.from, stored.snippet, stored.textBody, stored.searchText])
+        expect(lone.test(value)).toBe(false);
+    });
+  });
+
   test('ingest stores role labels for Microsoft and iCloud folder ids (SEARCH-1)', async () => {
     __clearFolderNameCacheForTest();
     await withHttpHarness(async (h) => {

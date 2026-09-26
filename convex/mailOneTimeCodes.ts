@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -147,7 +148,7 @@ export const recordCleanup = mutation({
     if (!row || row.userId !== userId) throw new Error('Code not found.');
     await ctx.db.patch(args.codeId, {
       cleanup: args.cleanup,
-      cleanupError: args.error?.slice(0, 300),
+      cleanupError: truncateText(args.error, 300),
       updatedAt: now(),
     });
     return { ok: true };

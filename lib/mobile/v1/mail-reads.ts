@@ -1,4 +1,5 @@
 import { emailFromHeader } from '@/lib/shared/format';
+import { stripLoneSurrogates, truncateText } from '@/lib/shared/text';
 import { MailThreadDetailSchema, MailThreadSummarySchema } from './contract';
 import { MobileInputError } from './http';
 
@@ -7,8 +8,11 @@ import { MobileInputError } from './http';
 // malformed corpus row becomes a 500 with context, never a leaked `any`.
 
 function cap(value: unknown, max: number, fallback = ''): string {
-  const text = typeof value === 'string' ? value : value == null ? fallback : String(value);
-  return text.length > max ? text.slice(0, max) : text;
+  const raw = typeof value === 'string' ? value : value == null ? fallback : String(value);
+  // A lone surrogate becomes an invalid JSON escape that Swift's JSONDecoder
+  // rejects, which fails the whole native list; clean it before the cap.
+  const text = stripLoneSurrogates(raw);
+  return text.length > max ? truncateText(text, max) : text;
 }
 
 function epochMs(value: unknown): number {

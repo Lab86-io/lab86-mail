@@ -6,6 +6,7 @@ import { prepareBriefContext } from '../narrative/service';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
+import { truncateText } from '../shared/text';
 import {
   type BriefEditionKind,
   type DailyReport,
@@ -140,7 +141,7 @@ export async function loadSinceLastEditionFromConvex(
       .map((row) => ({
         tool: String(row.tool || ''),
         surface: String(row.surface || ''),
-        summary: String(row.summary || '').slice(0, 200),
+        summary: truncateText(String(row.summary || ''), 200),
         createdAt: Number(row.createdAt || 0),
       })),
   };
@@ -182,7 +183,7 @@ function artifactError(stage: DailyReportArtifactErrorStage, err: unknown): Dail
 }
 
 function artifactErrorText(err: unknown): string {
-  const limit = (text: string) => text.slice(0, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
+  const limit = (text: string) => truncateText(text, MAX_ARTIFACT_ERROR_MESSAGE_CHARS);
   const anyErr = err as any;
   if (Array.isArray(anyErr?.issues)) {
     const issues = anyErr.issues
@@ -365,7 +366,7 @@ function selectedItems(report: DailyReport): Array<{ item: DailyReportItem; lane
 
 function cleanBody(message: Message): string {
   const raw = message.textBody || message.snippet || '';
-  return raw.replace(/\s+/g, ' ').trim().slice(0, MAX_BODY_CHARS);
+  return truncateText(raw.replace(/\s+/g, ' ').trim(), MAX_BODY_CHARS);
 }
 
 async function loadAreaPulsesFromConvex(userId: string): Promise<AreaPulseRecord[]> {
@@ -499,8 +500,8 @@ export async function composeDailyBrief(
   });
   layout.editorial.plan.areas = composed.areas.map((area) => ({
     areaId: area.areaId.slice(0, 240),
-    name: area.name.slice(0, 500),
-    line: area.line.slice(0, 4000),
+    name: truncateText(area.name, 500),
+    line: truncateText(area.line, 4000),
   }));
   return {
     ...composed,

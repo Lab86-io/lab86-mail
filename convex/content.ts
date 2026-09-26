@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { contentChunks, contentLabelsSchema, MAX_CONTENT_CHARS } from '../lib/content/contract';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import {
   action,
@@ -244,8 +245,8 @@ export const upsert = mutation({
         source: String(input.source),
         connectionId: String(input.connectionId),
         externalId: String(input.externalId),
-        title: String(input.title).slice(0, 500),
-        text: input.deleted ? '' : String(input.text ?? '').slice(0, MAX_CONTENT_CHARS),
+        title: truncateText(String(input.title), 500),
+        text: input.deleted ? '' : truncateText(String(input.text ?? ''), MAX_CONTENT_CHARS),
         url: input.url,
         version: String(input.version),
         modifiedAt: Number(input.modifiedAt),
@@ -582,7 +583,10 @@ export const search = query({
     const rows = await ctx.db
       .query('contentItems')
       .withSearchIndex('by_text', (q) => {
-        const s = q.search('text', args.query.slice(0, 200)).eq('userId', args.userId).eq('deleted', false);
+        const s = q
+          .search('text', truncateText(args.query, 200))
+          .eq('userId', args.userId)
+          .eq('deleted', false);
         return args.source ? s.eq('source', args.source) : s;
       })
       .take(100);
@@ -642,7 +646,12 @@ export const workCandidates = query({
       ...rows
         .filter((r) => !['done', 'archived', 'released'].includes(r.workState || r.status))
         .slice(0, 60)
-        .map((r) => ({ id: String(r._id), title: r.title, text: r.rawText.slice(0, 1500), shape: r.shape })),
+        .map((r) => ({
+          id: String(r._id),
+          title: r.title,
+          text: truncateText(r.rawText, 1500),
+          shape: r.shape,
+        })),
       ...proposals
         .filter((p) => p.draft && !p.workId)
         .map((p) => ({

@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
@@ -258,7 +259,7 @@ export const settle = mutation({
         active: false,
         token: undefined,
         completedAt: now,
-        ...(args.error ? { error: args.error.slice(0, 300) } : {}),
+        ...(args.error ? { error: truncateText(args.error, 300) } : {}),
       });
       await publishJobArtifact(ctx, job, now, args.error);
       return true;
@@ -268,7 +269,7 @@ export const settle = mutation({
       state: 'queued',
       token: undefined,
       availableAt: retryAt,
-      error: args.error!.slice(0, 300),
+      error: truncateText(args.error!, 300),
     });
     if (job.kind === 'daily') {
       const report = await dailyReportRow(ctx, job.userId, job.reportId);

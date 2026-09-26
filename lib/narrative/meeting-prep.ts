@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { requireConnectedAccount } from '@/lib/nylas/provider';
+import { truncateText } from '@/lib/shared/text';
 import { formatNarrativeContext, type NarrativeContextPacket, narrativeContextStamp } from './context';
 import { cleanNarrativeText } from './core';
 import { getNarrativeTaskContext } from './service';
@@ -100,7 +101,7 @@ export async function prepareNarrativeMeeting(
     .filter(Boolean);
   const request = {
     purpose: 'meeting' as const,
-    query: [event.title, ...people].join(' ').slice(0, 240),
+    query: truncateText([event.title, ...people].join(' '), 240),
     topic: `event:${selector.accountId}:${selector.eventId}`,
   };
   const context = await deps.context(userId, request, signal);

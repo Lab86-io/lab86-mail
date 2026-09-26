@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { recordClassifierUsage, resolveClassifierRuntime } from '../ai/gateway';
 import { type ClassifierQuestion, evaluateClassifier, mapConcurrent } from '../classifier/client';
 import { compareMailRelevance } from '../mail/search/ranking';
+import { truncateText } from '../shared/text';
 import type { Thread } from '../shared/types';
 import { JEV_QUESTION_VERSION } from './contract';
 import { loadJevPolicy } from './service';
@@ -37,7 +38,7 @@ export async function rerankMail(
       index,
       subject: thread.subject,
       sender: thread.fromAddress,
-      matchingText: thread.snippet.slice(0, 1600),
+      matchingText: truncateText(thread.snippet, 1600),
       purpose: thread.jev?.purpose,
     }));
     const runtime = await resolveClassifierRuntime(userId);

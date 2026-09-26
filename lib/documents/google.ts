@@ -1,4 +1,5 @@
 import { getCloudFileAccess, listCloudFileConnections } from '@/lib/files/connections';
+import { truncateText } from '@/lib/shared/text';
 import { upgradeDeckModel } from './deck-versions';
 import {
   assertGoogleFileEditable,
@@ -644,7 +645,7 @@ export async function updateGoogleNativeFile(input: {
     await syncGoogleDoc(access.accessToken, input.fileId, model, false, input.expectedProviderVersion);
   if (model.kind === 'sheet') await syncGoogleSheet(access.accessToken, input.fileId, sheetGridModel(model)!);
   if (model.kind === 'deck') await syncGoogleDeck(access.accessToken, input.fileId, model);
-  const title = input.title.trim().slice(0, 500) || 'Untitled';
+  const title = truncateText(input.title.trim(), 500) || 'Untitled';
   await googleJson(
     access.accessToken,
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?supportsAllDrives=true&fields=id`,

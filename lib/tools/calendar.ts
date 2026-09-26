@@ -11,6 +11,7 @@ import { startCalendarResync } from '@/lib/calendar/resync';
 import { maybeKickCalendarSync } from '@/lib/calendar/sync';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { requireConnectedAccount } from '@/lib/nylas/provider';
+import { safeSlice } from '@/lib/shared/text';
 import { parseIsoInTimezone, wallClockInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
@@ -896,5 +897,5 @@ function toToolEvent(row: any, options?: { detail?: boolean }) {
 function truncateText(value: unknown, max: number) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text || text.length <= max) return text || undefined;
-  return `${text.slice(0, max)}...`;
+  return `${safeSlice(text, 0, max)}...`;
 }

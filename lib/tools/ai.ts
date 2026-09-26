@@ -4,6 +4,7 @@ import { contextFirstName } from '../ai/context';
 import { generateTextForCurrentUser, hasAiForCurrentUser } from '../ai/gateway';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
+import { truncateText } from '../shared/text';
 import { recallSender } from '../store/memories';
 import { resolveThreadMessages } from '../store/messages';
 import {
@@ -35,7 +36,7 @@ async function loadThread(account: string, threadId: string, userId?: string | n
       subject: newest.subject || messages[0]?.subject || '(no subject)',
       fromAddress: newest.from,
       lastDate: newest.date,
-      snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+      snippet: newest.snippet || truncateText(newest.textBody, 240) || '',
       labels: newest.labels || [],
       unread: messages.some((message) => Boolean(message.unread) || message.labels?.includes('UNREAD')),
     }).catch(() => undefined);
@@ -44,13 +45,15 @@ async function loadThread(account: string, threadId: string, userId?: string | n
 }
 
 function concatThread(messages: any[], maxChars = 24_000): string {
-  return messages
-    .map(
-      (m, i) =>
-        `--- Message ${i + 1}/${messages.length} ---\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(m.date).toISOString()}\nSubject: ${m.subject}\n\n${(m.textBody || m.snippet || '').slice(0, 4000)}`,
-    )
-    .join('\n\n')
-    .slice(0, maxChars);
+  return truncateText(
+    messages
+      .map(
+        (m, i) =>
+          `--- Message ${i + 1}/${messages.length} ---\nFrom: ${m.from}\nTo: ${m.to}\nDate: ${new Date(m.date).toISOString()}\nSubject: ${m.subject}\n\n${truncateText(m.textBody || m.snippet || '', 4000)}`,
+      )
+      .join('\n\n'),
+    maxChars,
+  );
 }
 
 export const summarizeThread = defineTool({
@@ -169,7 +172,7 @@ export const triageThread = defineTool({
       parsed.priority === 1 || parsed.priority === 2 || parsed.priority === 3 ? parsed.priority : 2
     ) as 1 | 2 | 3;
     const action = String(parsed.action || 'read');
-    const reason = String(parsed.reason || '').slice(0, 240);
+    const reason = truncateText(String(parsed.reason || ''), 240);
     await setThreadTriage(account, threadId, { priority, action, reason, at: Date.now() }).catch(
       () => undefined,
     );
@@ -276,7 +279,7 @@ export const bulkTriage = defineTool({
     const lines = items
       .map(
         (it, i) =>
-          `${i + 1}. id=${it.id} from=${it.from || ''} subject=${(it.subject || '').slice(0, 100)} snippet=${(it.snippet || '').slice(0, 160)}`,
+          `${i + 1}. id=${it.id} from=${it.from || ''} subject=${truncateText(it.subject || '', 100)} snippet=${truncateText(it.snippet || '', 160)}`,
       )
       .join('\n');
     const prompt = [
@@ -335,7 +338,7 @@ export async function saveBulkTriageVerdicts(
       setThreadTriage(accounts.get(verdict.id) as string, verdict.id, {
         priority: verdict.priority,
         action: verdict.action,
-        reason: verdict.reason.slice(0, 240),
+        reason: truncateText(verdict.reason, 240),
         at,
       }).then(
         () => true,

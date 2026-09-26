@@ -1,5 +1,6 @@
 import { resolveShape, SHAPE_POLICY } from '@/lib/albatross/shape-policy';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 export interface WorkChatContextData {
   work: {
@@ -43,10 +44,12 @@ export class WorkContextNotFoundError extends Error {
 }
 
 function clean(value: unknown, max = 700): string {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    max,
+  );
 }
 
 function line(label: string, value: unknown, max?: number) {

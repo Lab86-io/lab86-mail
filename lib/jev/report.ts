@@ -6,6 +6,7 @@ import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefNode } from '../shared/brief-document';
 import { emailFromHeader } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type { DailyReport, DailyReportItem, Thread } from '../shared/types';
 import { briefAttention } from './brief';
 import {
@@ -141,7 +142,7 @@ export function projectBriefMail(
               : waiting
                 ? 'Check the promised response before following up.'
                 : 'Review the latest update.',
-          openLoops: assessment.obligations.map((entry) => entry.evidence.text.slice(0, 240)),
+          openLoops: assessment.obligations.map((entry) => truncateText(entry.evidence.text, 240)),
           lane: reply
             ? ('reply_owed' as const)
             : waiting
@@ -216,7 +217,7 @@ export function projectBriefMail(
       unread: current.unread,
       receivedAt: current.lastDate,
       jev: assessment,
-      openLoops: assessment.obligations.map((o) => o.evidence.text.slice(0, 240)),
+      openLoops: assessment.obligations.map((o) => truncateText(o.evidence.text, 240)),
       score: attention.reply || attention.action ? 8 : 5,
       budgetLane: attention.reply ? 'answer' : attention.action || attention.change ? 'today' : 'know',
       lane: attention.reply ? 'reply_owed' : attention.followUp ? 'follow_up_owed' : 'time_sensitive',

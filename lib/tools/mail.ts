@@ -19,6 +19,7 @@ import {
   searchNylasThreads,
 } from '../nylas/provider';
 import { emailFromHeader } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type { Thread } from '../shared/types';
 import { upsertMessage as upsertMessageRecord } from '../store/messages';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
@@ -358,7 +359,7 @@ export const readThread = defineTool({
         from: message.from || '',
         to: message.to || undefined,
         date: message.date,
-        body: text.length > maxCharsPerMessage ? `${text.slice(0, maxCharsPerMessage)}…` : text,
+        body: text.length > maxCharsPerMessage ? `${truncateText(text, maxCharsPerMessage)}…` : text,
         attachments: (message.attachments || []).map((a: any) => ({
           id: a.id || a.attachmentId,
           name: a.filename || a.name,
@@ -466,7 +467,7 @@ export const getThread = defineTool({
             subject: newest.subject || nylas.messages[0]?.subject || '(no subject)',
             fromAddress: newest.from,
             lastDate: newest.date,
-            snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
+            snippet: newest.snippet || truncateText(newest.textBody, 240) || '',
             labels: newest.labels || [],
             unread: nylas.messages.some(
               (message) => Boolean(message.unread) || message.labels?.includes('UNREAD'),

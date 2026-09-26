@@ -23,6 +23,7 @@ import { WORK_SHAPES } from '@/lib/albatross/work-shape';
 import { resolveWorkByTitle } from '@/lib/albatross/work-title-match';
 import { unappliedActions } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { calendarCreateEvent, calendarRsvpEvent } from './calendar';
 import { saveDraftTool, sendMessage } from './compose';
 import { documentCreate } from './documents';
@@ -1278,10 +1279,10 @@ export const albatrossApplyIntentPlan = defineTool({
       // The created artifacts are recorded. The caller sees the failure and
       // does not mark the plan applied, so a retry creates only what is missing.
       throw new Error(
-        `Applied ${artifacts.length} of the plan's actions. ${failures.length} failed: ${failures
-          .map((failure) => `${failure.title} (${failure.error})`)
-          .join('; ')
-          .slice(0, 400)}`,
+        `Applied ${artifacts.length} of the plan's actions. ${failures.length} failed: ${truncateText(
+          failures.map((failure) => `${failure.title} (${failure.error})`).join('; '),
+          400,
+        )}`,
       );
     }
 

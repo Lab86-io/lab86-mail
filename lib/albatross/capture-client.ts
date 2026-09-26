@@ -1,6 +1,7 @@
 import type { WorkHorizon } from '@/lib/albatross/horizon';
 import { resolveShape } from '@/lib/albatross/shape-policy';
 import type { WorkShape } from '@/lib/albatross/work-shape';
+import { truncateText } from '@/lib/shared/text';
 
 // The client side of Hold. The bar and "Hold this" on a chat reply both post
 // to `/api/albatross/capture` with `source: 'chat'`, so the response carries
@@ -57,7 +58,7 @@ export function holdCardsFromResponse(body: unknown): HoldCard[] {
 
 /** Post one Hold. Rejects with `HOLD_ERROR` on any failure, so the bar keeps the text. */
 export async function holdText(input: HoldInput, options: HoldOptions = {}): Promise<HoldResult> {
-  const text = input.text.trim().slice(0, HOLD_TEXT_MAX);
+  const text = truncateText(input.text.trim(), HOLD_TEXT_MAX);
   if (!text) throw new Error(HOLD_ERROR);
   const fetchImpl = options.fetchImpl ?? fetch;
   let body: any;

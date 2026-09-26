@@ -1,3 +1,5 @@
+import { truncateText } from '../shared/text';
+
 export const CALENDAR_CORPUS_SEARCH_TEXT_MAX_CHARS = 16_000;
 
 export interface CalendarEventSearchTextInput {
@@ -18,10 +20,12 @@ export function normalizeCalendarCorpusText(
   value: unknown,
   maxChars = CALENDAR_CORPUS_SEARCH_TEXT_MAX_CHARS,
 ) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxChars);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    maxChars,
+  );
 }
 
 export function buildCalendarEventSearchText(input: CalendarEventSearchTextInput) {

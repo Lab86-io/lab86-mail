@@ -1,3 +1,4 @@
+import { truncateText } from '../shared/text';
 import { type NarrativeEntry, narrativePeriods, selectBriefEvidence } from './core';
 
 export const COMPACTION_POLICY_VERSION = 1;
@@ -64,8 +65,8 @@ export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000,
   if (brief) chosen.sort((a, b) => Number(b.source === 'checkins') - Number(a.source === 'checkins'));
   const rows = chosen.map((row) => ({
     ...row,
-    title: row.title.slice(0, 160),
-    text: row.text.slice(0, 700),
+    title: truncateText(row.title, 160),
+    text: truncateText(row.text, 700),
     coverage:
       row.text.length > 700
         ? 'Source excerpt truncated; consult the original for complete wording.'
@@ -80,11 +81,11 @@ export function writerEvidenceRows(entries: NarrativeEntry[], maxChars = 10_000,
     if (brief) {
       const share = Math.floor(maxChars / rows.length);
       const metadataSize = JSON.stringify({ ...row, text: '' }).length;
-      const excerpt = row.text.slice(0, Math.max(0, share - metadataSize));
+      const excerpt = truncateText(row.text, Math.max(0, share - metadataSize));
       if (excerpt.length < row.text.length) {
         row.coverage = 'Source excerpt truncated; consult the original for complete wording.';
         const overhead = JSON.stringify({ ...row, text: '' }).length;
-        row.text = excerpt.slice(0, Math.max(0, share - overhead));
+        row.text = truncateText(excerpt, Math.max(0, share - overhead));
       }
     }
     const bytes = JSON.stringify(row).length;

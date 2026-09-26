@@ -1,4 +1,5 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { APNsDeliveryError, sendAPNsPush } from './apns';
 import type { NotificationEnvelope } from './delivery';
 import { nativePushDisabledReason } from './mobile-preferences';
@@ -149,7 +150,7 @@ export async function dispatchNativeNotification(
     channel: 'native_push',
     status,
     providerId: providerIds.join(',').slice(0, 500) || undefined,
-    error: status === 'sent' ? undefined : deliveryErrors.join('; ').slice(0, 500),
+    error: status === 'sent' ? undefined : truncateText(deliveryErrors.join('; '), 500),
   });
   return { sent, failed };
 }

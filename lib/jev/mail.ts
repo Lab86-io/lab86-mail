@@ -1,6 +1,7 @@
 import { type ClassifierModel, defaultClassifier } from '../classifier/catalog';
 import type { ClassifierAnswer, ClassifierQuestion, ClassifierResponse } from '../classifier/client';
 import { emailFromHeader } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type { SmartCategory } from '../shared/types';
 import {
   hasObligation,
@@ -115,7 +116,7 @@ export function buildMailQuestions(
         : [
             [
               `m${index}`,
-              `Message ${index} from ${message.from}: ${message.subject}. ${message.body.slice(0, 300)}`,
+              `Message ${index} from ${message.from}: ${message.subject}. ${truncateText(message.body, 300)}`,
             ],
           ],
     ),
@@ -163,7 +164,7 @@ export function assessmentFromResponse(
     const index = /^m(\d+)$/.exec(answer.choice)?.[1];
     const message = index === undefined ? undefined : input.messages[Number(index)];
     if (!message) return undefined;
-    return { messageId: message.id, text: (message.body || message.subject).slice(0, 2400) };
+    return { messageId: message.id, text: truncateText(message.body || message.subject, 2400) };
   };
   const obligations: JevAssessment['obligations'] = [];
   let changeEvidence: JevAssessment['changeEvidence'];

@@ -1,3 +1,4 @@
+import { truncateText } from '../shared/text';
 export const CORPUS_SEARCH_TEXT_MAX_CHARS = 32_000;
 
 export interface CorpusSearchTextInput {
@@ -21,10 +22,12 @@ export interface NylasWebhookMetadata {
 }
 
 export function normalizeCorpusText(value: unknown, maxChars = CORPUS_SEARCH_TEXT_MAX_CHARS) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maxChars);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    maxChars,
+  );
 }
 
 export function buildCorpusSearchText(input: CorpusSearchTextInput) {

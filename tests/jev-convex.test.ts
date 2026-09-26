@@ -211,6 +211,38 @@ describe('Jev persisted state and tenancy', () => {
     expect((await row(t))?.jevStatus).toBe('unavailable');
     expect((await claim(t)).items).toEqual([]);
   });
+  test('an emoji across the body and header cuts still claims valid JSON and saves its evidence', async () => {
+    const t = convexTest(schema, modules);
+    const emoji = '\u{1F600}';
+    // The emoji takes code units 2399 and 2400, so a plain cut at 2400 splits it.
+    await seed(t, 'a', 'owner', 't', `${'x'.repeat(2399)}${emoji} Please confirm the budget.`);
+    await seed(t, 'a', 'owner', 'plain');
+    await t.run(async (ctx) => {
+      const m = await ctx.db
+        .query('mailCorpusMessages')
+        .filter((q) => q.eq(q.field('providerThreadId'), 't'))
+        .first();
+      await ctx.db.patch(m!._id, { headers: { 'list-id': `${'y'.repeat(499)}${emoji}` } });
+    });
+    const page = await claim(t);
+    expect(page.items).toHaveLength(2);
+    const json = JSON.stringify(page);
+    // JSON.stringify escapes only lone surrogates; a whole emoji stays literal.
+    expect(json).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+    const parsed = JSON.parse(json);
+    expect(parsed).toEqual(page);
+    const input = parsed.items.find((item: any) => item.threadId === 't');
+    const [message] = input.messages;
+    expect(message.body).toBe('x'.repeat(2399));
+    expect(message.headers['list-id']).toBe('y'.repeat(499));
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    expect(lone.test(JSON.stringify(parsed.items.map((item: any) => item.messages)))).toBe(false);
+    expect(lone.test(message.body)).toBe(false);
+    expect(lone.test(message.headers['list-id'])).toBe(false);
+    // The evidence check uses the same safe cut, so the assessment is stored.
+    expect((await save(t, input)).stored).toBe(1);
+    expect((await row(t))?.jev?.obligations[0].evidence.text).toBe('x'.repeat(2399));
+  });
   test('three unavailable attempts stop retries; reprocessing explicitly reopens them', async () => {
     const t = convexTest(schema, modules);
     await seed(t);

@@ -1,6 +1,8 @@
 // Pure helpers behind the Area home surface and the rail's areas list.
 // No DOM, no React — everything here is bun:test-able in isolation.
 
+import { truncateText } from '../shared/text';
+
 export interface AreaHomeCountsLike {
   mail: number;
   events: number;
@@ -202,7 +204,7 @@ export function areaInitials(name?: string | null) {
     .split(/\s+/)
     .filter(Boolean);
   if (!words.length) return 'A';
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  if (words.length === 1) return truncateText(words[0], 2).toUpperCase();
   return `${words[0][0] || ''}${words.at(-1)?.[0] || ''}`.toUpperCase();
 }
 
@@ -301,7 +303,7 @@ function cleanOptionalUrl(value?: string | null): string | null {
   const raw = String(value || '').trim();
   if (!raw) return null;
   if (!/^https?:\/\//i.test(raw)) return null;
-  return raw.slice(0, 800);
+  return truncateText(raw, 800);
 }
 
 export function areaBrandingFromFacts(
@@ -696,7 +698,7 @@ export function intentDisplayTitle(intent: { title?: string | null; rawText?: st
   if (title) return title;
   const raw = (intent.rawText || '').replace(/\s+/g, ' ').trim();
   if (!raw) return 'Untitled plan';
-  return raw.length > 80 ? `${raw.slice(0, 79).trimEnd()}…` : raw;
+  return raw.length > 80 ? `${truncateText(raw, 79).trimEnd()}…` : raw;
 }
 
 export type PlanTone = 'active' | 'attention' | 'ready' | 'done' | 'neutral';

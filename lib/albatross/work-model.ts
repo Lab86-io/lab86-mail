@@ -1,3 +1,5 @@
+import { truncateText } from '../shared/text';
+
 export type AlbatrossArtifactKind =
   | 'project'
   | 'task'
@@ -177,9 +179,9 @@ function resolvedProjectTitle(
   if (declared) return declared;
   if (!projectRequired) return undefined;
   return (
-    clean(input.intentTitle).slice(0, 180) ||
-    clean(input.intentText).slice(0, 180) ||
-    clean(input.plan.outcome).slice(0, 180) ||
+    truncateText(clean(input.intentTitle), 180) ||
+    truncateText(clean(input.intentText), 180) ||
+    truncateText(clean(input.plan.outcome), 180) ||
     'Untitled project'
   );
 }

@@ -5,6 +5,7 @@ import { advanceWork } from '@/lib/albatross/work-orchestrator';
 import { WORK_SHAPE_GUIDE, WORK_SHAPES } from '@/lib/albatross/work-shape';
 import { preserveCaptureText } from '@/lib/albatross/work-v2';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 
 /**
  * Split one existing Work into independent sibling Works. A blob like "book a
@@ -127,10 +128,10 @@ export async function proposeWorkSplit(
     system: SPLIT_WORK_SYSTEM,
     prompt: JSON.stringify(
       {
-        title: workTitle.slice(0, 300),
-        rawText: String(detail.work.rawText || '').slice(0, 8_000),
+        title: truncateText(workTitle, 300),
+        rawText: truncateText(String(detail.work.rawText || ''), 8_000),
         planSteps: planSteps.slice(0, 24),
-        focus: input.focus?.slice(0, 300) || undefined,
+        focus: truncateText(input.focus, 300) || undefined,
       },
       null,
       2,
@@ -157,9 +158,7 @@ export async function commitWorkSplit(
   const deps = { ...defaultDependencies, ...dependencies };
   const items = input.items
     .map((item) => ({
-      title: String(item.title || '')
-        .trim()
-        .slice(0, 180),
+      title: truncateText(String(item.title || '').trim(), 180),
       rawText: preserveCaptureText(String(item.rawText || '')),
       shape: item.shape,
     }))
@@ -204,7 +203,7 @@ export async function commitWorkSplit(
     .mutate((api as any).albatrossWorkV2.attachProof, {
       userId: input.userId,
       workId: input.workId,
-      claim: `Split into ${workIds.length} Works: ${titles.join('; ')}`.slice(0, 900),
+      claim: truncateText(`Split into ${workIds.length} Works: ${titles.join('; ')}`, 900),
       title: 'Split this work',
       sourceKind: 'manual',
       sourceId: `split:${input.workId}`,
@@ -220,7 +219,7 @@ export async function commitWorkSplit(
   await deps.mutate((api as any).albatrossWorkV2.releaseWork, {
     userId: input.userId,
     workId: input.workId,
-    reason: `Split into: ${titles.join('; ')}`.slice(0, 400),
+    reason: truncateText(`Split into: ${titles.join('; ')}`, 400),
     proposedBy: 'user',
   });
 

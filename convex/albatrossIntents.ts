@@ -10,6 +10,7 @@ import {
 } from '../lib/albatross/step-progress';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
 import { appliedStepsFromApplicationArtifacts, mergeAppliedSteps } from '../lib/albatross/work-model';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -141,7 +142,7 @@ async function resolveUserId(
 
 function bounded(value: string | undefined, max: number, fallback = '') {
   if (value === undefined) return undefined;
-  return normalizeText(value, fallback).slice(0, max);
+  return truncateText(normalizeText(value, fallback), max);
 }
 
 function normalizedProofRequirement(value: string) {
@@ -154,7 +155,7 @@ function normalizedProofRequirement(value: string) {
 // Raw dumps are always preserved (epic non-negotiable #6): trim the ends and cap
 // length, but never collapse internal whitespace or line breaks the user typed.
 function preserveRaw(value: string, max = RAW_TEXT_MAX): string {
-  return value.replace(/^\s+|\s+$/g, '').slice(0, max);
+  return truncateText(value.replace(/^\s+|\s+$/g, ''), max);
 }
 
 async function requireIntent(ctx: QueryCtx | MutationCtx, intentId: Id<'albatrossIntents'>, userId: string) {
@@ -519,7 +520,7 @@ export const savePlan = mutation({
       })),
       assumptions: args.assumptions.map((assumption) => bounded(assumption, 500)!).filter(Boolean),
       sourceRefs: normalizeSourceRefs(args.sourceRefs),
-      artifactHtml: args.artifactHtml ? args.artifactHtml.slice(0, ARTIFACT_HTML_MAX) : undefined,
+      artifactHtml: args.artifactHtml ? truncateText(args.artifactHtml, ARTIFACT_HTML_MAX) : undefined,
       document: args.document,
       artifactSource: args.artifactSource,
       artifactTitle: bounded(args.artifactTitle, 180),

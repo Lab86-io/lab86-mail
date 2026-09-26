@@ -9,6 +9,7 @@ import {
   normalizeJevPreferences,
 } from '../lib/jev/contract';
 import { type JevMailInput, type JevMailMessage, mailSourceRevision } from '../lib/jev/mail';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
@@ -164,7 +165,7 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
       to: message.to,
       cc: message.cc || '',
       subject: message.subject,
-      body: String(message.textBody || message.snippet || '').slice(0, 2400),
+      body: truncateText(String(message.textBody || message.snippet || ''), 2400),
       date: message.receivedAt,
       headers: Object.fromEntries(
         Object.entries(message.headers || {})
@@ -173,7 +174,7 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
               typeof value === 'string' &&
               /^(list-id|list-unsubscribe|precedence|auto-submitted)$/i.test(key),
           )
-          .map(([key, value]) => [key.toLowerCase(), String(value).slice(0, 500)]),
+          .map(([key, value]) => [key.toLowerCase(), truncateText(String(value), 500)]),
       ),
       attachments: (message.attachments || [])
         .slice(0, 10)
@@ -286,7 +287,7 @@ export const storeAssessments = mutation({
             !input.messages.some(
               (message) =>
                 message.id === evidence.messageId &&
-                (message.body || message.subject).slice(0, 2400) === evidence.text,
+                truncateText(message.body || message.subject, 2400) === evidence.text,
             ),
         )
       ) {
