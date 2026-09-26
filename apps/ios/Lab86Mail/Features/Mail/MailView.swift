@@ -938,6 +938,9 @@ enum MailboxScope: String, CaseIterable, Identifiable {
 }
 
 private struct CategoryExplanationSheet: View {
+    #if os(macOS)
+    @Environment(\.dismiss) private var dismiss
+    #endif
     let thread: MailThreadSummary
     let onCorrect: (MailCategoryCorrection) -> Void
 
@@ -960,7 +963,18 @@ private struct CategoryExplanationSheet: View {
             }
             .navigationTitle("Why this category?")
             .navigationBarTitleDisplayMode(.inline)
+            #if os(macOS)
+            // A Mac sheet has no swipe to close, and a list gives it no size.
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            #endif
         }
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 440)
+        #endif
     }
 }
 
