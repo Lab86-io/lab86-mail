@@ -149,6 +149,7 @@ interface QuickFixSuppression {
   senderEmail: string;
   action: string;
   category?: string;
+  customLabelId?: string;
 }
 
 // inboxDateGroupLabel moved to lib/shared/format so it can carry unit tests;
@@ -162,6 +163,7 @@ function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) 
   if (s.action === 'never_main') return smartCategory === 'main';
   if (s.action === 'always_noise') return smartCategory !== 'noise';
   if (s.action === 'move_to' && s.category) return !!smartCategory && smartCategory !== s.category;
+  if (s.action === 'move_to' && s.customLabelId) return smartCategory !== `custom:${s.customLabelId}`;
   return false;
 }
 
@@ -756,6 +758,7 @@ export function Inbox() {
         senderEmail,
         action: input.action,
         category: input.category,
+        customLabelId: input.customLabelId,
       };
       if (!suppressionHides(suppression, smartCategory)) return {};
       setSuppressions((prev) => [...prev, suppression]);
@@ -1506,8 +1509,9 @@ export const InboxThreadRow = memo(function InboxThreadRow({
           ) : null}
           {/* The category chip only earns its place when it says something the
               view doesn't already — inside a category view every row would
-              repeat the view's own name. */}
-          {smart?.primary && smart.primary !== activeCategory ? (
+              repeat the view's own name. Filed mail is not in its primary
+              category, so that chip would be wrong. */}
+          {smart?.primary && smart.primary !== activeCategory && !smart.filedUnder ? (
             <Popover>
               <PopoverTrigger asChild>
                 <button

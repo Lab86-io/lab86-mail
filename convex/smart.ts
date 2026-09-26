@@ -2,11 +2,14 @@ import { v } from 'convex/values';
 import { assessmentIsCurrent, attentionMatches, isAttentionView } from '../lib/jev/contract';
 import { smartCategoryFromJev } from '../lib/jev/mail';
 import {
+  applyUserRuleOverrides,
   classifyThreadWithContext,
   includeInSmartCategory,
   type SmartClassificationContext,
+  smartIndexKey,
+  smartRuleMatches,
 } from '../lib/mail/smart-categories';
-import { emailFromHeader } from '../lib/shared/format';
+import type { SmartRule } from '../lib/shared/types';
 import { internal } from './_generated/api';
 import { internalMutation, mutation } from './_generated/server';
 import { now, requireInternalSecret } from './lib';
@@ -51,7 +54,8 @@ function classifierInput(row: any, bodyText?: string) {
 }
 
 export function classifyCorpusThread(row: any, context: SmartClassificationContext, bodyText?: string) {
-  const det = classifyThreadWithContext(classifierInput(row, bodyText) as any, context);
+  const input = classifierInput(row, bodyText) as any;
+  const det = classifyThreadWithContext(input, context);
   const ruleDriven = det.model === 'user_rule';
   // Precedence: user rules > persisted LLM verdict > deterministic. Custom
   // labels and rule hits are always the deterministic computation (they're
@@ -70,10 +74,17 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
         }
       : null;
   const jevCurrent = assessmentIsCurrent(row.jev, row.latestMessageId);
-  const verdict = jevCurrent ? smartCategoryFromJev(row.jev, det, Boolean(row.unread)) : llm || det;
+  // User placement rules apply last, on top of whichever verdict won, so a
+  // label move or a Never Main rule holds after every later model pass.
+  const verdict = applyUserRuleOverrides(
+    jevCurrent ? smartCategoryFromJev(row.jev, det, Boolean(row.unread)) : llm || det,
+    input,
+    context,
+    det.primary,
+  );
   return {
     smartCategory: verdict,
-    smartPrimary: verdict.primary,
+    smartPrimary: smartIndexKey(verdict),
     smartCustomKeys: verdict.customLabels || [],
     classifiedAt: now(),
     // Every latest message gets the lightweight model pass. Exact user rules
@@ -243,8 +254,10 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
   };
 
   if (isCustom) {
-    // Custom labels are arrays, which Convex indexes cannot key on; filter a
-    // bounded recency window over the stored membership keys instead.
+    // Mail filed by a label-move rule keys smartPrimary on the label, so its
+    // full history is an indexed read. Other label hits are array members,
+    // which Convex indexes cannot key on; filter a bounded recency window.
+    add(await fetchPrimary(category, limit * 2));
     add(await fetchRecent(limit * 6));
   } else {
     add(await fetchPrimary(category, limit * 2));
@@ -297,32 +310,6 @@ export const classifyBacklog = internalMutation({
   },
 });
 
-function rowMatchesRuleScope(row: any, scope: string, match: string) {
-  // Mirror matchRule() in lib/mail/smart-categories.ts so the immediate
-  // reclassify covers the same rule surface as the eventual full sweep:
-  // subject_pattern honors regex, and header rules match the same haystack.
-  const email = (emailFromHeader(String(row.fromAddress || '')) || '').toLowerCase();
-  const subject = String(row.subject || '').toLowerCase();
-  const headerHaystack = [row.fromAddress, row.subject, row.snippet, ...(row.labels || [])]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  if (scope === 'sender') return email === match;
-  if (scope === 'domain') return (email.split('@')[1] || '') === match;
-  if (scope === 'subject_pattern') return subject.includes(match) || safeRegexTest(match, subject);
-  if (scope === 'header') return headerHaystack.includes(match);
-  if (scope === 'thread') return String(row.providerThreadId || '').toLowerCase() === match;
-  return false;
-}
-
-function safeRegexTest(pattern: string, value: string) {
-  try {
-    return new RegExp(pattern, 'i').test(value);
-  } catch {
-    return false;
-  }
-}
-
 // Targeted, synchronous reclassification of the threads a just-created rule
 // matches. The full-corpus sweep that rule edits schedule runs ~5s later in
 // background pages; this exists so the rows the user is looking at flip
@@ -340,6 +327,7 @@ export const reclassifyMatchingThreads = mutation({
     const context = await loadSmartContext(ctx, args.userId);
     const match = args.match.trim().toLowerCase();
     if (!match) return { patched: 0 };
+    const rule = { enabled: true, scope: args.scope as SmartRule['scope'], match };
     // Bounded recency window — covers everything a paged inbox view can show;
     // the scheduled sweep converges the older tail.
     const rows = await ctx.db
@@ -349,7 +337,7 @@ export const reclassifyMatchingThreads = mutation({
       .take(1500);
     let patched = 0;
     for (const row of rows) {
-      if (!rowMatchesRuleScope(row, args.scope, match)) continue;
+      if (!smartRuleMatches(rule, classifierInput(row))) continue;
       await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
       patched += 1;
     }

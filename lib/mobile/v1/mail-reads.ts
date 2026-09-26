@@ -24,8 +24,13 @@ function labelList(value: unknown): string[] {
     .slice(0, 200);
 }
 
+// Native clients filter the unified inbox by this string. Mail that a
+// label-move rule filed reports `custom:<labelId>`, so Main leaves it out.
 function smartPrimary(value: unknown): string | undefined {
-  const primary = (value as { primary?: unknown } | null | undefined)?.primary;
+  const smart = value as { primary?: unknown; filedUnder?: unknown } | null | undefined;
+  if (typeof smart?.filedUnder === 'string' && smart.filedUnder)
+    return cap(`custom:${smart.filedUnder}`, 240);
+  const primary = smart?.primary;
   return typeof primary === 'string' && primary ? cap(primary, 240) : undefined;
 }
 

@@ -279,6 +279,13 @@ function isMarketplacePromoNoise(text: string) {
   return /\betsi\b/i.test(text) && MARKETPLACE_PROMO_PATTERNS.test(text) && !isOrderLike(text);
 }
 
+export function smartRuleMatches(
+  rule: Pick<SmartRule, 'enabled' | 'scope' | 'match'>,
+  thread: Partial<Thread> & { from?: string; fromAddress?: string },
+) {
+  return matchRule(rule as SmartRule, thread);
+}
+
 function matchRule(rule: SmartRule, thread: Partial<Thread> & { from?: string; fromAddress?: string }) {
   const match = rule.match.toLowerCase();
   const email = senderEmail(thread);
@@ -350,9 +357,83 @@ export function classifyThreadDeterministic(
   return classifyThreadWithContext(thread, {});
 }
 
+// Rules that decide WHERE mail lives. A user who changes their mind adds a
+// new rule instead of editing the old one, so the newest matching placement
+// rule wins over every older one.
+const PLACEMENT_EFFECTS = new Set<SmartRule['effect']>([
+  'always_noise',
+  'always_category',
+  'always_custom_label',
+  'never_main',
+]);
+
+function newestPlacementRule(hits: SmartRule[]) {
+  let newest: SmartRule | undefined;
+  for (const rule of hits) {
+    if (!PLACEMENT_EFFECTS.has(rule.effect)) continue;
+    if (rule.effect === 'always_category' && !rule.category) continue;
+    if (rule.effect === 'always_custom_label' && !rule.customLabelId) continue;
+    if (!newest || Number(rule.createdAt || 0) >= Number(newest.createdAt || 0)) newest = rule;
+  }
+  return newest;
+}
+
+// Index key for the stored verdict (mailCorpusThreads.smartPrimary). Filed
+// mail keys on its label so no built-in category range read returns it.
+export function smartIndexKey(smart: Pick<SmartCategory, 'primary' | 'filedUnder'>) {
+  return smart.filedUnder ? `custom:${smart.filedUnder}` : smart.primary;
+}
+
+// Applies the user's placement rules on top of ANY verdict — deterministic,
+// the lightweight model, or Jev. The model paths only defer to a verdict whose
+// model is 'user_rule', so without this pass a label move or a Never Main
+// rule changed nothing once a model had judged the thread. `fallback` is the
+// primary to use when a Never Main rule removes a verdict from Main.
+export function applyUserRuleOverrides(
+  smart: SmartCategory,
+  thread: Partial<Thread> & { from?: string; fromAddress?: string },
+  context: SmartClassificationContext = {},
+  fallback?: SmartCategoryId,
+): SmartCategory {
+  const { filedUnder: _stale, ...base } = smart;
+  const placement = newestPlacementRule((context.rules || []).filter((rule) => matchRule(rule, thread)));
+  if (!placement) return base;
+  const marked = {
+    ruleHits: [...new Set([...(base.ruleHits || []), placement._id])],
+    signals: [...new Set([...(base.signals || []), 'user_rule'])],
+  };
+  if (placement.effect === 'always_custom_label') {
+    const labelId = placement.customLabelId as string;
+    // Never file mail under a disabled or deleted label: it would vanish from
+    // every view.
+    const labelIsLive = (context.customLabels || []).some(
+      (label) => label._id === labelId && label.enabled !== false,
+    );
+    if (!labelIsLive || !(base.customLabels || []).includes(labelId)) return base;
+    return { ...base, ...marked, filedUnder: labelId };
+  }
+  if (placement.effect === 'never_main' && base.primary === 'main') {
+    return {
+      ...base,
+      ...marked,
+      primary: fallback && fallback !== 'main' ? fallback : 'noise',
+      needsAttention: false,
+      reason: placement.reason || `User rule: ${placement.name}`,
+    };
+  }
+  return base;
+}
+
 export function classifyThreadWithContext(
   thread: Partial<Thread> & { from?: string; fromAddress?: string; bodyText?: string },
   context: SmartClassificationContext = {},
+): SmartCategory {
+  return applyUserRuleOverrides(classifyBaseline(thread, context), thread, context);
+}
+
+function classifyBaseline(
+  thread: Partial<Thread> & { from?: string; fromAddress?: string; bodyText?: string },
+  context: SmartClassificationContext,
 ): SmartCategory {
   const rules = context.rules || [];
   const customLabels = context.customLabels || [];
@@ -371,15 +452,16 @@ export function classifyThreadWithContext(
   const blockingRule = ruleHits.find(
     (rule) => rule.effect === 'always_noise' || rule.effect === 'never_main',
   );
-  const categoryRule = ruleHits.find((rule) => rule.effect === 'always_category' && rule.category);
+  const placement = newestPlacementRule(ruleHits);
+  const categoryRule = placement?.effect === 'always_category' ? placement : undefined;
 
-  if (blockingRule?.effect === 'always_noise') {
+  if (placement?.effect === 'always_noise') {
     return applyCustomLabels(
-      verdict(thread, 'noise', blockingRule.reason || `User rule: ${blockingRule.name}`, {
+      verdict(thread, 'noise', placement.reason || `User rule: ${placement.name}`, {
         confidence: 1,
         needsAttention: false,
         suggestedAction: 'archive',
-        ruleHits: [blockingRule._id],
+        ruleHits: [placement._id],
         signals: ['user_rule'],
         model: 'user_rule',
       }),
@@ -656,6 +738,9 @@ export function includeInSmartCategory(thread: Partial<Thread>, category: SmartC
   if (category.startsWith('custom:')) {
     return (smart.customLabels || []).includes(category.slice('custom:'.length));
   }
+  // Attention views are lenses over obligations, not places, so they still
+  // include filed mail. Every built-in category leaves it out.
+  if (smart.filedUnder && !isAttentionView(category)) return false;
   if (category === 'main') {
     return smart.primary === 'main';
   }
