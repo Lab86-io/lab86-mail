@@ -39,7 +39,7 @@ export function RailPrimaryActions({
         >
           <Search className="size-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden />
           <span>Search</span>
-          <span className="ml-auto group-data-[collapsible=icon]:hidden" aria-hidden>
+          <span className="shell-key-hint ml-auto group-data-[collapsible=icon]:hidden" aria-hidden>
             <kbd className="control-key">{searchShortcut}</kbd>
           </span>
         </SidebarMenuButton>
@@ -172,7 +172,7 @@ export function AssistantLauncher({
       data-phrase={phraseIndex}
       className="assistant-launcher"
     >
-      <kbd className="control-key assistant-launcher__key" aria-hidden>
+      <kbd className="control-key assistant-launcher__key shell-key-hint" aria-hidden>
         {shortcut}
       </kbd>
       <span className="assistant-launcher__copy" aria-hidden>

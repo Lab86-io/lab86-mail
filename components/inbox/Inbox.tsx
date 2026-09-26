@@ -1043,7 +1043,11 @@ export function Inbox() {
             aria-hidden
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-3 bg-gradient-to-b from-[var(--color-bg-elevated)] to-transparent"
           />
-          <div ref={scrollRef} data-mail-results className="scrollable flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            data-mail-results
+            className="scrollable assistant-launcher-clearance flex min-h-0 flex-1 flex-col"
+          >
             {/* No mailbox connected means no mail is coming. Skeleton rows here
               read as "still loading" forever, which is a lie. */}
             {!authedAccounts.length ? (

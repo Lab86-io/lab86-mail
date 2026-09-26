@@ -431,7 +431,9 @@ export function BriefCanvas({
       className={cn(
         '@container/brief-canvas brief-canvas',
         authored && 'brief-canvas--authored',
-        embedded ? 'brief-canvas--embedded' : 'scrollable h-full overflow-y-auto bg-[var(--color-content)]',
+        embedded
+          ? 'brief-canvas--embedded'
+          : 'scrollable assistant-launcher-clearance h-full overflow-y-auto bg-[var(--color-content)]',
       )}
       data-brief-document-version={document.version}
     >

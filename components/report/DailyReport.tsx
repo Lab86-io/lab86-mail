@@ -393,9 +393,15 @@ if(d&&d.source==='lab86-host'&&d.type==='dismissed_tasks')hideDismissedTasks(d.c
 	})();
 	</script>`;
 
-function withReportArtifactRuntime(
+/* The frame scrolls on its own, so the room for the floating launcher has to
+   be inside it. The style goes last in the body, after the edition's own
+   styles, so a reset in the edition cannot remove it. */
+const REPORT_ARTIFACT_LAUNCHER_CLEARANCE = `<style id="lab86-launcher-clearance">html:root{padding-bottom:88px}</style>`;
+
+export function withReportArtifactRuntime(
   html: string,
   albatrossContext?: AlbatrossDailyReportContext | null,
+  options: { launcherClearance?: boolean } = {},
 ): string {
   if (!html) return html;
   let next = injectReportAreaBrief(html, albatrossContext ?? null).replace(
@@ -403,10 +409,10 @@ function withReportArtifactRuntime(
     '',
   );
   const bodyClose = next.toLowerCase().lastIndexOf('</body>');
-  next =
-    bodyClose >= 0
-      ? `${next.slice(0, bodyClose)}${REPORT_ARTIFACT_RUNTIME_JS}${next.slice(bodyClose)}`
-      : `${next}${REPORT_ARTIFACT_RUNTIME_JS}`;
+  const tail = options.launcherClearance
+    ? `${REPORT_ARTIFACT_LAUNCHER_CLEARANCE}${REPORT_ARTIFACT_RUNTIME_JS}`
+    : REPORT_ARTIFACT_RUNTIME_JS;
+  next = bodyClose >= 0 ? `${next.slice(0, bodyClose)}${tail}${next.slice(bodyClose)}` : `${next}${tail}`;
   return injectBriefArtifactReadyRuntime(next);
 }
 
@@ -740,7 +746,9 @@ function ReportArtifact({
     <iframe
       ref={frameRef}
       title="The Daily Brief"
-      srcDoc={withReportArtifactRuntime(html, albatrossContext)}
+      // A frame that grows to its own height scrolls with the page, and the
+      // page leaves the room; a frame that fills the pane leaves it inside.
+      srcDoc={withReportArtifactRuntime(html, albatrossContext, { launcherClearance: !autoHeight })}
       aria-busy={!artifactReady}
       onLoad={() => {
         postTheme();
@@ -1175,7 +1183,7 @@ export function DailyReport({
             ? embedded
               ? ''
               : 'overflow-hidden'
-            : cn('@container', embedded ? 'py-1' : 'scrollable px-5 py-5'),
+            : cn('@container', embedded ? 'py-1' : 'scrollable assistant-launcher-clearance px-5 pt-5'),
         )}
       >
         {reportQuery.isError && !report ? (
