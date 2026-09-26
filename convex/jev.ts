@@ -229,6 +229,11 @@ export const claimPending = mutation({
         jevLeaseId: leaseId,
         jevLeaseUntil: now + 90_000,
         jevStatus: 'pending',
+        // Rows synced before latestMessageId existed take it from the newest
+        // message. storeAssessments requires the row to name the message the
+        // claim assessed, so without this the result is dropped every time and
+        // the row is claimed again forever.
+        ...(row.latestMessageId ? {} : { latestMessageId: input.messageId }),
       });
       items.push({ ...input, leaseId });
       if (items.length === limit) break;

@@ -104,6 +104,20 @@ async function row(t: TestConvex<typeof schema>, account = 'a', id = 't') {
 }
 
 describe('Jev persisted state and tenancy', () => {
+  test('a row synced before latestMessageId existed is claimed once and its result is saved', async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    const before = await row(t);
+    await t.run((ctx) => ctx.db.patch(before!._id, { latestMessageId: undefined, llmPending: true }));
+    const page = await claim(t);
+    expect(page.items).toHaveLength(1);
+    expect((await row(t))?.latestMessageId).toBe(page.items[0].messageId);
+    expect((await save(t, page.items[0])).stored).toBe(1);
+    const after = await row(t);
+    expect(after?.llmPending).toBeUndefined();
+    expect(after?.jev?.sourceMessageId).toBe(page.items[0].messageId);
+    expect((await claim(t)).items).toHaveLength(0);
+  });
   test('claiming cannot replace the corpus revision when its newest message is not synced', async () => {
     const t = convexTest(schema, modules);
     await seed(t);
