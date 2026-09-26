@@ -8,6 +8,7 @@ import {
   computeCategoryUnreadCounts,
   queryCategoryThreads,
 } from '../convex/smart';
+import { assessment } from './fixtures/jev';
 
 const convexModules = {
   '../convex/_generated/api.js': () => import('../convex/_generated/api.js'),
@@ -362,5 +363,115 @@ describe('queryCategoryThreads', () => {
       }),
     );
     expect(next.items.map((item: { _id: string }) => item._id)).toEqual(['labeled_0']);
+  });
+});
+
+describe('mail filed by a label move', () => {
+  async function seedDevOps(t: Harness) {
+    const ts = Date.now();
+    await t.run((ctx) =>
+      ctx.db.insert('userDocs', {
+        userId: USER,
+        kind: 'smartLabel',
+        key: 'smart-label-dev-ops',
+        doc: {
+          _id: 'smart-label-dev-ops',
+          name: 'Dev/Ops',
+          enabled: true,
+          positiveExamples: [],
+          negativeExamples: [],
+        },
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    );
+    await seedRule(t, {
+      _id: 'rule_devops',
+      name: 'move to',
+      scope: 'sender',
+      match: 'noreply@apple.com',
+      effect: 'always_custom_label',
+      customLabelId: 'smart-label-dev-ops',
+      createdAt: 1,
+    });
+  }
+
+  test('leaves Main and every count, and the label view finds it outside the recency window', async () => {
+    const t = newHarness();
+    await seedDevOps(t);
+    // A current Jev verdict with an obligation puts this row in Main.
+    await seedThread(t, {
+      providerThreadId: 'xcode_build',
+      fromAddress: 'Xcode Cloud <noreply@apple.com>',
+      subject: 'Build succeeded',
+      latestMessageId: 'm1',
+      jev: assessment(),
+      smartPrimary: 'main',
+      smartCategory: { primary: 'main', secondary: [], customLabels: ['smart-label-dev-ops'] },
+      lastDate: 1_000,
+    });
+    for (let i = 0; i < 8; i += 1) {
+      await seedThread(t, { providerThreadId: `newer_${i}`, smartPrimary: 'main', lastDate: 2_000 + i });
+    }
+    const result = await t.mutation(api.smart.reclassifyMatchingThreads, {
+      internalSecret: SECRET,
+      userId: USER,
+      scope: 'sender',
+      match: 'noreply@apple.com',
+    });
+    expect(result).toEqual({ patched: 1 });
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query('mailCorpusThreads').collect()).find((r) => r.providerThreadId === 'xcode_build'),
+    );
+    expect(row?.smartPrimary).toBe('custom:smart-label-dev-ops');
+    expect(row?.smartCategory?.filedUnder).toBe('smart-label-dev-ops');
+
+    const main = await t.run((ctx) =>
+      queryCategoryThreads(ctx, { userId: USER, category: 'main', limit: 50 }),
+    );
+    expect(main.items.some((item: { _id: string }) => item._id === 'xcode_build')).toBe(false);
+
+    // limit 1 reads a recency window of 6 rows; the filed row is the 9th newest.
+    const label = await t.run((ctx) =>
+      queryCategoryThreads(ctx, {
+        userId: USER,
+        accountIds: ['account_1'],
+        category: 'custom:smart-label-dev-ops',
+        limit: 1,
+      }),
+    );
+    expect(label.items.map((item: { _id: string }) => item._id)).toEqual(['xcode_build']);
+
+    const counts = await t.run((ctx) => computeCategoryUnreadCounts(ctx, USER));
+    expect(counts.main.unread).toBe(8);
+  });
+
+  test('attention views still list filed mail but drop muted and trashed rows', async () => {
+    const t = newHarness();
+    const reply = { latestMessageId: 'm1', jev: assessment(), jevNeedsReply: true };
+    await seedThread(t, {
+      ...reply,
+      providerThreadId: 'filed_reply',
+      smartCategory: { primary: 'main', filedUnder: 'smart-label-dev-ops' },
+      lastDate: 3_000,
+    });
+    await seedThread(t, {
+      ...reply,
+      providerThreadId: 'muted_reply',
+      smartCategory: { primary: 'noise', model: 'user_rule' },
+      lastDate: 2_000,
+    });
+    await seedThread(t, { ...reply, providerThreadId: 'trashed_reply', labels: ['TRASH'], lastDate: 1_000 });
+    await seedThread(t, { ...reply, providerThreadId: 'stale_reply', latestMessageId: 'm2', lastDate: 500 });
+    const page = await t.run((ctx) =>
+      queryCategoryThreads(ctx, {
+        userId: USER,
+        accountIds: ['account_1'],
+        category: 'needs_reply',
+        limit: 10,
+      }),
+    );
+    expect(page.items.map((item: { _id: string }) => item._id)).toEqual(['filed_reply']);
+    expect(page.nextCursor).toBeUndefined();
   });
 });
