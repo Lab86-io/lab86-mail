@@ -158,6 +158,29 @@ export function eventsByDay(
   return byDay;
 }
 
+// Events kept for each local day of the week ahead. The prose prompt shows at
+// most this many; a cap on the whole window would drop a busy late day and
+// let the letter call it open.
+export const BRIEF_EVENTS_PER_DAY = 8;
+
+/** Keeps the earliest events of each local day, in start order. */
+export function capCalendarPerDay(
+  calendar: DailyReportCalendarItem[],
+  timeZone: string | null | undefined,
+  perDay = BRIEF_EVENTS_PER_DAY,
+): DailyReportCalendarItem[] {
+  const zone = normalizeBriefTimezone(timeZone);
+  const counts = new Map<string, number>();
+  return [...calendar]
+    .sort((a, b) => a.startAt - b.startAt)
+    .filter((event) => {
+      const key = localDayKey(event.startAt, zone);
+      const count = counts.get(key) ?? 0;
+      counts.set(key, count + 1);
+      return count < perDay;
+    });
+}
+
 function eventPhrase(event: DailyReportCalendarItem, timeZone: string): string {
   return event.allDay ? event.title : `${event.title} at ${localTimeLabel(event.startAt, timeZone)}`;
 }
@@ -376,7 +399,7 @@ export function buildBriefProsePrompt(input: BriefProseInput): string {
     weekday: day.weekday,
     date: day.label,
     isToday: day.isToday,
-    events: (byDay.get(day.dayKey) || []).slice(0, 8).map((event) => ({
+    events: (byDay.get(day.dayKey) || []).slice(0, BRIEF_EVENTS_PER_DAY).map((event) => ({
       title: event.title,
       time: event.allDay ? 'all day' : localTimeLabel(event.startAt, input.timezone),
       location: event.location || null,

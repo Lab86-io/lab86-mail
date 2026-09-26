@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { getFunctionName } from 'convex/server';
 import { NextRequest } from 'next/server';
 import { createWorkspaceRoutes } from '../app/api/narrative/workspace/route';
-import { generateTextForCurrentUser } from '../lib/ai/gateway';
+import { BRIEF_MAX_OUTPUT_TOKENS, generateTextForCurrentUser } from '../lib/ai/gateway';
 import * as hosted from '../lib/hosted/convex';
 import type { NarrativeEntry } from '../lib/narrative/core';
 import * as narrative from '../lib/narrative/service';
@@ -102,33 +102,37 @@ describe('Today workspace composition and trust boundary', () => {
       Date.now = clock;
     }
   });
-  test('the workspace and gateway leave reasoning output uncapped instead of returning length-truncated source cards', async () => {
+  test('the workspace gets the high brief cap, so reasoning cannot truncate the source cards', async () => {
     const deps = harness();
     const requests: any[] = [];
     deps.generate = (options: any) =>
-      generateTextForCurrentUser(options, {
-        resolveAiRuntime: async () => ({
-          userId: 'owner',
-          source: 'lab86',
-          provider: 'openrouter',
-          modelName: 'z-ai/glm-5.3-flash',
-          model: {} as any,
-        }),
-        fallbackRuntimes: () => [],
-        recordUsage: async () => {},
-        generateText: (async (request: any) => {
-          requests.push(request);
-          // Replay the observed provider symptom: reasoning consumes the app's
-          // completion allowance and no JSON is emitted.
-          return request.maxOutputTokens === undefined
-            ? { text: JSON.stringify(composition), output: composition, finishReason: 'stop', usage: {} }
-            : { text: '', finishReason: 'length', usage: {} };
-        }) as any,
-      });
+      generateTextForCurrentUser(
+        { ...options, maxOutputTokens: 1200 },
+        {
+          resolveAiRuntime: async () => ({
+            userId: 'owner',
+            source: 'lab86',
+            provider: 'openrouter',
+            modelName: 'z-ai/glm-5.3-flash',
+            model: {} as any,
+          }),
+          fallbackRuntimes: () => [],
+          recordUsage: async () => {},
+          generateText: (async (request: any) => {
+            requests.push(request);
+            // Replay the observed provider symptom: a small allowance is consumed
+            // by reasoning and no JSON is emitted.
+            return request.maxOutputTokens >= BRIEF_MAX_OUTPUT_TOKENS
+              ? { text: JSON.stringify(composition), output: composition, finishReason: 'stop', usage: {} }
+              : { text: '', finishReason: 'length', usage: {} };
+          }) as any,
+        },
+      );
     const result = await loadNarrativeWorkspace('owner', now, true, undefined, deps);
     expect(result.mode).toBe('generated');
     expect(requests).toHaveLength(1);
-    expect(requests[0].maxOutputTokens).toBeUndefined();
+    // An explicit cap: an uncapped call lets OpenRouter reserve credits for the model maximum.
+    expect(requests[0].maxOutputTokens).toBe(BRIEF_MAX_OUTPUT_TOKENS);
   });
   test('live work hydration preserves its shape and safely defaults unknown shapes', async () => {
     const enabled = spyOn(narrative, 'narrativeEnabled').mockReturnValue(true);

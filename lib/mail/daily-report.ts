@@ -56,6 +56,7 @@ import { insightId, upsertThreadInsight } from '../store/thread-insights';
 import { getThread, upsertThread } from '../store/threads';
 import { listTrackedThreads, updateTrackedThread, upsertTrackedThread } from '../store/tracked-threads';
 import { resolveBriefPlanTier } from './brief-plan';
+import { capCalendarPerDay } from './brief-prose';
 import {
   assignBriefLane,
   type BriefItemCandidate,
@@ -1094,7 +1095,9 @@ export async function composeReport(input: {
     ),
   );
   const reportTasks = input.taskContext.slice(0, 24);
-  const reportCalendar = input.calendarContext.slice(0, 24);
+  // Cap each local day, not the whole window: the week ahead must not call a
+  // busy late day open because earlier days used up a shared limit.
+  const reportCalendar = capCalendarPerDay(input.calendarContext, getAiRequestContext().userTimezone);
   const hiddenByUser = (item: DailyReportItem) => {
     const dismissal = threadDismissals.get(dailyReportThreadKey(item.account, item.threadId));
     if (!dismissal) return false;

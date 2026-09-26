@@ -1034,6 +1034,24 @@ describe('shared narrative runtime', () => {
     await t.mutation(f.finish, { ...args, runId: 'first' });
     expect(await t.mutation(f.claim, { ...args, runId: 'second', kind: 'test' })).not.toBeNull();
   });
+  test('a run whose worker stopped is closed when the next run claims the expired lease', async () => {
+    const t = harness();
+    await enable(t);
+    expect(await t.mutation(f.claim, { ...args, runId: 'lost', kind: 'test' })).not.toBeNull();
+    // The worker stopped without finish; the lease expires.
+    await t.run(async (ctx) => {
+      const prefs = await ctx.db
+        .query('narrativeSettings')
+        .withIndex('by_user', (q: any) => q.eq('userId', userId))
+        .unique();
+      await ctx.db.patch(prefs!._id, { leaseUntil: Date.now() - 1 });
+    });
+    expect(await t.mutation(f.claim, { ...args, runId: 'next', kind: 'test' })).not.toBeNull();
+    const runs = await t.run((ctx) => ctx.db.query('narrativeRuns').collect());
+    expect(runs.find((run) => run.runId === 'lost')).toMatchObject({ status: 'partial' });
+    expect(runs.find((run) => run.runId === 'lost')?.endedAt).toBeNumber();
+    expect(runs.find((run) => run.runId === 'next')).toMatchObject({ status: 'running' });
+  });
   test('requested brief refreshes have no daily generation quota', async () => {
     const t = harness();
     await enable(t);

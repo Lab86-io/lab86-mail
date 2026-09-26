@@ -2,7 +2,8 @@ import { editorialPlanSchema } from '../brief/editorial';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import { projectBriefMail } from '../jev/report';
+import { DEFAULT_JEV_PREFERENCES } from '../jev/contract';
+import { type BriefHiddenItems, projectBriefMail } from '../jev/report';
 import { loadJevPolicy, markJevBriefItems } from '../jev/service';
 import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
@@ -21,6 +22,7 @@ import {
   MAX_ARTIFACT_ERROR_MESSAGE_CHARS,
   MAX_ARTIFACT_ERRORS,
 } from '../shared/types';
+import { listDismissedDailyReportTasks, listDismissedDailyReportThreads } from './daily-report-dismissals';
 import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
 
 const saveDefaults = {
@@ -29,8 +31,81 @@ const saveDefaults = {
   owner: requireStoreUserId,
   mark: markJevBriefItems,
 };
+// Convex rejects a document over 1 MiB. The stored edition must stay below
+// this, with room for the row's other fields; above it the edition degrades.
+export const DAILY_REPORT_STORED_BYTE_LIMIT = 900_000;
+const OVERSIZE_NOTE = 'This edition was too large to store in full, so some detail was left out.';
+
+function storedBytes(value: unknown) {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+// Overflow items only need their identity and line to render. `jev` stays: the
+// live projection compares its sourceRevision and reads its obligations.
+function slimOverflowItem(item: DailyReportItem): DailyReportItem {
+  return {
+    account: item.account,
+    threadId: item.threadId,
+    subject: item.subject,
+    people: [],
+    whyItMatters: item.whyItMatters,
+    unread: item.unread,
+    ...(item.line ? { line: item.line } : {}),
+    ...(item.sender ? { sender: item.sender } : {}),
+    ...(item.receivedAt != null ? { receivedAt: item.receivedAt } : {}),
+    ...(item.dueAt != null ? { dueAt: item.dueAt } : {}),
+    ...(item.score != null ? { score: item.score } : {}),
+    ...(item.budgetLane ? { budgetLane: item.budgetLane } : {}),
+    ...(item.lane ? { lane: item.lane } : {}),
+    ...(item.trackedThreadId ? { trackedThreadId: item.trackedThreadId } : {}),
+    ...(item.firstSurfacedAt != null ? { firstSurfacedAt: item.firstSurfacedAt } : {}),
+    ...(item.jev ? { jev: item.jev } : {}),
+  };
+}
+
+/**
+ * The form of an edition that goes to storage. A document-v2 edition does not
+ * store the legacy `html`, `composition`, and `handoffs`: every reader goes
+ * through migrateDailyReport, which rebuilds them from the sections. Above
+ * DAILY_REPORT_STORED_BYTE_LIMIT the edition degrades step by step instead of
+ * failing the save.
+ */
+export function dailyReportForStorage(report: DailyReport): DailyReport {
+  if (report.artifactSource !== 'document-v2' || !report.document) return report;
+  const { html: _html, composition: _composition, handoffs: _handoffs, ...rest } = report;
+  let stored: DailyReport = {
+    ...rest,
+    sections: { ...rest.sections, overflow: rest.sections.overflow?.map(slimOverflowItem) },
+  };
+  if (!rest.sections.overflow) delete stored.sections.overflow;
+  if (storedBytes(stored) <= DAILY_REPORT_STORED_BYTE_LIMIT) return stored;
+  const note = { stage: 'document_v2' as const, message: OVERSIZE_NOTE, at: Date.now() };
+  const degrade = [
+    // The overflow list is the least important content; its count stays in stats.
+    (value: DailyReport): DailyReport => ({ ...value, sections: { ...value.sections, overflow: [] } }),
+    // The legacy lanes repeat the budget lanes for older readers.
+    (value: DailyReport): DailyReport => ({
+      ...value,
+      sections: { ...value.sections, replyOwed: [], followUpOwed: [], timeSensitive: [], tracked: [] },
+    }),
+    // Last: drop the composed page; readers rebuild the source letter from sections.
+    (value: DailyReport): DailyReport => {
+      const { document: _document, editorial: _editorial, ...withoutPage } = value;
+      return { ...withoutPage, artifactSource: 'deterministic', artifactStatus: 'rendered' };
+    },
+  ];
+  for (const step of degrade) {
+    stored = step(stored);
+    if (storedBytes(stored) <= DAILY_REPORT_STORED_BYTE_LIMIT) break;
+  }
+  return {
+    ...stored,
+    artifactErrors: [...(stored.artifactErrors || []), note].slice(-MAX_ARTIFACT_ERRORS),
+  };
+}
+
 export async function saveDailyReport(report: DailyReport, dependencies = saveDefaults) {
-  await dependencies.persist('dailyReport', report._id, report);
+  await dependencies.persist('dailyReport', report._id, dailyReportForStorage(report));
   if (
     dependencies.configured() &&
     (report.artifactStatus === 'rendered' || report.artifactStatus === 'ready')
@@ -51,11 +126,24 @@ export async function getDailyReport(id: string) {
 
 export type DailyReportSummary = Pick<DailyReport, '_id' | 'kind' | 'generatedAt' | 'title'>;
 
+// Saved brief dismissals (dismiss, resolve, archive) as hidden item sets.
+async function loadBriefDismissals(): Promise<BriefHiddenItems> {
+  const [threads, tasks] = await Promise.all([
+    listDismissedDailyReportThreads(),
+    listDismissedDailyReportTasks(),
+  ]);
+  return {
+    threads: new Set(threads.map((row) => `${row.account}:${row.threadId}`)),
+    tasks: new Set(tasks.map((row) => row.cardId).filter(Boolean)),
+  };
+}
+
 const readDefaults = {
   query: convexQuery,
   configured: isConvexConfigured,
   loadPolicy: loadJevPolicy,
   load: getDailyReport,
+  loadDismissals: loadBriefDismissals,
 };
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
@@ -110,7 +198,17 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
     ? await readDependencies.load(latest._id)
     : await migrateDailyReportForRead(latest);
   if (!report) return null;
-  if (Date.now() - report.generatedAt > 24 * 3600_000 || !readDependencies.configured()) return report;
+  if (!readDependencies.configured()) return report;
+  const hidden = await readDependencies.loadDismissals().catch((): BriefHiddenItems => ({}));
+  // Dismissals apply to any latest edition; live mail facts only to a fresh one.
+  if (Date.now() - report.generatedAt > 24 * 3600_000)
+    return projectBriefMail(
+      report,
+      [],
+      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+      Date.now(),
+      hidden,
+    );
   const items = [
     ...(report.sections.answer || []),
     ...(report.sections.today || []),
@@ -144,9 +242,17 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
         ).values(),
       ],
       policy,
+      Date.now(),
+      hidden,
     );
   } catch {
-    return report;
+    return projectBriefMail(
+      report,
+      [],
+      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+      Date.now(),
+      hidden,
+    );
   }
 }
 
@@ -200,6 +306,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     generatedAt: raw.generatedAt ?? 0,
     status: raw.status ?? 'ready',
     progress: raw.progress,
+    ...(raw.retrying === true ? { retrying: true } : {}),
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
     services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',

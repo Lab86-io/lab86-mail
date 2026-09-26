@@ -1,6 +1,6 @@
 import { tool } from 'ai';
 import { z } from 'zod';
-import { generateTextForCurrentUser } from '../ai/gateway';
+import { generateTextForCurrentUser, isTerminalAiError } from '../ai/gateway';
 import {
   briefComponentCatalog,
   briefComponentNameSchema,
@@ -184,7 +184,13 @@ export async function writeDailyEditorial(
     generate?: typeof generateTextForCurrentUser | null;
     evidence?: Record<string, unknown>;
   } = {},
-): Promise<{ document: BriefDocumentV2; editorial: NonNullable<DailyReport['editorial']>; failed: boolean }> {
+): Promise<{
+  document: BriefDocumentV2;
+  editorial: NonNullable<DailyReport['editorial']>;
+  failed: boolean;
+  /** Set when another attempt cannot succeed (no plan, key, or credits). */
+  terminalError?: Error;
+}> {
   const timezone = normalizeBriefTimezone(letter.timezone);
   let session = createDailyEditorialSession(report, letter, options.evidence);
   const fallback = defaultEditorialPlan(session.modules);
@@ -193,6 +199,7 @@ export async function writeDailyEditorial(
     return session.tools;
   };
   const generate = options.generate === undefined ? generateTextForCurrentUser : options.generate;
+  let terminalError: Error | undefined;
   if (generate) {
     try {
       const response = await generate({
@@ -254,11 +261,14 @@ export async function writeDailyEditorial(
       console.warn('[brief-editorial] using the source composition', {
         error: error instanceof Error ? error.name : 'UnknownError',
       });
+      if (isTerminalAiError(error))
+        terminalError = error instanceof Error ? error : new Error('The writer has no model access.');
     }
   }
   return {
     document: composeEditorialDocument(letter, session.modules, fallback),
     editorial: { plan: fallback, mode: 'fallback' },
     failed: !!generate,
+    ...(terminalError ? { terminalError } : {}),
   };
 }

@@ -16,18 +16,57 @@ import {
   jevReason,
 } from './contract';
 
-/** Read projection of the latest edition. Never writes over the historical snapshot. */
+/** Items the reader dismissed, resolved, or archived from the brief. */
+export interface BriefHiddenItems {
+  /** Thread keys as `${account}:${threadId}`. */
+  threads?: ReadonlySet<string>;
+  /** Task card ids. */
+  tasks?: ReadonlySet<string>;
+}
+
+/** Read projection of the latest edition. Never writes over the historical snapshot.
+ *
+ * Saved dismissals apply to any latest edition, so the current edition hides
+ * them after a reload. Live mail facts apply only in the first 24 hours. */
 export function projectBriefMail(
   report: DailyReport,
   threads: Thread[],
   policy: { preferences: JevPreferences; corrections: JevCorrection[] },
   now = Date.now(),
+  hidden: BriefHiddenItems = {},
 ): DailyReport {
-  if (now - report.generatedAt > 24 * 3600_000) return report;
-  const byKey = new Map(threads.map((thread) => [`${thread.account}:${thread._id}`, thread]));
+  const live = now - report.generatedAt <= 24 * 3600_000;
+  const hiddenThreads = hidden.threads ?? new Set<string>();
+  const hiddenTasks = hidden.tasks ?? new Set<string>();
+  const isHidden = (item: Pick<DailyReportItem, 'account' | 'threadId'>) =>
+    hiddenThreads.has(`${item.account}:${item.threadId}`);
+  if (!live) {
+    if (!hiddenThreads.size && !hiddenTasks.size) return report;
+    const s: Partial<DailyReport['sections']> = report.sections ?? {};
+    const touched =
+      [
+        s.answer,
+        s.today,
+        s.know,
+        s.overflow,
+        s.waiting,
+        s.replyOwed,
+        s.followUpOwed,
+        s.timeSensitive,
+        s.tracked,
+      ]
+        .flatMap((items) => items ?? [])
+        .some(isHidden) || (s.tasks ?? []).some((task) => hiddenTasks.has(task.cardId));
+    if (!touched) return report;
+  }
+  const byKey = new Map(live ? threads.map((thread) => [`${thread.account}:${thread._id}`, thread]) : []);
   let changed = false;
   const project = (items?: DailyReportItem[]) =>
     (items || []).flatMap((item) => {
+      if (isHidden(item)) {
+        changed = true;
+        return [];
+      }
       const current = byKey.get(`${item.account}:${item.threadId}`);
       if (!current) return [item];
       const assessment = current.jev;
@@ -110,16 +149,19 @@ export function projectBriefMail(
     followUpOwed: project(report.sections.followUpOwed),
     timeSensitive: project(report.sections.timeSensitive),
     tracked: project(report.sections.tracked),
+    tasks: (report.sections.tasks ?? []).filter((task) => !hiddenTasks.has(task.cardId)),
   };
+  if (sections.tasks.length !== (report.sections.tasks ?? []).length) changed = true;
   const present = new Set(
     [...sections.answer, ...sections.today, ...sections.know, ...sections.overflow, ...sections.waiting].map(
       (item) => `${item.account}:${item.threadId}`,
     ),
   );
-  for (const current of threads) {
+  for (const current of live ? threads : []) {
     const key = `${current.account}:${current._id}`;
     if (
       present.has(key) ||
+      hiddenThreads.has(key) ||
       !report.accounts.includes(current.account) ||
       current.lastDate <= report.generatedAt ||
       current.lastDate > now ||
@@ -207,14 +249,24 @@ export function projectBriefMail(
   sections.replyOwed = all.filter((item) => item.lane === 'reply_owed');
   sections.followUpOwed = all.filter((item) => item.lane === 'follow_up_owed');
   sections.timeSensitive = all.filter((item) => item.lane === 'time_sensitive');
-  const lede = selected.length
-    ? 'Your open conversations and meaningful updates, refreshed from the latest mail.'
-    : 'No mail highlights remain in this edition. Your mail views show the latest conversation states.';
+  // The written lede stays: a mail update changes only the item lines. The
+  // fixed text fills in only for an edition that never had a written lede.
+  const writtenLede = report.prose?.lede?.trim() || '';
+  const lede =
+    writtenLede ||
+    (selected.length
+      ? 'Your open conversations and meaningful updates, refreshed from the latest mail.'
+      : 'No mail highlights remain in this edition. Your mail views show the latest conversation states.');
   const next: DailyReport = {
     ...report,
     sections,
-    narrative: lede,
-    prose: { ...report.prose, lede, weekAhead: report.prose?.weekAhead || '', model: 'local' },
+    narrative: writtenLede ? report.narrative || lede : lede,
+    prose: {
+      ...report.prose,
+      lede,
+      weekAhead: report.prose?.weekAhead || '',
+      model: writtenLede ? report.prose?.model || 'local' : 'local',
+    },
     stats: {
       ...report.stats,
       selected: selected.length,

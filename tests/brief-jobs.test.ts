@@ -4,6 +4,7 @@ import { convexTest } from 'convex-test';
 import { NextRequest } from 'next/server';
 import { createBriefJobPost } from '../app/api/cron/brief-job/route';
 import { api, internal } from '../convex/_generated/api';
+import { BRIEF_JOB_MAX_ATTEMPTS } from '../convex/briefJobState';
 import schema from '../convex/schema';
 import { getAiRequestContext } from '../lib/ai/context';
 import * as hosted from '../lib/hosted/convex';
@@ -96,24 +97,113 @@ test('heartbeats allow arbitrarily old runs, lost workers are reclaimed, and sta
   await t.finishInProgressScheduledFunctions();
 });
 
-test('failed jobs retain the same edition and retry without an attempt quota', async () => {
+test('failed jobs retain the same edition and retry until the attempt cap', async () => {
   const t = convexTest(schema, modules);
   const { jobId }: any = await t.mutation(functions.enqueue, daily);
   const owner = { ...caller, id: jobId, token: 'worker' };
-  await t.run((ctx) => ctx.db.patch(jobId, { attempts: 1000 }));
+  await t.run((ctx) => ctx.db.patch(jobId, { attempts: 1 }));
   await t.mutation(functions.claim, owner);
   expect(await t.mutation(functions.settle, { ...owner, error: 'retry' })).toBe(true);
   const job: any = await t.query(functions.get, { ...caller, id: jobId });
-  expect(job).toMatchObject({ state: 'queued', active: true, attempts: 1001, reportId: 'edition' });
+  expect(job).toMatchObject({ state: 'queued', active: true, attempts: 2, reportId: 'edition' });
   expect(job.availableAt).toBeGreaterThan(Date.now());
   const report = await t.run((ctx) => ctx.db.query('userDocs').first());
+  // Only the empty placeholder shows a progress state while the writer retries.
   expect(report?.doc).toMatchObject({ status: 'partial', progress: { stage: 'Retrying the writer' } });
+
+  // The last allowed attempt publishes what the edition holds and closes the job.
+  await t.run((ctx) => ctx.db.patch(jobId, { attempts: BRIEF_JOB_MAX_ATTEMPTS - 1, availableAt: 0 }));
+  await t.mutation(functions.claim, { ...owner, token: 'last' });
+  expect(await t.mutation(functions.settle, { ...owner, token: 'last', error: 'retry' })).toBe(true);
+  expect(await t.query(functions.get, { ...caller, id: jobId })).toMatchObject({
+    state: 'completed',
+    active: false,
+    error: 'retry',
+  });
+  const published: any = await t.run((ctx) => ctx.db.query('userDocs').first());
+  expect(published.doc.status).toBe('ready');
+  expect(published.doc.progress).toBeUndefined();
+  expect(published.doc.narrative).toContain('could not be written');
+  // Write can start a new edition at once.
+  expect(((await t.mutation(functions.enqueue, { ...daily, reportId: 'again' })) as any).started).toBe(true);
   await t.finishInProgressScheduledFunctions();
 });
 
-test('a later local day can start without cancelling a slow earlier edition', async () => {
+test('a terminal writer failure completes the job and keeps the fallback edition ready', async () => {
+  const t = convexTest(schema, modules);
+  const { jobId }: any = await t.mutation(functions.enqueue, daily);
+  const owner = { ...caller, id: jobId, token: 'worker' };
+  await t.mutation(functions.claim, owner);
+  await t.mutation(api.userData.upsertDoc, {
+    ...caller,
+    kind: 'dailyReport',
+    key: 'edition',
+    doc: { _id: 'edition', status: 'ready', document: { version: 2 }, editorial: { mode: 'fallback' } },
+    briefJob: { id: jobId, token: owner.token },
+  });
+  // A retry keeps the published fallback readable and marks it retrying.
+  await t.mutation(functions.settle, { ...owner, error: 'retry' });
+  let row: any = await t.run((ctx) => ctx.db.query('userDocs').first());
+  expect(row.doc).toMatchObject({ status: 'ready', retrying: true });
+  expect(row.doc.progress).toBeUndefined();
+
+  await t.run((ctx) => ctx.db.patch(jobId, { availableAt: 0 }));
+  await t.mutation(functions.claim, { ...owner, token: 'second' });
+  await t.mutation(functions.settle, { ...owner, token: 'second', error: 'No access', terminal: true });
+  expect(await t.query(functions.get, { ...caller, id: jobId })).toMatchObject({
+    state: 'completed',
+    active: false,
+    attempts: 2,
+  });
+  row = await t.run((ctx) => ctx.db.query('userDocs').first());
+  expect(row.doc.status).toBe('ready');
+  expect(row.doc.retrying).toBeUndefined();
+  expect(row.doc.narrative).toBeUndefined();
+  await t.finishInProgressScheduledFunctions();
+});
+
+test('an area brief leaves generating when its job ends without a writer', async () => {
+  const t = convexTest(schema, modules);
+  const areaId = await t.run((ctx) =>
+    ctx.db.insert('areas', {
+      userId: 'owner',
+      name: 'Studio',
+      kind: 'project',
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+  for (const lede of ['', 'An earlier account.']) {
+    const job: any = await t.mutation(functions.enqueue, { ...caller, kind: 'area', areaId, force: true });
+    await t.run(async (ctx) => {
+      const brief = await ctx.db.query('albatrossAreaBriefs').first();
+      await ctx.db.patch(brief!._id, { lede });
+    });
+    const owner = { ...caller, id: job.jobId, token: `area-${lede.length}` };
+    await t.mutation(functions.claim, owner);
+    await t.mutation(functions.settle, { ...owner, error: 'No access', terminal: true });
+    expect(await t.run((ctx) => ctx.db.query('albatrossAreaBriefs').first())).toMatchObject({
+      status: lede ? 'ready' : 'error',
+    });
+  }
+  await t.finishInProgressScheduledFunctions();
+});
+
+test('a later local day starts a new edition and cancels the earlier day unfinished job', async () => {
   const t = convexTest(schema, modules);
   const first: any = await t.mutation(functions.enqueue, daily);
+  const area = await t.run((ctx) =>
+    ctx.db.insert('areas', {
+      userId: 'owner',
+      name: 'Studio',
+      kind: 'project',
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+  const areaJob: any = await t.mutation(functions.enqueue, { ...caller, kind: 'area', areaId: area });
   await t.finishInProgressScheduledFunctions();
   const now = Date.now();
   const clock = spyOn(Date, 'now').mockReturnValue(now + 2 * 86_400_000);
@@ -121,7 +211,19 @@ test('a later local day can start without cancelling a slow earlier edition', as
     const later: any = await t.mutation(functions.enqueue, { ...daily, reportId: 'later-edition' });
     expect(later.started).toBe(true);
     expect(later.jobId).not.toBe(first.jobId);
-    expect(await t.query(functions.get, { ...caller, id: first.jobId })).toMatchObject({ active: true });
+    expect(await t.query(functions.get, { ...caller, id: first.jobId })).toMatchObject({
+      active: false,
+      state: 'cancelled',
+    });
+    // Other job kinds are not touched.
+    expect(await t.query(functions.get, { ...caller, id: areaJob.jobId })).toMatchObject({ active: true });
+    const earlier: any = await t.run((ctx) =>
+      ctx.db
+        .query('userDocs')
+        .filter((q) => q.eq(q.field('key'), 'edition'))
+        .first(),
+    );
+    expect(earlier.doc.status).toBe('ready');
   } finally {
     clock.mockRestore();
   }
@@ -285,8 +387,10 @@ function worker(kind = 'daily') {
     }),
     area: mock(async () => ({ pulse: { model: 'glm' } })),
     narrative: mock(async () => ({ status: 'ready' })),
-    readDaily: mock(async () => null),
+    readDaily: mock(async () => null as any),
     notify: mock(async () => {}),
+    noAccess: mock(async () => false),
+    now: () => 100,
   };
   return { deps, calls, edition };
 }
@@ -318,12 +422,12 @@ test('worker retries failed layouts and provider failures without announcing com
   }
 });
 
-test('a runtime availability failure remains recoverable instead of completing a fallback edition', async () => {
+test('an availability error from an earlier run stays recoverable', async () => {
   const { deps, calls, edition } = worker();
   deps.daily.mockResolvedValue({
     ...edition,
     editorial: { mode: 'fallback' },
-    artifactErrors: [{ stage: 'ai_availability' }],
+    artifactErrors: [{ stage: 'ai_availability', message: 'old', at: 1 }],
   } as any);
   await runBriefJob('owner', 'job', deps as any);
   expect(deps.notify).not.toHaveBeenCalled();
@@ -331,6 +435,75 @@ test('a runtime availability failure remains recoverable instead of completing a
     name: 'briefJobs:settle',
     args: { error: 'The writer will retry automatically.' },
   });
+});
+
+test('no model access during this run publishes the fallback edition and completes the job', async () => {
+  const { deps, calls, edition } = worker();
+  deps.daily.mockResolvedValue({
+    ...edition,
+    editorial: { mode: 'fallback' },
+    artifactErrors: [{ stage: 'ai_availability', message: 'Choose a plan', at: 100 }],
+  } as any);
+  await runBriefJob('owner', 'job', deps as any);
+  expect(deps.notify).toHaveBeenCalledTimes(1);
+  expect(calls.at(-1)?.name).toBe('briefJobs:settle');
+  expect(calls.at(-1)?.args.error).toBeUndefined();
+});
+
+test('area and narrative writers with no model access, or on the last attempt, complete', async () => {
+  for (const kind of ['area', 'narrative']) {
+    const { deps, calls } = worker(kind);
+    deps.area.mockResolvedValue({ pulse: { model: 'local' } });
+    deps.narrative.mockResolvedValue({ status: 'partial' });
+    deps.noAccess.mockResolvedValue(true);
+    await runBriefJob('owner', 'job', deps as any);
+    expect(deps.noAccess).toHaveBeenCalledTimes(1);
+    expect(calls.at(-1)?.args.error).toBeUndefined();
+  }
+  for (const kind of ['daily', 'area', 'narrative']) {
+    const { deps, calls, edition } = worker(kind);
+    const base = deps.mutation;
+    deps.mutation = async (fn: any, args: any) => {
+      const result = await base(fn, args);
+      return getFunctionName(fn) === 'briefJobs:claim'
+        ? { ...result, attempts: BRIEF_JOB_MAX_ATTEMPTS }
+        : result;
+    };
+    deps.daily.mockResolvedValue({ ...edition, editorial: { mode: 'fallback' } } as any);
+    deps.area.mockResolvedValue({ pulse: { model: 'local' } });
+    deps.narrative.mockResolvedValue({ status: 'partial' });
+    await runBriefJob('owner', 'job', deps as any);
+    expect(deps.noAccess).not.toHaveBeenCalled();
+    expect(calls.at(-1)?.args.error).toBeUndefined();
+  }
+});
+
+test('a thrown access or credit error settles as terminal, and other errors retry', async () => {
+  for (const [error, terminal] of [
+    [Object.assign(new Error('Payment required'), { statusCode: 402 }), true],
+    [Object.assign(new Error('Plan'), { name: 'AiAccessError' }), true],
+    [new Error('socket hang up'), false],
+  ] as const) {
+    const { deps, calls } = worker();
+    deps.daily.mockRejectedValue(error);
+    await runBriefJob('owner', 'job', deps as any);
+    expect(calls.at(-1)?.args).toMatchObject(
+      terminal
+        ? { error: 'The writer is unavailable. The edition was published without it.', terminal: true }
+        : { error: 'The writer will retry automatically.' },
+    );
+    if (!terminal) expect(calls.at(-1)?.args.terminal).toBeUndefined();
+  }
+});
+
+test('a retry over a published fallback edition runs quietly', async () => {
+  const { deps, edition } = worker();
+  deps.readDaily.mockResolvedValue({ ...edition, status: 'ready', editorial: { mode: 'fallback' } } as any);
+  await runBriefJob('owner', 'job', deps as any);
+  expect(deps.daily.mock.calls[0][0]).toMatchObject({ quiet: true });
+  deps.readDaily.mockResolvedValue({ _id: edition._id, status: 'partial' } as any);
+  await runBriefJob('owner', 'job', deps as any);
+  expect(deps.daily.mock.calls[1][0]).toMatchObject({ quiet: false });
 });
 
 test('area and narrative workers complete, and duplicate deliveries do no model work', async () => {

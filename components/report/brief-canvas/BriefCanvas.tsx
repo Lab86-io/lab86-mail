@@ -299,24 +299,33 @@ export function BriefCanvas({
             action: {
               label: 'Undo',
               onClick: () => {
-                void undoBriefAction(action.action, payload).then(() => {
-                  record(action, payload, sourceRef, meta, 'undone');
-                  if (hides && key) {
-                    setHiddenRefs((current) => {
-                      const next = new Set(current);
-                      next.delete(key);
-                      return next;
+                void undoBriefActionWithFeedback(action.action, payload, {
+                  onUndone: () => {
+                    record(action, payload, sourceRef, meta, 'undone');
+                    if (hides && key) {
+                      setHiddenRefs((current) => {
+                        const next = new Set(current);
+                        next.delete(key);
+                        return next;
+                      });
+                    }
+                    if (action.action === 'toggle_task' && key) {
+                      setCompletedRefs((current) => {
+                        const next = new Map(current);
+                        if (previousCompleted === undefined) next.delete(key);
+                        else next.set(key, previousCompleted);
+                        return next;
+                      });
+                    }
+                    refresh();
+                  },
+                  onFailed: (error) => {
+                    record(action, payload, sourceRef, meta, 'failed');
+                    toast.error(BRIEF_UNDO_FAILED_COPY, {
+                      description: error instanceof Error ? error.message : undefined,
                     });
-                  }
-                  if (action.action === 'toggle_task' && key) {
-                    setCompletedRefs((current) => {
-                      const next = new Map(current);
-                      if (previousCompleted === undefined) next.delete(key);
-                      else next.set(key, previousCompleted);
-                      return next;
-                    });
-                  }
-                  refresh();
+                    refresh();
+                  },
                 });
               },
             },
@@ -602,6 +611,11 @@ function kindNameForReply(kind: 'doc' | 'sheet' | 'deck') {
   return 'document';
 }
 
+function briefEventIso(value: unknown): string | null {
+  const ms = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 /** Runs one immediate or review action against the live tools. Exported for tests. */
 export async function executeBriefAction(
   action: string,
@@ -689,16 +703,22 @@ export async function executeBriefAction(
         kind: kind as 'doc' | 'sheet' | 'deck',
       };
     }
-    case 'create_event':
+    case 'create_event': {
+      // The calendar tool takes ISO times; the brief carries epoch ms or ISO.
+      const startIso = briefEventIso(payload.startAt);
+      const endIso = briefEventIso(payload.endAt);
+      if (!startIso || !endIso || Date.parse(endIso) <= Date.parse(startIso))
+        throw new Error('The event needs a valid start and end time.');
       return callTool('calendar_create_event', {
         account: required(payload, 'account'),
-        title: required(payload, 'title'),
-        startAt: payload.startAt,
-        endAt: payload.endAt,
+        title: required(payload, 'title').slice(0, 300),
+        startIso,
+        endIso,
         allDay: Boolean(payload.allDay),
         location: optional(payload, 'location'),
         description: optional(payload, 'description'),
       });
+    }
     case 'capture_intent': {
       const response = await fetch('/api/albatross/capture', {
         method: 'POST',
@@ -736,6 +756,25 @@ export async function executeBriefAction(
     default:
       throw new Error(BRIEF_UNKNOWN_ACTION_COPY);
   }
+}
+
+export const BRIEF_UNDO_FAILED_COPY = 'Undo did not finish. The item is still changed.';
+
+/** Runs an Undo and reports a failure instead of dropping it. Exported for tests. */
+export async function undoBriefActionWithFeedback(
+  action: string,
+  payload: BriefActionPayload,
+  handlers: { onUndone: () => void; onFailed: (error: unknown) => void },
+  undo: (action: string, payload: BriefActionPayload) => Promise<unknown> = undoBriefAction,
+) {
+  try {
+    await undo(action, payload);
+  } catch (error) {
+    handlers.onFailed(error);
+    return false;
+  }
+  handlers.onUndone();
+  return true;
 }
 
 async function undoBriefAction(action: string, payload: BriefActionPayload) {
