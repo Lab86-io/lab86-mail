@@ -9,6 +9,7 @@ import { hydrateChatAttachments } from '@/lib/ai/chat-upload-content';
 import { readRecoveryContext, resolveAgentRunId } from '@/lib/ai/execution';
 import { runAgent } from '@/lib/ai/loop';
 import { sanitizeToolPairs } from '@/lib/ai/message-sanitize';
+import { normalizeClientPlatform } from '@/lib/ai/system-prompt';
 import { initialToolGroups } from '@/lib/ai/tool-groups';
 import { readAreaDiscoveryContext } from '@/lib/albatross/area-discovery';
 import { readWorkChatContext, WorkContextNotFoundError } from '@/lib/albatross/work-chat-context';
@@ -38,6 +39,8 @@ interface AgentRequestBody {
   timezone?: string;
   areaDiscovery?: { mode: 'teach' | 'area'; areaId?: string };
   contextAttachments?: Array<{ kind: 'work'; id: string }>;
+  /** The client that renders the chat. Native clients get no web-only UI tools. Default web. */
+  clientPlatform?: 'web' | 'ios' | 'macos';
 }
 
 export class InvalidContextAttachmentError extends Error {
@@ -245,6 +248,7 @@ export async function POST(req: NextRequest) {
       userName: user.name,
       userTimezone: typeof body.timezone === 'string' ? body.timezone : undefined,
       narrativeTopics,
+      clientPlatform: normalizeClientPlatform(body.clientPlatform),
       toolGroups: initialToolGroups({
         hasWorkContext: contextAttachments.some((attachment) => attachment.kind === 'work'),
         hasAreaContext: Boolean(body.areaDiscovery),
