@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PricingPage from '../app/pricing/page';
 import SupportPage from '../app/support/page';
@@ -118,6 +119,42 @@ describe('the pricing page', () => {
     expect(faq.find((entry) => entry.question === 'What is Own key?')?.answer).toContain('$12/month');
     expect(faq[0].answer).toContain('14 days of Pro with no card');
     for (const entry of faq) expect(`${entry.question} ${entry.answer}`).not.toMatch(/\bAI\b/);
+  });
+});
+
+describe('the plans on a phone', () => {
+  const page = () => new JSDOM(renderToStaticMarkup(<PricingPage />)).window.document;
+
+  test('below sm, each plan is one card with every row of the table', () => {
+    const doc = page();
+    const cards = [...doc.querySelectorAll('[data-plan-card]')];
+    expect(cards.map((card) => card.getAttribute('data-plan-card'))).toEqual(['free', 'pro', 'byok']);
+    expect(cards.map((card) => card.querySelector('h3')?.textContent)).toEqual(['Free', 'Pro', 'Own key']);
+    // The cards show only on a phone.
+    expect(cards[0].parentElement?.className.split(' ')).toContain('sm:hidden');
+    const rows = planTableRows();
+    for (const card of cards) {
+      const plan = card.getAttribute('data-plan-card') as 'free' | 'pro' | 'byok';
+      const terms = [...card.querySelectorAll('dt')].map((node) => node.textContent);
+      const values = [...card.querySelectorAll('dd')].map((node) => node.textContent);
+      expect(terms).toEqual(rows.map((row) => row.feature));
+      expect(values).toEqual(rows.map((row) => row[plan]));
+    }
+  });
+
+  test('the table shows from sm up and has no fixed width that scrolls sideways', () => {
+    const doc = page();
+    const table = doc.querySelector('table');
+    expect(table).not.toBeNull();
+    const wrapper = table?.parentElement;
+    expect(wrapper?.className.split(' ')).toEqual(expect.arrayContaining(['hidden', 'sm:block']));
+    expect(table?.className).not.toMatch(/min-w-/);
+    expect([...doc.querySelectorAll('thead th')].map((cell) => cell.textContent)).toEqual([
+      'Feature',
+      'Free',
+      'Pro',
+      'Own key',
+    ]);
   });
 });
 

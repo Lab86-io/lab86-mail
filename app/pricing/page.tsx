@@ -17,6 +17,11 @@ export const dynamic = 'force-dynamic';
 export default function PricingPage() {
   const clerkConfigured = isClerkConfigured();
   const rows = planTableRows();
+  const plans = [
+    { id: 'free', name: FREE_PLAN_NAME },
+    { id: 'pro', name: PAID_PLANS.pro.name },
+    { id: 'byok', name: PAID_PLANS.byok.name },
+  ] as const;
   return (
     <main className="min-h-dvh bg-[var(--color-bg)] px-5 py-12 text-[var(--color-text)]">
       <div className="mx-auto max-w-4xl space-y-14">
@@ -40,22 +45,48 @@ export default function PricingPage() {
           <h2 id="plans" className="text-xl font-semibold">
             Plans
           </h2>
-          <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-            <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+          {/* Below sm, one card per plan with the same rows, so nothing
+              scrolls sideways. The table stays for wider screens. */}
+          <div className="grid gap-3 sm:hidden">
+            {plans.map((plan) => (
+              <section
+                key={plan.id}
+                data-plan-card={plan.id}
+                aria-labelledby={`plan-card-${plan.id}`}
+                className="rounded-xl border border-[var(--color-border)]"
+              >
+                <h3
+                  id={`plan-card-${plan.id}`}
+                  className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 py-3 text-[14px] font-semibold"
+                >
+                  {plan.name}
+                </h3>
+                <dl className="divide-y divide-[var(--color-border)] text-[13px]">
+                  {rows.map((row) => (
+                    <div
+                      key={row.feature}
+                      className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 px-4 py-2.5"
+                    >
+                      <dt className="font-medium">{row.feature}</dt>
+                      <dd className="text-[var(--color-text-muted)]">{row[plan.id]}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto rounded-xl border border-[var(--color-border)] sm:block">
+            <table className="w-full border-collapse text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                   <th scope="col" className="px-4 py-3 font-medium text-[var(--color-text-muted)]">
                     <span className="sr-only">Feature</span>
                   </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    {FREE_PLAN_NAME}
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    {PAID_PLANS.pro.name}
-                  </th>
-                  <th scope="col" className="px-4 py-3 font-semibold">
-                    {PAID_PLANS.byok.name}
-                  </th>
+                  {plans.map((plan) => (
+                    <th key={plan.id} scope="col" className="px-4 py-3 font-semibold">
+                      {plan.name}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -64,9 +95,11 @@ export default function PricingPage() {
                     <th scope="row" className="px-4 py-3 font-medium">
                       {row.feature}
                     </th>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{row.free}</td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{row.pro}</td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{row.byok}</td>
+                    {plans.map((plan) => (
+                      <td key={plan.id} className="px-4 py-3 text-[var(--color-text-muted)]">
+                        {row[plan.id]}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
