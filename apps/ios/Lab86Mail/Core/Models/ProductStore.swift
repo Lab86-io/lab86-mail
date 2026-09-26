@@ -130,6 +130,10 @@ final class ProductStore {
     // The id of the newest edition the server returned. Set on every
     // `get_latest_daily_report`; `selectDailyReport` leaves it alone.
     var latestDailyReportID: String?
+    // The sources behind the shown edition, with their last sync and any
+    // that must reconnect (round 2, FEATURES item 18). The last good read
+    // stays when a refresh fails.
+    var briefSources: BriefSourceHealth?
 
     // True while the shown edition is the newest one (or no newer edition is
     // known yet). Inactive-row hiding stays on in that state and turns off
@@ -688,6 +692,17 @@ final class ProductStore {
             await persistCache()
         } catch {
             briefError = error.localizedDescription
+        }
+        await refreshBriefSources()
+    }
+
+    /// Reads the source health line for the shown edition. A failure keeps
+    /// the last good line; the masthead never blanks on a slow read.
+    func refreshBriefSources() async {
+        do {
+            briefSources = try await BriefSettingsClient(tools: tools).sources(reportID: dailyReport?.id)
+        } catch {
+            // The line is a read-only aid. The brief itself reports errors.
         }
     }
 
@@ -3052,6 +3067,7 @@ final class ProductStore {
         dailyBrief = nil
         dailyReport = nil
         latestDailyReportID = nil
+        briefSources = nil
         areaDetails = [:]
         workDetails = [:]
         allWork = []

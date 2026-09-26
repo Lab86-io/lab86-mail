@@ -10,6 +10,8 @@ struct DailyBriefMasthead: View {
     @Environment(AppEnvironment.self) private var environment
     let generatedAt: Date
     let art: DailyBriefArt?
+    // The edition kind. A `weekly` edition is "The Weekly Review".
+    var kind: String? = nil
 
     @State private var walk = ImageSourceWalk()
     @State private var width: CGFloat = 0
@@ -19,6 +21,18 @@ struct DailyBriefMasthead: View {
     static func height(forWidth width: CGFloat) -> CGFloat {
         guard width > 0 else { return 280 }
         return min(360, max(220, width * 0.62))
+    }
+
+    static let weeklyReviewTitle = "The Weekly Review"
+
+    static func editionTitle(
+        for date: Date,
+        kind: String?,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current
+    ) -> String {
+        if kind == "weekly" { return weeklyReviewTitle }
+        return editionTitle(for: date, timeZone: timeZone, locale: locale)
     }
 
     static func editionTitle(
@@ -61,7 +75,7 @@ struct DailyBriefMasthead: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            Text(Self.editionTitle(for: generatedAt))
+            Text(Self.editionTitle(for: generatedAt, kind: kind))
                 .font(environment.theme.displayType.displayFont(size: 40))
                 .fontWeight(.semibold)
                 .multilineTextAlignment(.center)

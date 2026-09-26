@@ -1201,6 +1201,15 @@ struct DailyReportModel: Hashable, Codable, Sendable {
     private let importantMailItems: [ImportantMailItem]?
     // The overflow backlog. Optional in the cache so older snapshots decode.
     private let overflowItems: [BriefOverflowItem]?
+    // Round 2 edition flags: a light weekend edition and the first edition
+    // after a mailbox connects. Optional so older snapshots decode.
+    private let lightEdition: Bool?
+    private let firstEdition: Bool?
+
+    var isLightEdition: Bool { lightEdition == true }
+    var isFirstEdition: Bool { firstEdition == true }
+    // The Sunday weekly review (round 2, FEATURES item 9).
+    var isWeeklyReview: Bool { kind == "weekly" }
 
     var importantMail: [ImportantMailItem] { importantMailItems ?? [] }
     var overflow: [BriefOverflowItem] { overflowItems ?? [] }
@@ -1278,6 +1287,8 @@ struct DailyReportModel: Hashable, Codable, Sendable {
         errors = (json["errors"]?.arrayValue ?? []).compactMap { $0.stringValue?.nilIfBlank }
         art = DailyBriefArt(json: json["art"])
         services = json["services"]?.arrayValue.map { $0.compactMap { $0.stringValue?.nilIfBlank } }
+        lightEdition = json["light"]?.boolValue
+        firstEdition = json["first"]?.boolValue
     }
 }
 

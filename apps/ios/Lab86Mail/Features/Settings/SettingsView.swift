@@ -43,6 +43,10 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Daily Brief") {
+                    NavigationLink("Delivery and schedule") { BriefSettingsView() }
+                }
+
                 Section("Notifications") {
                     NavigationLink("Delivery and schedule") { NotificationSettingsView() }
                 }

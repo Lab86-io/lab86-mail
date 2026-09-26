@@ -67,8 +67,13 @@ struct BriefDocumentView: View {
                         .font(.footnote)
                         .lineLimit(2)
                     Spacer(minLength: 8)
-                    Button("Undo") { Task { await applyUndo(undo) } }
-                        .font(.footnote.weight(.semibold))
+                    if undo.hasUndo {
+                        Button("Undo") { Task { await applyUndo(undo) } }
+                            .font(.footnote.weight(.semibold))
+                    } else {
+                        Button("Dismiss") { self.undo = nil }
+                            .font(.footnote.weight(.semibold))
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -318,21 +323,50 @@ extension BriefDocumentView {
         let key = sourceRef?.key ?? payload.refKey
         let previousCompleted = key.flatMap { completedRefs[$0] }
         let hides = ["dismiss_task", "resolve_thread", "dismiss_thread", "archive_thread"].contains(action)
+            || BriefRoundTwoActions.hidesItem(action, payload: payload)
         if hides, let key { hiddenRefs.insert(key) }
         if action == "toggle_task", let key, let completed = payload.completed {
             completedRefs[key] = completed
         }
         do {
-            try await executeImmediate(action, payload)
-            undo = BriefUndo(
-                action: action,
-                payload: payload,
-                sourceRef: sourceRef,
-                sourceRefKey: key,
-                previousCompleted: previousCompleted,
-                regionID: regionID,
-                message: immediateMessage(action, payload)
-            )
+            if BriefRoundTwoActions.names.contains(action) {
+                // Steering, Defer, and the look-back Undo are logged
+                // operations. Their Undo runs by the operation id the call
+                // returned, the same inverse Activity runs.
+                let call = try BriefRoundTwoActions.call(action, payload: payload)
+                let result = try await environment.tools.invoke(call.name, arguments: call.arguments)
+                let undoCall = BriefRoundTwoActions.undoCall(
+                    action,
+                    payload: payload,
+                    operationID: result["operationId"]?.stringValue
+                )
+                undo = BriefUndo(
+                    action: action,
+                    payload: payload,
+                    sourceRef: sourceRef,
+                    sourceRefKey: key,
+                    previousCompleted: previousCompleted,
+                    regionID: regionID,
+                    message: BriefRoundTwoActions.message(
+                        action,
+                        payload: payload,
+                        resultSummary: result["summary"]?.stringValue
+                    ),
+                    undoCall: undoCall,
+                    hasUndo: undoCall != nil
+                )
+            } else {
+                try await executeImmediate(action, payload)
+                undo = BriefUndo(
+                    action: action,
+                    payload: payload,
+                    sourceRef: sourceRef,
+                    sourceRefKey: key,
+                    previousCompleted: previousCompleted,
+                    regionID: regionID,
+                    message: immediateMessage(action, payload)
+                )
+            }
             record(action, regionID: regionID, payload: payload, sourceRef: sourceRef, outcome: "done")
             await environment.store.refreshToday()
         } catch {
@@ -427,6 +461,17 @@ extension BriefDocumentView {
         undo = nil
         do {
             let payload = item.payload
+            if BriefRoundTwoActions.names.contains(item.action) {
+                guard let call = item.undoCall else { return }
+                _ = try await environment.tools.invoke(call.name, arguments: call.arguments)
+                if let key = item.sourceRefKey {
+                    hiddenRefs.remove(key)
+                    completedRefs[key] = item.previousCompleted
+                }
+                record(item.action, regionID: item.regionID, payload: payload, sourceRef: item.sourceRef, outcome: "undone")
+                await environment.store.refreshToday()
+                return
+            }
             switch item.action {
             case "toggle_task":
                 guard let ownerID = environment.sessionStore.ownerID,
@@ -588,6 +633,10 @@ private struct BriefUndo: Identifiable {
     let previousCompleted: Bool?
     let regionID: String
     let message: String
+    // Round 2 actions undo through one tool call. An undo of a look-back
+    // operation has none, so its bar only confirms.
+    var undoCall: BriefToolCall? = nil
+    var hasUndo = true
 }
 
 // The action tiers the renderer knows. Shared with the letter rows, which
@@ -597,6 +646,8 @@ enum BriefActionPolicy {
 
     static let immediate: Set<String> = [
         "toggle_task", "dismiss_task", "resolve_thread", "dismiss_thread", "archive_thread",
+        // Round 2: steering, the look-back Undo, and the weekly review's Defer.
+        "steer_item", "undo_operation", "defer_task", "defer_thread",
     ]
     static let review: Set<String> = [
         "rsvp_event", "create_task", "create_event", "draft_reply", "create_document",
@@ -900,11 +951,18 @@ struct BriefActionFlow: View {
 
     @ViewBuilder private var actionButtons: some View {
         ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
-            if BriefActionPolicy.known.contains(action.action) {
+            if BriefActionPolicy.known.contains(action.action), !BriefActionPolicy.isSteering(action.action) {
                 Button(action.label) { Task { await onAction(action, sourceRef) } }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(action.style == "danger" ? Color.red : Color.accentColor)
+            }
+        }
+        // Steering choices sit behind one overflow control (FEATURES item 8).
+        let steering = BriefActionPolicy.steering(actions)
+        if !steering.isEmpty {
+            BriefSteeringMenu(actions: steering) { action in
+                await onAction(action, sourceRef)
             }
         }
     }
@@ -1580,7 +1638,7 @@ extension BriefEventRecord.Ref {
     }
 }
 
-private extension BriefActionPayload {
+extension BriefActionPayload {
     init(action: BriefDocumentAction, sourceRef: BriefSourceRef?) {
         func string(_ key: String) -> String? { action.payload[key]?.stringValue }
         func number(_ key: String) -> Double? { action.payload[key]?.doubleValue }
@@ -1624,6 +1682,12 @@ private extension BriefActionPayload {
             documentID: string("documentId"),
             attachToReply: bool("attachToReply")
         )
+        mode = string("mode")
+        senderEmail = string("senderEmail")
+        operationID = string("operationId")
+        until = number("until")
+        previousDueAt = number("previousDueAt")
+        summary = string("summary")
     }
 
     var refKey: String? {
