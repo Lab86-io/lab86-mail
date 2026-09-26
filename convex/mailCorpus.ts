@@ -581,7 +581,7 @@ export const repairTick = internalAction({
       console.error('[mail-repair cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
       return;
     }
-    const targets = await ctx.runQuery((internal as any).dailyReports.reportTargets, {});
+    const targets = await ctx.runQuery(internal.dailyReports.reportTargets, {});
     const bodies = [
       { kind: 'webhooks' },
       ...targets.map((target: { userId: string }) => ({ kind: 'sweep', userId: target.userId })),
@@ -1344,7 +1344,7 @@ export const hasDueSnoozes = internalQuery({
 export const snoozeTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const due = await ctx.runQuery((internal as any).mailCorpus.hasDueSnoozes, {});
+    const due = await ctx.runQuery(internal.mailCorpus.hasDueSnoozes, {});
     if (!due) return;
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';

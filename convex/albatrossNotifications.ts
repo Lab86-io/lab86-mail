@@ -1308,7 +1308,7 @@ async function runCheckinBackgroundTick(ctx: ActionCtx, kind: 'reflection' | 'to
     console.error(`[checkin-${kind} cron] missing LAB86_MAIL_PUBLIC_URL or internal secret`);
     return;
   }
-  const refs = internal.albatrossNotifications as any;
+  const refs = internal.albatrossNotifications;
   const candidates = await ctx.runQuery(
     kind === 'reflection' ? refs.reflectionReconcileCandidates : refs.tomorrowPlanCandidates,
     {},
@@ -1439,9 +1439,9 @@ export const queueHorizonWake = internalMutation({
 export const missedMoveTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.missedRecoveryCandidates, {});
+    const candidates = await ctx.runQuery(internal.albatrossWorkV2.missedRecoveryCandidates, {});
     for (const candidate of candidates) {
-      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+      await ctx.runMutation(internal.albatrossNotifications.queueWorkConductorNotice, {
         userId: candidate.userId,
         workId: candidate.workId,
         title: 'That block passed',
@@ -1455,9 +1455,9 @@ export const missedMoveTick = internalAction({
 export const stalenessReviewTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const candidates = await ctx.runQuery((internal as any).albatrossWorkV2.stalenessReviewCandidates, {});
+    const candidates = await ctx.runQuery(internal.albatrossWorkV2.stalenessReviewCandidates, {});
     for (const candidate of candidates) {
-      await ctx.runMutation((internal as any).albatrossNotifications.queueWorkConductorNotice, {
+      await ctx.runMutation(internal.albatrossNotifications.queueWorkConductorNotice, {
         userId: candidate.userId,
         workId: candidate.workId,
         title: 'Still carrying this?',
@@ -2168,7 +2168,7 @@ export const claimMailDigest = mutation({
 export const mailDigestTick = internalAction({
   args: {},
   handler: async (ctx) => {
-    const due = await ctx.runQuery((internal as any).albatrossNotifications.hasDueMailDigests, {});
+    const due = await ctx.runQuery(internal.albatrossNotifications.hasDueMailDigests, {});
     if (!due) return;
     const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';

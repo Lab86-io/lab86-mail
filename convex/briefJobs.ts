@@ -199,7 +199,7 @@ export const enqueue = mutation({
     } else if (args.kind === 'area' && args.force) {
       await markAreaGenerating(ctx, args.userId, args.areaId!);
     }
-    await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [id] });
+    await ctx.scheduler.runAfter(0, internal.briefJobs.deliver, { ids: [id] });
     return { jobId: id, reportId: args.reportId, started: true };
   },
 });
@@ -268,7 +268,7 @@ export const settle = mutation({
     if (job.kind === 'area' && job.force && args.force === false && !args.error) {
       await ctx.db.patch(job._id, { state: 'queued', token: undefined, availableAt: now });
       await markAreaGenerating(ctx, job.userId, job.areaId!);
-      await ctx.scheduler.runAfter(0, (internal as any).briefJobs.deliver, { ids: [job._id] });
+      await ctx.scheduler.runAfter(0, internal.briefJobs.deliver, { ids: [job._id] });
       return true;
     }
     const final = !args.error || args.terminal === true || job.attempts >= BRIEF_JOB_MAX_ATTEMPTS;
@@ -319,7 +319,7 @@ export const settle = mutation({
         .unique();
       if (brief) await ctx.db.patch(brief._id, { status: 'generating', error: undefined, updatedAt: now });
     }
-    await ctx.scheduler.runAt(retryAt, (internal as any).briefJobs.deliver, { ids: [job._id] });
+    await ctx.scheduler.runAt(retryAt, internal.briefJobs.deliver, { ids: [job._id] });
     return true;
   },
 });
@@ -354,7 +354,7 @@ export const deliver = internalAction({
     const url = process.env.LAB86_MAIL_PUBLIC_URL?.replace(/\/$/, '');
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
-    const targets = await ctx.runQuery((internal as any).briefJobs.targets, args);
+    const targets = await ctx.runQuery(internal.briefJobs.targets, args);
     // This short request only acknowledges a durable job; it never waits for AI.
     await fanOutInternalPost(`${url}/api/cron/brief-job`, secret, targets, { label: 'brief jobs' });
   },
@@ -362,8 +362,8 @@ export const deliver = internalAction({
 export const recover = internalAction({
   args: {},
   handler: async (ctx) => {
-    const jobs = await ctx.runQuery((internal as any).briefJobs.due, {});
+    const jobs = await ctx.runQuery(internal.briefJobs.due, {});
     if (jobs.length)
-      await ctx.runAction((internal as any).briefJobs.deliver, { ids: jobs.map((job: any) => job._id) });
+      await ctx.runAction(internal.briefJobs.deliver, { ids: jobs.map((job: any) => job._id) });
   },
 });

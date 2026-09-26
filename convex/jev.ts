@@ -435,7 +435,7 @@ export const reprocess = mutation({
   args: { internalSecret: v.optional(v.string()), userId: v.string() },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
-    await ctx.scheduler.runAfter(0, (internal as any).jev.queueUser, { userId: args.userId });
+    await ctx.scheduler.runAfter(0, internal.jev.queueUser, { userId: args.userId });
     return { queued: true };
   },
 });
@@ -481,7 +481,7 @@ export const queueUser = internalMutation({
         jevLeaseUntil: undefined,
       });
     if (!page.isDone)
-      await ctx.scheduler.runAfter(1_000, (internal as any).jev.queueUser, {
+      await ctx.scheduler.runAfter(1_000, internal.jev.queueUser, {
         userId: args.userId,
         cursor: page.continueCursor,
       });
@@ -496,7 +496,7 @@ export const queueUnassessed = internalMutation({
       .take(100);
     for (const row of rows)
       await ctx.db.patch(row._id, { jevVersion: 0, llmPending: true, jevStatus: 'pending', jevAttempts: 0 });
-    if (rows.length === 100) await ctx.scheduler.runAfter(1_000, (internal as any).jev.queueUnassessed, {});
+    if (rows.length === 100) await ctx.scheduler.runAfter(1_000, internal.jev.queueUnassessed, {});
   },
 });
 export const usersWithMail = internalMutation({
@@ -510,7 +510,7 @@ export const tick = internalAction({
     const base = process.env.LAB86_MAIL_PUBLIC_URL;
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!base || !secret) return;
-    const users: string[] = await ctx.runMutation((internal as any).jev.usersWithMail, {});
+    const users: string[] = await ctx.runMutation(internal.jev.usersWithMail, {});
     await fanOutInternalPost(
       `${base.replace(/\/$/, '')}/api/cron/jev`,
       secret,

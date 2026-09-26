@@ -2232,12 +2232,13 @@ export const mailWatchTick = internalAction({
       console.error('[mail watch cron] missing LAB86_MAIL_PUBLIC_URL');
       return;
     }
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
     await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     const candidates = await ctx.runQuery(refs.mailWatchCandidates, {});
     let completed = 0;
     for (const candidate of candidates) {
-      const claim = await ctx.runMutation(refs.beginMailWatch, { workId: candidate.workId });
+      const workId = candidate.workId as Id<'albatrossIntents'>;
+      const claim = await ctx.runMutation(refs.beginMailWatch, { workId });
       if (!claim) continue;
       let ok = false;
       try {
@@ -2249,7 +2250,7 @@ export const mailWatchTick = internalAction({
           })) === 1;
         if (ok) completed += 1;
       } finally {
-        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId: candidate.workId });
+        if (!ok) await ctx.runMutation(refs.releaseMailWatch, { workId });
       }
     }
     if (candidates.length) {
@@ -2258,11 +2259,15 @@ export const mailWatchTick = internalAction({
   },
 });
 
-async function materializePendingStepEvidence(ctx: ActionCtx, secret: string, refs: any) {
+async function materializePendingStepEvidence(
+  ctx: ActionCtx,
+  secret: string,
+  refs: typeof internal.albatrossWorkV2,
+) {
   const pending = await ctx.runQuery(refs.pendingStepEvidenceCandidates, {});
   for (const entry of pending) {
     try {
-      await ctx.runMutation((api as any).albatrossWorkV2.attachProof, {
+      await ctx.runMutation(api.albatrossWorkV2.attachProof, {
         internalSecret: secret,
         userId: entry.userId,
         workId: entry.workId,
@@ -2298,7 +2303,7 @@ export const stepEvidenceMaterializeTick = internalAction({
       console.error('[step evidence materializer] missing internal secret');
       return;
     }
-    await materializePendingStepEvidence(ctx, secret, (internal as any).albatrossWorkV2);
+    await materializePendingStepEvidence(ctx, secret, internal.albatrossWorkV2);
   },
 });
 
@@ -2310,7 +2315,7 @@ export const evidenceReconcileTick = internalAction({
       console.error('[evidence reconcile cron] missing internal secret');
       return;
     }
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
     await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     await materializePendingStepEvidence(ctx, secret, refs);
 
@@ -2388,15 +2393,17 @@ export const wakeHorizon = internalMutation({
 export const horizonWakeTick = internalAction({
   args: {},
   handler: async (ctx: ActionCtx) => {
-    const refs = (internal as any).albatrossWorkV2;
+    const refs = internal.albatrossWorkV2;
     await ctx.runMutation(refs.sweepStaleConductorFlags, {});
     const candidates = await ctx.runQuery(refs.horizonWakeCandidates, {});
     let woken = 0;
     for (const candidate of candidates) {
-      const wake = await ctx.runMutation(refs.wakeHorizon, { workId: candidate.workId });
+      const wake = await ctx.runMutation(refs.wakeHorizon, {
+        workId: candidate.workId as Id<'albatrossIntents'>,
+      });
       if (!wake) continue;
       woken += 1;
-      await ctx.runMutation((internal as any).albatrossNotifications.queueHorizonWake, {
+      await ctx.runMutation(internal.albatrossNotifications.queueHorizonWake, {
         userId: wake.userId,
         workId: wake.workId,
         title: wake.title,

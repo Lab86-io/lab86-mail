@@ -623,7 +623,7 @@ export const semanticSearch = action({
       limit: 80,
       filter: (q) => q.eq('userId', args.userId),
     });
-    return ctx.runQuery((internal as any).content.vectorRows, {
+    return ctx.runQuery(internal.content.vectorRows, {
       userId: args.userId,
       ids: matches.filter((r) => r._score > 0.3).map((r) => r._id),
     });
@@ -704,8 +704,8 @@ export const tick = internalAction({
     const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     if (!url || !secret) return;
     const pages = await Promise.all(
-      ['connectedAccounts', 'mcpConnections', 'cloudFileConnections'].map((source) =>
-        ctx.runMutation((internal as any).content.users, { source }),
+      (['connectedAccounts', 'mcpConnections', 'cloudFileConnections'] as const).map((source) =>
+        ctx.runMutation(internal.content.users, { source }),
       ),
     );
     const users = [...new Set(pages.flat())];

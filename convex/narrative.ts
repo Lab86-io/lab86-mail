@@ -18,6 +18,7 @@ import {
 import { type Observation, observationsForRow } from '../lib/narrative/observations';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { documentModel } from './documents';
@@ -148,7 +149,7 @@ async function visible(ctx: QueryCtx | MutationCtx, row: any, prefs: any, meter?
 async function invalidate(ctx: MutationCtx, userId: string) {
   // Read-time version/consent checks revoke access immediately. Physical cleanup
   // is bounded, and must never delete an unrelated older chapter.
-  await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, { userId });
+  await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId });
 }
 
 export const status = query({
@@ -538,7 +539,7 @@ async function queueRefresh(ctx: MutationCtx, userId: string) {
   const at = Math.max(Date.now() + 30_000, (prefs.lastRunAt || 0) + 300_000, (prefs.leaseUntil || 0) + 1000);
   const token = `${Date.now()}:${prefs.revision}`;
   await ctx.db.patch(prefs._id, { refreshToken: token, refreshScheduledAt: at });
-  await ctx.scheduler.runAt(at, (internal as any).narrative.flushRefresh, { userId, token });
+  await ctx.scheduler.runAt(at, internal.narrative.flushRefresh, { userId, token });
 }
 
 export async function scheduleNarrativeSource(
@@ -549,7 +550,7 @@ export async function scheduleNarrativeSource(
 ) {
   const prefs = await settings(ctx, userId);
   if (!prefs?.enabled || prefs.cleaning) return;
-  await ctx.scheduler.runAfter(0, (internal as any).narrative.captureSource, { userId, table, id });
+  await ctx.scheduler.runAfter(0, internal.narrative.captureSource, { userId, table, id });
 }
 
 // Only internal server mutations can supply source identities. No text supplied
@@ -587,11 +588,11 @@ export const flushRefresh = internalMutation({
     const at = Math.max((prefs.leaseUntil || 0) + 1000, (prefs.lastRunAt || 0) + 300_000);
     if (at > Date.now()) {
       await ctx.db.patch(prefs._id, { refreshScheduledAt: at });
-      await ctx.scheduler.runAt(at, (internal as any).narrative.flushRefresh, args);
+      await ctx.scheduler.runAt(at, internal.narrative.flushRefresh, args);
       return;
     }
     await ctx.db.patch(prefs._id, { refreshToken: undefined, refreshScheduledAt: undefined });
-    await ctx.scheduler.runAfter(0, (internal as any).narrative.refreshUser, { userId: args.userId });
+    await ctx.scheduler.runAfter(0, internal.narrative.refreshUser, { userId: args.userId });
   },
 });
 export const refreshTarget = internalQuery({
@@ -603,7 +604,7 @@ export const refreshUser = internalAction({
   handler: async (ctx, args) => {
     const url = process.env.LAB86_MAIL_PUBLIC_URL,
       secret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
-    if (!url || !secret || !(await ctx.runQuery((internal as any).narrative.refreshTarget, args))) return;
+    if (!url || !secret || !(await ctx.runQuery(internal.narrative.refreshTarget, args))) return;
     await fanOutInternalPost(`${url.replace(/\/$/, '')}/api/cron/narrative`, secret, [args], {
       concurrency: 1,
       timeoutMs: 10_000,
@@ -1113,14 +1114,14 @@ export const compile = mutation({
         key,
         level: bucket.level,
         period: bucket.period,
-        ids: selectCompactionEvidence(bucket.entries).map((row) => row._id),
+        ids: selectCompactionEvidence(bucket.entries).map((row) => row._id as Id<'narrativeEntries'>),
         truncated: recent.length === 800 || pinned.length === 160,
         compacted: bucket.level !== 'thread',
       };
       // Merging earlier windows also rechecks their provenance. One immediate
       // bucket leaves room below Convex's read cap; others get their own transaction.
       if (index < 1) await writeNarrativeBucket(ctx, prefs, job);
-      else await ctx.scheduler.runAfter(0, (internal as any).narrative.compileBucket, job);
+      else await ctx.scheduler.runAfter(0, internal.narrative.compileBucket, job);
     }
     return { count: buckets.size };
   },
@@ -1417,7 +1418,7 @@ export const cleanup = internalMutation({
         await ctx.db.delete(row._id);
     }
     if (!page.isDone)
-      await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, {
+      await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
         ...args,
         cursor: page.continueCursor,
       });
@@ -1431,7 +1432,7 @@ export const cleanup = internalMutation({
           .take(200);
         for (const item of remaining) await ctx.db.delete(item._id);
         if (remaining.length === 200) {
-          await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, {
+          await ctx.scheduler.runAfter(0, internal.narrative.cleanup, {
             userId: args.userId,
             all: true,
           });
@@ -1459,7 +1460,7 @@ export const erase = mutation({
         refreshToken: undefined,
         refreshScheduledAt: undefined,
       });
-    await ctx.scheduler.runAfter(0, (internal as any).narrative.cleanup, { userId, all: true });
+    await ctx.scheduler.runAfter(0, internal.narrative.cleanup, { userId, all: true });
     return {
       ok: true,
       note: 'Memory is inaccessible immediately; stored copies are being removed. Source opt-outs are retained so forgotten items do not return. Original source data is unchanged.',

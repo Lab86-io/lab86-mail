@@ -51,8 +51,7 @@ export const select = mutation({
         updatedBy: args.updatedBy,
       });
     const changed = previous !== args.classifierId;
-    if (changed)
-      await ctx.scheduler.runAfter(0, (internal as any).classifier.requeueAfterSwitch, { since: ts });
+    if (changed) await ctx.scheduler.runAfter(0, internal.classifier.requeueAfterSwitch, { since: ts });
     return { classifierId: args.classifierId, revision: ts, requeued: changed };
   },
 });
@@ -102,7 +101,7 @@ export const requeueAfterSwitch = internalMutation({
         });
     }
     if (!page.isDone)
-      await ctx.scheduler.runAfter(1_000, (internal as any).classifier.requeueAfterSwitch, {
+      await ctx.scheduler.runAfter(1_000, internal.classifier.requeueAfterSwitch, {
         since: args.since,
         cursor: page.continueCursor,
       });
