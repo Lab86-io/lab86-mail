@@ -153,4 +153,10 @@ crons.interval(
 
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
+// Retention for tables that otherwise grow with no limit: expired one-time
+// codes, processed webhook payloads older than 14 days, lapsed rate-limit
+// windows, and expired OAuth states. The sweep reschedules itself while a
+// batch comes back full.
+crons.hourly('retention sweep', { minuteUTC: 41 }, internal.retention.sweep, {});
+
 export default crons;

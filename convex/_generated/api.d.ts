@@ -54,6 +54,7 @@ import type * as narrativeSchema from "../narrativeSchema.js";
 import type * as officeDocuments from "../officeDocuments.js";
 import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
+import type * as retention from "../retention.js";
 import type * as smart from "../smart.js";
 import type * as suggestions from "../suggestions.js";
 import type * as userData from "../userData.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   officeDocuments: typeof officeDocuments;
   operations: typeof operations;
   rateLimits: typeof rateLimits;
+  retention: typeof retention;
   smart: typeof smart;
   suggestions: typeof suggestions;
   userData: typeof userData;
