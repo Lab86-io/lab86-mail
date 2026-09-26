@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 
@@ -809,13 +809,200 @@ describe('boards Convex runtime', () => {
     ]);
     expect(report[0]).toMatchObject({ cardId: dueSoon, boardTitle: 'Personal', columnName: 'Today' });
     expect(report[1].cardId).toBe(dueLater);
-    // The cap applies before the completion filter: a tiny limit that only
-    // reaches the completed card yields nothing.
+    // Completed cards never use up the cap: a limit of one is the soonest open card.
     const capped = await owner.query(api.boards.listReportCards, {
       since: 0,
       endAt: base + 200_000,
       limit: 1,
     });
-    expect(capped).toEqual([]);
+    expect(capped.map((card) => card.title)).toEqual(['Due soon']);
+    // The window applies: a card due after endAt is left out.
+    const narrow = await owner.query(api.boards.listReportCards, { since: 0, endAt: base + 10_000 });
+    expect(narrow.map((card) => card.title)).toEqual(['Due soon', 'Due later', 'No due date']);
+  });
+
+  test('listReportCards includes cards other members made on a shared board (TSK-3)', async () => {
+    const { t, owner } = makeHarness();
+    await seedUser(t, 'user_member', 'member@example.com');
+    const member = t.withIdentity({ subject: 'user_member', email: 'member@example.com' });
+    const boardId = await owner.mutation(api.boards.createBoard, { title: 'Team', columns: ['Now'] });
+    await owner.mutation(api.boards.inviteMember, { boardId, email: 'member@example.com', role: 'member' });
+    const [column] = await boardColumns(t, boardId);
+    const base = Date.now();
+    await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: column._id,
+      title: 'Owner task',
+      dueAt: base + 1_000,
+    });
+    // An old card with no due date and no recent change is out of the window.
+    const stale = await member.mutation(api.boards.createCard, {
+      boardId,
+      columnId: column._id,
+      title: 'Stale',
+    });
+    await t.run((ctx) => ctx.db.patch(stale, { updatedAt: base - 90 * 86_400_000 }));
+
+    const report = await member.query(api.boards.listReportCards, {
+      since: base - 86_400_000,
+      endAt: base + 86_400_000,
+    });
+    expect(report.map((card) => card.title)).toEqual(['Owner task']);
+    expect(report[0]).toMatchObject({ boardTitle: 'Team', columnName: 'Now' });
+  });
+});
+
+describe('card attachment storage (TSK-2)', () => {
+  async function store(t: ReturnType<typeof convexTest>, bytes: number, type: string) {
+    return t.run((ctx) => ctx.storage.store(new Blob([new Uint8Array(bytes)], { type })));
+  }
+  async function blobExists(t: ReturnType<typeof convexTest>, id: Id<'_storage'>) {
+    return Boolean(await t.run((ctx) => ctx.db.system.get(id)));
+  }
+
+  test('size and type come from storage, and blocked files are deleted', async () => {
+    const { t, owner } = makeHarness();
+    const boardId = await owner.mutation(api.boards.ensureDefaultBoard, {});
+    const [today] = await boardColumns(t, boardId);
+    const cardId = await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: today._id,
+      title: 'Files',
+    });
+
+    const pdf = await store(t, 2_048, 'application/pdf');
+    await owner.mutation(api.boards.attachToCard, {
+      cardId,
+      name: 'plan.pdf',
+      storageId: pdf,
+      contentType: 'image/png',
+      size: 1,
+    });
+    const card = await t.run((ctx) => ctx.db.get(cardId));
+    // The stored size wins over the size the client claims.
+    expect(card?.attachments?.[0]).toMatchObject({ size: 2_048 });
+
+    // The test storage keeps no content type, so the claimed type is checked.
+    const page = await store(t, 10, 'text/html');
+    await expect(
+      owner.mutation(api.boards.attachToCard, {
+        cardId,
+        name: 'x.html',
+        storageId: page,
+        contentType: 'text/html',
+      }),
+    ).rejects.toThrow('This file type cannot be attached');
+    // The upload check deletes a refused file and returns the reason.
+    expect(
+      await owner.mutation(api.boards.verifyAttachmentUpload, {
+        cardId,
+        storageId: page,
+        contentType: 'text/html',
+      }),
+    ).toEqual({ ok: false, error: 'This file type cannot be attached. Upload a PDF, image, or document.' });
+    expect(await blobExists(t, page)).toBe(false);
+    expect(
+      await owner.mutation(api.boards.verifyAttachmentUpload, { boardId, storageId: pdf }),
+    ).toMatchObject({
+      ok: true,
+      size: 2_048,
+    });
+
+    const huge = await store(t, 25 * 1024 * 1024 + 1, 'application/pdf');
+    await expect(
+      owner.mutation(api.boards.createCard, {
+        boardId,
+        columnId: today._id,
+        title: 'Big',
+        attachments: [{ name: 'big.pdf', storageId: huge }],
+      }),
+    ).rejects.toThrow('at most 25 MB');
+    await owner.mutation(api.boards.verifyAttachmentUpload, { boardId, storageId: huge });
+    expect(await blobExists(t, huge)).toBe(false);
+  });
+
+  test('card, column, and board deletes remove their files', async () => {
+    const { t, owner } = makeHarness();
+    const boardId = await owner.mutation(api.boards.createBoard, { title: 'Ops', columns: ['A', 'B'] });
+    const [columnA, columnB] = await boardColumns(t, boardId);
+    const blobs = await Promise.all([1, 2, 3].map(() => store(t, 8, 'image/png')));
+    const cardA = await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: columnA._id,
+      title: 'A',
+      attachments: [{ name: 'a.png', storageId: blobs[0] }],
+    });
+    await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: columnB._id,
+      title: 'B',
+      attachments: [{ name: 'b.png', storageId: blobs[1] }],
+    });
+    // A file shared by two cards stays while one card still refers to it.
+    const shared = await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: columnB._id,
+      title: 'Shared',
+      attachments: [
+        { name: 'a.png', storageId: blobs[0] },
+        { name: 'c.png', storageId: blobs[2] },
+      ],
+    });
+    await owner.mutation(api.boards.deleteCard, { cardId: cardA });
+    expect(await blobExists(t, blobs[0])).toBe(true);
+    await owner.mutation(api.boards.deleteCard, { cardId: shared });
+    expect(await blobExists(t, blobs[0])).toBe(false);
+    expect(await blobExists(t, blobs[2])).toBe(false);
+
+    const again = await store(t, 8, 'image/png');
+    await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: columnA._id,
+      title: 'A2',
+      attachments: [{ name: 'a2.png', storageId: again }],
+    });
+    await owner.mutation(api.boards.deleteColumn, { columnId: columnA._id });
+    expect(await blobExists(t, again)).toBe(false);
+    expect(await blobExists(t, blobs[1])).toBe(true);
+    await owner.mutation(api.boards.deleteBoard, { boardId });
+    expect(await blobExists(t, blobs[1])).toBe(false);
+  });
+
+  test('a removed attachment is deleted after the grace period unless it is put back', async () => {
+    const { t, owner } = makeHarness();
+    const boardId = await owner.mutation(api.boards.ensureDefaultBoard, {});
+    const [today] = await boardColumns(t, boardId);
+    const [kept, dropped] = await Promise.all([store(t, 8, 'image/png'), store(t, 8, 'image/png')]);
+    const cardId = await owner.mutation(api.boards.createCard, {
+      boardId,
+      columnId: today._id,
+      title: 'Files',
+      attachments: [
+        { name: 'kept.png', storageId: kept },
+        { name: 'dropped.png', storageId: dropped },
+      ],
+    });
+    await owner.mutation(api.boards.updateCard, {
+      cardId,
+      attachments: [{ name: 'kept.png', storageId: kept }],
+    });
+    const [job] = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(job.name).toBe('boards:deleteDetachedAttachments');
+    expect(await blobExists(t, dropped)).toBe(true);
+    await t.mutation(internal.boards.deleteDetachedAttachments, job.args[0] as any);
+    expect(await blobExists(t, dropped)).toBe(false);
+    expect(await blobExists(t, kept)).toBe(true);
+
+    // Undo put the file back before the job ran: it stays.
+    const restored = await store(t, 8, 'image/png');
+    await owner.mutation(api.boards.updateCard, {
+      cardId,
+      attachments: [
+        { name: 'kept.png', storageId: kept },
+        { name: 'r.png', storageId: restored },
+      ],
+    });
+    await t.mutation(internal.boards.deleteDetachedAttachments, { cardId, storageIds: [restored] });
+    expect(await blobExists(t, restored)).toBe(true);
   });
 });

@@ -2191,6 +2191,7 @@ export default defineSchema({
     .index('by_user_source_intent', ['userId', 'source.intentId'])
     .index('by_board', ['boardId'])
     .index('by_board_updatedAt', ['boardId', 'updatedAt'])
+    .index('by_board_due', ['boardId', 'dueAt'])
     .index('by_column_order', ['columnId', 'order'])
     .index('by_user', ['userId'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
