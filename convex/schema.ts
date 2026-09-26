@@ -225,10 +225,7 @@ export default defineSchema({
     currentPeriodEnd: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_stripe_customer', ['stripeCustomerId'])
-    .index('by_stripe_subscription', ['stripeSubscriptionId']),
+  }).index('by_user', ['userId']),
 
   aiUsagePeriods: defineTable({
     userId: v.string(),
@@ -324,7 +321,6 @@ export default defineSchema({
     .index('by_user_lastDate', ['userId', 'lastDate'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_account_thread', ['accountId', 'providerThreadId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'providerThreadId'])
     .index('by_user_account_updated', ['userId', 'accountId', 'lastDate'])
@@ -342,7 +338,6 @@ export default defineSchema({
     .index('by_user_area_version', ['userId', 'areaClassifierVersion', 'lastDate'])
     .index('by_user_area_pending', ['userId', 'areaRoutingPending', 'lastDate'])
     // Backlog sweep: rows without smartPrimary sort first under undefined.
-    .index('by_smart_primary', ['smartPrimary'])
     .index('by_smart_classifier_version', ['smartClassifierVersion']),
 
   mailCorpusMessages: defineTable({
@@ -478,7 +473,6 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_area', ['areaId'])
-    .index('by_area_status', ['areaId', 'status'])
     .index('by_user_area_status', ['userId', 'areaId', 'status'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
     .index('by_user_status', ['userId', 'status'])
@@ -554,8 +548,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_status', ['userId', 'status'])
-    .index('by_user_updatedAt', ['userId', 'updatedAt'])
-    .index('by_user_area_updatedAt', ['userId', 'areaId', 'updatedAt']),
+    .index('by_user_updatedAt', ['userId', 'updatedAt']),
 
   albatrossProjects: defineTable({
     userId: v.string(),
@@ -730,8 +723,7 @@ export default defineSchema({
     .index('by_project', ['projectId'])
     .index('by_area', ['areaId'])
     .index('by_user_status', ['userId', 'status'])
-    .index('by_status_nextRunAt', ['status', 'nextRunAt'])
-    .index('by_user_project_status', ['userId', 'projectId', 'status']),
+    .index('by_status_nextRunAt', ['status', 'nextRunAt']),
 
   albatrossRoutineRuns: defineTable({
     userId: v.string(),
@@ -760,8 +752,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_routine', ['routineId'])
     .index('by_project', ['projectId'])
-    .index('by_routine_runKey', ['routineId', 'runKey'])
-    .index('by_user_status_scheduled', ['userId', 'status', 'scheduledFor']),
+    .index('by_routine_runKey', ['routineId', 'runKey']),
 
   // Source-normalized evidence is the substrate for the personal index. The
   // target is optional: unassigned evidence remains searchable until the user
@@ -1291,7 +1282,6 @@ export default defineSchema({
     .index('by_user_external', ['userId', 'externalId'])
     .index('by_updatedAt', ['updatedAt'])
     .index('by_user_updatedAt', ['userId', 'updatedAt'])
-    .index('by_user_autoassigned', ['userId', 'areaAutoAssigned'])
     .index('by_user_primary_area', ['userId', 'primaryAreaId'])
     .index('by_user_work_state', ['userId', 'workState'])
     .index('by_work_state_conductor', ['workState', 'lastConductorAt'])
@@ -1300,8 +1290,7 @@ export default defineSchema({
     .index('by_mail_watch', ['mailWatchAt'])
     .index('by_user_reply_received', ['userId', 'replyReceivedAt'])
     .index('by_horizon_wake', ['horizonWakeAt'])
-    .index('by_plan_retry', ['planRetryAt'])
-    .index('by_capture', ['captureId']),
+    .index('by_plan_retry', ['planRetryAt']),
 
   // One logged value for a practice-shaped Work. The trend, the streak of
   // weeks with a log, and the weekly review line are all computed from these
@@ -1374,8 +1363,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt'])
-    .index('by_work', ['workId'])
-    .index('by_user_unresolved', ['userId', 'resolvedAt']),
+    .index('by_work', ['workId']),
 
   albatrossIntentPlans: defineTable({
     userId: v.string(),
@@ -1517,7 +1505,6 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_account', ['accountId'])
     .index('by_status', ['status']),
 
   // Snoozed mail threads (MUT-1). Snooze moves the thread out of the inbox
@@ -1561,10 +1548,8 @@ export default defineSchema({
     .index('by_event', ['eventId'])
     .index('by_status_next_attempt', ['status', 'nextAttemptAt'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account', ['accountId'])
     .index('by_grant', ['grantId'])
-    .index('by_status', ['status'])
-    .index('by_received', ['receivedAt']),
+    .index('by_status', ['status']),
 
   // One-time codes lifted out of incoming mail so the phone can offer them to
   // AutoFill. These are live authentication secrets with a very short useful
@@ -2405,8 +2390,7 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_type_created', ['userId', 'type', 'createdAt'])
-    .index('by_user_dedupe', ['userId', 'dedupeKey'])
-    .index('by_scheduled', ['scheduledFor']),
+    .index('by_user_dedupe', ['userId', 'dedupeKey']),
 
   albatrossNotificationPreferences: defineTable({
     userId: v.string(),
@@ -2493,8 +2477,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_notification', ['notificationId'])
-    .index('by_user', ['userId'])
-    .index('by_status_scheduled', ['status', 'scheduledFor']),
+    .index('by_user', ['userId']),
 
   // One durable receipt per notification/device prevents a transient failure
   // on one install from causing an already-delivered install to receive a
@@ -2584,7 +2567,6 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_date', ['userId', 'localDate'])
     .index('by_narrative_updated', ['userId', 'updatedAt'])
-    .index('by_user_status_date', ['userId', 'status', 'localDate'])
     .index('by_reflection_reconcile', ['reflectionReconcileStatus', 'reflectionReconcileNextAt'])
     .index('by_tomorrow_plan', ['tomorrowPlanStatus', 'tomorrowPlanNextAt']),
 
@@ -2629,8 +2611,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_status', ['status'])
-    .index('by_server', ['server']),
+    .index('by_status', ['status']),
 
   mcpCredentials: defineTable({
     userId: v.string(),
@@ -2735,8 +2716,7 @@ export default defineSchema({
   })
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
-    .index('by_connection_external', ['connectionId', 'externalId'])
-    .index('by_card', ['cardId']),
+    .index('by_connection_external', ['connectionId', 'externalId']),
 
   // One row per user action on a brief item (brief round 2026-09-22). The
   // generator reads nothing from here yet; the rows measure which regions and
@@ -2754,6 +2734,5 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_user', ['userId'])
-    .index('by_user_created', ['userId', 'createdAt'])
-    .index('by_user_report', ['userId', 'reportId']),
+    .index('by_user_created', ['userId', 'createdAt']),
 });
