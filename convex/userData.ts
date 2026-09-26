@@ -109,7 +109,7 @@ export const dailyReportPage = query({
   args: {
     internalSecret: v.optional(v.string()),
     userId: v.string(),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'), v.literal('weekly'))),
     cursor: v.union(v.string(), v.null()),
     limit: v.number(),
     summaryOnly: v.boolean(),

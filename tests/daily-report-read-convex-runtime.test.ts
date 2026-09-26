@@ -49,6 +49,28 @@ describe('bounded brief reads', () => {
     ).rejects.toThrow();
   });
 
+  test('the latest weekly review is read by its edition', async () => {
+    // get_latest_daily_report accepts kind 'weekly'; the read used to fail argument validation.
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (const [key, generatedAt, kind] of [
+        ['weekly-old', 100, 'weekly'],
+        ['weekly-new', 200, 'weekly'],
+        ['manual-latest', 300, 'manual'],
+      ] as const)
+        await ctx.db.insert('userDocs', {
+          userId: 'reader',
+          kind: 'dailyReport',
+          key,
+          createdAt: generatedAt,
+          updatedAt: generatedAt,
+          doc: { _id: key, kind, generatedAt, title: key },
+        });
+    });
+    const result = await t.query(api.userData.dailyReportPage, { ...args, edition: 'weekly' });
+    expect(result.page.map((r) => r._id)).toEqual(['weekly-new']);
+  });
+
   test('a history larger than the read limit is paged without returning artifact bodies in summaries', async () => {
     const t = convexTest(schema, modules);
     const html = 'x'.repeat(750_000);

@@ -11,7 +11,7 @@ import { buildNativeDailyReportArtifact } from '../mail/report-artifact';
 import { compositionFromReport } from '../shared/brief-composition';
 import { parseBriefDocument } from '../shared/brief-document';
 import { parseTriageHandoffs } from '../shared/triage-handoff';
-import type { Thread } from '../shared/types';
+import type { BriefEditionKind, Thread } from '../shared/types';
 import {
   DAILY_REPORT_ARTIFACT_ERROR_STAGES,
   type DailyReport,
@@ -182,7 +182,7 @@ export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaul
 async function readReportRows<T>(
   limit: number,
   summaryOnly: boolean,
-  edition?: DailyReport['kind'],
+  edition?: BriefEditionKind,
 ): Promise<T[]> {
   const count = Math.min(100, Math.max(1, Math.floor(limit)));
   if (!readDependencies.configured()) {
@@ -219,7 +219,7 @@ async function readReportRows<T>(
   return rows;
 }
 
-export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFirst = false) {
+export async function getLatestDailyReport(kind?: BriefEditionKind, summaryFirst = false) {
   const rows = await readReportRows<DailyReport>(1, summaryFirst, kind);
   const latest = rows[0];
   if (!latest) return null;
