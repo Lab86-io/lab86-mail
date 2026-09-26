@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { SMART_CATEGORY_IDS } from '../mail/smart-categories';
 import {
   createNylasFolder,
+  moveNylasThread,
   updateNylasMessage,
   updateNylasMessageFolders,
   updateNylasMessageFoldersWithRetry,
@@ -9,14 +9,8 @@ import {
   updateNylasThreadFolders,
   updateNylasThreadFoldersWithRetry,
 } from '../nylas/provider';
-import { snoozeMessage, unsnoozeByMessage } from '../store/snooze';
-import {
-  getThread,
-  setThreadGmailLabelSync,
-  setThreadReadState,
-  setThreadSmartCategory,
-  upsertThread,
-} from '../store/threads';
+import { snoozeThread, unsnoozeThread } from '../store/snooze';
+import { getThread, setThreadGmailLabelSync, setThreadReadState, upsertThread } from '../store/threads';
 import { defineTool } from './registry';
 
 const BasicMutate = z.object({
@@ -29,8 +23,6 @@ const ThreadMutate = z.object({
   threadId: z.string(),
 });
 
-const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
-
 export const archiveThread = defineTool({
   name: 'archive_thread',
   description: 'Archive a thread.',
@@ -40,11 +32,11 @@ export const archiveThread = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
     return await requireNylasResult(
-      updateNylasThread({
+      moveNylasThread({
         userId: ctx.userId,
         account,
         threadId,
-        folders: [],
+        to: 'archive',
       }),
     );
   },
@@ -59,11 +51,11 @@ export const trashThread = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
     return await requireNylasResult(
-      updateNylasThread({
+      moveNylasThread({
         userId: ctx.userId,
         account,
         threadId,
-        folders: ['TRASH'],
+        to: 'trash',
       }),
     );
   },
@@ -78,11 +70,11 @@ export const restoreFromTrash = defineTool({
   output: z.object({ ok: z.boolean() }),
   async handler({ account, threadId }, ctx) {
     return await requireNylasResult(
-      updateNylasThread({
+      moveNylasThread({
         userId: ctx.userId,
         account,
         threadId,
-        folders: ['INBOX'],
+        to: 'inbox',
       }),
     );
   },
@@ -327,38 +319,6 @@ export const applySmartLabels = defineTool({
   },
 });
 
-export const setSmartCategoryTool = defineTool({
-  name: 'set_smart_category',
-  description: 'Locally override a thread smart category without mutating provider labels.',
-  category: 'mail',
-  mutating: true,
-  input: z.object({
-    account: z.string(),
-    threadId: z.string(),
-    category: SmartCategorySchema,
-    reason: z.string().optional(),
-  }),
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, threadId, category, reason }) {
-    const existing = await getThread(account, threadId).catch(() => null);
-    await setThreadSmartCategory(account, threadId, {
-      primary: category,
-      secondary: [],
-      confidence: 1,
-      reason: reason || 'Set by user correction.',
-      needsAttention: category === 'review' || category === 'main',
-      suggestedAction: category === 'review' ? 'read' : 'none',
-      isHumanLike: existing?.smartCategory?.isHumanLike || false,
-      isAutomated: existing?.smartCategory?.isAutomated || false,
-      allowNoReplyInMain: existing?.smartCategory?.allowNoReplyInMain || false,
-      signals: ['user_correction'],
-      classifiedAt: Date.now(),
-      model: 'user',
-    }).catch(() => undefined);
-    return { ok: true };
-  },
-});
-
 export const muteThread = defineTool({
   name: 'mute_thread',
   description: 'Mute a thread so future replies bypass the inbox.',
@@ -381,32 +341,38 @@ export const muteThread = defineTool({
 export const snoozeThreadTool = defineTool({
   name: 'snooze_thread',
   description:
-    'Snooze a message until a future timestamp. Adds a MailOS/Snoozed label and records due time locally.',
+    'Snooze a thread until a future time. The thread leaves the inbox now and comes back, unread, when the time passes.',
   category: 'mail',
   mutating: true,
   input: z.object({
     account: z.string(),
-    messageId: z.string(),
+    messageId: z.string().optional(),
     threadId: z.string(),
-    untilTs: z.number().describe('Epoch ms when the message should resurface'),
+    untilTs: z.number().describe('Epoch ms when the thread should come back'),
   }),
   output: z.object({ ok: z.boolean(), untilIso: z.string() }),
-  async handler({ account, messageId, threadId, untilTs }) {
-    await snoozeMessage(account, messageId, threadId, untilTs);
+  async handler({ account, messageId, threadId, untilTs }, ctx) {
+    if (!ctx.userId) throw new Error('Sign in required to snooze mail.');
+    await snoozeThread({ userId: ctx.userId, account, threadId, messageId, untilTs });
     return { ok: true, untilIso: new Date(untilTs).toISOString() };
   },
 });
 
 export const unsnoozeThreadTool = defineTool({
   name: 'unsnooze_thread',
-  description: 'Cancel a snooze for a message.',
+  description: 'Cancel a snooze and move the thread back to the inbox now.',
   category: 'mail',
   mutating: true,
-  input: BasicMutate,
-  output: z.object({ ok: z.boolean() }),
-  async handler({ account, messageId }) {
-    await unsnoozeByMessage(account, messageId);
-    return { ok: true };
+  input: z.object({
+    account: z.string(),
+    threadId: z.string().optional(),
+    messageId: z.string().optional(),
+  }),
+  output: z.object({ ok: z.boolean(), restored: z.number() }),
+  async handler({ account, threadId, messageId }, ctx) {
+    if (!ctx.userId) throw new Error('Sign in required to unsnooze mail.');
+    const { restored } = await unsnoozeThread({ userId: ctx.userId, account, threadId, messageId });
+    return { ok: true, restored };
   },
 });
 

@@ -1,5 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
-import { updateNylasMessageFolders } from '@/lib/nylas/provider';
+import { moveNylasMessage } from '@/lib/nylas/provider';
 
 const oneTimeCodesApi = (api as any).mailOneTimeCodes;
 
@@ -33,12 +33,12 @@ export interface ConsumeOneTimeCodeResult {
 
 interface ConsumeDependencies {
   mutate: typeof convexMutation;
-  updateFolders: typeof updateNylasMessageFolders;
+  moveMessage: typeof moveNylasMessage;
 }
 
 const defaultDependencies: ConsumeDependencies = {
   mutate: convexMutation,
-  updateFolders: updateNylasMessageFolders,
+  moveMessage: moveNylasMessage,
 };
 
 /**
@@ -89,11 +89,12 @@ export async function consumeOneTimeCode(
   }
 
   try {
-    await dependencies.updateFolders({
+    // Provider-aware move: Gmail edits labels, other providers change folder.
+    await dependencies.moveMessage({
       userId: input.userId,
       account: used.accountId,
       messageId: used.providerMessageId,
-      ...(input.cleanup === 'trash' ? { add: ['TRASH'] } : { remove: ['INBOX'] }),
+      to: input.cleanup === 'trash' ? 'trash' : 'archive',
     });
     const status = input.cleanup === 'trash' ? 'trashed' : 'archived';
     await dependencies

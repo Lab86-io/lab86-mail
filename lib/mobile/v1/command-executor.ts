@@ -251,7 +251,11 @@ export async function executeMobileCommand(
     case 'mail.unsnooze': {
       const result = await dependencies.invoke(
         'unsnooze_thread',
-        { account: command.payload.accountID, messageId: command.payload.messageID },
+        {
+          account: command.payload.accountID,
+          messageId: command.payload.messageID,
+          threadId: command.payload.threadID,
+        },
         user,
       );
       return {

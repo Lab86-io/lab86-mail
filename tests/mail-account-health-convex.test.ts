@@ -139,3 +139,89 @@ describe('durable webhook retry (SYNC-3)', () => {
     expect(nextWebhookAttemptAt(20, 0)).toBe(6 * 60 * 60_000);
   });
 });
+
+describe('snooze records (MUT-1)', () => {
+  test('one active snooze per thread, due listing, cancel, and settle with retries', async () => {
+    const t = convexTest(schema, convexModules);
+    const base = {
+      internalSecret: SECRET,
+      userId: 'user_1',
+      accountId: 'acct_1',
+      threadId: 't1',
+      messageId: 'm1',
+    };
+    await t.mutation((api as any).mailCorpus.createSnooze, { ...base, untilTs: Date.now() + 3_600_000 });
+    await t.mutation((api as any).mailCorpus.createSnooze, { ...base, untilTs: Date.now() - 1_000 });
+    const rows = await t.run((ctx) => ctx.db.query('mailSnoozes').collect());
+    expect(rows.map((row) => row.status).sort()).toEqual(['active', 'cancelled']);
+
+    let due = await t.query((api as any).mailCorpus.listDueSnoozes, { internalSecret: SECRET });
+    expect(due).toHaveLength(1);
+    expect(due[0]).toMatchObject({ userId: 'user_1', accountId: 'acct_1', threadId: 't1', attempts: 0 });
+
+    for (let i = 0; i < 4; i += 1) {
+      const out = await t.mutation((api as any).mailCorpus.settleSnooze, {
+        internalSecret: SECRET,
+        id: due[0].id,
+        ok: false,
+        error: 'provider down',
+      });
+      expect(out.status).toBe('active');
+    }
+    expect(
+      await t.mutation((api as any).mailCorpus.settleSnooze, {
+        internalSecret: SECRET,
+        id: due[0].id,
+        ok: false,
+      }),
+    ).toMatchObject({ status: 'failed' });
+
+    await t.mutation((api as any).mailCorpus.createSnooze, {
+      ...base,
+      threadId: 't2',
+      untilTs: Date.now() - 1,
+    });
+    due = await t.query((api as any).mailCorpus.listDueSnoozes, { internalSecret: SECRET });
+    expect(due.map((row: any) => row.threadId)).toEqual(['t2']);
+    expect(
+      await t.mutation((api as any).mailCorpus.settleSnooze, {
+        internalSecret: SECRET,
+        id: due[0].id,
+        ok: true,
+      }),
+    ).toMatchObject({ status: 'restored' });
+    expect(
+      await t.mutation((api as any).mailCorpus.settleSnooze, {
+        internalSecret: SECRET,
+        id: due[0].id,
+        ok: true,
+      }),
+    ).toEqual({ ok: false });
+
+    await t.mutation((api as any).mailCorpus.createSnooze, {
+      ...base,
+      threadId: 't3',
+      untilTs: Date.now() + 1,
+    });
+    const byMessage = await t.mutation((api as any).mailCorpus.cancelSnooze, {
+      internalSecret: SECRET,
+      userId: 'user_1',
+      accountId: 'acct_1',
+      messageId: 'm1',
+    });
+    expect(byMessage.threadIds).toEqual(['t3']);
+    const byThread = await t.mutation((api as any).mailCorpus.cancelSnooze, {
+      internalSecret: SECRET,
+      userId: 'user_1',
+      accountId: 'acct_1',
+      threadId: 't3',
+    });
+    expect(byThread.threadIds).toEqual([]);
+    const none = await t.mutation((api as any).mailCorpus.cancelSnooze, {
+      internalSecret: SECRET,
+      userId: 'user_1',
+      accountId: 'acct_1',
+    });
+    expect(none.threadIds).toEqual([]);
+  });
+});

@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { getDraft } from '../lib/store/drafts';
-import { listDueSnoozes } from '../lib/store/snooze';
 import { getThread } from '../lib/store/threads';
 import { deleteDraftTool, listDraftsTool, saveDraftTool, updateDraft } from '../lib/tools/compose';
-import { snoozeThreadTool, unsnoozeThreadTool } from '../lib/tools/mail-mutate';
+import { snoozeThreadTool } from '../lib/tools/mail-mutate';
 import { listMemories, recall, remember } from '../lib/tools/memories';
 import {
   createSmartLabel,
@@ -65,19 +64,11 @@ describe('representative agent local-store smoke flow', () => {
     await runTool(deleteDraftTool.handler, { id: draft.draft._id });
     expect(await withToolContext(() => getDraft(draft.draft._id))).toBeNull();
 
-    const untilTs = Date.parse('2026-06-15T13:00:00.000Z');
-    await runTool(snoozeThreadTool.handler, { account, messageId, threadId, untilTs });
-    expect(
-      (await withToolContext(() => listDueSnoozes(Number.POSITIVE_INFINITY))).some(
-        (row) => row.account === account && row.messageId === messageId,
-      ),
-    ).toBe(true);
-    await runTool(unsnoozeThreadTool.handler, { account, messageId });
-    expect(
-      (await withToolContext(() => listDueSnoozes(Number.POSITIVE_INFINITY))).some(
-        (row) => row.account === account && row.messageId === messageId,
-      ),
-    ).toBe(false);
+    // Snooze moves real mail at the provider (MUT-1); with no provider it
+    // fails instead of recording a snooze nothing would honor.
+    await expect(
+      runTool(snoozeThreadTool.handler, { account, messageId, threadId, untilTs: Date.now() + 3_600_000 }),
+    ).rejects.toThrow(/Nylas account|Convex/);
 
     const label = await runTool(createSmartLabel.handler, {
       name: 'Legal smoke',

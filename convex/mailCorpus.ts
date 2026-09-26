@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { internal } from './_generated/api';
-import { internalAction, mutation, query } from './_generated/server';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
@@ -1296,3 +1296,149 @@ function withinReceivedAtBounds(row: any, args: any) {
   if (Number.isFinite(args.before) && row.receivedAt > args.before) return false;
   return true;
 }
+
+// ---- Snooze (MUT-1) -------------------------------------------------------
+// The app moves the thread at the provider; these rows only remember when to
+// move it back. One active row per thread: a new snooze replaces the old.
+
+const SNOOZE_MAX_ATTEMPTS = 5;
+
+async function activeSnoozes(ctx: any, userId: string, accountId: string, threadId: string) {
+  const rows = await ctx.db
+    .query('mailSnoozes')
+    .withIndex('by_user_account_thread', (q: any) =>
+      q.eq('userId', userId).eq('accountId', accountId).eq('threadId', threadId),
+    )
+    .collect();
+  return rows.filter((row: any) => row.status === 'active');
+}
+
+export const createSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    untilTs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = now();
+    for (const row of await activeSnoozes(ctx, args.userId, args.accountId, args.threadId)) {
+      await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    }
+    const id = await ctx.db.insert('mailSnoozes', {
+      userId: args.userId,
+      accountId: args.accountId,
+      threadId: args.threadId,
+      messageId: args.messageId,
+      untilTs: args.untilTs,
+      status: 'active',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    return { id };
+  },
+});
+
+// Cancels the active snooze for a thread, or for the thread that holds the
+// given message. Returns the thread ids it cancelled.
+export const cancelSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    threadId: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    let rows: any[] = [];
+    if (args.threadId) {
+      rows = await activeSnoozes(ctx, args.userId, args.accountId, args.threadId);
+    } else if (args.messageId) {
+      const active = await ctx.db
+        .query('mailSnoozes')
+        .withIndex('by_status_until', (q) => q.eq('status', 'active'))
+        .take(1000);
+      rows = active.filter(
+        (row) =>
+          row.userId === args.userId && row.accountId === args.accountId && row.messageId === args.messageId,
+      );
+    }
+    const ts = now();
+    for (const row of rows) await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: ts });
+    return { threadIds: rows.map((row) => row.threadId) };
+  },
+});
+
+export const listDueSnoozes = query({
+  args: { internalSecret: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .take(clampLimit(args.limit, 50, 200));
+    return rows.map((row) => ({
+      id: row._id,
+      userId: row.userId,
+      accountId: row.accountId,
+      threadId: row.threadId,
+      untilTs: row.untilTs,
+      attempts: row.attempts ?? 0,
+    }));
+  },
+});
+
+export const settleSnooze = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    id: v.id('mailSnoozes'),
+    ok: v.boolean(),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.id);
+    if (!row || row.status !== 'active') return { ok: false };
+    const ts = now();
+    if (args.ok) {
+      await ctx.db.patch(row._id, { status: 'restored', error: undefined, updatedAt: ts });
+      return { ok: true, status: 'restored' };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const status = attempts >= SNOOZE_MAX_ATTEMPTS ? 'failed' : 'active';
+    await ctx.db.patch(row._id, { status, attempts, error: args.error?.slice(0, 300), updatedAt: ts });
+    return { ok: true, status };
+  },
+});
+
+export const hasDueSnoozes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query('mailSnoozes')
+      .withIndex('by_status_until', (q) => q.eq('status', 'active').lte('untilTs', now()))
+      .first();
+    return Boolean(row);
+  },
+});
+
+// Wakes due snoozes. The app owns Nylas, so this asks it to move the threads
+// back; it posts only when a snooze is due.
+export const snoozeTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const due = await ctx.runQuery((internal as any).mailCorpus.hasDueSnoozes, {});
+    if (!due) return;
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-snooze cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    await fanOutInternalPost(`${appUrl}/api/cron/mail-snooze`, secret, [{}], { label: 'mail-snooze cron' });
+  },
+});
