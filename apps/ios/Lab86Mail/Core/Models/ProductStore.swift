@@ -2254,18 +2254,17 @@ final class ProductStore {
         attendeeEmails: [String] = [],
         recurrence: [String]? = nil
     ) async throws {
-        let iso = ISO8601DateFormatter()
-        var arguments: [String: JSONValue] = [
+        // All-day events travel as date-only strings with an exclusive end;
+        // `end` is the editor's inclusive last day (CAL-4).
+        var arguments = EventWriteFields.timeArguments(start: start, end: end, allDay: allDay)
+        arguments.merge([
             "account": .string(accountID),
             "title": .string(title),
-            "startIso": .string(iso.string(from: start)),
-            "endIso": .string(iso.string(from: end)),
-            "allDay": .bool(allDay),
             "attendees": .array(
                 attendeeEmails.map { .object(["email": .string($0)]) }
             ),
             "busy": .bool(true),
-        ]
+        ]) { _, new in new }
         if let calendarID, !calendarID.isEmpty { arguments["calendarId"] = .string(calendarID) }
         if let location, !location.isEmpty { arguments["location"] = .string(location) }
         if let description, !description.isEmpty { arguments["description"] = .string(description) }
@@ -2307,6 +2306,24 @@ final class ProductStore {
             )
         }
         if let recurrence { arguments["recurrence"] = .array(recurrence.map(JSONValue.string)) }
+        let result = try await tools.invoke("calendar_update_event", arguments: arguments)
+        captureUndoNotice(result, summary: "Updated calendar event")
+        await refreshCalendar(sync: false)
+        noteCalendarMutation(eventID: nil)
+    }
+
+    /// Sends only the given changes, keyed as `calendar_update_event` reads
+    /// them (CAL-2).
+    func updateEvent(
+        accountID: String,
+        calendarID: String,
+        eventID: String,
+        changes: [String: JSONValue]
+    ) async throws {
+        var arguments = changes
+        arguments["account"] = .string(accountID)
+        arguments["calendarId"] = .string(calendarID)
+        arguments["eventId"] = .string(eventID)
         let result = try await tools.invoke("calendar_update_event", arguments: arguments)
         captureUndoNotice(result, summary: "Updated calendar event")
         await refreshCalendar(sync: false)

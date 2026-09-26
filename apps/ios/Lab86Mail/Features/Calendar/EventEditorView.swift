@@ -43,6 +43,8 @@ struct EventEditorView: View {
     @State private var showsInviteConfirmation = false
     @State private var baseline = ""
     @State private var didSeed = false
+    // The values the form opened with. An edit sends only what differs.
+    private let initialSnapshot: EventFormSnapshot
 
     init(
         mode: Mode,
@@ -57,15 +59,43 @@ struct EventEditorView: View {
         notes: String = ""
     ) {
         self.mode = mode
+        // A stored all-day event ends the day after its last day; the form
+        // shows the last day itself (CAL-4).
+        let dates = EventWriteFields.editorDates(start: start, end: end, allDay: allDay)
+        let seededEnd = dates.end ?? dates.start.addingTimeInterval(3_600)
+        let preset = Self.repeatPreset(recurrence)
         _title = State(initialValue: title)
         _allDay = State(initialValue: allDay)
-        _start = State(initialValue: start)
-        _end = State(initialValue: end ?? start.addingTimeInterval(3_600))
+        _start = State(initialValue: dates.start)
+        _end = State(initialValue: seededEnd)
         _location = State(initialValue: location)
         _calendarID = State(initialValue: calendarID)
-        _eventRepeat = State(initialValue: Self.repeatPreset(recurrence))
+        _eventRepeat = State(initialValue: preset)
         _attendeeText = State(initialValue: attendees.joined(separator: ", "))
         _notes = State(initialValue: notes)
+        initialSnapshot = EventFormSnapshot(
+            title: title.trimmingCharacters(in: .whitespaces),
+            allDay: allDay,
+            start: dates.start,
+            end: max(seededEnd, dates.start),
+            location: location.trimmingCharacters(in: .whitespaces),
+            repeatRule: preset.rule,
+            attendees: Self.emails(in: attendees.joined(separator: ", ")),
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private var currentSnapshot: EventFormSnapshot {
+        EventFormSnapshot(
+            title: title.trimmingCharacters(in: .whitespaces),
+            allDay: allDay,
+            start: start,
+            end: max(end, start),
+            location: location.trimmingCharacters(in: .whitespaces),
+            repeatRule: eventRepeat.rule,
+            attendees: attendeeEmails,
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     static var defaultStart: Date {
@@ -269,8 +299,10 @@ struct EventEditorView: View {
         )
     }
 
-    private var attendeeEmails: [String] {
-        attendeeText
+    private var attendeeEmails: [String] { Self.emails(in: attendeeText) }
+
+    private static func emails(in text: String) -> [String] {
+        text
             .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
             .map(String.init)
             .filter { $0.contains("@") }
@@ -319,19 +351,18 @@ struct EventEditorView: View {
                     recurrence: eventRepeat.rule
                 )
             case .edit(let accountID, let calendarID, let eventID):
-                try await environment.store.updateEvent(
-                    accountID: accountID,
-                    calendarID: calendarID,
-                    eventID: eventID,
-                    title: title.trimmingCharacters(in: .whitespaces),
-                    start: start,
-                    end: max(end, start),
-                    allDay: allDay,
-                    location: location.trimmingCharacters(in: .whitespaces),
-                    description: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-                    attendeeEmails: attendeeEmails,
-                    recurrence: eventRepeat.rule ?? []
-                )
+                // Only what the user changed (CAL-2). A series edit opened
+                // from one instance must not carry that instance's times, or
+                // an empty repeat rule, to the whole series.
+                let changes = EventWriteFields.changedArguments(from: initialSnapshot, to: currentSnapshot)
+                if !changes.isEmpty {
+                    try await environment.store.updateEvent(
+                        accountID: accountID,
+                        calendarID: calendarID,
+                        eventID: eventID,
+                        changes: changes
+                    )
+                }
             }
             dismiss()
         } catch {
