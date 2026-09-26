@@ -146,10 +146,8 @@ export const upsertEntitlement = mutation({
       v.literal('past_due'),
       v.literal('canceled'),
     ),
-    source: v.union(v.literal('manual'), v.literal('stripe'), v.literal('clerk')),
+    source: v.union(v.literal('manual'), v.literal('clerk')),
     monthlyCredits: v.number(),
-    stripeCustomerId: v.optional(v.string()),
-    stripeSubscriptionId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -164,8 +162,6 @@ export const upsertEntitlement = mutation({
       status: args.status,
       source: args.source,
       monthlyCredits: args.monthlyCredits,
-      stripeCustomerId: args.stripeCustomerId,
-      stripeSubscriptionId: args.stripeSubscriptionId,
       currentPeriodEnd: args.currentPeriodEnd,
       updatedAt: ts,
     };
