@@ -70,6 +70,16 @@ enum EventWriteFields {
 
     /// Local midnight of the calendar date an all-day instant names.
     static func localDay(of instant: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
+        AllDayDate.localDay(of: instant, calendar: calendar)
+    }
+}
+
+/// All-day dates (CAL-3/CAL-4, the rule of lib/calendar/all-day.ts). Sync
+/// stores an all-day row as the UTC midnight of its date, with an exclusive
+/// end. That instant is the evening before in the Americas, so a reader takes
+/// the date from the UTC parts and builds local midnight of that date.
+enum AllDayDate {
+    static func localDay(of instant: Date, calendar: Calendar = .autoupdatingCurrent) -> Date {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         let utcParts = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: instant)
@@ -80,6 +90,18 @@ enum EventWriteFields {
         return calendar.date(from: parts) ?? calendar.startOfDay(for: instant)
     }
 
+    /// Local start and exclusive local end of a stored all-day span.
+    static func localSpan(start: Date, end: Date, calendar: Calendar = .autoupdatingCurrent) -> (start: Date, end: Date) {
+        let localStart = localDay(of: start, calendar: calendar)
+        var localEnd = localDay(of: end, calendar: calendar)
+        if localEnd <= localStart {
+            localEnd = calendar.date(byAdding: .day, value: 1, to: localStart) ?? localStart
+        }
+        return (localStart, localEnd)
+    }
+}
+
+extension EventWriteFields {
     static func changedArguments(
         from initial: EventFormSnapshot,
         to current: EventFormSnapshot,
@@ -99,10 +121,14 @@ enum EventWriteFields {
                 timeArguments(start: current.start, end: current.end, allDay: current.allDay, calendar: calendar)
             ) { _, new in new }
         }
-        // An empty rule removes the repeat, so it goes only when the user
-        // chose "Never" for an event that repeated.
+        // The server ignores an empty rule. "Never" on an event that
+        // repeated stops the series with `clearRecurrence`.
         if current.repeatRule != initial.repeatRule {
-            arguments["recurrence"] = .array((current.repeatRule ?? []).map(JSONValue.string))
+            if let rule = current.repeatRule {
+                arguments["recurrence"] = .array(rule.map(JSONValue.string))
+            } else {
+                arguments["clearRecurrence"] = .bool(true)
+            }
         }
         return arguments
     }

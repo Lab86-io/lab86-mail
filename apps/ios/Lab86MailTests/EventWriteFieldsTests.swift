@@ -49,11 +49,20 @@ struct EventWriteFieldsTests {
         current.location = "Room 2"
         #expect(EventWriteFields.changedArguments(from: initial, to: current, calendar: ny)["recurrence"] == nil)
 
-        // A repeating event the user sets to Never sends the empty rule.
+        // A repeating event the user sets to Never stops the series. The
+        // server ignores an empty rule, so the stop is explicit.
         let repeating = snapshot(start: start, end: start.addingTimeInterval(1_800))
         var never = repeating
         never.repeatRule = nil
-        #expect(EventWriteFields.changedArguments(from: repeating, to: never, calendar: ny)["recurrence"] == .array([]))
+        let stop = EventWriteFields.changedArguments(from: repeating, to: never, calendar: ny)
+        #expect(stop["clearRecurrence"] == .bool(true))
+        #expect(stop["recurrence"] == nil)
+        var daily = repeating
+        daily.repeatRule = ["RRULE:FREQ=DAILY"]
+        #expect(
+            EventWriteFields.changedArguments(from: repeating, to: daily, calendar: ny)["recurrence"]
+                == .array([.string("RRULE:FREQ=DAILY")])
+        )
     }
 
     @Test
@@ -132,5 +141,48 @@ struct EventWriteFieldsTests {
             "eventId": .string("master-1"),
             "title": .string("Renamed"),
         ]])
+    }
+
+    @Test
+    func storedAllDayEventsShowOnTheirOwnLocalDate() throws {
+        let local = Calendar.autoupdatingCurrent
+        let json: JSONValue = .object([
+            "eventId": .string("e1"),
+            "title": .string("Holiday"),
+            "allDay": .bool(true),
+            "startIso": .string("2026-09-26T00:00:00Z"),
+            "endIso": .string("2026-09-27T00:00:00Z"),
+        ])
+        let event = try #require(CalendarEventSummary(json: json))
+        let day = local.date(from: DateComponents(year: 2026, month: 9, day: 26))!
+        #expect(event.start == day)
+        #expect(event.end == local.date(byAdding: .day, value: 1, to: day))
+        // The day index puts it on that one day only.
+        #expect(CalendarDayIndex.days(touchedBy: event, calendar: local) == [day])
+
+        let detail = CalendarEventDetail(json: json)
+        #expect(detail.start == day)
+        // Timed events keep their instants.
+        let timed = try #require(CalendarEventSummary(json: .object([
+            "eventId": .string("e2"), "title": .string("Call"),
+            "startIso": .string("2026-09-26T15:00:00Z"), "endIso": .string("2026-09-26T16:00:00Z"),
+        ])))
+        #expect(timed.start == ISO8601DateFormatter().date(from: "2026-09-26T15:00:00Z"))
+    }
+
+    @Test
+    func aStoredSpanInEveryZoneKeepsItsDates() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let start = utc.date(from: DateComponents(year: 2026, month: 9, day: 26))!
+        let end = utc.date(from: DateComponents(year: 2026, month: 9, day: 29))!
+        for zone in ["America/Los_Angeles", "Europe/Berlin", "Pacific/Auckland"] {
+            let local = calendar(zone)
+            let span = AllDayDate.localSpan(start: start, end: end, calendar: local)
+            #expect(span.start == date(2026, 9, 26, in: local), "zone \(zone)")
+            #expect(span.end == date(2026, 9, 29, in: local), "zone \(zone)")
+            // Reading it twice changes nothing.
+            #expect(AllDayDate.localSpan(start: span.start, end: span.end, calendar: local).start == span.start)
+        }
     }
 }

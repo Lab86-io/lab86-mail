@@ -506,9 +506,17 @@ struct CalendarEventSummary: Identifiable, Hashable, Codable, Sendable {
         accountID = json["accountId"]?.stringValue ?? json["account"]?.stringValue ?? ""
         calendarID = json["calendarId"]?.stringValue?.nilIfBlank
         title = json["title"]?.stringValue?.nilIfBlank ?? "Untitled event"
-        self.start = start
-        self.end = end
         allDay = json["allDay"]?.boolValue ?? false
+        // A stored all-day row is UTC midnight of its date. Every view reads
+        // local dates, so the span becomes local midnights here (CAL-3).
+        if allDay {
+            let span = AllDayDate.localSpan(start: start, end: end)
+            self.start = span.start
+            self.end = span.end
+        } else {
+            self.start = start
+            self.end = end
+        }
         location = json["location"]?.stringValue?.nilIfBlank
     }
 
@@ -562,9 +570,21 @@ struct CalendarEventDetail: Sendable {
 
     init(json: JSONValue) {
         title = json["title"]?.stringValue?.nilIfBlank ?? "Untitled event"
-        start = CalendarDateParser.date(json["startIso"] ?? json["startAt"] ?? json["start"])
-        end = CalendarDateParser.date(json["endIso"] ?? json["endAt"] ?? json["end"])
-        allDay = json["allDay"]?.boolValue ?? false
+        let rawStart = CalendarDateParser.date(json["startIso"] ?? json["startAt"] ?? json["start"])
+        let rawEnd = CalendarDateParser.date(json["endIso"] ?? json["endAt"] ?? json["end"])
+        let isAllDay = json["allDay"]?.boolValue ?? false
+        allDay = isAllDay
+        if isAllDay, let rawStart, let rawEnd {
+            let span = AllDayDate.localSpan(start: rawStart, end: rawEnd)
+            start = span.start
+            end = span.end
+        } else if isAllDay, let rawStart {
+            start = AllDayDate.localDay(of: rawStart)
+            end = rawEnd
+        } else {
+            start = rawStart
+            end = rawEnd
+        }
         location = json["location"]?.stringValue?.nilIfBlank
         description = json["description"]?.stringValue?.nilIfBlank
         calendarName = (json["calendarName"] ?? json["calendarId"])?.stringValue?.nilIfBlank
@@ -1476,13 +1496,15 @@ struct AreaDetail: Hashable, Codable, Sendable {
                   let start = CalendarDateParser.date(row["startAt"] ?? row["startIso"] ?? row["start"]),
                   let end = CalendarDateParser.date(row["endAt"] ?? row["endIso"] ?? row["end"]),
                   end >= start else { return nil }
+            let allDay = row["allDay"]?.boolValue ?? false
+            let span = allDay ? AllDayDate.localSpan(start: start, end: end) : (start: start, end: end)
             return EventRow(
                 accountID: row["accountId"]?.stringValue ?? "",
                 eventID: eventID,
                 title: row["title"]?.stringValue?.nilIfBlank ?? "Untitled event",
-                start: start,
-                end: end,
-                allDay: row["allDay"]?.boolValue ?? false,
+                start: span.start,
+                end: span.end,
+                allDay: allDay,
                 location: row["location"]?.stringValue?.nilIfBlank,
                 linkStatus: row["linkStatus"]?.stringValue ?? "verified"
             )
