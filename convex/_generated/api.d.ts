@@ -56,6 +56,7 @@ import type * as operations from "../operations.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as retention from "../retention.js";
 import type * as smart from "../smart.js";
+import type * as standingOrders from "../standingOrders.js";
 import type * as suggestions from "../suggestions.js";
 import type * as userData from "../userData.js";
 import type * as users from "../users.js";
@@ -116,6 +117,7 @@ declare const fullApi: ApiFromModules<{
   rateLimits: typeof rateLimits;
   retention: typeof retention;
   smart: typeof smart;
+  standingOrders: typeof standingOrders;
   suggestions: typeof suggestions;
   userData: typeof userData;
   users: typeof users;

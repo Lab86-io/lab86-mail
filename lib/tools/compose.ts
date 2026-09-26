@@ -179,6 +179,7 @@ export const sendMessage = defineTool({
   name: 'send_message',
   description: 'Send a brand-new email.',
   category: 'compose',
+  risk: 'reach_person',
   mutating: true,
   input: SendBase,
   output: SentOutput,
@@ -203,6 +204,7 @@ export const replyMessage = defineTool({
   name: 'reply',
   description: 'Reply to a single message (to its sender).',
   category: 'compose',
+  risk: 'reach_person',
   mutating: true,
   input: ReplyInput,
   output: SentOutput,
@@ -229,6 +231,7 @@ export const replyAllMessage = defineTool({
   name: 'reply_all',
   description: 'Reply-all to a message (everyone on To: + Cc:).',
   category: 'compose',
+  risk: 'reach_person',
   mutating: true,
   input: ReplyInput,
   output: SentOutput,
@@ -258,6 +261,7 @@ export const forwardMessage = defineTool({
   description:
     'Forward a message to one or more recipients. Synthesizes a quoted body from the original. To re-carry the original file(s), pass attachments: [{ account, messageId, attachmentId }] (find ids via list_attachments).',
   category: 'compose',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -292,6 +296,7 @@ export const saveDraftTool = defineTool({
   name: 'save_draft',
   description: 'Persist a draft locally (not yet uploaded to Gmail).',
   category: 'compose',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -317,6 +322,7 @@ export const updateDraft = defineTool({
   name: 'update_draft',
   description: 'Update an existing local draft by id.',
   category: 'compose',
+  risk: 'write_self',
   mutating: true,
   input: z.object({
     id: z.string(),
@@ -348,6 +354,7 @@ export const deleteDraftTool = defineTool({
   name: 'delete_draft',
   description: 'Delete a local draft.',
   category: 'compose',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ id: z.string() }),
   output: z.object({ ok: z.boolean() }),
@@ -379,6 +386,7 @@ export const scheduleSend = defineTool({
   description:
     'Schedule an email to send at a future time (provider-side via Nylas send_at). Returns a scheduleId usable with cancel_scheduled.',
   category: 'compose',
+  risk: 'reach_person',
   mutating: true,
   input: SendBase.extend({ scheduledFor: z.number().describe('Epoch ms when to send') }),
   output: z.object({ ok: z.boolean(), scheduleId: z.string().optional(), messageId: z.string().optional() }),
@@ -406,6 +414,7 @@ export const cancelScheduled = defineTool({
   name: 'cancel_scheduled',
   description: 'Cancel a scheduled send by its Nylas scheduleId (see list_scheduled / schedule_send).',
   category: 'compose',
+  risk: 'destructive',
   mutating: true,
   input: z.object({ account: z.string(), scheduleId: z.string() }),
   output: z.object({ ok: z.boolean() }),
@@ -436,6 +445,7 @@ export const undoSend = defineTool({
   description:
     'Cancel a message that is still in its undo-send window. Pass the pendingId from the send receipt (an outbox: key, or a provider-backed scheduled send).',
   category: 'compose',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ pendingId: z.string() }),
   output: z.object({ ok: z.boolean(), undone: z.boolean(), error: z.string().optional() }),

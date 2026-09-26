@@ -218,6 +218,7 @@ export const calendarSyncNow = defineTool({
   description:
     'Force a full calendar resync from the providers, for one account or all of them. Use when events seem stale or after connecting an account.',
   category: 'calendar',
+  risk: 'write_self',
   mutating: true,
   input: z.object({ account: z.string().optional() }),
   output: z.object({ results: z.array(z.any()) }),
@@ -313,6 +314,7 @@ export const calendarCreateEvent = defineTool({
   description:
     'Create a calendar event. Times are ISO timestamps; for allDay pass date-only startIso/endIso ("2026-09-26") with an exclusive end. Use conferencing: google_meet to create a real Google Meet link on a connected Google calendar. Adding attendees emails real invitations and requires user authorization; an explicit request to invite them supplies it. A pending conference means the event exists but its video link is not yet available; never create a duplicate event to obtain the link. The operation is recorded and undoable via undo_operation.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -510,6 +512,7 @@ export const calendarUpdateEvent = defineTool({
   description:
     'Update fields of an existing event (title, times, location, description, attendees, recurrence). Send only the fields that change. For an all-day event, pass date-only startIso/endIso ("2026-09-26") with an exclusive end. An empty recurrence array is ignored; pass clearRecurrence: true to stop a series from repeating. Identify the event by exact eventId (with account + calendarId), OR by title to have the tool find it — when a title matches several events it returns candidates to disambiguate instead of guessing. For a recurring series pass the master event id to change every occurrence, or an instance id to change just that one. Undoable. notifyParticipants emails attendees about the change — confirm with the user first.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -586,6 +589,7 @@ export const calendarDeleteEvent = defineTool({
   description:
     'Delete an event. Identify it by exact eventId (with account + calendarId), OR by matchTitle to have the tool find the closest match — when a title matches several events it returns candidates to disambiguate instead of guessing. If deleteSeries is true and the resolved event is a recurring instance, the whole series is deleted. Undoable — undo recreates the event. notifyParticipants emails attendees a cancellation — confirm with the user first.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -646,6 +650,7 @@ export const calendarDeleteRecurringSeries = defineTool({
   description:
     'Delete one or more recurring calendar series. Use eventId when available; otherwise pass a title and optional account/calendar/window filters. This resolves expanded recurring instances to their master series id before deleting.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string().optional(),
@@ -739,6 +744,7 @@ export const calendarUnsubscribeCalendar = defineTool({
   description:
     'Unsubscribe from or remove a synced provider calendar. Pass either calendarId or an exact calendar name. If the provider refuses deletion, fallbackToHide hides it locally and stops it from appearing in the merged calendar view.',
   category: 'calendar',
+  risk: 'destructive',
   mutating: true,
   input: z.object({
     account: z.string(),
@@ -796,6 +802,7 @@ export const calendarRsvpEvent = defineTool({
   description:
     'RSVP to an event invitation (yes/no/maybe). This notifies the organizer — confirm with the user before responding on their behalf. Not undoable (the organizer already saw it), but it can be re-sent with a different status.',
   category: 'calendar',
+  risk: 'reach_person',
   mutating: true,
   input: z.object({
     account: z.string(),

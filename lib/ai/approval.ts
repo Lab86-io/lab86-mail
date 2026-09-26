@@ -1,15 +1,31 @@
-// Server-enforced approval for agent tools that reach another person.
+// Server-enforced approval for agent tools that reach another person or
+// cannot be undone.
 //
-// The agent marks these tools with the AI SDK `needsApproval` flag. The SDK
-// then stops at a `tool-approval-request` chunk and runs the tool only when
-// the next request carries an approved response for that call. The client
-// cannot skip the step, and the model cannot approve its own call.
+// Each tool in the registry declares a risk class (lib/tools/registry.ts).
+// The agent marks every tool in an approval class with the AI SDK
+// `needsApproval` flag. The SDK then stops at a `tool-approval-request` chunk
+// and runs the tool only when the next request carries an approved response
+// for that call. The client cannot skip the step, and the model cannot
+// approve its own call.
 //
 // Pure module: the web chat imports approvalSummary to draw the card, and the
 // agent stream sends the same summary to native clients as a
 // `data-tool-approval` chunk.
 
 type Rec = Record<string, unknown>;
+
+/**
+ * What one tool call can touch.
+ * - `read`: nothing changes.
+ * - `write_self`: the user's own data changes, and Activity shows it with Undo.
+ * - `reach_person`: another person sees the result (mail, invitations, answers).
+ * - `destructive`: the change cannot be undone.
+ */
+export type ToolRisk = 'read' | 'write_self' | 'reach_person' | 'destructive';
+export const TOOL_RISKS: readonly ToolRisk[] = ['read', 'write_self', 'reach_person', 'destructive'];
+
+/** Risk classes whose agent calls always wait for the user's answer. */
+export const APPROVAL_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>(['reach_person', 'destructive']);
 
 export interface ApprovalSummary {
   title: string;
@@ -20,13 +36,27 @@ export interface ApprovalSummary {
   intent: 'default' | 'destructive';
 }
 
-/** Tools whose calls can reach another person. Each is gated by toolNeedsApproval. */
+/**
+ * Agent tools in an approval risk class. This client-safe list mirrors the
+ * registry: tests/agent-approval-platform.test.ts fails when an agent tool's
+ * declared risk and this list disagree.
+ */
 export const APPROVAL_GATED_TOOLS: ReadonlySet<string> = new Set([
+  // reach_person
   'schedule_send',
   'calendar_create_event',
   'calendar_update_event',
   'calendar_delete_event',
   'calendar_delete_recurring_series',
+  'calendar_rsvp_event',
+  // destructive
+  'cancel_scheduled',
+  'delete_draft',
+  'delete_smart_label',
+  'forget',
+  'calendar_unsubscribe_calendar',
+  'tasks_delete_board',
+  'tasks_delete_column',
 ]);
 
 function rec(value: unknown): Rec {
@@ -49,12 +79,14 @@ function attendeeList(value: unknown): string[] {
     .filter(Boolean);
 }
 
-/** True when this call reaches another person and must wait for the user. */
-export function toolNeedsApproval(toolName: string, input: unknown): boolean {
+/**
+ * For a gated tool, whether this exact call needs the user's answer. Calendar
+ * writes reach another person only when they invite or notify someone; a
+ * private hold or a silent delete (which Undo can restore) goes through.
+ */
+export function approvalConditionMet(toolName: string, input: unknown): boolean {
   const args = rec(input);
   switch (toolName) {
-    case 'schedule_send':
-      return true;
     case 'calendar_create_event':
       return attendeeList(args.attendees).length > 0;
     case 'calendar_update_event':
@@ -63,8 +95,13 @@ export function toolNeedsApproval(toolName: string, input: unknown): boolean {
     case 'calendar_delete_recurring_series':
       return args.notifyParticipants === true;
     default:
-      return false;
+      return true;
   }
+}
+
+/** True when this call reaches another person or cannot be undone, and must wait for the user. */
+export function toolNeedsApproval(toolName: string, input: unknown): boolean {
+  return APPROVAL_GATED_TOOLS.has(toolName) && approvalConditionMet(toolName, input);
 }
 
 function joinPeople(people: string[], max = 4): string {
@@ -177,6 +214,84 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
         denyLabel: 'Keep it',
         intent: 'destructive',
       };
+    case 'calendar_rsvp_event': {
+      const answer = RSVP_ANSWERS[text(args.status)] || text(args.status);
+      return {
+        title: answer ? `Answer the invitation: ${answer}` : 'Answer the invitation',
+        description: 'The organizer gets your answer by email.',
+        metadata: [...row('Answer', answer), ...row('Calendar', text(args.account))],
+        confirmLabel: 'Send answer',
+        denyLabel: 'Cancel',
+        intent: 'default',
+      };
+    }
+    case 'cancel_scheduled':
+      return {
+        title: 'Cancel this scheduled email',
+        description: 'The email does not go out. This cannot be undone.',
+        metadata: [...row('From', text(args.account))],
+        confirmLabel: 'Cancel email',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'delete_draft':
+      return {
+        title: 'Delete this draft',
+        description: 'The draft is removed. This cannot be undone.',
+        metadata: [],
+        confirmLabel: 'Delete draft',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'delete_smart_label':
+      return {
+        title: 'Delete this label',
+        description:
+          'The label goes away, and the rules that file mail under it turn off. This cannot be undone.',
+        metadata: [],
+        confirmLabel: 'Delete label',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'forget':
+      return {
+        title: `Forget what Albatross knows about ${text(args.email) || 'this person'}`,
+        description: 'Every stored note about this person is deleted. This cannot be undone.',
+        metadata: [...row('Person', text(args.email))],
+        confirmLabel: 'Forget',
+        denyLabel: 'Keep notes',
+        intent: 'destructive',
+      };
+    case 'calendar_unsubscribe_calendar':
+      return {
+        title: `Remove the calendar ${text(args.name) ? `“${text(args.name)}”` : 'from this account'}`,
+        description: 'Its events leave Albatross. To get them back, you subscribe again with the provider.',
+        metadata: [
+          ...row('Calendar', text(args.name) || text(args.calendarId)),
+          ...row('Account', text(args.account)),
+        ],
+        confirmLabel: 'Remove calendar',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'tasks_delete_board':
+      return {
+        title: 'Delete this board',
+        description: 'The board, its columns, and every card on it are deleted. This cannot be undone.',
+        metadata: [],
+        confirmLabel: 'Delete board',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'tasks_delete_column':
+      return {
+        title: `Delete the column ${text(args.column) ? `“${text(args.column)}”` : ''}`.trim(),
+        description: 'The column and every card in it are deleted. This cannot be undone.',
+        metadata: [...row('Column', text(args.column))],
+        confirmLabel: 'Delete column',
+        denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
     default:
       return {
         title: 'Approve this action',
@@ -187,6 +302,8 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
       };
   }
 }
+
+const RSVP_ANSWERS: Record<string, string> = { yes: 'Yes', no: 'No', maybe: 'Maybe' };
 
 type ChatMessageLike = { role?: string; parts?: unknown[] };
 

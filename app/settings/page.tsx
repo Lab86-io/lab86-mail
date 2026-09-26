@@ -20,6 +20,7 @@ import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
+import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -80,6 +81,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   areas: () => <TeachAreas />,
   sending: () => <SendingSection />,
   notifications: () => <NotificationsSection />,
+  orders: () => <StandingOrdersSection />,
   ai: () => (
     <AiSection
       heading={
