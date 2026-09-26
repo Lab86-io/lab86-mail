@@ -35,7 +35,8 @@ export const SMART_CATEGORY_LABELS: Record<SmartCategoryId, string> = {
 // changes a stored verdict. The backlog cron then sorts every row again that
 // has an older number, so stored verdicts follow the new code without a manual
 // run.
-export const SMART_CLASSIFIER_VERSION = 1;
+// 2: relatives and forwards from people are no longer sorted as lists.
+export const SMART_CLASSIFIER_VERSION = 2;
 
 // Gmail labels that "Apply smart labels" writes. Labels from the old product
 // name keep working: labelsForSmartCategory rewrites them to this prefix.
@@ -59,6 +60,39 @@ const BLOCKED_SENDER_ADDRESS =
   /\b(no-?reply|donotreply|do-not-reply|notifications?|newsletters?|updates|support|linkedin|etsy|wsj|dowjones)\b/i;
 const ROLE_MAILBOX = /^(hello|team|info|billing|receipts)@/i;
 const BLOCKED_SENDER_DOMAIN = /\b(linkedin|etsy|wsj|dowjones|nytimes|substack)\b/i;
+
+// Personal mailbox providers. Brands and platforms do not send from these, so
+// a non-role address here is a person, whatever tab Gmail filed the thread in
+// (a relative's Google Docs share lands in Updates).
+const PERSONAL_MAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'yahoo.com',
+  'ymail.com',
+  'aol.com',
+  'proton.me',
+  'protonmail.com',
+  'pm.me',
+  'fastmail.com',
+  'hey.com',
+  'zoho.com',
+  'gmx.com',
+  'gmx.de',
+  'yandex.com',
+  'mail.com',
+]);
+// iCloud Hide My Email relays a brand as `name_at_brand_com_<id>@icloud.com`.
+const RELAYED_BRAND_LOCAL_PART = /_at_[a-z0-9-]+_(com|net|org|io|co|app|ai)_/i;
+// A forwarded message carries the original sender's footer. Its list markers
+// say nothing about the person who forwarded it.
+const FORWARDED_SUBJECT = /^\s*(fwd?|fw)\s*:/i;
 
 // Gmail tabs that a person's direct mail does not land in.
 const NON_PERSONAL_GMAIL_CATEGORIES = [
@@ -241,13 +275,23 @@ export function isHumanLike(thread: ClassifierThread) {
   const address = senderEmail(thread);
   const domain = senderDomain(thread);
   const labels = thread.labels || [];
-  const h = haystack(thread);
   if (!email) return false;
   if (isNoReplyLike(from)) return false;
+  const [localPart = ''] = address.split('@');
+  const blockedAddress =
+    BLOCKED_SENDER_ADDRESS.test(address) ||
+    ROLE_MAILBOX.test(address) ||
+    RELAYED_BRAND_LOCAL_PART.test(localPart);
+  if (PERSONAL_MAIL_DOMAINS.has(domain) && !blockedAddress) return true;
+  // For forwarded mail, judge the sender on the headers only.
+  if (FORWARDED_SUBJECT.test(String(thread.subject || ''))) {
+    thread = { ...thread, bodyText: undefined, listId: undefined, listUnsubscribe: undefined };
+  }
   // Gmail's own Primary-tab "personal" signal beats the keyword heuristics: a
   // real person whose subject happens to contain "offer"/"sale"/"contract"
   // (e.g. a recruiter or a signed job offer) is still a person. Only hard list
   // mail and blocklisted/platform senders are excluded.
+  const h = haystack(thread);
   const personalCat = labels.includes('CATEGORY_PERSONAL');
   // Gmail files campaign and notification mail in the other tabs. That mail
   // is not a person unless Gmail also calls the thread personal.
