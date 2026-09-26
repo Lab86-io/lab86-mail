@@ -67,12 +67,12 @@ describe('daily report tools attach deterministic edition art', () => {
 
   test('get_latest_daily_report returns null without crashing when nothing matches', async () => {
     // The per-user kv store is shared across every suite in this process and
-    // other files seed evening reports for the default test user, so the
+    // other files seed reports for the default test user, so the
     // null path must run as a user nobody else writes for (file execution
     // order differs between local runs and CI).
     const emptyUser = { userId: 'tool_art_empty_user' };
     const result = await withToolContext(
-      () => getLatestDailyReportTool.handler({ kind: 'evening' }, toolContext(emptyUser)),
+      () => getLatestDailyReportTool.handler({ kind: 'manual' }, toolContext(emptyUser)),
       emptyUser,
     );
     expect(result.report).toBeNull();

@@ -85,7 +85,7 @@ export const enqueue = mutation({
   args: {
     ...caller,
     kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('evening'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'))),
     areaId: v.optional(v.id('areas')),
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),

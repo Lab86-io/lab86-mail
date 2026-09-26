@@ -546,9 +546,14 @@ export interface DailyReportArtifactError {
   at: number;
 }
 
+/** The edition kinds the brief writes. The scheduler sends morning only. */
+export type BriefEditionKind = 'morning' | 'manual';
+
 export interface DailyReport {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  // 'evening' appears only on editions stored in June 2026. Nothing writes it
+  // now, but history still renders those editions.
+  kind: BriefEditionKind | 'evening';
   generatedAt: number;
   // Progressive generation: 'partial' editions stream lanes in as threads are
   // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.

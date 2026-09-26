@@ -147,7 +147,7 @@ describe('fallback prose', () => {
     expect(
       ledeFallback({
         firstName: null,
-        kind: 'evening',
+        kind: 'morning',
         items: [
           { lane: 'answer', sender: 'Maya', subject: 'Venue' },
           { lane: 'answer', sender: 'Ben', subject: 'Contract' },
@@ -157,7 +157,7 @@ describe('fallback prose', () => {
         todayEventCount: 2,
       }),
     ).toBe(
-      'Here is where the day ends. Maya and Ben are waiting on replies. Today holds 2 events and 1 deadline. 1 more thread is worth a look.',
+      'Here is your morning. Maya and Ben are waiting on replies. Today holds 2 events and 1 deadline. 1 more thread is worth a look.',
     );
     expect(ledeFallback({ firstName: 'Jakob', kind: 'manual', items: [], todayEventCount: 0 })).toBe(
       'Jakob, here is where things stand. Nobody is waiting on a reply.',

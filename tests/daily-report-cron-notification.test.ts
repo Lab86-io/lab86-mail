@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { NextRequest } from 'next/server';
 import { createDailyReportPost, localDateForTimezone } from '../app/api/cron/daily-report/route';
 import { notifyBriefReady } from '../lib/mail/brief-ready';
+import { generateDailyReportTool } from '../lib/tools/daily-report';
 
 function request(body: unknown, host = 'mail.lab86.io') {
   return new NextRequest('https://mail.lab86.io/api/cron/daily-report', {
@@ -82,6 +83,18 @@ describe('daily brief cron and completion notifications', () => {
     ).toMatchObject({ skipped: true });
     deps.isInternalCronRequest.mockReturnValue(false);
     expect((await createDailyReportPost(deps as any)(request({ userId: 'owner' }))).status).toBe(401);
+  });
+  test('cron writes morning or manual editions only; a dropped evening request becomes manual', async () => {
+    const deps = {
+      ...dependencies(),
+      enqueue: mock(async () => ({ jobId: 'job', reportId: 'report', started: true })),
+    };
+    const response = await createDailyReportPost(deps as any)(request({ userId: 'owner', kind: 'evening' }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ kind: 'manual' });
+    expect(deps.enqueue.mock.calls[0][0]).toMatchObject({ edition: 'manual' });
+    expect(generateDailyReportTool.input.safeParse({ kind: 'evening' }).success).toBe(false);
+    expect(generateDailyReportTool.input.safeParse({ kind: 'morning' }).success).toBe(true);
   });
   test('local date helper handles a UTC-to-local day rollover', () => {
     expect(localDateForTimezone(Date.parse('2026-07-25T02:30:00.000Z'), 'America/New_York')).toBe(

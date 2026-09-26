@@ -28,6 +28,7 @@ import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categorie
 import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
 import type {
+  BriefEditionKind,
   DailyReport,
   DailyReportCalendarItem,
   DailyReportItem,
@@ -165,7 +166,7 @@ function scopeProfile(scope: 'week' | 'full' = 'full') {
 }
 
 export async function generateDailyReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   accounts?: string[];
   userId?: string | null;
   now?: number;
@@ -1063,7 +1064,7 @@ async function buildThreadInsight(
 // Exported for tests: the handoff-index merge below must stay on the
 // composition path that returns and persists DailyReport.handoffs.
 export async function composeReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   now: number;
   accounts: string[];
   services?: string[];
@@ -1281,9 +1282,7 @@ export async function composeReport(input: {
     albatrossQuestions: input.albatrossContext.askBeforeCentering.length,
   };
   const reportId = input.reportId ?? randomUUID();
-  const title = `${
-    input.kind === 'evening' ? 'Evening' : input.kind === 'morning' ? 'Morning' : 'Manual'
-  } Daily Report`;
+  const title = `${input.kind === 'morning' ? 'Morning' : 'Manual'} Daily Report`;
   // Merge duplicate task handoffs before the index is persisted, so the
   // stored report and the narrative carry one handoff per outcome — not just
   // the artifact prompt downstream.
@@ -1343,15 +1342,10 @@ function signalsFromInsight(insight: ThreadInsight, now: number): BriefScoreSign
 }
 
 function localHandoffNarrative(
-  kind: DailyReport['kind'],
+  kind: BriefEditionKind,
   handoffs: NonNullable<DailyReport['handoffs']>,
 ): string {
-  const opener =
-    kind === 'evening'
-      ? "Tonight's wrap-up:"
-      : kind === 'morning'
-        ? "This morning's brief:"
-        : "Here's where things stand:";
+  const opener = kind === 'morning' ? "This morning's brief:" : "Here's where things stand:";
   if (!handoffs.length) return `${opener} a quiet day — no open handoff needs your attention.`;
   const protectedCount = handoffs.filter((handoff) => handoff.protected).length;
   const lead = handoffs[0];

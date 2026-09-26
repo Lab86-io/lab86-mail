@@ -24,7 +24,7 @@ import {
 } from '../store/daily-reports';
 import { defineTool } from './registry';
 
-const ReportKindSchema = z.enum(['morning', 'evening', 'manual']);
+const ReportKindSchema = z.enum(['morning', 'manual']);
 
 export const generateDailyReportTool = defineTool({
   name: 'generate_daily_report',

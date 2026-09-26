@@ -4,7 +4,12 @@ import { allDayDateKey } from '../calendar/all-day';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
 import { stripEmoji } from '../shared/format';
 import { parseIsoInTimezone } from '../shared/timezones';
-import type { DailyReportCalendarItem, DailyReportMcpItem, DailyReportProse } from '../shared/types';
+import type {
+  BriefEditionKind,
+  DailyReportCalendarItem,
+  DailyReportMcpItem,
+  DailyReportProse,
+} from '../shared/types';
 import { BRIEF_EVIDENCE_POLICY } from './brief-evidence-policy';
 import type { BriefLane } from './brief-score';
 
@@ -42,7 +47,7 @@ export interface BriefProseSinceInput {
 
 export interface BriefProseInput {
   firstName: string | null;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: BriefEditionKind;
   now: number;
   timezone: string;
   items: BriefProseItemInput[];
@@ -236,7 +241,7 @@ export function weekAheadFallback(input: {
 
 export function ledeFallback(input: {
   firstName: string | null;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: BriefEditionKind;
   items: Array<{ lane: BriefLane | 'waiting'; sender: string; subject: string }>;
   todayEventCount: number;
 }): string {
@@ -244,12 +249,7 @@ export function ledeFallback(input: {
   const today = input.items.filter((item) => item.lane === 'today');
   const know = input.items.filter((item) => item.lane === 'know');
   const sentences: string[] = [];
-  const opener =
-    input.kind === 'evening'
-      ? 'Here is where the day ends.'
-      : input.kind === 'morning'
-        ? 'Here is your morning.'
-        : 'Here is where things stand.';
+  const opener = input.kind === 'morning' ? 'Here is your morning.' : 'Here is where things stand.';
   sentences.push(
     input.firstName ? `${input.firstName}, ${opener.charAt(0).toLowerCase()}${opener.slice(1)}` : opener,
   );

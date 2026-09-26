@@ -7,6 +7,7 @@ import { compositionFromReport } from '../shared/brief-composition';
 import type { BriefDocumentV2 } from '../shared/brief-document';
 import { normalizeBriefTimezone } from '../shared/brief-edition';
 import {
+  type BriefEditionKind,
   type DailyReport,
   type DailyReportArtifactError,
   type DailyReportArtifactErrorStage,
@@ -213,7 +214,7 @@ export function withArtifactError(report: DailyReport, error: DailyReportArtifac
 }
 
 export async function generateAgentReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   userId?: string | null;
   now?: number;
   reportId?: string;
@@ -229,7 +230,7 @@ export async function generateAgentReport(input: {
 }
 
 async function runAgentReport(input: {
-  kind: DailyReport['kind'];
+  kind: BriefEditionKind;
   userId?: string | null;
   now?: number;
   reportId?: string;
@@ -447,7 +448,7 @@ export async function composeBudgetBrief(
   const prose = await writeBriefProse(
     {
       firstName: contextFirstName() || null,
-      kind: report.kind,
+      kind: report.kind === 'morning' ? 'morning' : 'manual',
       now,
       timezone,
       items,

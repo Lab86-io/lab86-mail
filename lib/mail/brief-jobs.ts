@@ -6,7 +6,7 @@ import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { refreshNarrative } from '../narrative/service';
-import type { DailyReport } from '../shared/types';
+import type { BriefEditionKind, DailyReport } from '../shared/types';
 import { getDailyReport } from '../store/daily-reports';
 import { generateAgentReport } from './agent-report';
 import { notifyBriefReady } from './brief-ready';
@@ -15,7 +15,7 @@ const functions = (api as any).briefJobs;
 export async function enqueueBriefJob(input: {
   userId: string;
   kind: 'daily' | 'area' | 'narrative';
-  edition?: 'morning' | 'evening' | 'manual';
+  edition?: BriefEditionKind;
   timezone?: string;
   areaId?: string;
   force?: boolean;

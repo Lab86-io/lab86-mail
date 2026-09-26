@@ -21,7 +21,7 @@ export function createDailyReportPost(deps = defaults) {
     const body = await req.json().catch(() => null);
     const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
     if (!userId) return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
-    const kind = body?.kind === 'morning' || body?.kind === 'evening' ? body.kind : 'manual';
+    const kind = body?.kind === 'morning' ? 'morning' : 'manual';
     try {
       const job = await deps.enqueue({
         userId,
