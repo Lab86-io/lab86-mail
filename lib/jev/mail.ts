@@ -183,6 +183,23 @@ export function assessmentFromResponse(
   });
 }
 
+// True when each obligation answer is clear: no probability in the unclear
+// band, and each likely obligation has its evidence. This is the obligation
+// part of the status test in assessmentFromResponse.
+function obligationsSettled(assessment: JevAssessment) {
+  const p = assessment.probabilities || {};
+  const present: Record<string, boolean> = {
+    reply: hasObligation(assessment, 'reply'),
+    action: hasObligation(assessment, 'action'),
+    waiting: hasObligation(assessment, 'waiting'),
+    change: assessment.meaningfulChange,
+  };
+  return Object.entries(present).every(([key, found]) => {
+    const value = p[key] ?? 0;
+    return !(value > 0.25 && value < 0.75) && !(value >= 0.75 && !found);
+  });
+}
+
 export function smartCategoryFromJev(
   assessment: JevAssessment,
   local: SmartCategory,
@@ -194,20 +211,31 @@ export function smartCategoryFromJev(
   const waiting = hasObligation(assessment, 'waiting');
   const active = reply || action || waiting || assessment.meaningfulChange;
   const bulk = assessment.purpose === 'promotion' || assessment.purpose === 'newsletter';
+  const purposeSettled = assessment.confidence >= 0.6 && assessment.purpose !== 'unknown';
+  // A cut message window does not make the place of the mail unclear. Older
+  // stored verdicts also set contextComplete=false for each long body, so the
+  // other status inputs decide when the context flag is false.
+  const settled =
+    assessment.status === 'accepted' ||
+    (!assessment.contextComplete && purposeSettled && obligationsSettled(assessment));
   let primary: SmartCategory['primary'] = 'main';
-  if (assessment.status === 'uncertain' && !active) primary = 'review';
-  else if (!active && bulk) primary = 'noise';
-  else if (assessment.subjectKind === 'code') primary = 'codes';
+  // A clear promotion, newsletter, or code has its place even when an
+  // obligation answer is unclear.
+  if (!active && bulk && purposeSettled) primary = 'noise';
+  else if (assessment.subjectKind === 'code' && purposeSettled) primary = 'codes';
+  else if (!settled && !active) primary = 'review';
   else if (!active && ['order', 'booking'].includes(assessment.subjectKind)) primary = 'orders';
   else if (!active && assessment.subjectKind === 'finance') primary = 'finance_admin';
+  // A routine account or general update with nothing to do (a password change
+  // notice, a welcome mail) is not Main mail.
+  else if (!active && assessment.purpose === 'transaction') primary = 'noise';
   return {
     ...local,
     primary,
     secondary: reply ? ['needs_reply'] : [],
     confidence: assessment.confidence,
     reason: jevReason(assessment),
-    needsAttention:
-      reply || action || assessment.meaningfulChange || (unread && assessment.status === 'uncertain'),
+    needsAttention: reply || action || assessment.meaningfulChange || (unread && primary === 'review'),
     suggestedAction: reply
       ? 'reply'
       : action || assessment.meaningfulChange
