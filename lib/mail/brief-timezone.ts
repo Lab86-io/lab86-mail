@@ -3,10 +3,10 @@ import { isConvexConfigured } from '../hosted/env';
 
 // The Daily Brief's dateline, weather geocoding, and calendar formatting all
 // hang off one timezone. The request context carries what the trigger sent —
-// the browser header (which correctly tracks travel) or the cron's calendar
-// guess — and when it is a real zone it wins. Only when the context is missing
-// or unusable (UTC/GMT filler, garbage) do the user's synced calendars fill it
-// in, and nothing here ever invents a default city or zone.
+// the browser header (which correctly tracks travel) or the scheduler's stored
+// zone — and when it is a real zone it wins. Only when the context is missing
+// or unusable (UTC/GMT filler, garbage) do the stored zones fill it in, and
+// nothing here ever invents a default city or zone.
 
 interface CalendarTimezoneRow {
   timezone?: string | null;
@@ -46,31 +46,57 @@ export function pickCalendarTimezone(calendars: CalendarTimezoneRow[]): string |
   return best;
 }
 
-async function listCalendarTimezones(userId: string): Promise<CalendarTimezoneRow[]> {
-  if (!isConvexConfigured()) return [];
-  const calendars = await convexQuery<CalendarTimezoneRow[]>((api as any).calendarData.listCalendars, {
-    userId,
-  });
-  return Array.isArray(calendars) ? calendars : [];
+interface BriefTimezoneSources {
+  preference?: string | null;
+  calendars?: CalendarTimezoneRow[];
+  lastClient?: string | null;
+}
+
+async function loadBriefTimezoneSources(userId: string): Promise<BriefTimezoneSources> {
+  if (!isConvexConfigured()) return {};
+  return (
+    (await convexQuery<BriefTimezoneSources | null>((api as any).dailyReports.briefTimezoneSources, {
+      userId,
+    })) ?? {}
+  );
+}
+
+/** The stored zone order: the notification preference (Settings says the
+ * morning brief follows it), then calendar consensus, then the zone the
+ * user's own client last sent. Undefined when none is real. */
+export function pickBriefTimezone(sources: BriefTimezoneSources): string | undefined {
+  if (isUsableTimezone(sources.preference)) return String(sources.preference).trim();
+  const calendar = pickCalendarTimezone(sources.calendars ?? []);
+  if (calendar) return calendar;
+  if (isUsableTimezone(sources.lastClient)) return String(sources.lastClient).trim();
+  return undefined;
 }
 
 /** Resolve the timezone a brief should be composed in: a usable context
- * (browser/cron) value wins — it tracks where the user actually is right now,
- * including travel. Calendar consensus only fills a missing/unusable context;
- * otherwise undefined (callers render UTC times and skip anything
- * place-derived rather than guessing a city). */
+ * (the job's zone: a live browser zone, or the scheduler's stored zone) wins.
+ * Otherwise the stored order in pickBriefTimezone applies; otherwise
+ * undefined (callers render UTC times and skip anything place-derived rather
+ * than guessing a city). */
 export async function resolveBriefTimezone(
   userId: string | null | undefined,
   contextTimezone: string | undefined,
-  deps: { listCalendars?: (userId: string) => Promise<CalendarTimezoneRow[]> } = {},
+  deps: {
+    listCalendars?: (userId: string) => Promise<CalendarTimezoneRow[]>;
+    loadSources?: (userId: string) => Promise<BriefTimezoneSources>;
+  } = {},
 ): Promise<string | undefined> {
   if (isUsableTimezone(contextTimezone)) return contextTimezone;
   if (!userId) return undefined;
+  const listCalendars = deps.listCalendars;
+  const load =
+    deps.loadSources ??
+    (listCalendars
+      ? async (id: string) => ({ calendars: await listCalendars(id) })
+      : loadBriefTimezoneSources);
   try {
-    const calendars = await (deps.listCalendars ?? listCalendarTimezones)(userId);
-    return pickCalendarTimezone(calendars) ?? undefined;
+    return pickBriefTimezone(await load(userId));
   } catch (err) {
-    console.warn('[brief-timezone] calendar timezone lookup failed; brief runs without one:', err);
+    console.warn('[brief-timezone] timezone lookup failed; brief runs without one:', err);
     return undefined;
   }
 }

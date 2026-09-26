@@ -1,7 +1,8 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import { internalAction, internalQuery } from './_generated/server';
-import { fanOutInternalPost } from './lib';
+import type { QueryCtx } from './_generated/server';
+import { internalAction, internalQuery, query } from './_generated/server';
+import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 // Local hour the scheduled morning edition fires (24h clock, in each user's tz).
 // Evening editions were dropped — mornings + manual generation only.
@@ -11,8 +12,78 @@ export const MORNING_HOUR = 7;
 // window fires again for every user who still has no morning edition for the
 // local date. The window closes at noon so a late brief never lands at night.
 export const CATCH_UP_LAST_HOUR = 11;
-// Users without a synced calendar timezone fall back to this.
+// The clock that schedules users with no known zone. It only picks the hour
+// the cron fires; it is never written into the job as the user's zone.
 const DEFAULT_TZ = 'America/New_York';
+const SCHEDULE_ONLY_TZ = DEFAULT_TZ;
+
+/** A real, resolvable IANA zone. UTC/GMT/Etc are provider filler, not a place. */
+export function isRealZone(tz: string | null | undefined): tz is string {
+  const value = String(tz || '').trim();
+  if (!value || /^(UTC|GMT|Etc\/)/i.test(value)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface BriefTimezoneSources {
+  preference: string | null;
+  calendars: Array<{ timezone?: string | null; isPrimary?: boolean | null }>;
+  lastClient: string | null;
+}
+
+/** The brief zone: the notification preference, then the calendars (primary
+ * first), then the zone the user's own client last sent. Never a default. */
+export function pickBriefZone(sources: BriefTimezoneSources): string | undefined {
+  if (isRealZone(sources.preference)) return sources.preference;
+  let calendarZone: string | undefined;
+  for (const calendar of sources.calendars) {
+    if (!isRealZone(calendar.timezone)) continue;
+    if (calendar.isPrimary) return calendar.timezone;
+    calendarZone ??= calendar.timezone;
+  }
+  if (calendarZone) return calendarZone;
+  return isRealZone(sources.lastClient) ? sources.lastClient : undefined;
+}
+
+async function briefTimezoneSourcesFor(ctx: QueryCtx, userId: string): Promise<BriefTimezoneSources> {
+  const [preference, calendars, jobs] = await Promise.all([
+    ctx.db
+      .query('albatrossNotificationPreferences')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .unique(),
+    ctx.db
+      .query('calendars')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect(),
+    ctx.db
+      .query('briefJobs')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .order('desc')
+      .take(20),
+  ]);
+  // A manual edition is the only job whose zone the user's client sent.
+  const lastClient =
+    jobs.find((job) => job.kind === 'daily' && job.edition === 'manual' && isRealZone(job.timezone))
+      ?.timezone ?? null;
+  return {
+    preference: preference?.timezone ?? null,
+    calendars: calendars.map((calendar) => ({ timezone: calendar.timezone, isPrimary: calendar.isPrimary })),
+    lastClient,
+  };
+}
+
+/** The sources the app resolves a brief zone from, for a job with no usable zone. */
+export const briefTimezoneSources = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return await briefTimezoneSourcesFor(ctx, args.userId);
+  },
+});
 
 function isStagingCronTarget(appUrl: string) {
   const environment = String(
@@ -75,20 +146,10 @@ export const reportTargetPage = internalQuery({
     const userIds = [...new Set(accounts.map((account) => account.userId))];
     const targets = await Promise.all(
       userIds.map(async (userId) => {
-        const calendars = await ctx.db
-          .query('calendars')
-          .withIndex('by_user', (q) => q.eq('userId', userId))
-          .collect();
-        let timezone = DEFAULT_TZ;
-        let found = false;
-        for (const calendar of calendars) {
-          if (!calendar.timezone || /^(UTC|GMT|Etc\/)/i.test(calendar.timezone)) continue;
-          if (calendar.isPrimary || !found) {
-            timezone = calendar.timezone;
-            found = true;
-          }
-        }
-        return { userId, timezone };
+        const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, userId));
+        // `timezone` schedules the tick; `zoneKnown` says whether it is the
+        // user's real zone and may be written into the job.
+        return { userId, timezone: zone ?? SCHEDULE_ONLY_TZ, zoneKnown: Boolean(zone) };
       }),
     );
     return { targets, nextUserId: accounts.length === TARGET_BATCH_SIZE ? userIds.at(-1) : undefined };
@@ -199,10 +260,14 @@ export const tick = internalAction({
         }),
       );
     }
+    const unknownZone = new Set(
+      targets.filter((target: any) => target.zoneKnown === false).map((target) => target.userId),
+    );
     const due = dueTargets(targets, at, (target) => editionByUser.get(target.userId) !== false).map(
       ({ catchUp, ...target }) => {
         if (catchUp) console.log(`[daily-report cron] catch-up edition for ${target.userId}`);
-        return target;
+        // Never send the scheduling clock as the user's zone.
+        return unknownZone.has(target.userId) ? { userId: target.userId, kind: target.kind } : target;
       },
     );
     // The morning hour also rewrites every area's living brief so the Daily

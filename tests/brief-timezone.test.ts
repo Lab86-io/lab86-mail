@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { isUsableTimezone, pickCalendarTimezone, resolveBriefTimezone } from '../lib/mail/brief-timezone';
+import {
+  isUsableTimezone,
+  pickBriefTimezone,
+  pickCalendarTimezone,
+  resolveBriefTimezone,
+} from '../lib/mail/brief-timezone';
 
 // The context (browser/cron) timezone tracks where the user actually is right
 // now — including travel — so a usable context value wins. Synced calendars
@@ -95,5 +100,23 @@ describe('resolveBriefTimezone', () => {
 
   test('without a userId only the context timezone is considered', async () => {
     expect(await resolveBriefTimezone(undefined, 'Europe/Paris')).toBe('Europe/Paris');
+  });
+});
+
+describe('stored brief zone order', () => {
+  test('the notification preference wins over calendars, then calendars over the last client zone', async () => {
+    const sources = {
+      preference: 'Europe/Berlin',
+      calendars: [{ timezone: 'America/New_York', isPrimary: true }],
+      lastClient: 'Asia/Tokyo',
+    };
+    expect(await resolveBriefTimezone('user_1', undefined, { loadSources: async () => sources })).toBe(
+      'Europe/Berlin',
+    );
+    expect(pickBriefTimezone({ ...sources, preference: 'UTC' })).toBe('America/New_York');
+    expect(pickBriefTimezone({ ...sources, preference: null, calendars: [] })).toBe('Asia/Tokyo');
+    expect(pickBriefTimezone({ preference: 'UTC', calendars: [{ timezone: 'GMT' }], lastClient: null })).toBe(
+      undefined,
+    );
   });
 });

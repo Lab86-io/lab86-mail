@@ -78,6 +78,10 @@ test('both scheduled workflows resume all target pages and preserve the original
         .sort(),
     ).toEqual(Array.from({ length: 7 }, (_, i) => `user-${i}`));
     expect(calls.filter((call) => call.path.endsWith('area-briefs'))).toHaveLength(7);
+    // No user here has a known zone: the scheduling clock is never sent as theirs.
+    expect(
+      calls.filter((call) => call.path.endsWith('daily-report')).every((call) => !('timezone' in call.body)),
+    ).toBe(true);
     calls.length = 0;
     await t.action(internal.dailyReports.areaRefreshTick, {});
     await drain(t);
@@ -98,4 +102,73 @@ test('both scheduled workflows resume all target pages and preserve the original
       else process.env[key] = value;
     }
   }
+});
+
+test('scheduled targets use the preference zone, then the calendar zone, then the last client zone', async () => {
+  const t = await seeded();
+  await t.run(async (ctx) => {
+    const preference = {
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: '19:00',
+      inAppEnabled: true,
+      webPushEnabled: false,
+      emailFallbackEnabled: false,
+      emailFallbackDelayMinutes: 30,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    await ctx.db.insert('albatrossNotificationPreferences', {
+      ...preference,
+      userId: 'user-0',
+      timezone: 'Europe/Berlin',
+    });
+    await ctx.db.insert('albatrossNotificationPreferences', {
+      ...preference,
+      userId: 'user-1',
+      timezone: 'UTC',
+    });
+    for (const userId of ['user-0', 'user-1'])
+      await ctx.db.insert('calendars', {
+        userId,
+        accountId: 'a',
+        grantId: 'g',
+        provider: 'google',
+        providerCalendarId: `cal-${userId}`,
+        name: 'Main',
+        timezone: 'America/Chicago',
+        isPrimary: true,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    const job = { active: false, availableAt: 0, createdAt: 1, attempts: 1, state: 'completed' as const };
+    await ctx.db.insert('briefJobs', {
+      ...job,
+      userId: 'user-2',
+      scope: 'daily:x',
+      kind: 'daily',
+      edition: 'manual',
+      timezone: 'Asia/Tokyo',
+    });
+    // A scheduled job's zone is not a client zone.
+    await ctx.db.insert('briefJobs', {
+      ...job,
+      userId: 'user-3',
+      scope: 'daily:y',
+      kind: 'daily',
+      edition: 'morning',
+      timezone: 'America/New_York',
+    });
+  });
+  const targets: any[] = [];
+  let afterUserId: string | undefined;
+  do {
+    const page: any = await t.query(internal.dailyReports.reportTargetPage, { afterUserId });
+    targets.push(...page.targets);
+    afterUserId = page.nextUserId || undefined;
+  } while (afterUserId);
+  const byUser = Object.fromEntries(targets.map((target) => [target.userId, target]));
+  expect(byUser['user-0']).toMatchObject({ timezone: 'Europe/Berlin', zoneKnown: true });
+  expect(byUser['user-1']).toMatchObject({ timezone: 'America/Chicago', zoneKnown: true });
+  expect(byUser['user-2']).toMatchObject({ timezone: 'Asia/Tokyo', zoneKnown: true });
+  expect(byUser['user-3']).toMatchObject({ zoneKnown: false });
 });
