@@ -54,7 +54,7 @@ describe('MCP syncConnection state transitions', () => {
       }),
     );
 
-    expect(missing).toEqual({ ok: false, count: 0, error: 'missing credentials' });
+    expect(missing).toEqual({ ok: false, count: 0, error: 'missing or unreadable credentials' });
     expect(mutations[0]).toMatchObject({ status: 'error', error: 'missing or unreadable credentials' });
     expect(unknown).toEqual({ ok: false, count: 0, error: 'unknown server' });
   });
@@ -354,6 +354,74 @@ describe('MCP syncConnection state transitions', () => {
     expect(rejected.error).toBe('query rejected');
     expect(closedUnsupported).toBe(true);
     expect(closedRejected).toBe(true);
+  });
+
+  test('an MCP tool result with isError is a query error, not an empty good sync', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const jiraRow = {
+      ...bitbucketRow,
+      connectionId: 'jira_conn',
+      server: 'jira',
+      serverUrl: 'https://mcp.atlassian.com/v1/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      jiraRow.connectionId,
+      depsFor({
+        getConnectionToken: async () => ({ row: jiraRow, token: 'token' }),
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+        connectMcp: async () =>
+          ({ toolNames: new Set(['searchJiraIssuesUsingJql']), close: async () => undefined }) as any,
+        callMcpTool: async () => ({ isError: true, content: [{ type: 'text', text: 'JQL is invalid' }] }),
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('searchJiraIssuesUsingJql failed: JQL is invalid');
+    expect(mutations.at(-1)).toMatchObject({
+      status: 'error',
+      error: 'searchJiraIssuesUsingJql failed: JQL is invalid',
+    });
+    expect(mutations.some((args) => args.status === 'ready')).toBe(false);
+  });
+
+  test('an expired OAuth sign-in asks the user to reconnect that source', async () => {
+    const mutations: Array<Record<string, any>> = [];
+    const { syncConnection } = await import('../lib/mcp/sync');
+    const granolaRow = {
+      ...bitbucketRow,
+      connectionId: 'granola_conn',
+      server: 'granola',
+      authKind: 'oauth',
+      serverUrl: 'https://mcp.granola.ai/mcp',
+    } as any;
+    const result = await syncConnection(
+      'user_1',
+      'granola_conn',
+      depsFor({
+        getConnectionToken: async () => null,
+        listUserConnections: async () => [granolaRow, { ...bitbucketRow }] as any,
+        convexMutation: async (_fn, args) => {
+          mutations.push(args);
+          return undefined as any;
+        },
+      }),
+    );
+    expect(result).toEqual({ ok: false, count: 0, error: 'Reconnect Granola: its sign-in expired.' });
+    expect(mutations[0]).toMatchObject({
+      server: 'granola',
+      status: 'error',
+      error: 'Reconnect Granola: its sign-in expired.',
+    });
+    const tokenRow = await syncConnection(
+      'user_1',
+      'bitbucket_conn',
+      depsFor({ listUserConnections: async () => [bitbucketRow as any] }),
+    );
+    expect(tokenRow.error).toBe('Reconnect Bitbucket: its saved credentials cannot be read.');
   });
 
   test('normalizes, deduplicates, persists, and closes successful hosted MCP results', async () => {
