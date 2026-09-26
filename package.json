@@ -14,7 +14,6 @@
     "mobile:openapi": "bun scripts/generate-mobile-openapi.ts && biome format --write docs/mobile/openapi/mobile-v1.json",
     "ios:configure": "bun scripts/configure-ios.ts",
     "ios:verify-auth": "bun scripts/verify-ios-auth.ts",
-    "daily-report": "bun --bun scripts/generate-daily-report.ts",
     "eval:albatross-work": "bun --bun scripts/eval-albatross-work.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage --coverage-reporter=lcov --coverage-reporter=text --coverage-dir=coverage",
