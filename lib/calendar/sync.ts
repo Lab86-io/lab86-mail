@@ -1,3 +1,4 @@
+import type { FunctionReference } from 'convex/server';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect } from '@/lib/nylas/grant-health';
@@ -68,7 +69,10 @@ export interface EventInputRow {
   providerUpdatedAt?: number;
 }
 
-type ReconcileMutation = (fn: any, args: Record<string, unknown>) => Promise<any>;
+type ReconcileMutation = (
+  fn: FunctionReference<'mutation', 'public'>,
+  args: Record<string, unknown>,
+) => Promise<any>;
 
 export async function reconcileCalendarWindowBatched(
   args: Record<string, unknown>,
