@@ -108,4 +108,23 @@ describe('deployment classifier selection', () => {
     expect(byId['old-quiet'].llmPending).toBeUndefined();
     expect(byId['old-quiet'].jevStatus).toBe('accepted');
   });
+
+  test('a switch with more users than one page schedules the next page', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 5; i++)
+        await ctx.db.insert('users', {
+          clerkUserId: `user-${i}`,
+          email: `user-${i}@example.test`,
+          createdAt: 0,
+          updatedAt: 0,
+        });
+    });
+    const since = Date.now();
+    await t.mutation(internal.classifier.requeueAfterSwitch, { since });
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].name).toContain('requeueAfterSwitch');
+    expect(scheduled[0].args[0]).toMatchObject({ since, cursor: expect.any(String) });
+  });
 });
