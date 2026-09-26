@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, expect, spyOn, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { JSDOM } from 'jsdom';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -65,6 +65,7 @@ function render(report: Record<string, unknown> & { generatedAt: number }, selec
 
 const request = spyOn(client, 'callTool').mockImplementation((async () => ({})) as any);
 afterEach(() => request.mockClear());
+afterAll(() => request.mockRestore());
 
 test('an old HTML edition shows the source line and says it describes an older day', () => {
   const doc = render(legacyReport(Date.now() - 80 * DAY));
