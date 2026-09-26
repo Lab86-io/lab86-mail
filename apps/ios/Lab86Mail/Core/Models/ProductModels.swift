@@ -7,6 +7,11 @@ struct AccountSummary: Identifiable, Hashable, Codable, Sendable {
     let provider: String
     let displayName: String?
     let isPrimary: Bool
+    // Set when the mailbox's sign-in ended (`list_accounts` returns it with
+    // authed:false). Optional so cached snapshots still decode.
+    let reconnectReason: String?
+
+    var needsReconnect: Bool { reconnectReason != nil }
 
     init?(json: JSONValue) {
         guard let id = json["accountId"]?.stringValue,
@@ -16,6 +21,8 @@ struct AccountSummary: Identifiable, Hashable, Codable, Sendable {
         provider = json["provider"]?.stringValue ?? "mail"
         displayName = json["displayName"]?.stringValue
         isPrimary = json["primary"]?.boolValue ?? false
+        reconnectReason = json["reconnectReason"]?.stringValue?.nilIfBlank
+            ?? (json["authed"]?.boolValue == false ? "Reconnect needed" : nil)
     }
 }
 

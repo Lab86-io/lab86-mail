@@ -6,6 +6,7 @@ struct MailView: View {
     @State private var searchText = ""
     @State private var accountScope: Set<String> = []
     @State private var selection = MailScopeSelection()
+    @State private var reconnectingID: String?
     @State private var mailboxScope = MailboxScope.inbox
     @State private var selectedThreadKeys: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -57,6 +58,11 @@ struct MailView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                // A mailbox whose sign-in ended is not a mail scope until it
+                // reconnects. Say so where the mail would be.
+                ForEach(environment.store.reconnectAccounts) { account in
+                    reconnectRow(account)
+                }
             }
             if filteredThreads.isEmpty {
                 if Self.showsLoadMoreRow(
@@ -437,6 +443,41 @@ struct MailView: View {
             .padding(.bottom, 6)
         }
         .background(environment.theme.paperColor.opacity(0.01))
+    }
+
+    private func reconnectRow(_ account: AccountSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Reconnect needed")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(account.email) stopped syncing. Sign in again to get its mail.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(reconnectingID == account.id ? "Reconnecting…" : "Reconnect") {
+                Task { await reconnect(account) }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(reconnectingID != nil)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+    }
+
+    private func reconnect(_ account: AccountSummary) async {
+        reconnectingID = account.id
+        defer { reconnectingID = nil }
+        do {
+            try await environment.webAuthentication.connectMailbox(provider: account.provider)
+            await environment.store.refreshMail()
+        } catch {
+            // The sign-in sheet reports its own failure; the row stays.
+        }
     }
 
     private func categoryPill(
@@ -845,7 +886,9 @@ struct MailScopeSelection: Hashable {
 }
 
 enum MailboxScope: String, CaseIterable, Identifiable {
-    case inbox, unread, starred, important, attachments, thisWeek, sent, drafts, allMail, snoozed, trash
+    // No Snoozed scope: a snoozed thread is archived now and comes back by
+    // itself, and no search finds the active snoozes (audit MUT-1).
+    case inbox, unread, starred, important, attachments, thisWeek, sent, drafts, allMail, trash
     var id: Self { self }
     var title: String {
         switch self {
@@ -858,7 +901,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "Sent"
         case .drafts: "Drafts"
         case .allMail: "All Mail"
-        case .snoozed: "Snoozed"
         case .trash: "Trash"
         }
     }
@@ -873,7 +915,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "paperplane"
         case .drafts: "doc"
         case .allMail: "tray.full"
-        case .snoozed: "clock"
         case .trash: "trash"
         }
     }
@@ -888,7 +929,6 @@ enum MailboxScope: String, CaseIterable, Identifiable {
         case .sent: "in:sent"
         case .drafts: "in:drafts"
         case .allMail: "-in:trash"
-        case .snoozed: "label:SNOOZED"
         case .trash: "in:trash"
         }
     }

@@ -282,4 +282,65 @@ struct MailScopeTests {
         await store.refreshMail()
         #expect(store.threads.isEmpty)
     }
+
+    @Test
+    func aSnoozedThreadComesBackWhenItsTimePasses() async throws {
+        let target = Self.thread("s2", epoch: 2_000)
+        let pages = ScopedPages(pages: [
+            "*/*": [
+                MailListPage(items: [target], nextCursor: nil, hasMore: false),
+                MailListPage(items: [target], nextCursor: nil, hasMore: false),
+            ],
+        ])
+        let tools = RecordingTools { name, _ in
+            switch name {
+            case "list_accounts":
+                return .object(["accounts": .array([
+                    .object(["email": .string("o@example.com"), "provider": .string("google"), "authed": .bool(true), "accountId": .string("account-1")]),
+                ])])
+            case "get_thread":
+                return .object(["messages": .array([.object(["_id": .string("m1")])])])
+            default:
+                return .object(["ok": .bool(true)])
+            }
+        }
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil), spotlight: NoopSpotlight(), mailPages: pages)
+        await store.refreshMail()
+        // The server brings the thread back at its time; after that the list shows it.
+        await store.snooze(target, until: .now.addingTimeInterval(-1))
+        #expect(store.threads.isEmpty)
+        await store.refreshMail()
+        #expect(store.threads.map(\.id) == ["s2"])
+    }
+
+    @Test
+    func thereIsNoSnoozedMailboxScope() {
+        #expect(!MailboxScope.allCases.compactMap(\.query).contains("label:SNOOZED"))
+    }
+
+    @Test
+    func aMailboxThatNeedsToReconnectIsNotAMailAccount() async {
+        let tools = RecordingTools { name, _ in
+            switch name {
+            case "list_accounts":
+                return .object(["accounts": .array([
+                    .object(["email": .string("live@example.com"), "provider": .string("google"), "authed": .bool(true), "accountId": .string("live")]),
+                    .object([
+                        "email": .string("dead@example.com"), "provider": .string("microsoft"), "authed": .bool(false),
+                        "accountId": .string("dead"), "reconnectReason": .string("Grant expired"),
+                    ]),
+                ])])
+            default:
+                return .object(["threads": .array([])])
+            }
+        }
+        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil))
+        await store.refreshMail()
+        #expect(store.accounts.map(\.id) == ["live"])
+        #expect(store.reconnectAccounts.map(\.id) == ["dead"])
+        #expect(store.reconnectAccounts.first?.reconnectReason == "Grant expired")
+        // The dead mailbox is not read.
+        let reads = await tools.arguments(of: "list_account_threads")
+        #expect(reads.map { $0["account"] } == [.string("live")])
+    }
 }

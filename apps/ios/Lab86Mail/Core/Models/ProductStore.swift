@@ -51,9 +51,14 @@ final class ProductStore {
     private var liveMailTask: Task<Void, Never>?
     private var mailStateOverrides: [String: MailStateOverride] = [:]
     private var suppressedMailThreads: Set<String> = []
+    // Snoozed threads stay hidden until their time. The server archives them
+    // and brings them back, so they may show again after that (MUT-1).
+    private var snoozedMailThreads: [String: Date] = [:]
     private var areaBriefMonitoringTasks: [String: Task<Void, Never>] = [:]
 
     var accounts: [AccountSummary] = []
+    // Mailboxes whose sign-in ended. Not mail scopes until they reconnect.
+    var reconnectAccounts: [AccountSummary] = []
     var threads: [MailThreadSummary] = []
     // Cursor state for the typed unified-inbox pages. hasMoreMail drives the
     // list's load-more row; the cursor is a lastDate watermark from the server.
@@ -197,8 +202,12 @@ final class ProductStore {
         mailErrorMessage = nil
         do {
             let result = try await tools.invoke("list_accounts")
-            let refreshedAccounts = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
+            let listed = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
+            // A mailbox that needs to reconnect is not a mail account until
+            // it does; it is listed apart so Mail can say so.
+            let refreshedAccounts = listed.filter { !$0.needsReconnect }
             accounts = refreshedAccounts
+            reconnectAccounts = listed.filter(\.needsReconnect)
             await refreshMailLabels()
             // Typed paged path: one unified corpus page with a real cursor,
             // instead of 200 threads per account replayed on every refresh.
@@ -2449,9 +2458,9 @@ final class ProductStore {
                     "untilTs": .number(until.timeIntervalSince1970 * 1_000),
                 ]
             )
-            // The suppression key must match `applyPendingMailState`, which
-            // reads `account:thread`; a bare thread id never matched (MUT-1).
-            suppressedMailThreads.insert(mailKey(thread))
+            // The key must match `applyPendingMailState`, which reads
+            // `account:thread`; a bare thread id never matched (MUT-1).
+            snoozedMailThreads[mailKey(thread)] = until
             threads.removeAll { mailKey($0) == mailKey(thread) }
             searchedThreads.removeAll { mailKey($0) == mailKey(thread) }
         } catch {
@@ -2870,6 +2879,7 @@ final class ProductStore {
         }
         cacheOwner = nil
         accounts = []
+        reconnectAccounts = []
         threads = []
         resetMailScopes()
         mailLabels = []
@@ -2916,6 +2926,7 @@ final class ProductStore {
         isLoadingTasks = false
         mailStateOverrides = [:]
         suppressedMailThreads = []
+        snoozedMailThreads = [:]
         lastRefresh = nil
         undoNotice = nil
     }
@@ -3006,6 +3017,10 @@ final class ProductStore {
     private func applyPendingMailState(_ incoming: MailThreadSummary) -> MailThreadSummary? {
         let key = mailKey(incoming)
         guard !suppressedMailThreads.contains(key) else { return nil }
+        if let until = snoozedMailThreads[key] {
+            if until > Date.now { return nil }
+            snoozedMailThreads.removeValue(forKey: key)
+        }
         guard var override = mailStateOverrides[key] else { return incoming }
         var result = incoming
         if let unread = override.unread {
