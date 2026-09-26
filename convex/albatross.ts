@@ -326,6 +326,66 @@ async function retireLegacyPersonalArea(ctx: MutationCtx, userId: string) {
   return { areaId: legacy._id, archived: !userAdopted };
 }
 
+const LEGACY_PERSONAL_LINK_BATCH = 200;
+
+/**
+ * One-time migration for the legacy `system:personal` catch-all area
+ * (WRK-7). For each user that still has one, it deletes the weak automatic
+ * links under that area in bounded batches, then retires the area the same
+ * way the reindex does: archived, or kept without its system id when the user
+ * adopted it. Idempotent: a finished user has no legacy area left, so a new
+ * run does nothing. Paginated over the areas table; each page schedules the
+ * next. Run once after deploy:
+ *   npx convex run albatross:migrateLegacyPersonalAreas '{}'
+ */
+export const migrateLegacyPersonalAreas = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    retiredAreas: v.optional(v.number()),
+    deletedLinks: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    let retiredAreas = args.retiredAreas ?? 0;
+    let deletedLinks = args.deletedLinks ?? 0;
+    const page = await ctx.db.query('areas').paginate({ cursor: args.cursor ?? null, numItems: 50 });
+    for (const area of page.page) {
+      if (area.externalId !== LEGACY_PERSONAL_AREA_EXTERNAL_ID) continue;
+      const links = await ctx.db
+        .query('areaArtifactLinks')
+        .withIndex('by_user_area', (q) => q.eq('userId', area.userId).eq('areaId', area._id))
+        .take(LEGACY_PERSONAL_LINK_BATCH);
+      let deletedHere = 0;
+      for (const link of links) {
+        if (!isWeakAutomaticAreaLink(link)) continue;
+        await ctx.db.delete(link._id);
+        deletedHere += 1;
+      }
+      deletedLinks += deletedHere;
+      if (links.length === LEGACY_PERSONAL_LINK_BATCH && deletedHere > 0) {
+        // More links may remain. Run this page again before the area loses
+        // its system id, so the next pass can still find it.
+        await ctx.scheduler.runAfter(0, internal.albatross.migrateLegacyPersonalAreas, {
+          cursor: args.cursor,
+          retiredAreas,
+          deletedLinks,
+        });
+        return { retiredAreas, deletedLinks, done: false };
+      }
+      if (await retireLegacyPersonalArea(ctx, area.userId)) retiredAreas += 1;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.albatross.migrateLegacyPersonalAreas, {
+        cursor: page.continueCursor,
+        retiredAreas,
+        deletedLinks,
+      });
+      return { retiredAreas, deletedLinks, done: false };
+    }
+    console.log(`[legacy personal migration] retired ${retiredAreas} areas, deleted ${deletedLinks} links`);
+    return { retiredAreas, deletedLinks, done: true };
+  },
+});
+
 export const createArea = mutation({
   args: {
     ...callerArgs,

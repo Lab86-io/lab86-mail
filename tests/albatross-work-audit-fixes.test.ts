@@ -3,6 +3,7 @@ import { convexTest } from 'convex-test';
 import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
+import { isPersonalFallbackReason, isWeakAutomaticAreaLink } from '../lib/albatross/area-home';
 import { ownedDefaultBoardId, tasksCreateCard } from '../lib/tools/tasks';
 
 // Regression tests for the 2026-09-26 audit findings in Work, Areas, and
@@ -16,6 +17,7 @@ const modules = {
   '../convex/albatrossNotifications.ts': () => import('../convex/albatrossNotifications'),
   '../convex/boards.ts': () => import('../convex/boards'),
   '../convex/mobile.ts': () => import('../convex/mobile'),
+  '../convex/albatross.ts': () => import('../convex/albatross'),
 };
 
 const SECRET = 'work-audit-fixes-secret';
@@ -517,5 +519,79 @@ describe('WRK-4 and WRK-5 applied steps', () => {
       { stepKey: 'step-4', kind: 'email_send' },
       { stepKey: 'step-3', kind: 'document', documentId: 'doc_1' },
     ]);
+  });
+});
+
+describe('WRK-7 legacy Personal area', () => {
+  test('both old reason strings mark an automatic Personal link', () => {
+    expect(isPersonalFallbackReason('legacy mail fallback to Personal')).toBe(true);
+    expect(isPersonalFallbackReason('No confident area match — filed to Personal')).toBe(true);
+    expect(isPersonalFallbackReason('Verified email match')).toBe(false);
+    expect(
+      isWeakAutomaticAreaLink({
+        status: 'verified',
+        reason: 'No confident area match — filed to Personal',
+        sourceRefs: [],
+        confirmationRefs: [],
+      }),
+    ).toBe(true);
+  });
+
+  test('the migration deletes weak links and retires each legacy area once', async () => {
+    const t = harness();
+    const link = (areaId: Id<'areas'>, owner: string, extra: Record<string, unknown>) =>
+      t.run((ctx) =>
+        ctx.db.insert('areaArtifactLinks', {
+          userId: owner,
+          areaId,
+          artifactKind: 'mailThread',
+          artifactId: `thread-${Math.random()}`,
+          role: 'supporting',
+          status: 'candidate',
+          sourceRefs: [],
+          confirmationRefs: [],
+          createdAt: 1,
+          updatedAt: 1,
+          ...extra,
+        } as any),
+      );
+    const area = (owner: string) =>
+      t.run((ctx) =>
+        ctx.db.insert('areas', {
+          userId: owner,
+          externalId: 'system:personal',
+          name: 'Personal',
+          kind: 'life',
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        } as any),
+      );
+    const plain = await area(userId);
+    const adopted = await area('adopting_user');
+    await link(plain, userId, { reason: 'No confident area match — filed to Personal', status: 'verified' });
+    await link(plain, userId, { reason: 'legacy mail fallback to Personal' });
+    await link(adopted, 'adopting_user', { reason: 'legacy mail fallback to Personal' });
+    await link(adopted, 'adopting_user', {
+      status: 'verified',
+      reason: 'Moved by you',
+      confirmationRefs: [
+        { kind: 'userConfirmation', id: 'c1', prompt: 'Moved here by the user', confirmedAt: 1 },
+      ],
+    });
+
+    const result = await t.mutation(internal.albatross.migrateLegacyPersonalAreas, {});
+    expect(result).toEqual({ retiredAreas: 2, deletedLinks: 3, done: true });
+    expect(await t.run((ctx) => ctx.db.get(plain))).toMatchObject({ status: 'archived' });
+    const kept = await t.run((ctx) => ctx.db.get(adopted));
+    expect(kept?.status).toBe('active');
+    expect(kept?.externalId).toBeUndefined();
+    expect(await t.run((ctx) => ctx.db.query('areaArtifactLinks').collect())).toHaveLength(1);
+
+    expect(await t.mutation(internal.albatross.migrateLegacyPersonalAreas, {})).toEqual({
+      retiredAreas: 0,
+      deletedLinks: 0,
+      done: true,
+    });
   });
 });

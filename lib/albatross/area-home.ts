@@ -71,9 +71,19 @@ export interface AreaLinkLike {
   confirmationRefs?: Array<{ kind?: string | null; prompt?: string | null }> | null;
 }
 
+/**
+ * The old Personal catch-all wrote two reason strings: "legacy mail fallback
+ * to Personal" and "No confident area match — filed to Personal". Both mark
+ * an automatic link, never a user decision (WRK-7).
+ */
+export function isPersonalFallbackReason(reason: string | null | undefined): boolean {
+  const text = String(reason || '').toLowerCase();
+  return text.includes('fallback to personal') || text.includes('filed to personal');
+}
+
 function hasAutomaticAreaSignature(link: AreaLinkLike): boolean {
   const reason = String(link.reason || '').toLowerCase();
-  if (reason.includes('fallback to personal')) return true;
+  if (isPersonalFallbackReason(reason)) return true;
   if (/^llm\b/.test(reason)) return true;
   if (/^(verified|candidate)\s+(email|domain)\b/.test(reason)) return true;
   return (link.sourceRefs || []).some(
@@ -161,8 +171,7 @@ export function isSupersedableAreaLink(link: AreaLinkLike, currentVersion: numbe
  */
 export function isWeakAutomaticAreaLink(link: AreaLinkLike): boolean {
   if (isUserAuthoritativeLink(link)) return false;
-  const reason = String(link.reason || '').toLowerCase();
-  if (reason.includes('fallback to personal')) return true;
+  if (isPersonalFallbackReason(link.reason)) return true;
   return (link.sourceRefs || []).some(
     (ref) => ref?.kind === 'areaContext' || (ref?.kind === 'system' && ref?.id === 'area-reindex'),
   );
