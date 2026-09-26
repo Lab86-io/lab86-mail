@@ -50,7 +50,7 @@ import {
   workHome,
   workList,
 } from './areas';
-import { listAuditEntries, logAction } from './audit-tools';
+import { listAuditEntries } from './audit-tools';
 import {
   calendarCountEvents,
   calendarCreateEvent,
@@ -335,7 +335,6 @@ const allTools: AnyTool[] = [
   resolvePhotos,
   browserbaseSearch,
   browserbaseFetch,
-  logAction,
   listAuditEntries,
   listRecentOperationsTool,
   undoOperationTool,

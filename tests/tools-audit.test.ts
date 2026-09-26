@@ -1,19 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import './tools/harness';
-import { logAction } from '../lib/tools/audit-tools';
 import { invokeTool } from '../lib/tools/registry';
-import { runTool, toolContext, withToolContext } from './tools/harness';
+import { toolContext, withToolContext } from './tools/harness';
 
 describe('audit tools', () => {
-  test('log_action completes successfully', async () => {
-    const result = await runTool(logAction.handler, {
-      tool: 'manual_note',
-      detail: 'Reviewed launch threads',
-      result: 'ok',
-    });
-    expect(result.ok).toBe(true);
-  });
-
   test('invokeTool audit entries are scoped to the active user', async () => {
     const { getTool } = await import('../lib/tools/index');
     const remember = getTool('remember');
