@@ -2,7 +2,7 @@
 
 import { Mic } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/surface-data';
+import { looksLikeMultipleIntents, splitIntentText } from '@/components/albatross/intent-split';
 import { cn } from '@/lib/utils';
 
 export { looksLikeMultipleIntents, splitIntentText };

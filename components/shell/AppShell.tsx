@@ -85,11 +85,6 @@ export function AppShell({
   const selectedWorkId = useClientStore((s) => s.selectedWorkId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
-  // Settings deep-links back into the area setup wizard via /?setup=areas.
-  const [openAreaSetup] = useState<boolean>(
-    () =>
-      typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('setup') === 'areas',
-  );
   const [deepLinkedView] = useState<PrimaryView | null>(() => {
     if (typeof window === 'undefined') return null;
     return primaryViewFromSearch(window.location.search);
@@ -133,11 +128,6 @@ export function AppShell({
     handleWorkCaptured(pendingOpenWorkId);
     setPendingOpenWorkId(null);
   }, [handleWorkCaptured, pendingOpenWorkId, setPendingOpenWorkId]);
-
-  useEffect(() => {
-    // The deep link must win over whatever view was persisted.
-    if (openAreaSetup) setPrimaryView('areas');
-  }, [openAreaSetup, setPrimaryView]);
 
   useEffect(() => {
     if (deepLinkedWorkId) {

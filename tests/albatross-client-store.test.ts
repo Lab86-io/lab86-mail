@@ -171,13 +171,11 @@ describe('the rest of the shell state', () => {
     s.setShortcutsOpen(true);
     s.setAiBarOpen(true);
     s.setThreadFullscreen(true);
-    s.setRightRailOpen(false);
     const open = useClientStore.getState();
     expect(open.paletteOpen).toBe(true);
     expect(open.shortcutsOpen).toBe(true);
     expect(open.aiBarOpen).toBe(true);
     expect(open.threadFullscreen).toBe(true);
-    expect(open.rightRailOpen).toBe(false);
 
     const next = useClientStore.getState();
     next.setPaletteOpen(false);

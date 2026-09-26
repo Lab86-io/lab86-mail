@@ -3,7 +3,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { BriefResponseRequest } from '@/lib/brief/response';
-import type { Capacity } from './albatross/today';
 import { DEFAULT_MAIL_QUERY } from './mail/search/constants';
 import type { CalendarSearchTarget } from './search/global-search';
 import { migratePrimaryView, type PrimaryView } from './shared/types';
@@ -81,19 +80,12 @@ export interface ClientState {
   // The column board is an optional lens, off by default. It used to be a
   // top-level surface, which made it a second system to maintain.
   boardSurfaceEnabled: boolean;
-  // The user's own statement about the day. It changes how much Today puts in
-  // front of them; it never changes what they are allowed to see.
-  capacity: Capacity;
-  // When the user last opened Albatross. Coming back after a while gets a
-  // different first screen — never a wall of accumulated overdue work.
-  lastSeenAt: number | null;
   compose: ComposeState;
   // Exact attachment blobs staged for the next composer (Undo Send or a
   // brief-generated deliverable). Transient by design; the composer persists
   // them with the draft as soon as it opens.
   composeRecoveredFiles: File[];
   shortcutsOpen: boolean;
-  rightRailOpen: boolean;
   railOpen: boolean;
   railWidth: number;
   aiBarOpen: boolean;
@@ -192,8 +184,6 @@ export interface ClientState {
   setCaptureOpen: (open: boolean) => void;
   openCaptureWith: (seed: string) => void;
   setBoardSurfaceEnabled: (enabled: boolean) => void;
-  setCapacity: (capacity: Capacity) => void;
-  markSeen: () => void;
   openComposeNew: (prefill?: ComposePrefill) => void;
   openComposeReply: (input: {
     mode: 'reply' | 'reply_all' | 'forward';
@@ -205,7 +195,6 @@ export interface ClientState {
   closeCompose: () => void;
   setComposeRecoveredFiles: (files: File[]) => void;
   setShortcutsOpen: (open: boolean) => void;
-  setRightRailOpen: (open: boolean) => void;
   setRailOpen: (open: boolean) => void;
   setRailWidth: (width: number) => void;
   setAiBarOpen: (open: boolean) => void;
@@ -314,13 +303,10 @@ export function persistedClientState(s: ClientState) {
     account: s.account,
     primaryView: s.primaryView,
     boardSurfaceEnabled: s.boardSurfaceEnabled,
-    capacity: s.capacity,
-    lastSeenAt: s.lastSeenAt,
     query: s.query,
     smartCategory: s.smartCategory,
     selectedAreaId: s.selectedAreaId,
     selectedWorkId: s.selectedWorkId,
-    rightRailOpen: s.rightRailOpen,
     railOpen: s.railOpen,
     railWidth: s.railWidth,
     lastChatId: s.lastChatId,
@@ -371,12 +357,9 @@ export const useClientStore = create<ClientState>()(
       captureOpen: false,
       captureSeed: null,
       boardSurfaceEnabled: false,
-      capacity: 'normal',
-      lastSeenAt: null,
       compose: initialCompose,
       composeRecoveredFiles: [],
       shortcutsOpen: false,
-      rightRailOpen: true,
       railOpen: true,
       railWidth: 240,
       aiBarOpen: false,
@@ -515,8 +498,6 @@ export const useClientStore = create<ClientState>()(
       setCaptureOpen: (captureOpen) => set({ captureOpen, ...(captureOpen ? {} : { captureSeed: null }) }),
       openCaptureWith: (captureSeed) => set({ captureSeed, captureOpen: true }),
       setBoardSurfaceEnabled: (boardSurfaceEnabled) => set({ boardSurfaceEnabled }),
-      setCapacity: (capacity) => set({ capacity }),
-      markSeen: () => set({ lastSeenAt: Date.now() }),
       openComposeNew: (prefill) =>
         set((s) => ({
           compose: {
@@ -542,7 +523,6 @@ export const useClientStore = create<ClientState>()(
       closeCompose: () => set({ compose: { ...initialCompose } }),
       setComposeRecoveredFiles: (composeRecoveredFiles) => set({ composeRecoveredFiles }),
       setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
-      setRightRailOpen: (rightRailOpen) => set({ rightRailOpen }),
       setRailOpen: (railOpen) => set({ railOpen }),
       setRailWidth: (railWidth) => set({ railWidth }),
       setAiBarOpen: (aiBarOpen) => set({ aiBarOpen }),
