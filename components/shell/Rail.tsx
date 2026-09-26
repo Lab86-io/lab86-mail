@@ -49,25 +49,23 @@ import { useClientStore } from '@/lib/client-state';
 import { mailSearchShortcutLabel } from '@/lib/mail/search/focus-contract';
 import { categoricalColor } from '@/lib/shared/format';
 import { normalizePrimaryView, type PrimaryView } from '@/lib/shared/types';
+import { type RailSurfaceView, railSurfaces } from '@/lib/shell/rail-surfaces';
 import { NotificationCenter } from './NotificationCenter';
 import { RAIL_SURFACE_ICONS } from './navigation-icons';
 import { RailPrimaryActions } from './ShellActions';
 import { useApplyThemeExtras } from './ThemePanel';
 
-// Top-level surfaces of the product, in the order a person meets them: the
-// day, the things being carried, then the systems those things run on.
-const SURFACES: Array<{
-  view: 'today' | 'albatrosses' | 'mail' | 'calendar' | 'files' | 'chat';
-  label: string;
-  Icon: any;
-}> = [
-  { view: 'today', label: 'Today', Icon: rowIcon(RAIL_SURFACE_ICONS.today) },
-  { view: 'albatrosses', label: 'Albatrosses', Icon: rowIcon(RAIL_SURFACE_ICONS.albatrosses) },
-  { view: 'chat', label: 'Chat', Icon: rowIcon(RAIL_SURFACE_ICONS.chat) },
-  { view: 'mail', label: 'Mail', Icon: rowIcon(RAIL_SURFACE_ICONS.mail) },
-  { view: 'calendar', label: 'Calendar', Icon: rowIcon(RAIL_SURFACE_ICONS.calendar) },
-  { view: 'files', label: 'Files', Icon: rowIcon(RAIL_SURFACE_ICONS.files) },
-];
+// Top-level surfaces of the product, with their rail glyphs. The order and
+// the optional board live in lib/shell/rail-surfaces.
+const SURFACE_ICONS: Record<RailSurfaceView, any> = {
+  today: rowIcon(RAIL_SURFACE_ICONS.today),
+  albatrosses: rowIcon(RAIL_SURFACE_ICONS.albatrosses),
+  chat: rowIcon(RAIL_SURFACE_ICONS.chat),
+  mail: rowIcon(RAIL_SURFACE_ICONS.mail),
+  calendar: rowIcon(RAIL_SURFACE_ICONS.calendar),
+  files: rowIcon(RAIL_SURFACE_ICONS.files),
+  tasks: rowIcon(RAIL_SURFACE_ICONS.tasks),
+};
 
 export const ALL_ACCOUNTS = '__all__';
 
@@ -134,6 +132,11 @@ export function Rail({
   const primaryView = useClientStore((s) => s.primaryView);
   const setPrimaryView = useClientStore((s) => s.setPrimaryView);
   const visiblePrimaryView = normalizePrimaryView(activeViewOverride ?? primaryView);
+  const boardEnabled = useClientStore((s) => s.boardSurfaceEnabled);
+  const SURFACES = railSurfaces({ boardEnabled }).map((surface) => ({
+    ...surface,
+    Icon: SURFACE_ICONS[surface.view],
+  }));
   const selectedAreaId = useClientStore((s) => s.selectedAreaId);
   const setSelectedAreaId = useClientStore((s) => s.setSelectedAreaId);
   const setSelectedWorkId = useClientStore((s) => s.setSelectedWorkId);

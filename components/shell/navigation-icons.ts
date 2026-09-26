@@ -3,6 +3,7 @@ import { CalendarDaysIcon } from '@/components/ui/calendar-days';
 import { CircleCheckIcon } from '@/components/ui/circle-check';
 import { FileTextIcon } from '@/components/ui/file-text';
 import { FolderIcon } from '@/components/ui/folder';
+import { LayoutGridIcon } from '@/components/ui/layout-grid';
 import { MailCheckIcon } from '@/components/ui/mail-check';
 import { MessageCircleIcon } from '@/components/ui/message-circle';
 
@@ -15,4 +16,5 @@ export const RAIL_SURFACE_ICONS = {
   files: FolderIcon,
   chat: MessageCircleIcon,
   notifications: BellIcon,
+  tasks: LayoutGridIcon,
 };
