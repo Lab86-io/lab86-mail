@@ -492,10 +492,14 @@ const mailThreadPayload = z
   })
   .strict();
 
-const mailMessagePayload = z
+// Mark unread, star, and unstar change one message. A list row knows only
+// its thread, so `messageID` is optional: without it the server changes the
+// newest message of the thread.
+const mailThreadMessagePayload = z
   .object({
     accountID: identifier,
-    messageID: identifier,
+    threadID: identifier,
+    messageID: optionalIdentifier,
   })
   .strict();
 
@@ -542,11 +546,13 @@ const mailMessageLabelPayload = z
   })
   .strict();
 
+// Snooze acts on the whole thread. `messageID` is optional: the Snoozed list
+// does not always know the message a snooze started from.
 const mailSnoozePayload = z
   .object({
     accountID: identifier,
     threadID: identifier,
-    messageID: identifier,
+    messageID: optionalIdentifier,
     untilAt: isoTimestamp,
   })
   .strict();
@@ -555,7 +561,7 @@ const mailUnsnoozePayload = z
   .object({
     accountID: identifier,
     threadID: identifier,
-    messageID: identifier,
+    messageID: optionalIdentifier,
   })
   .strict();
 
@@ -640,13 +646,13 @@ export const MailMarkReadCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.markRead'), payload: mailThreadPayload })
   .strict();
 export const MailMarkUnreadCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.markUnread'), payload: mailMessagePayload })
+  .object({ ...mobileCommandBase, kind: z.literal('mail.markUnread'), payload: mailThreadMessagePayload })
   .strict();
 export const MailStarCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.star'), payload: mailMessagePayload })
+  .object({ ...mobileCommandBase, kind: z.literal('mail.star'), payload: mailThreadMessagePayload })
   .strict();
 export const MailUnstarCommandSchema = z
-  .object({ ...mobileCommandBase, kind: z.literal('mail.unstar'), payload: mailMessagePayload })
+  .object({ ...mobileCommandBase, kind: z.literal('mail.unstar'), payload: mailThreadMessagePayload })
   .strict();
 export const MailAddLabelCommandSchema = z
   .object({ ...mobileCommandBase, kind: z.literal('mail.addLabel'), payload: mailMessageLabelPayload })

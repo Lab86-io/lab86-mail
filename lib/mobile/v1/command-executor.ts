@@ -7,6 +7,7 @@ import { api, convexMutation } from '@/lib/hosted/convex';
 import { getTool } from '@/lib/tools';
 import { invokeTool } from '@/lib/tools/registry';
 import type { MobileCommand, MobileDomain, MobileSyncExecution } from './contract';
+import { MobileNotFoundError } from './http';
 
 // A command that changes no entity (for example `calendar.resync`) records
 // no sync change. It still names its domain for the command row.
@@ -128,6 +129,27 @@ function resultMetadata(result: any) {
   };
 }
 
+// The newest message of a thread. A list row knows only its thread, so a
+// star or unread change from the list acts on the newest message, as the
+// native list did before these actions moved to the command outbox.
+async function newestMessageID(
+  dependencies: MobileCommandExecutorDependencies,
+  accountID: string,
+  threadID: string,
+  user: CurrentUser,
+): Promise<string> {
+  const thread = await dependencies.invoke('get_thread', { account: accountID, threadId: threadID }, user);
+  let newest: { id: string; at: number } | undefined;
+  for (const message of Array.isArray(thread?.messages) ? thread.messages : []) {
+    const id = String(message?._id || message?.id || '');
+    if (!id) continue;
+    const at = Number(message?.date) || 0;
+    if (!newest || at >= newest.at) newest = { id, at };
+  }
+  if (!newest) throw new MobileNotFoundError('This conversation has no message to change.');
+  return newest.id;
+}
+
 export async function executeMobileCommand(
   command: MobileCommand,
   user: CurrentUser,
@@ -184,9 +206,12 @@ export async function executeMobileCommand(
     case 'mail.unstar': {
       const toolName =
         command.kind === 'mail.markUnread' ? 'mark_unread' : command.kind === 'mail.star' ? 'star' : 'unstar';
+      const messageID =
+        command.payload.messageID ||
+        (await newestMessageID(dependencies, command.payload.accountID, command.payload.threadID, user));
       const result = await dependencies.invoke(
         toolName,
-        { account: command.payload.accountID, messageId: command.payload.messageID },
+        { account: command.payload.accountID, messageId: messageID },
         user,
       );
       return {
@@ -194,7 +219,7 @@ export async function executeMobileCommand(
         ...resultMetadata(result),
         syncDomain: 'mail',
         entityKind: 'message',
-        entityID: command.payload.messageID,
+        entityID: messageID,
         syncPayload: {
           accountID: command.payload.accountID,
           ...(command.kind === 'mail.markUnread'

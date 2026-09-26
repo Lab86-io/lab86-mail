@@ -578,7 +578,11 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     baseRevision: snapshot.baseRevision,
                     clientCreatedAt: snapshot.clientCreatedAt,
                     kind: .mail_markUnread,
-                    payload: .init(accountID: payload.accountID, messageID: payload.messageID)
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID
+                    )
                 )
             )
         case .mailStar(let payload):
@@ -588,7 +592,11 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     baseRevision: snapshot.baseRevision,
                     clientCreatedAt: snapshot.clientCreatedAt,
                     kind: .mail_star,
-                    payload: .init(accountID: payload.accountID, messageID: payload.messageID)
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID
+                    )
                 )
             )
         case .mailUnstar(let payload):
@@ -598,7 +606,11 @@ actor MobileV1Client: MobileCommandSubmitting, MobileBootstrapFetching, MobileSy
                     baseRevision: snapshot.baseRevision,
                     clientCreatedAt: snapshot.clientCreatedAt,
                     kind: .mail_unstar,
-                    payload: .init(accountID: payload.accountID, messageID: payload.messageID)
+                    payload: .init(
+                        accountID: payload.accountID,
+                        threadID: payload.threadID,
+                        messageID: payload.messageID
+                    )
                 )
             )
         case .mailAddLabel(let payload):

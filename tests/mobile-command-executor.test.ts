@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { executeMobileCommand, mobileCommandDomain } from '../lib/mobile/v1/command-executor';
 import { type MobileCommand, MobileCommandSchema } from '../lib/mobile/v1/contract';
+import { MobileNotFoundError } from '../lib/mobile/v1/http';
 
 const user = {
   userId: 'user_mobile_executor',
@@ -123,7 +124,7 @@ describe('mail commands', () => {
     const { calls, deps } = recordingDependencies();
 
     const result = await executeMobileCommand(
-      command('mail.markUnread', { accountID: 'account-1', messageID: 'message-1' }),
+      command('mail.markUnread', { accountID: 'account-1', threadID: 'thread-1', messageID: 'message-1' }),
       user,
       deps,
     );
@@ -140,7 +141,7 @@ describe('mail commands', () => {
   test('star and unstar report the resulting starred state, not the action name', async () => {
     const star = recordingDependencies();
     const starred = await executeMobileCommand(
-      command('mail.star', { accountID: 'account-1', messageID: 'message-2' }),
+      command('mail.star', { accountID: 'account-1', threadID: 'thread-2', messageID: 'message-2' }),
       user,
       star.deps,
     );
@@ -149,12 +150,74 @@ describe('mail commands', () => {
 
     const unstar = recordingDependencies();
     const unstarred = await executeMobileCommand(
-      command('mail.unstar', { accountID: 'account-1', messageID: 'message-2' }),
+      command('mail.unstar', { accountID: 'account-1', threadID: 'thread-2', messageID: 'message-2' }),
       user,
       unstar.deps,
     );
     expect(unstar.calls[0].name).toBe('unstar');
     expect(unstarred.syncPayload).toEqual({ accountID: 'account-1', starred: false });
+  });
+
+  test('a thread-only star or unread change acts on the newest message of the thread', async () => {
+    for (const [kind, tool] of [
+      ['mail.star', 'star'],
+      ['mail.unstar', 'unstar'],
+      ['mail.markUnread', 'mark_unread'],
+    ] as const) {
+      const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+      const deps = dependencies({
+        invoke: async (name: string, args: Record<string, unknown>) => {
+          calls.push({ name, args });
+          if (name !== 'get_thread') return { ok: true };
+          // The tool order is not trusted: the newest date wins.
+          return {
+            messages: [
+              { _id: 'message-new', date: 3_000 },
+              { _id: 'message-old', date: 1_000 },
+              { id: 'message-mid', date: 2_000 },
+              { date: 4_000 },
+            ],
+          };
+        },
+      });
+
+      const result = await executeMobileCommand(
+        command(kind, { accountID: 'account-1', threadID: 'thread-9' }),
+        user,
+        deps,
+      );
+
+      expect(calls).toEqual([
+        { name: 'get_thread', args: { account: 'account-1', threadId: 'thread-9' } },
+        { name: tool, args: { account: 'account-1', messageId: 'message-new' } },
+      ]);
+      expect(result).toMatchObject({ entityKind: 'message', entityID: 'message-new' });
+    }
+  });
+
+  test('a thread-only change on a thread without messages fails as not found, not as a retry', async () => {
+    const deps = dependencies({ invoke: async () => ({ messages: [{ date: 1 }] }) });
+
+    await expect(
+      executeMobileCommand(
+        command('mail.star', { accountID: 'account-1', threadID: 'thread-0' }),
+        user,
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(MobileNotFoundError);
+
+    const empty = dependencies({ invoke: async () => ({}) });
+    await expect(
+      executeMobileCommand(
+        command('mail.unstar', { accountID: 'account-1', threadID: 'thread-0' }),
+        user,
+        empty,
+      ),
+    ).rejects.toThrow('This conversation has no message to change.');
+  });
+
+  test('message targets need their thread', () => {
+    expect(() => command('mail.star', { accountID: 'account-1', messageID: 'message-1' })).toThrow();
   });
 
   test('provider failures propagate instead of being swallowed as applied', async () => {
@@ -242,6 +305,35 @@ describe('expanded mail commands', () => {
       entityID: 'thread-4',
       syncPayload: { accountID: 'account-1', snoozedUntil: Date.parse(untilAt) },
     });
+  });
+
+  test('snooze and unsnooze need no message: the tool acts on the whole thread', async () => {
+    const { calls, deps } = recordingDependencies();
+    const untilAt = '2026-08-21T09:00:00.000Z';
+
+    await executeMobileCommand(
+      command('mail.snooze', { accountID: 'account-1', threadID: 'thread-7', untilAt }),
+      user,
+      deps,
+    );
+    await executeMobileCommand(
+      command('mail.unsnooze', { accountID: 'account-1', threadID: 'thread-7' }),
+      user,
+      deps,
+    );
+
+    expect(calls).toEqual([
+      {
+        name: 'snooze_thread',
+        args: {
+          account: 'account-1',
+          messageId: undefined,
+          threadId: 'thread-7',
+          untilTs: Date.parse(untilAt),
+        },
+      },
+      { name: 'unsnooze_thread', args: { account: 'account-1', messageId: undefined, threadId: 'thread-7' } },
+    ]);
   });
 
   test('unsnooze clears the snooze with the explicit snoozeCleared flag', async () => {

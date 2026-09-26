@@ -37,9 +37,19 @@ struct MailThreadCommandTarget: Codable, Equatable, Sendable {
     let threadID: String
 }
 
-struct MailMessageCommandTarget: Codable, Equatable, Sendable {
+// Mark unread, star, and unstar change one message. A list row knows only
+// its thread, so the message is optional: without it the server changes the
+// newest message of the thread.
+struct MailThreadMessageCommandTarget: Codable, Equatable, Sendable {
     let accountID: String
-    let messageID: String
+    let threadID: String
+    let messageID: String?
+
+    init(accountID: String, threadID: String, messageID: String? = nil) {
+        self.accountID = accountID
+        self.threadID = threadID
+        self.messageID = messageID
+    }
 }
 
 struct MailMessageLabelCommandPayload: Codable, Equatable, Sendable {
@@ -49,17 +59,31 @@ struct MailMessageLabelCommandPayload: Codable, Equatable, Sendable {
     let label: String
 }
 
+// Snooze acts on the whole thread, so the message is optional.
 struct MailSnoozeCommandPayload: Codable, Equatable, Sendable {
     let accountID: String
     let threadID: String
-    let messageID: String
+    let messageID: String?
     let untilAt: Date
+
+    init(accountID: String, threadID: String, messageID: String? = nil, untilAt: Date) {
+        self.accountID = accountID
+        self.threadID = threadID
+        self.messageID = messageID
+        self.untilAt = untilAt
+    }
 }
 
 struct MailUnsnoozeCommandPayload: Codable, Equatable, Sendable {
     let accountID: String
     let threadID: String
-    let messageID: String
+    let messageID: String?
+
+    init(accountID: String, threadID: String, messageID: String? = nil) {
+        self.accountID = accountID
+        self.threadID = threadID
+        self.messageID = messageID
+    }
 }
 
 enum MailSendMode: String, Codable, Equatable, Sendable {
@@ -233,9 +257,9 @@ enum DurableMobileCommand: Codable, Equatable, Sendable {
     case mailArchive(MailThreadCommandTarget)
     case mailTrash(MailThreadCommandTarget)
     case mailMarkRead(MailThreadCommandTarget)
-    case mailMarkUnread(MailMessageCommandTarget)
-    case mailStar(MailMessageCommandTarget)
-    case mailUnstar(MailMessageCommandTarget)
+    case mailMarkUnread(MailThreadMessageCommandTarget)
+    case mailStar(MailThreadMessageCommandTarget)
+    case mailUnstar(MailThreadMessageCommandTarget)
     case mailAddLabel(MailMessageLabelCommandPayload)
     case mailRemoveLabel(MailMessageLabelCommandPayload)
     case mailSnooze(MailSnoozeCommandPayload)

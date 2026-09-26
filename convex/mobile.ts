@@ -380,7 +380,23 @@ export const beginCommand = mutation({
       )
       .unique();
     if (existing) {
-      return { command: existing, keyReused: existing.payloadHash !== args.payloadHash, created: false };
+      const keyReused = existing.payloadHash !== args.payloadHash;
+      // A client sends a command again when the last run failed with a
+      // retryable error. Queue it again so the route runs it; replaying the
+      // stored failure would stop every retry at the first failure.
+      if (!keyReused && existing.status === 'failed' && existing.errorRetryable === true) {
+        await ctx.db.patch(existing._id, {
+          status: 'queued',
+          errorCode: undefined,
+          errorMessage: undefined,
+          errorRetryable: undefined,
+          claimToken: undefined,
+          claimedAt: undefined,
+          updatedAt: now(),
+        });
+        return { command: await ctx.db.get(existing._id), keyReused, created: false };
+      }
+      return { command: existing, keyReused, created: false };
     }
     const head = await syncHead(ctx, args.userId, args.domain);
     const currentRevision = head?.revision ?? 0;

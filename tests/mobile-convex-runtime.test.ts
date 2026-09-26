@@ -154,6 +154,58 @@ describe('mobile Convex runtime', () => {
     }
   });
 
+  test('beginCommand queues a retryable failure again and keeps a final one', async () => {
+    const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
+    process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-retry-secret';
+    try {
+      const t = convexTest(schema, convexModules);
+      const begin = (idempotencyKey: string, payloadHash = 'hash_retry') =>
+        t.mutation(api.mobile.beginCommand, {
+          internalSecret: 'mobile-retry-secret',
+          userId: 'retry_user',
+          idempotencyKey,
+          payloadHash,
+          domain: 'mail',
+          kind: 'mail.archive',
+          payload: { accountID: 'account-1', threadID: 'thread-1' },
+          clientCreatedAt: '2026-09-26T12:00:00Z',
+        });
+      const fail = (commandId: any, errorRetryable: boolean) =>
+        t.run((ctx) =>
+          ctx.db.patch(commandId, {
+            status: 'failed',
+            errorCode: 'SERVER_ERROR',
+            errorMessage: 'The server could not complete the request.',
+            errorRetryable,
+            attemptCount: 1,
+          }),
+        );
+
+      const retryable = await begin('retry_key');
+      await fail(retryable.command?._id, true);
+      const again = await begin('retry_key');
+      expect(again.created).toBe(false);
+      expect(again.keyReused).toBe(false);
+      expect(again.command).toMatchObject({ status: 'queued', attemptCount: 1 });
+      expect(again.command?.errorCode).toBeUndefined();
+      expect(again.command?.errorRetryable).toBeUndefined();
+
+      // A different payload under the same key is still a reused key, not a retry.
+      await fail(retryable.command?._id, true);
+      const reused = await begin('retry_key', 'hash_other');
+      expect(reused.keyReused).toBe(true);
+      expect(reused.command?.status).toBe('failed');
+
+      const final = await begin('final_key');
+      await fail(final.command?._id, false);
+      const replay = await begin('final_key');
+      expect(replay.command).toMatchObject({ status: 'failed', errorRetryable: false });
+    } finally {
+      if (previousSecret === undefined) delete process.env.LAB86_CONVEX_INTERNAL_SECRET;
+      else process.env.LAB86_CONVEX_INTERNAL_SECRET = previousSecret;
+    }
+  });
+
   test('beginCommand conflicts a stale base revision against the domain head', async () => {
     const previousSecret = process.env.LAB86_CONVEX_INTERNAL_SECRET;
     process.env.LAB86_CONVEX_INTERNAL_SECRET = 'mobile-conflict-secret';
