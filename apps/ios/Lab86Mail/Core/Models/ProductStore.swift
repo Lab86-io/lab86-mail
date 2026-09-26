@@ -195,9 +195,6 @@ final class ProductStore {
 
     func refreshMail() async {
         mailErrorMessage = nil
-        // Every scope pages again from its first page after a refresh.
-        mailScopeCursors = [:]
-        mailScopeGeneration += 1
         do {
             let result = try await tools.invoke("list_accounts")
             let refreshedAccounts = (result["accounts"]?.arrayValue ?? []).compactMap(AccountSummary.init)
@@ -219,6 +216,7 @@ final class ProductStore {
                         threads = page.items.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
                         mailNextCursor = page.nextCursor
                         hasMoreMail = page.hasMore
+                        resetMailScopes()
                         await persistCache()
                         await syncMailIndex()
                         return
@@ -248,6 +246,7 @@ final class ProductStore {
             threads = allThreads.compactMap(applyPendingMailState).sorted { $0.date > $1.date }
             mailNextCursor = nil
             hasMoreMail = false
+            resetMailScopes()
             await persistCache()
             await syncMailIndex()
             if let firstFailure { recordMail(firstFailure) }
@@ -333,6 +332,14 @@ final class ProductStore {
         } catch {
             recordMail(error)
         }
+    }
+
+    // The list was replaced, so scope pages merged into it are gone. Every
+    // scope pages again from its first page; a page still in flight is
+    // dropped by the generation check.
+    private func resetMailScopes() {
+        mailScopeCursors = [:]
+        mailScopeGeneration += 1
     }
 
     private func mergeMailPage(_ items: [MailThreadSummary]) {
@@ -2864,6 +2871,8 @@ final class ProductStore {
         cacheOwner = nil
         accounts = []
         threads = []
+        resetMailScopes()
+        mailLabels = []
         searchedThreads = []
         completedMailSearchQuery = nil
         isSearchingMail = false
