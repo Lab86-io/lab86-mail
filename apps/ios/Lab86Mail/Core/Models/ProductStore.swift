@@ -1291,7 +1291,7 @@ final class ProductStore {
             let result = try await tools.invoke("tasks_list_boards")
             taskBoards = (result["boards"]?.arrayValue ?? []).compactMap(TaskBoardSummary.init)
             if activeBoardID == nil || !taskBoards.contains(where: { $0.id == activeBoardID }) {
-                activeBoardID = taskBoards.first(where: \.isDefault)?.id ?? taskBoards.first?.id
+                activeBoardID = TaskBoardSummary.defaultBoardID(in: taskBoards)
                 if let activeBoardID {
                     UserDefaults.standard.set(activeBoardID, forKey: "albatross.tasks.active-board")
                 }

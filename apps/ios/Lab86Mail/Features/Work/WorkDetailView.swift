@@ -238,16 +238,19 @@ struct WorkDetailView: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
-                            Button("Answer in chat") {
-                                environment.startAssistantChat(
-                                    scope: AssistantChatScope(
-                                        kind: .work,
-                                        contextID: route.workID,
-                                        label: detail.plan?.outcome ?? detail.work.title ?? route.title
+                            WorkQuestionOptionsView(
+                                question: question,
+                                onAnswered: { await load(initial: false) },
+                                onAnswerInChat: {
+                                    environment.startAssistantChat(
+                                        scope: AssistantChatScope(
+                                            kind: .work,
+                                            contextID: route.workID,
+                                            label: detail.plan?.outcome ?? detail.work.title ?? route.title
+                                        )
                                     )
-                                )
-                            }
-                            .buttonStyle(.borderedProminent)
+                                }
+                            )
                         }
                     }
                 }

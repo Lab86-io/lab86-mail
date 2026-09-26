@@ -636,6 +636,15 @@ struct TaskBoardSummary: Identifiable, Hashable, Codable, Sendable {
         hasPublicLink = json["hasPublicLink"]?.boolValue ?? false
         isDefault = json["isDefault"]?.boolValue ?? false
     }
+
+    /// The board new tasks go to when the user has not chosen one: the
+    /// user's own default board, else the first board the user owns. A
+    /// shared board of another person is never the default (TSK-1). Nil lets
+    /// the server create the user's default board.
+    static func defaultBoardID(in boards: [TaskBoardSummary]) -> String? {
+        boards.first(where: { $0.owned && $0.isDefault })?.id
+            ?? boards.first(where: \.owned)?.id
+    }
 }
 
 struct TaskColumnSummary: Identifiable, Hashable, Sendable {
