@@ -14,7 +14,6 @@ import {
 import {
   DAY_MS,
   formatUsd,
-  monthlyBudgetText,
   PAID_PLANS,
   PRODUCT_NAME,
   planPriceLine,
@@ -100,7 +99,9 @@ describe('the pricing page', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     for (const row of planTableRows()) expect(html).toContain(row.feature);
     for (const entry of pricingFaq()) expect(html).toContain(entry.question.replace(/'/g, '&#x27;'));
-    expect(html).toContain('500 credits a month, worth $5 of model use');
+    // The deployment's credit limits are operator settings, not published amounts.
+    expect(html).toContain('Chat uses a monthly model budget.');
+    expect(html).not.toMatch(/credits a month|of model use/);
     expect(html).not.toMatch(/\bAI\b/);
   });
 
@@ -117,7 +118,6 @@ describe('the pricing page', () => {
     expect(faq.find((entry) => entry.question === 'What is Own key?')?.answer).toContain('$12/month');
     expect(faq[0].answer).toContain('14 days of Pro with no card');
     for (const entry of faq) expect(`${entry.question} ${entry.answer}`).not.toMatch(/\bAI\b/);
-    expect(monthlyBudgetText(250, 0.01)).toBe('250 credits a month, worth $2.50 of model use');
   });
 });
 

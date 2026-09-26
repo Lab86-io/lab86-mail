@@ -1,11 +1,9 @@
 import { PricingTable } from '@clerk/nextjs';
 import Link from 'next/link';
-import { AI_CREDIT_VALUE_USD } from '@/lib/ai/budget';
-import { aiCreditDefaults, isClerkConfigured } from '@/lib/hosted/env';
+import { isClerkConfigured } from '@/lib/hosted/env';
 import {
   COMPANY_NAME,
   FREE_PLAN_NAME,
-  monthlyBudgetText,
   PAID_PLANS,
   PRODUCT_NAME,
   planTableRows,
@@ -18,7 +16,6 @@ export const dynamic = 'force-dynamic';
 
 export default function PricingPage() {
   const clerkConfigured = isClerkConfigured();
-  const budget = monthlyBudgetText(aiCreditDefaults().proMonthlyCredits, AI_CREDIT_VALUE_USD);
   const rows = planTableRows();
   return (
     <main className="min-h-dvh bg-[var(--color-bg)] px-5 py-12 text-[var(--color-text)]">
@@ -98,8 +95,8 @@ export default function PricingPage() {
             <div className="rounded-xl border border-[var(--color-border)] p-4">
               <dt className="font-medium">When you ask</dt>
               <dd className="mt-1 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-                Chat uses the monthly budget: {budget}. When it is used up, chat waits for the next month, or
-                you can add your own key. Sorting, drafts, and the Brief keep running.
+                Chat uses a monthly model budget. When it is used up, chat waits for the next month, or you
+                can add your own key. Sorting, drafts, and the Brief keep running.
               </dd>
             </div>
           </dl>

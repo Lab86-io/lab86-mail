@@ -194,12 +194,6 @@ export function planTableRows(): PlanTableRow[] {
   ];
 }
 
-/** "500 credits a month, worth $5 of model use." */
-export function monthlyBudgetText(monthlyCredits: number, creditValueUsd: number): string {
-  const worth = formatUsd(Math.round(monthlyCredits * creditValueUsd * 100) / 100);
-  return `${monthlyCredits} credits a month, worth ${worth} of model use`;
-}
-
 /** The pricing page questions, from the same constants. */
 export function pricingFaq(): Array<{ question: string; answer: string }> {
   return [
