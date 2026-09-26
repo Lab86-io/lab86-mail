@@ -494,7 +494,12 @@ export const applySmartLabels = defineTool({
       ? await recordMailOperation({
           userId: ctx.userId,
           tool: 'apply_smart_labels',
-          summary: `Applied labels to ${touched === 1 ? 'one thread' : pluralThreads(touched)}`,
+          summary: `Applied labels to ${[
+            threads.length ? pluralThreads(threads.length) : '',
+            messages.length ? `${messages.length} ${messages.length === 1 ? 'message' : 'messages'}` : '',
+          ]
+            .filter(Boolean)
+            .join(' and ')}`,
           reason: mailOperationReason(ctx, `Labels: ${uniqueLabels.join(', ') || 'smart labels'}`),
           target: { kind: 'threads', count: touched, accountId: account },
           inverse: { kind: MAIL_UNDO.threadFolders, payload: { threads, messages } },

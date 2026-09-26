@@ -23,8 +23,11 @@ import { getThread } from '../lib/store/threads';
 import { saveBulkTriageVerdicts } from '../lib/tools/ai';
 import {
   addLabel,
+  applySmartLabels,
   archiveThread,
   bulkMoveThreads,
+  muteThread,
+  removeLabel,
   restoreFromTrash,
   snoozeThreadTool,
   trashThread,
@@ -255,6 +258,61 @@ describe('mail tools record undoable operations', () => {
       });
     });
   });
+
+  test('remove label, mute, and smart labels each record a folder inverse', async () => {
+    await withHttpHarness(async (h) => {
+      const { folders, recorded } = gmailThreads(h, { t1: ['INBOX'], t2: ['INBOX'] });
+      const messageFolders = new Map([['m9', ['INBOX', 'Label_x']]]);
+      h.onNylas('GET', /\/v3\/grants\/grant_1\/messages\/[^/]+$/, ({ path }) => {
+        const id = path.split('/').pop() as string;
+        return { json: { data: { id, folders: messageFolders.get(id) || ['INBOX'] } } };
+      });
+      h.onNylas('PUT', /\/v3\/grants\/grant_1\/messages\/[^/]+$/, ({ path, body }) => {
+        messageFolders.set(path.split('/').pop() as string, body.folders);
+        return { json: { data: { id: 'm' } } };
+      });
+      h.onNylas('POST', /\/v3\/grants\/grant_1\/folders$/, ({ body }) => ({
+        json: { data: { id: `Label_${body.name}`, name: body.name } },
+      }));
+      h.onConvex('userData:upsertDoc', () => ({ ok: true }));
+
+      const removed = await runTool(removeLabel.handler, {
+        account: 'acct_1',
+        messageId: 'm9',
+        label: 'Receipts',
+      });
+      expect(removed.operationId).toBe('op_1');
+      expect(recorded[0]).toMatchObject({
+        summary: 'Removed the label "Receipts"',
+        inverse: { payload: { before: ['INBOX', 'Label_x'], after: ['INBOX'] } },
+      });
+
+      const muted = await runTool(muteThread.handler, { account: 'acct_1', threadId: 't1' }, { agent: 'ai' });
+      expect(muted.operationId).toBe('op_2');
+      expect(folders.get('t1')).toEqual(['INBOX', 'MUTE']);
+      expect(recorded[1]).toMatchObject({
+        summary: 'Muted "Quarterly plan"',
+        reason: 'Albatross did this while working on your request.',
+      });
+
+      const labeled = await runTool(applySmartLabels.handler, {
+        account: 'acct_1',
+        items: [
+          { threadId: 't2', labels: ['MailOS/Receipts'] },
+          { threadId: 't2', messageId: 'm10', labels: ['MailOS/Receipts'] },
+        ],
+      });
+      expect(labeled).toMatchObject({ ok: true, applied: 2, operationId: 'op_3' });
+      expect(recorded[2]).toMatchObject({
+        summary: 'Applied labels to 1 thread and 1 message',
+        reason: 'Labels: MailOS/Receipts',
+        target: { kind: 'threads', count: 2, accountId: 'acct_1' },
+        inverse: { kind: MAIL_UNDO.threadFolders },
+      });
+      expect(recorded[2].inverse.payload.threads).toHaveLength(1);
+      expect(recorded[2].inverse.payload.messages).toHaveLength(1);
+    });
+  }, 15_000);
 
   test('snooze records the wake time in the user zone and an unsnooze inverse', async () => {
     await withHttpHarness(async (h) => {
