@@ -311,6 +311,17 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     ...(raw.retrying === true ? { retrying: true } : {}),
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
     services: Array.isArray(raw.services) ? raw.services : undefined,
+    ...(Array.isArray(raw.sourceChecks)
+      ? {
+          sourceChecks: raw.sourceChecks
+            .filter((check) => typeof check?.source === 'string')
+            .slice(0, 24)
+            .map((check) => ({
+              source: check.source,
+              status: check.status === 'unavailable' ? ('unavailable' as const) : ('checked' as const),
+            })),
+        }
+      : {}),
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
     tier: raw.tier === 'free' || raw.tier === 'pro' || raw.tier === 'team' ? raw.tier : undefined,

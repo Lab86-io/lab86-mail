@@ -600,6 +600,10 @@ export interface DailyReport {
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];
+  // The source feeds checked before this edition (`mail:<accountId>`,
+  // `calendar:<accountId>`, `mcp:<connectionId>`). The masthead source line
+  // marks which sources the edition read (FEATURES item 18).
+  sourceChecks?: Array<{ source: string; status: 'checked' | 'unavailable' }>;
   // The plan tier that sized this edition's item budget.
   tier?: 'free' | 'pro' | 'team';
   // Model-written prose for the budget brief (2026-09-03).

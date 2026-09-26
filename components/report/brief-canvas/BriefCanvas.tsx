@@ -71,8 +71,11 @@ export function BriefCanvas({
   surface = 'daily',
   reportId,
   liveSections = false,
+  belowMasthead,
 }: {
   value: unknown;
+  /** A line under the masthead: the daily edition shows its source health. */
+  belowMasthead?: ReactNode;
   hideInactive?: boolean;
   /** Which brief this is. Telemetry records it with each action. */
   surface?: BriefEventSurface;
@@ -428,6 +431,7 @@ export function BriefCanvas({
           frameId={mastheadFrame}
         />
       ) : null}
+      {belowMasthead}
       {headerVisible ? (
         <header
           className={cn(

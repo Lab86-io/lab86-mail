@@ -259,6 +259,7 @@ async function runAgentReport(input: AgentReportInput): Promise<DailyReport> {
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
     if (input.light) structured.light = true;
+    if (sourceChecks.length) structured.sourceChecks = sourceChecks.slice(0, 24);
   } catch (err) {
     // The pass persists a 'partial' edition before the work that can throw.
     // Settle it so the UI does not stay stuck on a dead run.

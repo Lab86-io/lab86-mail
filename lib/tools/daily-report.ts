@@ -5,6 +5,7 @@ import {
   loadBriefPreferences,
   saveBriefPreferences,
 } from '../brief/preferences';
+import { briefSourceHealth, loadBriefSourceRows } from '../brief/source-health';
 import { isConvexConfigured } from '../hosted/env';
 import { generateAgentReport } from '../mail/agent-report';
 import { enqueueBriefJob, waitForBriefJob } from '../mail/brief-jobs';
@@ -308,5 +309,26 @@ export const saveBriefPreferencesTool = defineTool({
         timezone: ctx.userTimezone,
       }),
     };
+  },
+});
+
+// The masthead source line (FEATURES item 18): each mailbox, calendar, and
+// connected tool behind the edition, its last sync, and a reconnect path when
+// the user must act.
+export const getBriefSourcesTool = defineTool({
+  name: 'get_brief_sources',
+  description:
+    'List the sources behind the Daily Brief (mailboxes, calendars, connected tools) with their last sync time and whether any needs to reconnect. Pass reportId to mark the sources that edition read.',
+  category: 'ai',
+  mutating: false,
+  input: z.object({ reportId: z.string().min(1).max(240).optional() }).optional(),
+  output: z.object({ health: z.any() }),
+  async handler(input, ctx) {
+    const userId = signedInUser(ctx.userId);
+    const [rows, report] = await Promise.all([
+      loadBriefSourceRows(userId),
+      input?.reportId ? getDailyReportStore(input.reportId).catch(() => null) : Promise.resolve(null),
+    ]);
+    return { health: briefSourceHealth(rows, { report }) };
   },
 });

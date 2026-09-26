@@ -459,3 +459,79 @@ export const saveBriefPreferences = mutation({
     return { ...normalizeBriefSchedule(row), emailEnabled: row?.briefEmailEnabled === true };
   },
 });
+
+// ---- Source health (FEATURES item 18) --------------------------------------
+// The raw rows behind the masthead source line. Only display fields leave the
+// query: no grant ids, cursors, or credentials.
+export const briefSourceRows = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const byUser = { userId: args.userId };
+    const [accounts, mailSync, calendarSync, connections, connectorSync] = await Promise.all([
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mailSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('calendarSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mcpSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+    ]);
+    return {
+      accounts: accounts.map((row) => ({
+        accountId: row.accountId,
+        email: row.email,
+        provider: row.provider,
+        status: row.status,
+        displayName: row.displayName,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+      mailSync: mailSync.map((row) => ({
+        accountId: row.accountId,
+        status: row.status,
+        corpusReady: row.corpusReady,
+        error: row.error,
+        lastIncrementalSyncAt: row.lastIncrementalSyncAt,
+        lastBackfillAt: row.lastBackfillAt,
+        updatedAt: row.updatedAt,
+      })),
+      calendarSync: calendarSync.map((row) => ({
+        accountId: row.accountId,
+        status: row.status,
+        error: row.error,
+        lastSyncedAt: row.lastSyncedAt,
+        lastIncrementalSyncAt: row.lastIncrementalSyncAt,
+      })),
+      connections: connections.map((row) => ({
+        connectionId: row.connectionId,
+        server: row.server,
+        status: row.status,
+        authKind: row.authKind,
+        displayName: row.displayName,
+        includeInBrief: row.includeInBrief,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+      connectorSync: connectorSync.map((row) => ({
+        connectionId: row.connectionId,
+        status: row.status,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+    };
+  },
+});

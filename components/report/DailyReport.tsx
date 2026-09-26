@@ -9,6 +9,7 @@ import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/prov
 import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
+import { BriefSourceLine } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
@@ -1220,6 +1221,11 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine reportId={report._id} className="daily-brief-layout" />
+                    )
+                  }
                   footer={
                     <>
                       {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
@@ -1252,6 +1258,11 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine reportId={report._id} className="daily-brief-layout" />
+                    )
+                  }
                   footer={
                     <>
                       {letterFailed ? (
@@ -1338,6 +1349,8 @@ export function DailyReport({
                 Press Write to get today&apos;s brief. The morning run files here each day.
               </EmptyDescription>
             </EmptyHeader>
+            {/* With no edition, the source line still says when a source is broken. */}
+            <BriefSourceLine className="mt-3 max-w-md" />
           </Empty>
         )}
       </div>

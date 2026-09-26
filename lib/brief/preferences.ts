@@ -33,10 +33,11 @@ export const briefPreferencesInputSchema = z
 
 export type BriefPreferencesInput = z.infer<typeof briefPreferencesInputSchema>;
 
+// Read at call time, so a test can replace the hosted client.
 const defaults = {
-  query: convexQuery,
-  mutation: convexMutation,
-  emailConfigured: transactionalEmailConfigured,
+  query: <T>(fn: unknown, args: Record<string, unknown>) => convexQuery<T>(fn, args),
+  mutation: <T>(fn: unknown, args: Record<string, unknown>) => convexMutation<T>(fn, args),
+  emailConfigured: () => transactionalEmailConfigured(),
 };
 
 function emailState(configured: boolean) {
