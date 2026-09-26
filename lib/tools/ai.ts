@@ -7,11 +7,10 @@ import { isConvexConfigured } from '../hosted/env';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
 import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
-import { getNylasThread } from '../nylas/provider';
 import type { SmartCategory, SmartCategoryId, SmartLabelDefinition, SmartRule } from '../shared/types';
 import { requireStoreUserId } from '../store/kv';
 import { recallSender } from '../store/memories';
-import { getThreadMessages, upsertMessage as upsertMessageRecord } from '../store/messages';
+import { resolveThreadMessages } from '../store/messages';
 import { listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
 import {
@@ -30,17 +29,14 @@ const SUMMARY_PROMPT_INSTRUCTIONS = [
   'Never invent facts. If timing, ownership, or outcome is unclear, say so plainly.',
 ].join('\n');
 
+// The full thread from the corpus, then the provider (KV-1). A partial cache
+// never stands in for the full thread.
 async function loadThread(account: string, threadId: string, userId?: string | null) {
-  const cached = await getThreadMessages(account, threadId);
-  if (cached.length) return cached.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-
-  const thread = await getNylasThread({ userId, account, threadId }).catch(() => null);
-  const messages = (thread?.messages || [])
-    .filter((message) => message._id)
-    .sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0));
-  for (const message of messages) await upsertMessageRecord(message).catch(() => undefined);
+  const messages = await resolveThreadMessages(account, threadId, { userId });
   const newest = messages[messages.length - 1];
-  if (newest) {
+  // The KV thread row only carries the summary and triage overlay; it must
+  // exist before setThreadSummary or setThreadTriage can patch it.
+  if (newest && !(await getThreadRecord(account, threadId).catch(() => null))) {
     await upsertThread(account, {
       _id: threadId,
       subject: newest.subject || messages[0]?.subject || '(no subject)',
@@ -48,7 +44,7 @@ async function loadThread(account: string, threadId: string, userId?: string | n
       lastDate: newest.date,
       snippet: newest.snippet || newest.textBody?.slice(0, 240) || '',
       labels: newest.labels || [],
-      unread: messages.some((message) => message.labels?.includes('UNREAD')),
+      unread: messages.some((message) => Boolean(message.unread) || message.labels?.includes('UNREAD')),
     }).catch(() => undefined);
   }
   return messages;

@@ -831,26 +831,7 @@ export const getCorpusThreadBundle = query({
       )
       .order('asc')
       .collect();
-    const messages = rows.map((row) => ({
-      _id: row.providerMessageId,
-      threadId: row.providerThreadId,
-      account: row.accountId,
-      subject: row.subject || '(no subject)',
-      from: row.from || '',
-      to: row.to || '',
-      cc: row.cc || '',
-      bcc: row.bcc || '',
-      date: row.receivedAt || 0,
-      snippet: row.snippet || '',
-      textBody: row.textBody || '',
-      htmlBody: row.htmlBody ?? null,
-      labels: row.labels || [],
-      unread: Boolean(row.unread),
-      starred: Boolean(row.starred),
-      attachments: row.attachments || [],
-      headers: row.headers || {},
-      cachedAt: row.updatedAt || row.receivedAt || 0,
-    }));
+    const messages = rows.map(projectCorpusMessage);
     return {
       threadId: args.providerThreadId,
       subject: thread.subject || messages[0]?.subject || '(no subject)',
@@ -859,6 +840,51 @@ export const getCorpusThreadBundle = query({
     };
   },
 });
+
+// One message by provider id, for reply and forward anchors when the caller
+// has no thread id. The index has no userId column; tenancy is a filter.
+export const getCorpusMessage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_message', (q) =>
+        q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
+      )
+      .take(5);
+    const row = rows.find((candidate) => candidate.userId === args.userId);
+    return row ? projectCorpusMessage(row) : null;
+  },
+});
+
+function projectCorpusMessage(row: any) {
+  return {
+    _id: row.providerMessageId,
+    threadId: row.providerThreadId,
+    account: row.accountId,
+    subject: row.subject || '(no subject)',
+    from: row.from || '',
+    to: row.to || '',
+    cc: row.cc || '',
+    bcc: row.bcc || '',
+    date: row.receivedAt || 0,
+    snippet: row.snippet || '',
+    textBody: row.textBody || '',
+    htmlBody: row.htmlBody ?? null,
+    labels: row.labels || [],
+    unread: Boolean(row.unread),
+    starred: Boolean(row.starred),
+    attachments: row.attachments || [],
+    headers: row.headers || {},
+    cachedAt: row.updatedAt || row.receivedAt || 0,
+  };
+}
 
 // Recent threads with stored verdicts, projected small. Feeds the category
 // stat counters and the command-palette seeds without scanning message rows.

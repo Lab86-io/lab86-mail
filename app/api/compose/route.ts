@@ -4,17 +4,18 @@ import { runWithAiRequestContext } from '@/lib/ai/context';
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { sendNylasMessage } from '@/lib/nylas/provider';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
+import {
+  buildForwardMessagePayload,
+  replyAllTargetFor,
+  replyTargetFor,
+  resolveSendAnchor,
+} from '@/lib/send/anchor';
 import { enqueueOutbox } from '@/lib/send/outbox';
 import { sanitizeFilename } from '@/lib/shared/files';
-import { emailFromHeader } from '@/lib/shared/format';
 import { DEFAULT_UNDO_SEND_SECONDS, normalizeUndoSendSeconds } from '@/lib/shared/sending';
 import type { Message } from '@/lib/shared/types';
 import { writeAudit } from '@/lib/store/audit';
-import {
-  getMessage as getMessageRecord,
-  getThreadMessages,
-  upsertMessage as upsertMessageRecord,
-} from '@/lib/store/messages';
+import { upsertMessage as upsertMessageRecord } from '@/lib/store/messages';
 import { getPref } from '@/lib/store/prefs';
 import { upsertThread } from '@/lib/store/threads';
 
@@ -266,10 +267,8 @@ async function prepareComposeSend({
 }): Promise<PreparedSend> {
   if (mode === 'reply' || mode === 'reply_all') {
     if (!messageId && !threadId) throw new Error('messageId or threadId is required for reply/reply_all');
-    const target =
-      mode === 'reply_all'
-        ? await resolveReplyAllTarget(account, messageId, threadId)
-        : await resolveReplyTarget(account, messageId, threadId);
+    const anchor = await resolveSendAnchor({ account, messageId, threadId });
+    const target = mode === 'reply_all' ? replyAllTargetFor(anchor, account) : replyTargetFor(anchor);
     return {
       account,
       to: to || target.to,
@@ -278,7 +277,7 @@ async function prepareComposeSend({
       subject: subject || target.subject,
       body,
       html,
-      replyToMessageId: messageId,
+      replyToMessageId: target.replyToMessageId,
       attachments,
     };
   }
@@ -286,49 +285,16 @@ async function prepareComposeSend({
   if (mode === 'forward') {
     if (!messageId) throw new Error('messageId is required for forward');
     if (!to) throw new Error('to is required for forward');
-    const original = await getMessageRecord(account, messageId);
-    if (!original) {
-      throw new Error('Cannot forward — original message not in local cache. Open the thread first.');
-    }
-    const fwdSubject =
-      subject ||
-      (original.subject?.startsWith('Fwd:')
-        ? original.subject
-        : `Fwd: ${original.subject || '(no subject)'}`);
-    const headerBlock = [
-      '---------- Forwarded message ----------',
-      `From: ${original.from}`,
-      `Date: ${new Date(original.date).toISOString()}`,
-      `Subject: ${original.subject || ''}`,
-      `To: ${original.to || ''}`,
-      original.cc ? `Cc: ${original.cc}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const quotedText = [body || '', '', headerBlock, '', original.textBody || ''].join('\n');
-    const quotedHtml = html
-      ? [
-          html,
-          '<br/><br/>',
-          '<div style="border-left:2px solid currentColor;padding-left:.6em;opacity:.72">',
-          '<div>---------- Forwarded message ----------</div>',
-          `<div>From: ${escapeHtml(original.from)}</div>`,
-          `<div>Date: ${new Date(original.date).toISOString()}</div>`,
-          `<div>Subject: ${escapeHtml(original.subject || '')}</div>`,
-          `<div>To: ${escapeHtml(original.to || '')}</div>`,
-          original.cc ? `<div>Cc: ${escapeHtml(original.cc)}</div>` : '',
-          '</div>',
-          original.htmlBody || `<pre>${escapeHtml(original.textBody || '')}</pre>`,
-        ].join('')
-      : undefined;
+    const original = await resolveSendAnchor({ account, messageId, threadId });
+    const quoted = buildForwardMessagePayload(original, { body, html });
     return {
       account,
       to,
       cc,
       bcc,
-      subject: fwdSubject,
-      body: quotedText,
-      html: quotedHtml,
+      subject: subject || quoted.subject,
+      body: quoted.body,
+      html: quoted.html,
       attachments,
     };
   }
@@ -349,56 +315,4 @@ async function cacheSentMessage(account: string, sent: Message) {
     labels: sent.labels || [],
     unread: false,
   }).catch(() => undefined);
-}
-
-async function resolveReplyTarget(account: string, messageId?: string, threadId?: string) {
-  const anchor = await resolveReplyAnchor(account, messageId, threadId);
-  const to = emailFromHeader(anchor.from) || anchor.from;
-  if (!to) throw new Error('Cannot reply — original sender is missing.');
-  return {
-    to,
-    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
-  };
-}
-
-async function resolveReplyAllTarget(account: string, messageId?: string, threadId?: string) {
-  const anchor = await resolveReplyAnchor(account, messageId, threadId);
-  const self = account.toLowerCase();
-  const recipients = new Set<string>();
-  for (const field of [anchor.from, anchor.to, anchor.cc]) {
-    for (const item of String(field || '').split(/[,;]/)) {
-      const email = emailFromHeader(item) || item.trim();
-      if (!email || email.toLowerCase() === self) continue;
-      recipients.add(email);
-    }
-  }
-  return {
-    to: [...recipients].join(', '),
-    subject: anchor.subject?.startsWith('Re:') ? anchor.subject : `Re: ${anchor.subject || '(no subject)'}`,
-  };
-}
-
-async function resolveReplyAnchor(account: string, messageId?: string, threadId?: string) {
-  const anchor =
-    (messageId ? await getMessageRecord(account, messageId).catch(() => null) : null) ||
-    (threadId
-      ? (await getThreadMessages(account, threadId).catch(() => [])).sort(
-          (a, b) => Number(b.date || 0) - Number(a.date || 0),
-        )[0]
-      : null);
-  if (!anchor) {
-    throw new Error(
-      'Cannot reply — original message is not in the local cache. Reopen the thread and try again.',
-    );
-  }
-  return anchor;
-}
-
-function escapeHtml(s: string): string {
-  return String(s || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
