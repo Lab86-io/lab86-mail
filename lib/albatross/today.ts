@@ -198,6 +198,12 @@ export function briefIsStale(generatedAt: number | null, nowMs: number): boolean
   return nowMs - generatedAt > 36 * 3_600_000;
 }
 
+/** The note an edition shows when it describes an older day, or null while it is current. */
+export function briefStaleNote(generatedAt: number | null, nowMs: number): string | null {
+  if (!briefIsStale(generatedAt, nowMs)) return null;
+  return `${briefFreshness(generatedAt, nowMs)} — it describes an older day.`;
+}
+
 export interface TodayPractice {
   _id: string;
   title: string;

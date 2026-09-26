@@ -18,7 +18,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { injectBriefArtifactReadyRuntime, isBriefArtifactReadyMessage } from '@/lib/albatross/artifact-ready';
 import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
-import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
+import { briefFreshness, briefIsStale, briefStaleNote } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { hasLiveBriefSection } from '@/lib/brief/editorial';
 import { BRIEF_RETRY_NOTE, isBriefEditionGenerating, isBriefEditionRetrying } from '@/lib/brief/generation';
@@ -876,10 +876,13 @@ export function DailyReport({
   const report = reportQuery.data?.report || null;
   const artifactSource = report?.html ? (report.artifactSource ?? 'ai') : null;
   const displayDocument = Boolean(report?.document && report.artifactSource === 'document-v2');
-  // Embedded in Today, the brief sits under a live layer. It has to say when it
-  // was written, and say so louder when it describes an older day.
-  const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, Date.now());
-  const embeddedStale = briefIsStale(report?.generatedAt ?? null, Date.now());
+  // Every edition says so when it describes an older day. Embedded in Today,
+  // the stamp in the section rule carries it; on its own page the note sits
+  // with the source line, in every format.
+  const now = Date.now();
+  const embeddedFreshness = briefFreshness(report?.generatedAt ?? null, now);
+  const stale = briefIsStale(report?.generatedAt ?? null, now);
+  const staleNote = embedded ? null : briefStaleNote(report?.generatedAt ?? null, now);
   // The deterministic HTML is the interim save while the letter composes. If
   // it is still the final artifact, the letter did not write.
   const composingLetter =
@@ -992,13 +995,13 @@ export function DailyReport({
           <p
             className={cn(
               'text-[12px]',
-              embeddedStale ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
+              stale ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-faint)]',
             )}
           >
             {!report
               ? 'Not written yet today.'
-              : embeddedStale
-                ? `${embeddedFreshness} — it describes an older day.`
+              : stale
+                ? briefStaleNote(report.generatedAt ?? null, now)
                 : `${embeddedFreshness}, from your mail and calendar.`}
           </p>
           <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
@@ -1229,6 +1232,7 @@ export function DailyReport({
                       <BriefSourceLine
                         reportId={report._id}
                         notes={briefEditionNotes(report)}
+                        staleNote={staleNote}
                         className="daily-brief-layout"
                       />
                     )
@@ -1270,6 +1274,7 @@ export function DailyReport({
                       <BriefSourceLine
                         reportId={report._id}
                         notes={briefEditionNotes(report)}
+                        staleNote={staleNote}
                         className="daily-brief-layout"
                       />
                     )
@@ -1325,19 +1330,33 @@ export function DailyReport({
             ) : report?.html ? (
               <motion.div
                 key="artifact"
-                className={embedded ? undefined : 'h-full'}
+                className={embedded ? undefined : 'flex h-full flex-col'}
                 initial={{ opacity: 0, scale: 0.92 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ type: 'spring', stiffness: 190, damping: 22, mass: 0.9 }}
               >
-                <ReportArtifact
-                  html={report.html}
-                  albatrossContext={asAlbatrossContext(report.sections.albatross)}
-                  dismissedTaskIds={dismissedTaskIds}
-                  dismissedThreadRecords={dismissedThreadRecords}
-                  onChanged={invalidate}
-                  autoHeight={embedded}
-                />
+                {/* An edition in the older format carries its own cover inside
+                    the frame, so the source line and the stale note sit in a
+                    strip above it. The strip keeps clear of the floating
+                    toolbar: under it on a phone, beside it from sm up. */}
+                {selectedId ? null : (
+                  <BriefSourceLine
+                    reportId={report._id}
+                    notes={briefEditionNotes(report)}
+                    staleNote={staleNote}
+                    className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-content)] px-5 pb-2.5 pt-[3.75rem] sm:pr-64 sm:pt-2.5"
+                  />
+                )}
+                <div className={embedded ? undefined : 'min-h-0 flex-1'}>
+                  <ReportArtifact
+                    html={report.html}
+                    albatrossContext={asAlbatrossContext(report.sections.albatross)}
+                    dismissedTaskIds={dismissedTaskIds}
+                    dismissedThreadRecords={dismissedThreadRecords}
+                    onChanged={invalidate}
+                    autoHeight={embedded}
+                  />
+                </div>
               </motion.div>
             ) : (
               <ReportGenerating report={report} />

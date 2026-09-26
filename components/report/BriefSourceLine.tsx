@@ -112,10 +112,13 @@ export function BriefSourceLine({
   reportId,
   className,
   notes = [],
+  staleNote = null,
 }: {
   reportId?: string | null;
   className?: string;
   notes?: string[];
+  /** Said first, in the warning color, when the edition describes an older day. */
+  staleNote?: string | null;
 }) {
   const health = useQuery({
     queryKey: ['brief-sources', reportId ?? 'none'],
@@ -129,9 +132,14 @@ export function BriefSourceLine({
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
-  if (!health.data && !notes.length) return null;
+  if (!health.data && !notes.length && !staleNote) return null;
   return (
     <div className={cn('flex flex-col gap-1', className)}>
+      {staleNote ? (
+        <p data-brief-stale-note className="text-[12px] font-medium text-[var(--color-warning)]">
+          {staleNote}
+        </p>
+      ) : null}
       {notes.map((note) => (
         <p key={note} data-brief-edition-note className="text-[12px] text-[var(--color-text-muted)]">
           {note}
