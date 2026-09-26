@@ -217,6 +217,7 @@ export function AssistantChat({
   const selectedThreadId = useClientStore((s) => s.selectedThreadId);
   const invitation = useClientStore((s) => s.assistantInvitation);
   const pendingBriefResponse = useClientStore((s) => s.assistantBriefRequest);
+  const assistantPrompt = useClientStore((s) => s.assistantPrompt);
   const briefContext = useClientStore((s) => s.assistantBriefContext);
   const primaryView = useClientStore((s) => s.primaryView);
   const assistantDocument = useClientStore((s) => s.assistantDocument);
@@ -407,6 +408,7 @@ export function AssistantChat({
     const fresh = lastChatAt && Date.now() - lastChatAt < CHAT_RESTORE_WINDOW_MS;
     if (
       !useClientStore.getState().assistantBriefRequest &&
+      !useClientStore.getState().assistantPrompt &&
       chatScopeKind === 'global' &&
       lastChatId &&
       fresh &&
@@ -720,6 +722,22 @@ export function AssistantChat({
       });
     return true;
   };
+
+  // A request handed over by another surface (the command palette). Send it
+  // once, when the conversation is free.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    if (preview || !assistantPrompt || busy) return;
+    const prompt = useClientStore.getState().claimAssistantPrompt();
+    if (!prompt) return; // Atomic claim also prevents Strict Mode double submission.
+    restoredRef.current = true;
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = newChatId();
+      if (chatScopeKind === 'global') setLastChatId(sessionIdRef.current);
+    }
+    void sendRef.current(prompt);
+  }, [preview, assistantPrompt, busy, chatScopeKind, setLastChatId]);
 
   useEffect(() => {
     if (!pendingBriefResponse || busy) return;
