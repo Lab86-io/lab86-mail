@@ -1,6 +1,8 @@
 import { v } from 'convex/values';
 import { assessmentIsCurrent, attentionMatches, isAttentionView } from '../lib/jev/contract';
 import { smartCategoryFromJev } from '../lib/jev/mail';
+import { labelsHaveRole } from '../lib/mail/search/folders';
+import { pageThroughTies } from '../lib/mail/search/page-ties';
 import {
   applyUserRuleOverrides,
   classifyThreadWithContext,
@@ -201,7 +203,9 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
         .filter(
           (thread: any) =>
             attentionMatches(thread.jev, category) &&
-            !thread.labels.some((label: string) => ['SPAM', 'TRASH'].includes(label.toUpperCase())) &&
+            // Provider-neutral roles: iCloud ids end in `:Junk` (SEARCH-1).
+            !labelsHaveRole(thread.labels, 'SPAM') &&
+            !labelsHaveRole(thread.labels, 'TRASH') &&
             !(thread.smartCategory?.model === 'user_rule' && thread.smartCategory?.primary === 'noise'),
         ),
       nextBefore: undefined,
@@ -273,11 +277,15 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
     if (includeInSmartCategory(thread as any, category)) items.push(thread);
   }
   items.sort((a, b) => Number(b.lastDate || 0) - Number(a.lastDate || 0));
-  const page = items.slice(0, limit);
   // More matches than the page implies older pages exist; cursor on lastDate.
-  const nextBefore =
-    items.length > page.length && page.length ? Number(page[page.length - 1].lastDate) : undefined;
-  return { items: page, nextBefore, nextCursor: undefined };
+  // PAGE-1: the page holds every same-second match at its boundary, so the
+  // next page's `lt` watermark skips none of them.
+  const tied = pageThroughTies(items, limit, (row) => Number(row.lastDate || 0));
+  const boundary = tied.page.length ? Number(tied.page[tied.page.length - 1].lastDate || 0) : 0;
+  // The candidate windows are bounded, so a group that fills the rest of them
+  // does not prove there is nothing older: keep a watermark while matches ran over.
+  const nextBefore = tied.nextBefore ?? (items.length > limit && boundary > 0 ? boundary : undefined);
+  return { items: tied.page, nextBefore, nextCursor: undefined };
 }
 
 // Sweeps rows that predate write-time classification. Runs from a cron and

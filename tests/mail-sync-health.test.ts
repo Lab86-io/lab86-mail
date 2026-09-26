@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { createMailRepairPost } from '../app/api/cron/mail-repair/route';
 import { runWithAiRequestContext } from '../lib/ai/context';
 import {
+  __clearFolderNameCacheForTest,
   __setWebhookIngestDepsForTest,
   ingestNylasWebhookPayload,
   ingestThreadIntoCorpus,
@@ -200,6 +201,44 @@ describe('webhook ingest (SYNC-1, SYNC-2, SYNC-4)', () => {
       const batch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
       expect(batch?.args.messages[0].starred).toBe(true);
       expect(batch?.args.threads[0].starred).toBe(true);
+    });
+  });
+
+  test('ingest stores role labels for Microsoft and iCloud folder ids (SEARCH-1)', async () => {
+    __clearFolderNameCacheForTest();
+    await withHttpHarness(async (h) => {
+      h.convexFallback = () => ({});
+      h.onNylas('GET', /\/v3\/grants\/grant_ms\/folders$/, () => ({
+        json: { data: [{ id: 'AAMk-in', name: 'Inbox' }] },
+      }));
+      const ms = accountRow({ provider: 'microsoft', grantId: 'grant_ms' });
+      const message = normalizeNylasMessage(
+        nylasMessage({ id: 'x1', folders: ['AAMk-in'] }) as any,
+        'acct_1',
+      );
+      await ingestThreadIntoCorpus(ms, [message]);
+      await ingestThreadIntoCorpus(ms, [message]);
+      // The folder list is cached per grant.
+      expect(h.nylasCalls.filter((c) => c.path.endsWith('/folders'))).toHaveLength(1);
+      const batch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
+      expect(batch?.args.messages[0].labels).toEqual(['AAMk-in', 'INBOX']);
+      expect(batch?.args.threads[0].labels).toEqual(['AAMk-in', 'INBOX']);
+
+      h.convexCalls.length = 0;
+      const icloud = accountRow({ provider: 'icloud', grantId: 'grant_ic' });
+      const junk = normalizeNylasMessage(
+        nylasMessage({ id: 'x2', folders: ['v0:abc:Junk'] }) as any,
+        'acct_1',
+      );
+      await ingestThreadIntoCorpus(icloud, [junk]);
+      const icBatch = h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch');
+      expect(icBatch?.args.messages[0].labels).toEqual(['v0:abc:Junk', 'SPAM']);
+      // A failed folder read never blocks ingest.
+      h.convexCalls.length = 0;
+      await ingestThreadIntoCorpus(accountRow({ provider: 'microsoft', grantId: 'grant_down' }), [message]);
+      expect(
+        h.convexCalls.find((c) => c.path === 'mailCorpus:upsertCorpusBatch')?.args.messages[0].labels,
+      ).toEqual(['AAMk-in']);
     });
   });
 

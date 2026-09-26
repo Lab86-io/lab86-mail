@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
+import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
 import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
@@ -1249,11 +1250,33 @@ export const pageRecentCorpusThreads = query({
           })
           .order('desc')
           .take(limit + 1);
-    const page = rows.slice(0, limit);
-    // A row without a usable lastDate cannot anchor a `lt` watermark; report
-    // the page as the last one rather than hand out a cursor that matches nothing.
-    const lastDate = page.length ? Number(page[page.length - 1].lastDate ?? 0) : 0;
-    const nextBefore = rows.length > page.length && lastDate > 0 ? lastDate : undefined;
+    const dateOf = (row: any) => Number(row.lastDate ?? 0);
+    // PAGE-1: a page that ends inside a group of same-second threads takes
+    // the whole group, so the `lt` watermark on the next page skips nothing.
+    let candidates = rows;
+    if (pageEndsInTie(rows, limit, dateOf)) {
+      const boundary = dateOf(rows[limit - 1]);
+      const byTime = (range: (q: any) => any, take: number) =>
+        (args.accountId
+          ? ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_account_updated', (q) =>
+                range(q.eq('userId', args.userId).eq('accountId', args.accountId as string)),
+              )
+          : ctx.db
+              .query('mailCorpusThreads')
+              .withIndex('by_user_lastDate', (q) => range(q.eq('userId', args.userId)))
+        )
+          .order('desc')
+          .take(take);
+      const group = await byTime((q) => q.eq('lastDate', boundary), 200);
+      // One older row tells the helper whether another page exists.
+      const older = await byTime((q) => q.lt('lastDate', boundary), 1);
+      candidates = [...rows.filter((row) => dateOf(row) > boundary), ...group, ...older];
+    }
+    // A row without a usable lastDate cannot anchor a `lt` watermark; the
+    // helper reports that page as the last one.
+    const { page, nextBefore } = pageThroughTies(candidates, limit, dateOf);
     return { items: page.map(normalizeCorpusThread), nextBefore };
   },
 });

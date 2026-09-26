@@ -7,6 +7,7 @@ import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, retryAfterMs, withNylasRetry } from '@/lib/nylas/retry';
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
+import { withFolderRoleLabels } from './search/folders';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
 
@@ -740,13 +741,14 @@ async function upsertCorpus(
     incremental?: boolean;
   },
 ) {
+  const roled = await withProviderFolderRoles(row, input);
   await convexMutation(mailCorpusApi.upsertCorpusBatch, {
     userId: row.userId,
     accountId: row.accountId,
     grantId: row.grantId,
     provider: row.provider,
-    threads: input.threads,
-    messages: input.messages,
+    threads: roled.threads,
+    messages: roled.messages,
     cursor: input.cursor,
     corpusReady: input.corpusReady,
     progress: input.progress,
@@ -759,6 +761,51 @@ async function upsertCorpus(
       lastIncrementalSyncAt: Date.now(),
     });
   }
+}
+
+// Folder names by id for providers with opaque folder ids (Microsoft).
+const FOLDER_NAME_TTL_MS = 30 * 60_000;
+const folderNameCache = new Map<string, { at: number; names: Map<string, string> }>();
+
+export function __clearFolderNameCacheForTest() {
+  folderNameCache.clear();
+}
+
+async function providerFolderNames(row: NylasAccountRow): Promise<Map<string, string> | undefined> {
+  if (row.provider !== 'microsoft') return undefined;
+  const cached = folderNameCache.get(row.grantId);
+  if (cached && Date.now() - cached.at < FOLDER_NAME_TTL_MS) return cached.names;
+  try {
+    const page = await requireNylas().folders.list({ identifier: row.grantId, queryParams: { limit: 200 } });
+    const names = new Map(page.data.map((folder: any) => [String(folder.id), String(folder.name || '')]));
+    if (folderNameCache.size > 500) folderNameCache.clear();
+    folderNameCache.set(row.grantId, { at: Date.now(), names });
+    return names;
+  } catch {
+    // Roles are an aid; a failed folder read must not block ingest.
+    return undefined;
+  }
+}
+
+// SEARCH-1: store provider-neutral role labels (INBOX, SENT, TRASH, SPAM,
+// ARCHIVE, DRAFT) next to opaque iCloud and Microsoft folder ids, so search,
+// views, and filters match every provider. Gmail ids are roles already.
+async function withProviderFolderRoles(
+  row: NylasAccountRow,
+  input: { threads: CorpusThreadInput[]; messages: CorpusMessageInput[] },
+) {
+  if (row.provider === 'google') return input;
+  const names = await providerFolderNames(row);
+  return {
+    messages: input.messages.map((message) => ({
+      ...message,
+      labels: withFolderRoleLabels(message.labels || [], names),
+    })),
+    threads: input.threads.map((thread) => ({
+      ...thread,
+      labels: withFolderRoleLabels(thread.labels || [], names),
+    })),
+  };
 }
 
 async function markSync(
