@@ -40,6 +40,7 @@ import type { JevAssessment } from '@/lib/jev/contract';
 import { emailNeedsIsolatedFrame, sanitizeEmailFrameHtml, sanitizeEmailHtml } from '@/lib/sanitize';
 import { emailFromHeader, formatDate, shortFrom } from '@/lib/shared/format';
 import type { Attachment } from '@/lib/shared/types';
+import { unreadMessageIds } from '@/lib/shell/reader-read-state';
 import { cn } from '@/lib/utils';
 import { AttachmentIcon } from './attachment-chip';
 import {
@@ -264,10 +265,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     if (!account || !threadId || !messages.length) return;
     const key = `${account}:${threadId}`;
     if (markedReadRef.current.has(key)) return;
-    const unreadIds = messages
-      .filter((m) => m.labels?.includes('UNREAD'))
-      .map((m) => m._id)
-      .filter(Boolean);
+    const unreadIds = unreadMessageIds(messages);
     if (!unreadIds.length) return;
     markedReadRef.current.add(key);
     markThreadRead.mutate({ ids: unreadIds });
