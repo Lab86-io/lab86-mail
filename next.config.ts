@@ -23,6 +23,18 @@ if (clerkProxyUrl.startsWith('http') && publicUrl.startsWith('http')) {
   }
 }
 
+// Response security headers for production builds (staging and production).
+// The CSP holds frame-ancestors only: a script policy would break Clerk,
+// Convex, and the Collabora host. Only this origin may frame the app; the app
+// itself frames Collabora and sandboxed srcdoc documents, which this does not
+// affect. The native apps load the app as a top-level page.
+export const SECURITY_HEADERS = [
+  { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+];
+
 const config: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ['lab86.tail478321.ts.net', 'albatross.lab86.io'],
@@ -42,6 +54,11 @@ const config: NextConfig = {
   },
   // Long-running SSE responses
   poweredByHeader: false,
+  async headers() {
+    // `next dev` previews (localhost, tailnet) keep no HSTS or frame rules.
+    if (process.env.NODE_ENV !== 'production') return [];
+    return [{ source: '/:path*', headers: SECURITY_HEADERS }];
+  },
 };
 
 export default config;
