@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { redactExportRow } from '../lib/hosted/export-redaction';
 import { pickAccountForGrant } from '../lib/mail/grant-account';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -655,5 +656,114 @@ export const hasDocuments = query({
       .withIndex('by_user', (q) => q.eq('userId', args.userId))
       .first();
     return office !== null;
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Data export (Settings, Account, Export my data)
+// ---------------------------------------------------------------------------
+
+// Tables in the deletion cascade that the export leaves out, with the reason.
+export const EXPORT_SKIPPED_TABLES: Record<string, string> = {
+  contentChunks: 'Search chunks and embeddings derived from contentItems, which the export includes.',
+  nylasOAuthStates: 'Short-lived sign-in state for a mailbox connection, not user content.',
+  mcpOAuthStates: 'Short-lived sign-in state for a tool connection, not user content.',
+  cloudFileOAuthStates: 'Short-lived sign-in state for a file connection, not user content.',
+  cloudFileOAuthCompletions: 'Short-lived sign-in state for a file connection, not user content.',
+  rateLimits: 'Request counters that protect the service, not user content.',
+};
+
+/**
+ * Every table the export writes, one JSON file each. It follows the deletion
+ * cascade, so a table that the cascade learns about is exported too.
+ */
+export const EXPORT_TABLES: readonly string[] = [
+  ...new Set<string>([
+    'users',
+    ...USER_INLINE_TABLES,
+    ...USER_BULK_TABLES,
+    ...Object.keys(CASCADE_SPECIAL_TABLES),
+    'boards',
+    'boardColumns',
+  ]),
+].filter((table) => !(table in EXPORT_SKIPPED_TABLES));
+
+export const exportTableList = query({
+  args: { internalSecret: v.optional(v.string()) },
+  handler: async (_ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return [...EXPORT_TABLES];
+  },
+});
+
+/** One page of one table for one user, with secrets removed. */
+export const exportUserTablePage = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    table: v.string(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (!EXPORT_TABLES.includes(args.table)) throw new Error('This table is not part of the export.');
+    const numItems = Math.min(Math.max(Math.floor(args.numItems), 1), 200);
+    const done = (rows: any[]) => ({
+      page: rows.map((row) => redactExportRow(args.table, row)),
+      isDone: true,
+      continueCursor: '',
+    });
+    if (args.table === 'users') {
+      return done(
+        await ctx.db
+          .query('users')
+          .withIndex('by_clerk_user_id', (q) => q.eq('clerkUserId', args.userId))
+          .collect(),
+      );
+    }
+    if (args.table === 'boardColumns') {
+      // Columns carry no userId; they belong to the boards the user owns.
+      const boards = await ctx.db
+        .query('boards')
+        .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+        .take(200);
+      const columns: any[] = [];
+      for (const board of boards)
+        columns.push(
+          ...(await ctx.db
+            .query('boardColumns')
+            .withIndex('by_board', (q) => q.eq('boardId', board._id))
+            .collect()),
+        );
+      return done(columns);
+    }
+    const opts = { cursor: args.cursor, numItems };
+    let result: any;
+    if (args.table === 'boards') {
+      result = await ctx.db
+        .query('boards')
+        .withIndex('by_owner', (q) => q.eq('ownerUserId', args.userId))
+        .paginate(opts);
+    } else {
+      let lastErr: unknown;
+      for (const index of USER_INDEXES) {
+        try {
+          result = await ctx.db
+            .query(args.table as any)
+            .withIndex(index as any, (q: any) => q.eq('userId', args.userId))
+            .paginate(opts);
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (!result) throw lastErr;
+    }
+    return {
+      page: result.page.map((row: any) => redactExportRow(args.table, row)),
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
   },
 });

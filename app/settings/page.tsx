@@ -18,6 +18,7 @@ import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
+import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
@@ -1443,11 +1444,16 @@ function AccountSection() {
         />
       </SettingsCard>
 
+      <SettingsGroupTitle>Your data</SettingsGroupTitle>
+      <SettingsCard>
+        <SettingsRow label="Export my data" description={EXPORT_DESCRIPTION} control={<ExportDataButton />} />
+      </SettingsCard>
+
       <SettingsGroupTitle>Delete</SettingsGroupTitle>
       <SettingsCard tone="danger">
         <SettingsRow
           label="Delete everything"
-          description="Mail grants, the search index, model settings, usage records, and your Lab86 account. Gone for good, with no export first."
+          description="Mail grants, the search index, model settings, usage records, and your Albatross account. Gone for good. Export your data first if you want a copy."
           control={
             <AlertDialog
               onOpenChange={(open) => {
@@ -1470,10 +1476,11 @@ function AccountSection() {
                   <AlertDialogTitle>Delete your Albatross account?</AlertDialogTitle>
                   <AlertDialogDescription>
                     This removes every mailbox grant, the search index, your settings, and usage records from
-                    Lab86. It cannot be undone. Type{' '}
+                    Albatross. It cannot be undone. Type{' '}
                     <span className="font-mono font-medium text-[var(--color-text)]">delete</span> to confirm.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                <ExportBeforeDelete />
                 <Input
                   value={confirmText}
                   onChange={(event) => setConfirmText(event.target.value)}
