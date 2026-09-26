@@ -31,8 +31,81 @@ const saveDefaults = {
   owner: requireStoreUserId,
   mark: markJevBriefItems,
 };
+// Convex rejects a document over 1 MiB. The stored edition must stay below
+// this, with room for the row's other fields; above it the edition degrades.
+export const DAILY_REPORT_STORED_BYTE_LIMIT = 900_000;
+const OVERSIZE_NOTE = 'This edition was too large to store in full, so some detail was left out.';
+
+function storedBytes(value: unknown) {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+// Overflow items only need their identity and line to render. `jev` stays: the
+// live projection compares its sourceRevision and reads its obligations.
+function slimOverflowItem(item: DailyReportItem): DailyReportItem {
+  return {
+    account: item.account,
+    threadId: item.threadId,
+    subject: item.subject,
+    people: [],
+    whyItMatters: item.whyItMatters,
+    unread: item.unread,
+    ...(item.line ? { line: item.line } : {}),
+    ...(item.sender ? { sender: item.sender } : {}),
+    ...(item.receivedAt != null ? { receivedAt: item.receivedAt } : {}),
+    ...(item.dueAt != null ? { dueAt: item.dueAt } : {}),
+    ...(item.score != null ? { score: item.score } : {}),
+    ...(item.budgetLane ? { budgetLane: item.budgetLane } : {}),
+    ...(item.lane ? { lane: item.lane } : {}),
+    ...(item.trackedThreadId ? { trackedThreadId: item.trackedThreadId } : {}),
+    ...(item.firstSurfacedAt != null ? { firstSurfacedAt: item.firstSurfacedAt } : {}),
+    ...(item.jev ? { jev: item.jev } : {}),
+  };
+}
+
+/**
+ * The form of an edition that goes to storage. A document-v2 edition does not
+ * store the legacy `html`, `composition`, and `handoffs`: every reader goes
+ * through migrateDailyReport, which rebuilds them from the sections. Above
+ * DAILY_REPORT_STORED_BYTE_LIMIT the edition degrades step by step instead of
+ * failing the save.
+ */
+export function dailyReportForStorage(report: DailyReport): DailyReport {
+  if (report.artifactSource !== 'document-v2' || !report.document) return report;
+  const { html: _html, composition: _composition, handoffs: _handoffs, ...rest } = report;
+  let stored: DailyReport = {
+    ...rest,
+    sections: { ...rest.sections, overflow: rest.sections.overflow?.map(slimOverflowItem) },
+  };
+  if (!rest.sections.overflow) delete stored.sections.overflow;
+  if (storedBytes(stored) <= DAILY_REPORT_STORED_BYTE_LIMIT) return stored;
+  const note = { stage: 'document_v2' as const, message: OVERSIZE_NOTE, at: Date.now() };
+  const degrade = [
+    // The overflow list is the least important content; its count stays in stats.
+    (value: DailyReport): DailyReport => ({ ...value, sections: { ...value.sections, overflow: [] } }),
+    // The legacy lanes repeat the budget lanes for older readers.
+    (value: DailyReport): DailyReport => ({
+      ...value,
+      sections: { ...value.sections, replyOwed: [], followUpOwed: [], timeSensitive: [], tracked: [] },
+    }),
+    // Last: drop the composed page; readers rebuild the source letter from sections.
+    (value: DailyReport): DailyReport => {
+      const { document: _document, editorial: _editorial, ...withoutPage } = value;
+      return { ...withoutPage, artifactSource: 'deterministic', artifactStatus: 'rendered' };
+    },
+  ];
+  for (const step of degrade) {
+    stored = step(stored);
+    if (storedBytes(stored) <= DAILY_REPORT_STORED_BYTE_LIMIT) break;
+  }
+  return {
+    ...stored,
+    artifactErrors: [...(stored.artifactErrors || []), note].slice(-MAX_ARTIFACT_ERRORS),
+  };
+}
+
 export async function saveDailyReport(report: DailyReport, dependencies = saveDefaults) {
-  await dependencies.persist('dailyReport', report._id, report);
+  await dependencies.persist('dailyReport', report._id, dailyReportForStorage(report));
   if (
     dependencies.configured() &&
     (report.artifactStatus === 'rendered' || report.artifactStatus === 'ready')
