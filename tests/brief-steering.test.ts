@@ -22,6 +22,7 @@ import { briefActionTier, isBriefSteeringAction } from '../lib/shared/brief-acti
 import type { DailyReport, DailyReportItem, Thread, ThreadInsight } from '../lib/shared/types';
 import { listDismissedDailyReportThreads } from '../lib/store/daily-report-dismissals';
 import { getLatestDailyReport, setDailyReportReaderForTest } from '../lib/store/daily-reports';
+import { upsertTrackedThread } from '../lib/store/tracked-threads';
 import { steerBriefItemTool } from '../lib/tools/daily-report';
 import { runTool, withToolContext } from './tools/harness';
 
@@ -630,5 +631,79 @@ describe('handled items leave the live edition', () => {
     expect(byId.get('a')).toMatchObject({ unread: true, inInbox: true, senderEmail: 'pat@example.com' });
     expect(byId.get('b')).toMatchObject({ unread: false, senderEmail: 'maya@example.com' });
     expect(byId.get('b')?.inInbox).toBeUndefined();
+  });
+});
+
+describe('the default reader loaders', () => {
+  test('a tracked thread the user resolved leaves the latest edition, and a failed look-back read keeps it', async () => {
+    const user = { userId: 'closed_tracked_reader' };
+    const tracked = await withToolContext(
+      () =>
+        upsertTrackedThread({
+          account: ACCOUNT,
+          threadId: 'resolved-thread',
+          subject: 'Resolved',
+          status: 'resolved',
+        }),
+      user,
+    );
+    const edition = {
+      _id: 'r-default',
+      kind: 'morning',
+      generatedAt: Date.now() - 3 * 86_400_000,
+      accounts: [ACCOUNT],
+      title: 'Brief',
+      narrative: 'Lede.',
+      sections: {
+        replyOwed: [],
+        followUpOwed: [],
+        newPeople: [],
+        timeSensitive: [],
+        tracked: [],
+        fyi: [],
+        bulkTail: [],
+        know: [
+          {
+            account: ACCOUNT,
+            threadId: 'resolved-thread',
+            subject: 'Resolved',
+            people: [],
+            whyItMatters: 'Because.',
+            unread: false,
+            trackedThreadId: tracked._id,
+          },
+        ],
+        since: {
+          previousGeneratedAt: 0,
+          completions: [],
+          agentActions: [
+            {
+              tool: 't',
+              surface: 'mail',
+              summary: 'Archived',
+              createdAt: 1,
+              operationId: 'op-x',
+              undoable: true,
+            },
+          ],
+        },
+      },
+      stats: {},
+    } as unknown as DailyReport;
+    setDailyReportReaderForTest({
+      configured: () => true,
+      load: (async () => edition) as any,
+      loadDismissals: async () => ({}),
+      loadOperationStates: async () => {
+        throw new Error('convex down');
+      },
+      query: (async (fn: any) =>
+        getFunctionName(fn) === 'userData:dailyReportPage'
+          ? { page: [edition], isDone: true, continueCursor: '' }
+          : []) as any,
+    });
+    const latest = await withToolContext(() => getLatestDailyReport(undefined, true), user);
+    expect(latest?.sections.know ?? []).toEqual([]);
+    expect(latest?.sections.since?.agentActions[0].operationId).toBe('op-x');
   });
 });

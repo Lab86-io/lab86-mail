@@ -382,3 +382,20 @@ describe('the weekly review job and delivery', () => {
     expect(MobileContractV1.schemas.BriefEditionKind).toBe(BriefEditionKindSchema);
   });
 });
+
+test('the default brief-ready queue sends the weekly title to Convex', async () => {
+  const hosted = await import('../lib/hosted/convex');
+  const { spyOn } = await import('bun:test');
+  const mutation = spyOn(hosted, 'convexMutation').mockImplementation((async (_fn: any, args: any) => ({
+    notificationId: null,
+    skipped: 'disabled',
+    args,
+  })) as any);
+  try {
+    const result = await notifyBriefReady('u1', 'weekly', { _id: 'w', generatedAt: SUNDAY }, TZ);
+    expect(result).toEqual({ skipped: 'disabled' });
+    expect(mutation.mock.calls[0][1]).toMatchObject({ title: WEEKLY_REVIEW_READY_TITLE, reportId: 'w' });
+  } finally {
+    mutation.mockRestore();
+  }
+});
