@@ -10,7 +10,6 @@ import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
 import {
-  ArrowLeft,
   CalendarDays,
   Check,
   KeyRound,
@@ -177,7 +176,6 @@ function SettingsPageBody() {
             href="/"
             className="mb-5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
           >
-            <ArrowLeft className="size-3.5" />
             Back to Albatross
           </Link>
           <h1 className="text-[26px] font-semibold tracking-tight">Settings</h1>
@@ -1204,7 +1202,6 @@ function ConnectionsSection() {
                   disabled={resync.isPending}
                   className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 >
-                  <RefreshCw className="size-3.5" />
                   Resync
                 </Button>
                 <Button
@@ -1219,7 +1216,6 @@ function ConnectionsSection() {
                   disabled={disconnect.isPending}
                   className="border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
-                  <Trash2 className="size-3.5" />
                   Disconnect
                 </Button>
               </div>
@@ -1284,10 +1280,7 @@ function ConnectionsSection() {
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
-                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>
-                        <Plus className="size-3.5" />
-                        Connect
-                      </a>
+                      <a href={`/api/mcp/oauth/start?server=${encodeURIComponent(server.id)}`}>Connect</a>
                     </Button>
                   </div>
                 </div>

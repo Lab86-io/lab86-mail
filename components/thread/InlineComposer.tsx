@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarClock,
   Pencil as EditIcon,
-  ExternalLink,
   Eye,
   Forward as ForwardIcon,
   Reply as ReplyIcon,
@@ -1059,7 +1058,6 @@ function DraftAttachmentPreviewDialog({ file }: { file: File }) {
               rel="noreferrer"
               className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
             >
-              <ExternalLink className="size-3.5" />
               Open
             </a>
           </div>

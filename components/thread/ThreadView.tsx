@@ -2,17 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  Mail,
-  Search,
-  UserRound,
-  X,
-} from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -620,9 +610,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply')}
                 disabled={!replyAnchor}
                 title="Reply (r)"
+                aria-label="Reply"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpLeftIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpLeftIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply</span>
               </button>
               <button
@@ -630,9 +624,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('reply_all')}
                 disabled={!replyAnchor}
                 title="Reply all"
+                aria-label="Reply all"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={ReplyAllIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={ReplyAllIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Reply all</span>
               </button>
               <button
@@ -640,9 +638,13 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                 onClick={() => startReply('forward')}
                 disabled={!replyAnchor}
                 title="Forward"
+                aria-label="Forward"
                 className={BAR_BUTTON}
               >
-                <RowIcon icon={CornerUpRightIcon} size={14} />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <span className="inline-flex @[520px]:hidden">
+                  <RowIcon icon={CornerUpRightIcon} size={14} />
+                </span>
                 <span className="hidden @[520px]:inline">Forward</span>
               </button>
               <span className="mx-1 h-4 w-px shrink-0 bg-[var(--color-border)]" aria-hidden />
@@ -900,14 +902,12 @@ function ContactButton({
             onClick={() => onShowEmails(contact.email!)}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-left text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-subtle)]"
           >
-            <Search className="size-3.5 text-[var(--color-text-muted)]" />
             Show emails with them
           </button>
           <a
             href={`mailto:${contact.email}`}
             className="flex h-8 items-center gap-2 rounded-md px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
           >
-            <UserRound className="size-3.5" />
             New email
           </a>
         </div>
@@ -1166,7 +1166,6 @@ function Attachments({
                     download={preview.filename}
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)]"
                   >
-                    <Download className="size-3.5" />
                     Download
                   </a>
                   <a
@@ -1175,7 +1174,6 @@ function Attachments({
                     rel="noreferrer"
                     className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--color-control-border)] bg-[var(--color-control)] px-2.5 text-[12px] text-[var(--color-text-muted)] shadow-[var(--shadow-control)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
                   >
-                    <ExternalLink className="size-3.5" />
                     Open
                   </a>
                 </div>
