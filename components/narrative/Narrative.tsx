@@ -35,6 +35,11 @@ function useNarrativeCommand() {
 const field =
   'rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[13px] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]';
 
+// Keep this true to the code: narrative runs have no daily count or cost
+// limit, and each model call has the brief output cap (BRIEF_MAX_OUTPUT_TOKENS).
+export const NARRATIVE_LIMITS_COPY =
+  'Runs have no daily limit. Each model call can write up to 32,000 tokens. If the model or a source is unavailable, the evidence-based fallback remains readable. Full provider archives are not copied.';
+
 export function NarrativeSettings() {
   const state = useQuery({
     queryKey: ['narrative', 'status'],
@@ -71,7 +76,7 @@ export function NarrativeSettings() {
       <p>
         No sources are included until you choose them. Enabling memory starts with the last 30 days of source
         changes plus existing Work and Area context, then follows new changes. Connected-source content is
-        sent to your selected AI provider when a narrative run needs it.
+        sent to your selected model provider when a narrative run needs it.
       </p>
       <fieldset className="space-y-2">
         <legend className="mb-2 font-medium">Sources you allow narrative memory to use</legend>
@@ -112,14 +117,10 @@ export function NarrativeSettings() {
           onChange={(event) => setModel(event.target.value)}
         >
           <option value="z-ai/glm-5.3-flash">GLM-5.3-Flash · OpenRouter</option>
-          <option value="current">Current AI model · subject to narrative budget</option>
+          <option value="current">Current model · from Intelligence settings</option>
         </select>
       </label>
-      <p className="text-xs text-[var(--color-text-muted)]">
-        Runs are capped at 24 per day, two research passes, and a conservative $0.50 maximum model-cost
-        estimate per run. If the model or a source is unavailable, the evidence-based fallback remains
-        readable. Full provider archives are not copied.
-      </p>
+      <p className="text-xs text-[var(--color-text-muted)]">{NARRATIVE_LIMITS_COPY}</p>
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={command.isPending || !selected.length}

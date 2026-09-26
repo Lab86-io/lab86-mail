@@ -2,8 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NarrativeSearchButton, NarrativeSettings } from '../components/narrative/Narrative';
+import {
+  NARRATIVE_LIMITS_COPY,
+  NarrativeSearchButton,
+  NarrativeSettings,
+} from '../components/narrative/Narrative';
 import { NarrativeBrief } from '../components/narrative/NarrativeBrief';
+import { BRIEF_MAX_OUTPUT_TOKENS, maxOutputTokensForFeature } from '../lib/ai/gateway';
 
 function render(node: ReactNode, key: unknown[], data: unknown) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -31,6 +36,16 @@ describe('narrative surfaces', () => {
     expect(html).toContain('Forget all narrative memory…');
     expect(html).not.toContain('Confirm: forget narrative');
     expect(html).toContain('OpenRouter');
+    // The settings copy states the limits the code enforces, and never says AI.
+    const text = html.replace(/<[^>]*>/g, ' ');
+    expect(text).not.toMatch(/\bAI\b/);
+    expect(text).not.toContain('24 per day');
+    expect(text).not.toContain('$0.50');
+    expect(text).toContain(NARRATIVE_LIMITS_COPY);
+  });
+  test('the stated output limit is the gateway cap for narrative calls', () => {
+    expect(NARRATIVE_LIMITS_COPY).toContain(BRIEF_MAX_OUTPUT_TOKENS.toLocaleString('en-US'));
+    expect(maxOutputTokensForFeature('narrative_write')).toBe(BRIEF_MAX_OUTPUT_TOKENS);
   });
   test('unavailable pilot does not display active consent controls', () => {
     const html = render(<NarrativeSettings />, ['narrative', 'status'], { available: false });
