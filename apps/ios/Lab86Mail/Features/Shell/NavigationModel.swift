@@ -195,6 +195,9 @@ final class NavigationModel {
     var requestsSourceList = false
     // Raw MailCategoryScope value chosen from the sidebar's smart filters.
     var pendingMailCategory: String?
+    // The custom label the mail list shows, or nil for a built-in scope. The
+    // Mac source list highlights that label's row.
+    var mailLabelID: String?
     var pendingCompose: ComposePrefill?
     // macOS presents Albatross chat as a floating corner panel (with a
     // tear-out window), never as a tab. Unused on iOS.

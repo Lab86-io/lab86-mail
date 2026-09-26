@@ -242,6 +242,9 @@ struct MailView: View {
             selection = MailScopeSelection.from(raw: raw)
             environment.navigation.pendingMailCategory = nil
         }
+        .onChange(of: selection, initial: true) { _, value in
+            environment.navigation.mailLabelID = value.labelID
+        }
         .task(id: effectiveQuery) {
             let query = effectiveQuery
             guard !query.isEmpty else {

@@ -123,12 +123,52 @@ struct MacShellView: View {
     }
 }
 
+// Which source-list row reads as selected, and what a row asks the mail
+// list for. Pure, so the rules are testable.
+enum MacSourceSelection {
+    // A primary row is selected while its tab is up. An open Area belongs to
+    // its own row, and a label view belongs to the label row.
+    static func isPrimarySelected(
+        _ destination: PrimaryTab,
+        selectedTab: PrimaryTab,
+        areaID: String?,
+        mailLabelID: String?
+    ) -> Bool {
+        guard selectedTab == destination else { return false }
+        switch destination {
+        case .work: return areaID == nil
+        case .mail: return mailLabelID == nil
+        default: return true
+        }
+    }
+
+    static func isLabelSelected(_ labelID: String, selectedTab: PrimaryTab, mailLabelID: String?) -> Bool {
+        selectedTab == .mail && mailLabelID == labelID
+    }
+
+    // The Mail row goes back to Main from a label view. Other rows ask the
+    // mail list for nothing.
+    static func mailCategory(forPrimary destination: PrimaryTab, mailLabelID: String?) -> String? {
+        destination == .mail && mailLabelID != nil ? MailCategoryScope.main.rawValue : nil
+    }
+
+    // A label row opens Mail on that label (NAT-4).
+    static func mailCategory(forLabel label: MailLabelSummary) -> String {
+        label.rawCategory
+    }
+}
+
 // The Mac sidebar: the same destinations as the iOS wheel — product sources,
-// then the user's areas — as a conventional Mac source list.
+// the labels shown in the sidebar, then the user's areas — as a conventional
+// Mac source list.
 struct MacSourceList: View {
     @Environment(AppEnvironment.self) private var environment
+    @State private var showsNewArea = false
+    @State private var newAreaName = ""
+    @State private var isCreatingArea = false
 
     private var primaries: [PrimaryTab] { PrimaryTab.sourceList }
+    private var labels: [MailLabelSummary] { environment.store.mailLabels }
     private var areas: [AreaSummary] { environment.store.areas }
 
     var body: some View {
@@ -141,6 +181,15 @@ struct MacSourceList: View {
                     sourceRow(destination)
                 }
             }
+            // Mail that a label-move rule files leaves Main, so the label
+            // view must be reachable from here (NAT-4).
+            if !labels.isEmpty {
+                Section("Labels") {
+                    ForEach(labels) { label in
+                        labelRow(label)
+                    }
+                }
+            }
             Section("Your areas") {
                 if areas.isEmpty {
                     areaState
@@ -149,6 +198,7 @@ struct MacSourceList: View {
                         areaRow(area)
                     }
                 }
+                newAreaRow
             }
         }
         .listStyle(.sidebar)
@@ -206,10 +256,19 @@ struct MacSourceList: View {
     }
 
     private func sourceRow(_ destination: PrimaryTab) -> some View {
-        let selected = environment.navigation.selectedTab == destination
-            && (destination != .work || environment.navigation.areaRoute == nil)
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isPrimarySelected(
+            destination,
+            selectedTab: navigation.selectedTab,
+            areaID: navigation.areaRoute?.areaID,
+            mailLabelID: navigation.mailLabelID
+        )
         return Button {
-            environment.navigation.selectPrimary(destination)
+            let category = MacSourceSelection.mailCategory(forPrimary: destination, mailLabelID: navigation.mailLabelID)
+            navigation.selectPrimary(destination)
+            if let category {
+                navigation.pendingMailCategory = category
+            }
         } label: {
             Label(destination.title, systemImage: destination.symbol)
                 .fontWeight(selected ? .semibold : .regular)
@@ -224,6 +283,72 @@ struct MacSourceList: View {
                 : nil
         )
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func labelRow(_ label: MailLabelSummary) -> some View {
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isLabelSelected(
+            label.id,
+            selectedTab: navigation.selectedTab,
+            mailLabelID: navigation.mailLabelID
+        )
+        return Button {
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailCategory = MacSourceSelection.mailCategory(forLabel: label)
+        } label: {
+            Label(label.name, systemImage: selected ? "tag.fill" : "tag")
+                .fontWeight(selected ? .semibold : .regular)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                : nil
+        )
+        .accessibilityLabel("\(label.name) label")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // NAT-9: an Area can be created from the source list, as on the web and
+    // the iOS sidebar. Text only, in the secondary color, under the areas.
+    private var newAreaRow: some View {
+        Button {
+            newAreaName = ""
+            showsNewArea = true
+        } label: {
+            Text(isCreatingArea ? "Creating area…" : "New Area")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(isCreatingArea)
+        .popover(isPresented: $showsNewArea, arrowEdge: .trailing) {
+            MacNewAreaPopover(
+                name: $newAreaName,
+                onCancel: { showsNewArea = false },
+                onCreate: createArea
+            )
+        }
+        .accessibilityHint("Names a new area and opens it")
+        .accessibilityIdentifier("mac-new-area")
+    }
+
+    private func createArea() {
+        guard let name = MacNewArea.cleanName(newAreaName) else { return }
+        showsNewArea = false
+        isCreatingArea = true
+        Task {
+            defer { isCreatingArea = false }
+            // A failure sets the store error, and the shell's alert shows it.
+            if let areaID = await environment.store.createArea(name: name) {
+                environment.navigation.openArea(id: areaID, name: name)
+            }
+        }
     }
 
     private func areaRow(_ area: AreaSummary) -> some View {
