@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import type { MailPushSettings } from '@/lib/notifications/mail-push';
+import { timeZoneLabel } from '@/lib/notifications/preferences';
 
 export const MAIL_PUSH_QUERY_KEY = ['mail-push-settings'] as const;
 
@@ -26,12 +27,19 @@ export type MailPushUpdate = {
   removeVipSenders?: string[];
 };
 
-export async function saveMailPushSettings(update: MailPushUpdate): Promise<MailPushSettings> {
-  let timezone: string | undefined;
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  } catch {
-    timezone = undefined;
+/**
+ * Saves mail alerts. `zone` is the notification zone that quiet hours use; it
+ * is written only when the user has no preference row yet. Without it, the
+ * device zone goes.
+ */
+export async function saveMailPushSettings(update: MailPushUpdate, zone?: string): Promise<MailPushSettings> {
+  let timezone: string | undefined = zone;
+  if (!timezone) {
+    try {
+      timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      timezone = undefined;
+    }
   }
   const response = await fetch('/api/mail/push-settings', {
     method: 'PUT',
@@ -52,8 +60,12 @@ export function hourLabel(hour: number) {
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
-/** Priority-only push, quiet hours, and VIP senders (FEATURES item 12). */
-export function MailAlertsSettings() {
+/**
+ * Priority-only push, quiet hours, and VIP senders (FEATURES item 12).
+ * `timezone` is the saved notification zone: quiet hours are labeled with it
+ * and saves send it, so the page shows one zone.
+ */
+export function MailAlertsSettings({ timezone }: { timezone?: string } = {}) {
   const queryClient = useQueryClient();
   const settings = useQuery({
     queryKey: MAIL_PUSH_QUERY_KEY,
@@ -66,7 +78,7 @@ export function MailAlertsSettings() {
     staleTime: 60_000,
   });
   const save = useMutation({
-    mutationFn: saveMailPushSettings,
+    mutationFn: (update: MailPushUpdate) => saveMailPushSettings(update, timezone),
     onSuccess: (next) => {
       queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, next);
       toast.success('Mail alerts saved');
@@ -134,7 +146,7 @@ export function MailAlertsSettings() {
           id="mail-quiet-hours"
           label="Quiet hours"
           description="No mail pushes in these hours, except from VIP senders. What arrives waits for one summary when quiet hours end."
-          hint={`Hours use your notification time zone (${current.timezone}).`}
+          hint={`Hours use your notification time zone (${timeZoneLabel(timezone ?? current.timezone)}).`}
           control={
             <Switch
               id="mail-quiet-hours"

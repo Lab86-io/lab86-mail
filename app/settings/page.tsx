@@ -59,7 +59,12 @@ import { api } from '@/convex/_generated/api';
 import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
-import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
+import {
+  initialNotificationForm,
+  type NotificationPreferences,
+  notificationPreferenceInput,
+  timeZoneLabel,
+} from '@/lib/notifications/preferences';
 import { DEFAULT_UNDO_SEND_SECONDS, UNDO_SEND_CHOICES } from '@/lib/shared/sending';
 import { cn } from '@/lib/utils';
 
@@ -94,12 +99,8 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
       <VoiceProfileSettings />
     </>
   ),
-  notifications: () => (
-    <>
-      <NotificationsSection />
-      <MailAlertsSettings />
-    </>
-  ),
+  // Mail alerts render inside the section, so quiet hours read its saved zone.
+  notifications: () => <NotificationsSection />,
   orders: () => <StandingOrdersSection />,
   brief: () => <BriefSection />,
   ai: () => (
@@ -560,13 +561,22 @@ function NotificationsSection() {
     }
   }, []);
 
+  // With nothing saved yet, the device zone is saved at once. The check-in,
+  // the brief, and quiet hours then read one saved zone, and "Everything here
+  // is saved" stays true.
+  const seeding = useRef(false);
   useEffect(() => {
-    if (remote && !prefs) {
-      const loaded = { ...remote, timezone: remote._id ? remote.timezone : deviceTimezone };
-      setPrefs(loaded);
-      setBaseline(loaded);
-    }
-  }, [deviceTimezone, prefs, remote]);
+    if (!remote || prefs) return;
+    const { form, seed } = initialNotificationForm(remote, deviceTimezone);
+    setPrefs(form);
+    setBaseline(form);
+    if (!seed || seeding.current) return;
+    seeding.current = true;
+    savePreferences(seed).catch(() => {
+      // Not saved: the zone shows as an unsaved change, with Save.
+      setBaseline({ ...form, timezone: remote.timezone });
+    });
+  }, [deviceTimezone, prefs, remote, savePreferences]);
 
   const update = <K extends keyof NotificationPreferences>(key: K, value: NotificationPreferences[K]) => {
     setPrefs((current) => (current ? { ...current, [key]: value } : current));
@@ -656,7 +666,7 @@ function NotificationsSection() {
         <SettingsRow
           id="checkin-time"
           label="Check-in time"
-          description={`Arrives at ${clockLabel(prefs.eveningCheckinLocalTime)} in ${prefs.timezone.replaceAll('_', ' ')}.`}
+          description={`Arrives at ${clockLabel(prefs.eveningCheckinLocalTime)} in ${timeZoneLabel(prefs.timezone)}.`}
           disabled={!prefs.eveningCheckinEnabled}
           control={
             <Input
@@ -790,6 +800,7 @@ function NotificationsSection() {
           {dirty ? 'Changes apply after you save.' : 'Everything here is saved.'}
         </span>
       </div>
+      <MailAlertsSettings timezone={baseline?.timezone ?? prefs.timezone} />
     </section>
   );
 }

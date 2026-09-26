@@ -21,3 +21,25 @@ export function notificationPreferenceInput(preferences: NotificationPreferences
     emailFallbackDelayMinutes: preferences.emailFallbackDelayMinutes,
   };
 }
+
+export type NotificationPreferenceInput = ReturnType<typeof notificationPreferenceInput>;
+
+/**
+ * The form's first state. With no saved row, the device zone is the zone the
+ * page shows, and `seed` is the input that saves it at once. Settings says
+ * "Everything here is saved", and the check-in, the brief, and quiet hours
+ * then all read that one saved zone.
+ */
+export function initialNotificationForm(
+  remote: NotificationPreferences,
+  deviceTimezone: string,
+): { form: NotificationPreferences; seed: NotificationPreferenceInput | null } {
+  if (remote._id) return { form: remote, seed: null };
+  const form = { ...remote, timezone: deviceTimezone || remote.timezone };
+  return { form, seed: notificationPreferenceInput(form) };
+}
+
+/** "America/New York" for "America/New_York". */
+export function timeZoneLabel(zone: string) {
+  return zone.replaceAll('_', ' ');
+}
