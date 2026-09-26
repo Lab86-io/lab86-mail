@@ -660,3 +660,51 @@ describe('WRK-12 plan timeouts retry with a backoff', () => {
     expect(await t.mutation(internal.albatrossIntents.beginPlanRetry, { intentId: closed })).toBe(false);
   });
 });
+
+describe('WRK-18 one helper writes both Area fields', () => {
+  test('savePlan and updateIntent keep areaId and primaryAreaId the same', async () => {
+    const t = harness();
+    const area = (name: string) =>
+      t.run((ctx) =>
+        ctx.db.insert('areas', {
+          userId,
+          name,
+          kind: 'life',
+          status: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        } as any),
+      );
+    const home = await area('Home');
+    const work = await area('Work');
+    const intentId = await seedWork(t, { areaId: String(home), primaryAreaId: home });
+    await t.mutation(api.albatrossIntents.savePlan, {
+      ...caller,
+      intentId,
+      areaId: String(work),
+      digitalActions: [],
+      physicalActions: [],
+      assumptions: [],
+      sourceRefs: [],
+    });
+    expect(await t.run((ctx) => ctx.db.get(intentId))).toMatchObject({
+      areaId: String(work),
+      primaryAreaId: work,
+    });
+    await t.mutation(api.albatrossIntents.updateIntent, { ...caller, intentId, areaId: String(home) });
+    expect(await t.run((ctx) => ctx.db.get(intentId))).toMatchObject({
+      areaId: String(home),
+      primaryAreaId: home,
+    });
+    const created = await t.mutation(api.albatrossIntents.createIntent, {
+      ...caller,
+      rawText: 'Fix the gutter',
+      source: 'text',
+      areaId: String(home),
+    });
+    expect(await t.run((ctx) => ctx.db.get(created as Id<'albatrossIntents'>))).toMatchObject({
+      areaId: String(home),
+      primaryAreaId: home,
+    });
+  });
+});

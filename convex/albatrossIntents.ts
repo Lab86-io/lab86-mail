@@ -183,6 +183,19 @@ async function normalizeIntentAreaId(
   return String(area._id);
 }
 
+/**
+ * The legacy `areaId` string and the Work v2 `primaryAreaId` id must name the
+ * same Area. Every write goes through this one helper, so tasks never go to
+ * a different Area board than the Work page shows (WRK-18).
+ */
+async function intentAreaFields(ctx: MutationCtx, userId: string, areaId: string | undefined) {
+  const normalized = await normalizeIntentAreaId(ctx, userId, areaId);
+  return {
+    areaId: normalized,
+    primaryAreaId: normalized ? (ctx.db.normalizeId('areas', normalized) ?? undefined) : undefined,
+  };
+}
+
 export const createIntent = mutation({
   args: {
     ...callerArgs,
@@ -233,7 +246,7 @@ export const createIntent = mutation({
                   : {}),
               }
             : {}),
-          ...(!existing.areaId ? { areaId: await normalizeIntentAreaId(ctx, userId, args.areaId) } : {}),
+          ...(!existing.areaId ? await intentAreaFields(ctx, userId, args.areaId) : {}),
           areaAutoAssigned: undefined,
           conversationId: existing.conversationId || `work_${String(existing._id)}`,
           ...(!args.replaceRawText ? { workState: existing.workState || ('active' as const) } : {}),
@@ -245,7 +258,7 @@ export const createIntent = mutation({
       }
     }
     const ts = now();
-    const areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+    const areaFields = await intentAreaFields(ctx, userId, args.areaId);
     const intentId = await ctx.db.insert('albatrossIntents', {
       userId,
       externalId,
@@ -254,7 +267,7 @@ export const createIntent = mutation({
       source: args.source,
       title: bounded(args.title, 180),
       status: 'captured',
-      areaId,
+      ...areaFields,
       areaAutoAssigned: undefined,
       workState: 'active',
       agentState: 'researching',
@@ -363,7 +376,7 @@ export const updateIntent = mutation({
     if (args.title !== undefined) patch.title = bounded(args.title, 180);
     if (args.kind !== undefined) patch.kind = bounded(args.kind, 40);
     if (args.areaId !== undefined) {
-      patch.areaId = await normalizeIntentAreaId(ctx, userId, args.areaId);
+      Object.assign(patch, await intentAreaFields(ctx, userId, args.areaId));
       // The user picked (or explicitly cleared to Personal) — stop auto-sorting.
       patch.areaAutoAssigned = false;
     }
@@ -684,8 +697,9 @@ export const savePlan = mutation({
       // The planner saw research the capture splitter never had, so its
       // shape verdict overwrites the capture guess when it offers one.
       shape: args.shape ?? intent.shape,
-      areaId:
-        args.areaId !== undefined ? await normalizeIntentAreaId(ctx, userId, args.areaId) : intent.areaId,
+      ...(args.areaId !== undefined
+        ? await intentAreaFields(ctx, userId, args.areaId)
+        : { areaId: intent.areaId }),
       priority:
         args.priority !== undefined ? Math.min(Math.max(Math.round(args.priority), 1), 3) : intent.priority,
       questions: args.questions ?? intent.questions,
