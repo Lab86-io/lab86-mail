@@ -150,6 +150,7 @@ export const createSmartLabel = defineTool({
     'Create a local custom label. It matches by keywords: a thread gets the label when every word of the label name or of one positive example is a whole word in its sender, subject, preview, or body, and no negative example matches the same way. The description is not matched. Does not create Gmail labels.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     name: z.string(),
     description: z.string(),
@@ -218,6 +219,7 @@ export const updateSmartLabel = defineTool({
   description: 'Update a local custom smart label.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     id: z.string(),
     name: z.string().optional(),
@@ -240,6 +242,7 @@ export const deleteSmartLabel = defineTool({
     'Delete a local custom smart label and turn off the rules that file mail under it. To keep the label but hide it, use update_smart_label with enabled false.',
   category: 'mail',
   mutating: true,
+  risk: 'destructive',
   input: z.object({ id: z.string() }),
   output: z.object({ label: z.any(), disabledRuleIds: z.array(z.string()) }),
   async handler({ id }) {
@@ -270,6 +273,7 @@ export const createSmartRule = defineTool({
   description: 'Create a local smart classification rule. User rules override built-ins and AI labels.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     name: z.string(),
     scope: RuleScopeSchema,
@@ -301,6 +305,7 @@ export const setSmartRuleEnabledTool = defineTool({
   description: 'Enable or disable a smart rule.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({ id: z.string(), enabled: z.boolean() }),
   output: z.object({ rule: z.any() }),
   async handler({ id, enabled }) {
@@ -315,6 +320,7 @@ export const applySmartCorrection = defineTool({
     'Apply a quick local correction such as Never Main, Always Noise, Move to category, or Create label from this. Does not mutate Gmail.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     threadId: z.string(),

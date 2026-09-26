@@ -572,3 +572,47 @@ describe('Convex reads for cleanup, block, and voice', () => {
     ).toEqual({ stored: false });
   });
 });
+
+describe('risk and approval', () => {
+  test('the assistant must get approval before it unsubscribes', async () => {
+    const { APPROVAL_GATED_TOOLS, approvalSummary, toolNeedsApproval } = await import('../lib/ai/approval');
+    const { AGENT_TOOL_NAMES } = await import('../lib/ai/loop');
+    expect(APPROVAL_GATED_TOOLS.has('unsubscribe_sender')).toBe(true);
+    expect(AGENT_TOOL_NAMES.has('unsubscribe_sender')).toBe(true);
+    expect(toolNeedsApproval('unsubscribe_sender', { account: 'a', threadId: 't', confirmed: true })).toBe(
+      true,
+    );
+    expect(approvalSummary('unsubscribe_sender', { account: 'me@example.com', method: 'mailto' })).toEqual({
+      title: 'Unsubscribe from this mailing list',
+      description: 'The sender gets an unsubscribe request. This cannot be undone.',
+      metadata: [
+        { label: 'How', value: 'An email from your mailbox' },
+        { label: 'Mailbox', value: 'me@example.com' },
+      ],
+      confirmLabel: 'Unsubscribe',
+      denyLabel: 'Keep getting it',
+      intent: 'destructive',
+    });
+    expect(approvalSummary('unsubscribe_sender', {}).metadata[0]).toEqual({
+      label: 'How',
+      value: 'The way the sender offers',
+    });
+  });
+
+  test('every new mail tool that changes something declares its risk', async () => {
+    const { TOOLS } = await import('../lib/tools');
+    const expected: Record<string, string> = {
+      bulk_move_threads: 'write_self',
+      bulk_triage: 'write_self',
+      block_sender: 'write_self',
+      unsubscribe_sender: 'reach_person',
+      set_signature: 'write_self',
+      save_saved_reply: 'write_self',
+      delete_saved_reply: 'destructive',
+    };
+    for (const [name, risk] of Object.entries(expected)) {
+      expect(TOOLS[name]?.mutating).toBe(true);
+      expect(TOOLS[name]?.risk).toBe(risk as any);
+    }
+  });
+});

@@ -118,6 +118,7 @@ export const archiveThread = defineTool({
   description: 'Archive a thread. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: ThreadMutate.extend({ reason: Reason }),
   output: MutateOutput,
   async handler(args, ctx) {
@@ -130,6 +131,7 @@ export const trashThread = defineTool({
   description: 'Move a thread to Trash. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: ThreadMutate.extend({ reason: Reason }),
   output: MutateOutput,
   async handler(args, ctx) {
@@ -142,6 +144,7 @@ export const restoreFromTrash = defineTool({
   description: 'Restore a thread from Trash or Archive to the inbox. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: ThreadMutate.extend({ reason: Reason }),
   output: MutateOutput,
   async handler(args, ctx) {
@@ -158,6 +161,7 @@ export const bulkMoveThreads = defineTool({
     'Archive, trash, or restore many threads at once. Records one Activity entry with Undo for the whole selection.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     items: z
       .array(z.object({ account: z.string(), threadId: z.string() }))
@@ -202,6 +206,7 @@ export const markRead = defineTool({
   description: 'Mark a message as read.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
@@ -221,6 +226,7 @@ export const markUnread = defineTool({
   description: 'Mark a message as unread.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
@@ -240,6 +246,7 @@ export const markThreadRead = defineTool({
   description: 'Mark every unread message in a thread as read and update the cached thread state.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     threadId: z.string(),
@@ -276,6 +283,7 @@ export const starMessage = defineTool({
   description: 'Star a message.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
@@ -295,6 +303,7 @@ export const unstarMessage = defineTool({
   description: 'Remove the starred state from a message.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate,
   output: z.object({ ok: z.boolean() }),
   async handler({ account, messageId }, ctx) {
@@ -331,6 +340,7 @@ export const addLabel = defineTool({
   description: 'Add a folder/label to a message. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate.extend({ label: z.string(), reason: Reason }),
   output: MutateOutput,
   async handler({ account, messageId, label, reason }, ctx) {
@@ -359,6 +369,7 @@ export const removeLabel = defineTool({
   description: 'Remove a folder/label from a message. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: BasicMutate.extend({ label: z.string(), reason: Reason }),
   output: MutateOutput,
   async handler({ account, messageId, label, reason }, ctx) {
@@ -386,6 +397,7 @@ export const createLabel = defineTool({
   description: 'Create a new provider folder/label.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({ account: z.string(), name: z.string() }),
   output: z.object({ ok: z.boolean(), id: z.string().optional() }),
   async handler({ account, name }, ctx) {
@@ -405,6 +417,7 @@ export const applySmartLabels = defineTool({
   description: 'Create missing MailOS labels and apply reviewed smart labels to messages or threads.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     items: z
@@ -497,6 +510,7 @@ export const muteThread = defineTool({
   description: 'Mute a thread so future replies bypass the inbox. The change shows in Activity with Undo.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: ThreadMutate.extend({ reason: Reason }),
   output: MutateOutput,
   async handler({ account, threadId, reason }, ctx) {
@@ -530,6 +544,7 @@ export const snoozeThreadTool = defineTool({
     'Snooze a thread until a future time. The thread leaves the inbox now and comes back, unread, when the time passes.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     messageId: z.string().optional(),
@@ -562,6 +577,7 @@ export const unsnoozeThreadTool = defineTool({
   description: 'Cancel a snooze and move the thread back to the inbox now.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     threadId: z.string().optional(),

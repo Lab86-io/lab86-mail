@@ -62,6 +62,7 @@ export const setSignatureTool = defineTool({
     'Set the signature for one mailbox. When enabled, it is added below new mail, replies, and forwards from that mailbox.',
   category: 'compose',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     account: z.string(),
     enabled: z.boolean(),
@@ -107,6 +108,7 @@ export const saveSavedReplyTool = defineTool({
   description: 'Create a saved reply, or update one by id.',
   category: 'compose',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     id: z.string().optional(),
     name: z.string().max(SAVED_REPLY_NAME_MAX),
@@ -120,14 +122,15 @@ export const saveSavedReplyTool = defineTool({
 
 export const deleteSavedReplyTool = defineTool({
   name: 'delete_saved_reply',
-  description: 'Delete a saved reply by id.',
+  description: 'Delete a saved reply by id. Returns the deleted reply, so it can be saved again.',
   category: 'compose',
   mutating: true,
+  risk: 'destructive',
   input: z.object({ id: z.string() }),
-  output: z.object({ ok: z.boolean(), deleted: z.boolean() }),
+  output: z.object({ ok: z.boolean(), deleted: z.boolean(), reply: SavedReplyOutput }),
   async handler({ id }) {
-    const deleted = await deleteSavedReply(id);
-    if (!deleted) throw new Error('Saved reply not found.');
-    return { ok: true, deleted };
+    const reply = await deleteSavedReply(id);
+    if (!reply) throw new Error('Saved reply not found.');
+    return { ok: true, deleted: true, reply };
   },
 });

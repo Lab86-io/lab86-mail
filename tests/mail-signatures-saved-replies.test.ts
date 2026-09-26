@@ -284,9 +284,9 @@ describe('saved replies', () => {
         await expect(saveSavedReply({ name: 'Long', body: 'y'.repeat(5001) })).rejects.toThrow(
           'at most 5000',
         );
-        expect(await deleteSavedReply(first.id)).toBe(true);
+        expect(await deleteSavedReply(first.id)).toMatchObject({ id: first.id, name: 'Availability' });
         expect(await getSavedReply(first.id)).toBeNull();
-        expect(await deleteSavedReply(first.id)).toBe(false);
+        expect(await deleteSavedReply(first.id)).toBeNull();
       },
       { userId: 'saved_replies_user' },
     );
@@ -307,9 +307,10 @@ describe('saved replies', () => {
     const created = await runTool(saveSavedReplyTool.handler, { name: 'Thanks', body: 'Thank you!' });
     const listed = await runTool(listSavedRepliesTool.handler, {});
     expect(listed.replies.some((reply) => reply.id === created.reply.id)).toBe(true);
-    expect(await runTool(deleteSavedReplyTool.handler, { id: created.reply.id })).toEqual({
+    expect(await runTool(deleteSavedReplyTool.handler, { id: created.reply.id })).toMatchObject({
       ok: true,
       deleted: true,
+      reply: { id: created.reply.id, name: 'Thanks', body: 'Thank you!' },
     });
     await expect(runTool(deleteSavedReplyTool.handler, { id: created.reply.id })).rejects.toThrow(
       'not found',

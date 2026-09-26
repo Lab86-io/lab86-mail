@@ -11,6 +11,19 @@
 
 type Rec = Record<string, unknown>;
 
+/**
+ * What one tool call can touch.
+ * - `read`: nothing changes.
+ * - `write_self`: the user's own data changes, and Activity shows it with Undo.
+ * - `reach_person`: another person sees the result (mail, invitations, answers).
+ * - `destructive`: the change cannot be undone.
+ */
+export type ToolRisk = 'read' | 'write_self' | 'reach_person' | 'destructive';
+export const TOOL_RISKS: readonly ToolRisk[] = ['read', 'write_self', 'reach_person', 'destructive'];
+
+/** Risk classes whose agent calls always wait for the user's answer. */
+export const APPROVAL_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>(['reach_person', 'destructive']);
+
 export interface ApprovalSummary {
   title: string;
   description?: string;
@@ -27,6 +40,8 @@ export const APPROVAL_GATED_TOOLS: ReadonlySet<string> = new Set([
   'calendar_update_event',
   'calendar_delete_event',
   'calendar_delete_recurring_series',
+  // reach_person: the list owner gets the request, and it cannot be undone.
+  'unsubscribe_sender',
 ]);
 
 function rec(value: unknown): Rec {
@@ -54,6 +69,7 @@ export function toolNeedsApproval(toolName: string, input: unknown): boolean {
   const args = rec(input);
   switch (toolName) {
     case 'schedule_send':
+    case 'unsubscribe_sender':
       return true;
     case 'calendar_create_event':
       return attendeeList(args.attendees).length > 0;
@@ -66,6 +82,12 @@ export function toolNeedsApproval(toolName: string, input: unknown): boolean {
       return false;
   }
 }
+
+const UNSUBSCRIBE_METHODS: Record<string, string> = {
+  one_click: 'One-click request',
+  mailto: 'An email from your mailbox',
+  link: 'The sender’s web page',
+};
 
 function joinPeople(people: string[], max = 4): string {
   if (people.length <= max) return people.join(', ');
@@ -175,6 +197,18 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
         metadata: [...row('Event', eventName(args))],
         confirmLabel: 'Cancel event',
         denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'unsubscribe_sender':
+      return {
+        title: 'Unsubscribe from this mailing list',
+        description: 'The sender gets an unsubscribe request. This cannot be undone.',
+        metadata: [
+          ...row('How', UNSUBSCRIBE_METHODS[text(args.method)] || 'The way the sender offers'),
+          ...row('Mailbox', text(args.account)),
+        ],
+        confirmLabel: 'Unsubscribe',
+        denyLabel: 'Keep getting it',
         intent: 'destructive',
       };
     default:

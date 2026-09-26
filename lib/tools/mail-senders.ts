@@ -66,6 +66,7 @@ export const unsubscribeSender = defineTool({
     "Unsubscribe from this thread's mailing list. It cannot be undone, so the user must confirm first (confirmed: true). A link-only sender returns the page for the user to open.",
   category: 'mail',
   mutating: true,
+  risk: 'reach_person',
   input: z.object({
     account: z.string(),
     threadId: z.string(),
@@ -100,6 +101,7 @@ export const blockSenderTool = defineTool({
     'Block a sender: their mail goes to Noise from now on, and their threads in the inbox move to the archive. Shows in Activity with Undo. Pass the sender address, or a thread to block its sender.',
   category: 'mail',
   mutating: true,
+  risk: 'write_self',
   input: z
     .object({
       sender: z.string().optional(),

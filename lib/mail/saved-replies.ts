@@ -62,9 +62,10 @@ export async function saveSavedReply(input: {
   return reply;
 }
 
-export async function deleteSavedReply(id: string): Promise<boolean> {
+/** Deletes a saved reply and returns it, so the caller can offer to put it back. */
+export async function deleteSavedReply(id: string): Promise<SavedReply | null> {
   const existing = await getSavedReply(id);
-  if (!existing) return false;
+  if (!existing) return null;
   await kvDelete(SAVED_REPLY_KIND, id);
-  return true;
+  return existing;
 }

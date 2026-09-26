@@ -241,6 +241,7 @@ export const bulkTriage = defineTool({
     'Triage many threads in a single call and save each verdict on its thread. Returns verdicts keyed by thread id. The saved verdicts show in Activity with Undo.',
   category: 'ai',
   mutating: true,
+  risk: 'write_self',
   input: z.object({
     items: z
       .array(

@@ -83,12 +83,29 @@ export function SavedRepliesSettings() {
 function SavedReplyItem({ reply, onEdit }: { reply: SavedReplyRow; onEdit: () => void }) {
   const queryClient = useQueryClient();
   const remove = useMutation({
-    mutationFn: async () => callTool('delete_saved_reply', { id: reply.id }),
-    onSuccess: () => {
+    mutationFn: async () => callTool<{ reply: SavedReplyRow }>('delete_saved_reply', { id: reply.id }),
+    onSuccess: ({ reply: deleted }) => {
       queryClient.setQueryData<SavedReplyRow[]>(SAVED_REPLIES_QUERY_KEY, (current) =>
         (current || []).filter((item) => item.id !== reply.id),
       );
-      toast.success(`Deleted "${reply.name}"`);
+      // A delete cannot be undone on the server; putting it back saves it again.
+      toast.success(`Deleted "${deleted.name}"`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void callTool<{ reply: SavedReplyRow }>('save_saved_reply', {
+              name: deleted.name,
+              body: deleted.body,
+            }).then(
+              () => {
+                void queryClient.invalidateQueries({ queryKey: SAVED_REPLIES_QUERY_KEY });
+                toast.success('Saved reply restored');
+              },
+              (error: Error) => toast.error(error.message || 'Could not restore the saved reply.'),
+            );
+          },
+        },
+      });
     },
     onError: (error: Error) => toast.error(error.message || 'Could not delete the saved reply.'),
   });
