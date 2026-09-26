@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/react';
 import { ChevronDown, Settings2, SquarePen } from 'lucide-react';
 import { useState } from 'react';
+import { ScheduledSends } from '@/components/inbox/ScheduledSends';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,6 +35,7 @@ export function MailNav() {
   const openComposeNew = useClientStore((s) => s.openComposeNew);
   const accountFilter = useClientStore((s) => s.accountFilter);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scheduledOpen, setScheduledOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // categoryCounts requires an identity and throws without one. Before Convex
@@ -67,7 +69,9 @@ export function MailNav() {
         onFolder={setQuery}
         onCompose={openComposeNew}
         onSettings={() => setSettingsOpen(true)}
+        onScheduled={() => setScheduledOpen(true)}
       />
+      <ScheduledSends open={scheduledOpen} onOpenChange={setScheduledOpen} />
       <SmartLabelsSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
@@ -89,6 +93,7 @@ export function MailNavView({
   onFolder,
   onCompose,
   onSettings,
+  onScheduled,
 }: {
   query: string;
   smartCategory: string | null;
@@ -98,6 +103,7 @@ export function MailNavView({
   onFolder: (query: string) => void;
   onCompose: () => void;
   onSettings: () => void;
+  onScheduled?: () => void;
 }) {
   const selection = mailNavigationSelection(smartCategory, query, customLabels);
   const extras = [
@@ -198,6 +204,11 @@ export function MailNavView({
               ) : null}
             </DropdownMenuItem>
           ))}
+          {onScheduled ? (
+            <DropdownMenuItem onSelect={onScheduled} className="text-[12.5px]">
+              Scheduled
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onSettings} className="gap-2 text-[12.5px]">
             <Settings2 className="size-3.5" aria-hidden />

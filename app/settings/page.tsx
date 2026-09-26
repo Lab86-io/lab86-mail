@@ -470,7 +470,8 @@ function SendingSection() {
         />
       </SettingsCard>
       <SettingsNote>
-        The window applies to every mailbox. Scheduled sends and replies from the brief use the same hold.
+        The window applies to every mailbox and to replies from the brief. Scheduled sends do not use it;
+        cancel them from Mail, More, Scheduled.
       </SettingsNote>
     </section>
   );
