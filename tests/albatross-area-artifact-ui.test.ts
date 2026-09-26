@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { maxOutputTokensForFeature } from '../lib/ai/gateway';
+import { BRIEF_MAX_OUTPUT_TOKENS, maxOutputTokensForFeature } from '../lib/ai/gateway';
 
 const read = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
@@ -39,7 +39,7 @@ describe('generated Area screen host contract', () => {
     expect(mutation).toContain('areaArtifactHtmlForWrite(');
     expect(mutation).toContain('assertAreaArtifactDocumentSize(');
     expect(mutation).not.toContain('args.artifactHtml.slice(');
-    expect(maxOutputTokensForFeature('albatross_area_artifact')).toBeUndefined();
+    expect(maxOutputTokensForFeature('albatross_area_artifact')).toBe(BRIEF_MAX_OUTPUT_TOKENS);
   });
 
   test('opening a saved document edition does not launch another generation', () => {
