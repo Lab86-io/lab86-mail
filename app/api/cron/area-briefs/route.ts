@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'userId is required.' }, { status: 400 });
   }
   try {
-    const areas = await convexQuery<any[]>((api as any).albatross.listAreas, {
+    const areas = await convexQuery<any[]>(api.albatross.listAreas, {
       userId,
       status: 'active',
     });

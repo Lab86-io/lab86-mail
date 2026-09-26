@@ -49,15 +49,16 @@ Mark an item completed only when the user's words explicitly say it was done, fi
         prompt: `Candidate items:\n${JSON.stringify(candidateItems, null, 2)}\n\nUser report:\n${responseText}`,
       });
       const reconciled = parseCheckinReconciliation(generated.text);
-      const result = await deps.convexMutation<any>(
-        (api as any).albatrossNotifications.completeReflectionReconcile,
-        { userId, checkinId, completed: reconciled.completed },
-      );
+      const result = await deps.convexMutation<any>(api.albatrossNotifications.completeReflectionReconcile, {
+        userId,
+        checkinId,
+        completed: reconciled.completed,
+      });
       return NextResponse.json({ ok: true, checkinId, ...result });
     } catch (error) {
       deps.reportError('[cron/checkin-reflection] reconciliation failed', checkinId, error);
       await deps
-        .convexMutation((api as any).albatrossNotifications.failReflectionReconcile, {
+        .convexMutation(api.albatrossNotifications.failReflectionReconcile, {
           userId,
           checkinId,
           error: 'Reflection reconciliation is temporarily unavailable.',

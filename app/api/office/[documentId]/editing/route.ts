@@ -37,7 +37,7 @@ export function createWordEditingPost(overrides: Partial<typeof dependencies> = 
         typeof token.sessionId !== 'string'
       )
         throw new OfficeError('Invalid editor session.', 403);
-      const result = await deps.convexMutation<{ ok: boolean }>((api as any).officeDocuments.coordinateEdit, {
+      const result = await deps.convexMutation<{ ok: boolean }>(api.officeDocuments.coordinateEdit, {
         userId: user.userId,
         documentId,
         requestId: input.requestId,

@@ -78,13 +78,13 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
     // Settings, Standing orders: paused watches read and check off nothing.
     if (await deps.watchesPaused(userId)) return NextResponse.json({ ok: true, skipped: 'paused' });
     try {
-      const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+      const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
         userId,
         workId,
       });
       if (detail?.work?.replyWatch && detail.work.workState === 'waiting') {
         const replies = await checkWaitingReplies({ userId, workId }, deps);
-        await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+        await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
           userId,
           workId,
           stillWatching: true,
@@ -97,7 +97,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
         (step) => stepNeedsCheck(step) && step.evidenceKind === 'mail_confirmation' && step.identity,
       );
       if (!outstanding.length) {
-        await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+        await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
           userId,
           workId,
           stillWatching: false,
@@ -106,7 +106,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       }
 
       const threads =
-        (await deps.convexQuery<RecentCorpusThread[]>((api as any).mailCorpus.listRecentCorpusThreads, {
+        (await deps.convexQuery<RecentCorpusThread[]>(api.mailCorpus.listRecentCorpusThreads, {
           userId,
           limit: WATCH_RECENT_THREADS,
         })) || [];
@@ -137,7 +137,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
             evidenceText: candidate.text,
           });
           if (!verdict.satisfies) continue;
-          await deps.convexMutation((api as any).albatrossWorkV2.attachProof, {
+          await deps.convexMutation(api.albatrossWorkV2.attachProof, {
             userId,
             workId,
             claim: `${step.title}: ${verdict.reason || 'confirmed by mail'}`.slice(0, 400),
@@ -159,7 +159,7 @@ export function createStepWatchPost(overrides: Partial<StepWatchDependencies> = 
       }
 
       const stillWatching = outstanding.length - completedSteps > 0;
-      await deps.convexMutation((api as any).albatrossWorkV2.completeMailWatch, {
+      await deps.convexMutation(api.albatrossWorkV2.completeMailWatch, {
         userId,
         workId,
         stillWatching,

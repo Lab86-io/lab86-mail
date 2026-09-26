@@ -78,7 +78,7 @@ export function createJevSettingsRoutes(dependencies = defaults) {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: 'Sign in required.' }, { status: 401 });
     const [state, selection, canChange] = await Promise.all([
-      convexQuery<any>((api as any).jev.settings, { userId: user.userId }),
+      convexQuery<any>(api.jev.settings, { userId: user.userId }),
       loadClassifierSelection(),
       isOperator(),
     ]);
@@ -158,11 +158,11 @@ export function createJevSettingsRoutes(dependencies = defaults) {
         return NextResponse.json({ ok: true, classifier: result });
       }
       if (parsed.data.action === 'reprocess') {
-        await convexMutation((api as any).jev.reprocess, { userId: user.userId });
+        await convexMutation(api.jev.reprocess, { userId: user.userId });
         kickLlmClassification(user.userId, 2_000);
         return NextResponse.json({ ok: true, queued: true });
       }
-      const state = await convexMutation((api as any).jev.saveSettings, {
+      const state = await convexMutation(api.jev.saveSettings, {
         userId: user.userId,
         preferences: parsed.data.preferences,
         corrections: parsed.data.corrections,

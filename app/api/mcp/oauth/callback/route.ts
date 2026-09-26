@@ -40,7 +40,7 @@ export function createMcpOAuthCallback(deps: typeof defaultDeps = defaultDeps) {
 
     let nativeCallback = false;
     try {
-      const stored = await deps.convexMutation<any>((api as any).mcp.consumeOAuthStateFromCallback, {
+      const stored = await deps.convexMutation<any>(api.mcp.consumeOAuthStateFromCallback, {
         state,
       });
       if (!stored) return settingsRedirect('mcp_error', 'OAuth state is invalid or expired.');

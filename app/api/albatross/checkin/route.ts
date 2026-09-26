@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const timezone =
       typeof body.timezone === 'string' ? body.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const result = await convexMutation<any>((api as any).albatrossNotifications.ensureCheckin, {
+    const result = await convexMutation<any>(api.albatrossNotifications.ensureCheckin, {
       userId: user.userId,
       localDate: localDateKey(timezone),
       timezone,

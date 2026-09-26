@@ -10,8 +10,8 @@ import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const suggestionsApi = (api as any).suggestions;
-const accountsApi = (api as any).accounts;
+const suggestionsApi = api.suggestions;
+const accountsApi = api.accounts;
 
 interface SuggestionActDependencies {
   requireCurrentUser: typeof requireCurrentUser;

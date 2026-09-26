@@ -38,7 +38,7 @@ export function createBriefEventsPost(deps = defaultDependencies) {
       const parsed = briefEventSchema.safeParse(await req.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'Invalid brief event.' }, { status: 400 });
       const event = parsed.data;
-      await deps.convexMutation((api as any).briefEvents.record, {
+      await deps.convexMutation(api.briefEvents.record, {
         userId: user.userId,
         reportId: event.reportId,
         surface: event.surface,

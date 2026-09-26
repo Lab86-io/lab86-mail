@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ planId: st
     const artifact = await convexQuery<{
       artifactHtml: string | null;
       artifactTitle: string | null;
-    }>((api as any).albatrossIntents.getPlanArtifact, { userId: user.userId, planId });
+    }>(api.albatrossIntents.getPlanArtifact, { userId: user.userId, planId });
     if (!artifact.artifactHtml) {
       return new Response('This plan has no brief yet.', {
         status: 404,

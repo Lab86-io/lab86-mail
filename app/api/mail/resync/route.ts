@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     if (!row || row.status !== 'connected') {
       return NextResponse.json({ ok: false, error: 'connected account not found' }, { status: 404 });
     }
-    await convexMutation((api as any).mailCorpus.markSyncState, {
+    await convexMutation(api.mailCorpus.markSyncState, {
       userId: user.userId,
       accountId,
       grantId: row.grantId,

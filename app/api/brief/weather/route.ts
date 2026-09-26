@@ -13,8 +13,7 @@ const defaults = {
   user: requireCurrentUser,
   rate: enforceUserRateLimit,
   weather: gatherBriefWeather,
-  preferences: (userId: string) =>
-    convexQuery<any>((api as any).albatrossNotifications.mobilePreferences, { userId }),
+  preferences: (userId: string) => convexQuery<any>(api.albatrossNotifications.mobilePreferences, { userId }),
   reports: () => kvList<any>('dailyReport', { limit: 1 }),
 };
 export function createBriefWeatherGet(deps = defaults) {

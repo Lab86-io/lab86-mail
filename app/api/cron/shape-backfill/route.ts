@@ -29,8 +29,8 @@ export interface ShapeBackfillDeps {
 const defaultDeps: ShapeBackfillDeps = {
   isInternalCronRequest,
   listUnshaped: ({ userId, limit }) =>
-    convexQuery((api as any).albatrossWorkV2.unshapedWork, { userId, limit }) as Promise<UnshapedWorkRow[]>,
-  applyWrite: (input) => convexMutation((api as any).albatrossWorkV2.applyShapeBackfill, input),
+    convexQuery(api.albatrossWorkV2.unshapedWork, { userId, limit }) as Promise<UnshapedWorkRow[]>,
+  applyWrite: (input) => convexMutation(api.albatrossWorkV2.applyShapeBackfill, input),
   plan: planShapeBackfill,
 };
 

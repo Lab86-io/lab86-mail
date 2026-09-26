@@ -26,7 +26,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ questi
       projectId?: string;
       routineId?: string;
       shouldAdvance: boolean;
-    }>((api as any).albatrossWorkV2.answerQuestion, {
+    }>(api.albatrossWorkV2.answerQuestion, {
       userId: user.userId,
       questionId,
       answer,

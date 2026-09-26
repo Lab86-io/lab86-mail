@@ -26,8 +26,8 @@ export async function GET() {
   try {
     const user = await requireCurrentUser();
     const [areas, onboarding] = await Promise.all([
-      convexQuery<any[]>((api as any).albatross.listAreas, { userId: user.userId, status: 'active' }),
-      convexQuery<any>((api as any).userData.getDoc, {
+      convexQuery<any[]>(api.albatross.listAreas, { userId: user.userId, status: 'active' }),
+      convexQuery<any>(api.userData.getDoc, {
         userId: user.userId,
         kind: ONBOARDING_KIND,
         key: ONBOARDING_KEY,
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
     switch (body.action) {
       case 'create_area': {
         if (!body.name?.trim()) return json(400, { ok: false, error: 'name required' });
-        const areaId = await convexMutation<string>((api as any).albatross.createArea, {
+        const areaId = await convexMutation<string>(api.albatross.createArea, {
           ...caller,
           name: body.name.trim(),
           kind: body.kind,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
       }
       case 'update_area': {
         if (!body.areaId) return json(400, { ok: false, error: 'areaId required' });
-        await convexMutation((api as any).albatross.updateArea, {
+        await convexMutation(api.albatross.updateArea, {
           ...caller,
           areaId: body.areaId,
           name: body.name,
@@ -137,11 +137,11 @@ export async function POST(req: NextRequest) {
       }
       case 'archive_area': {
         if (!body.areaId) return json(400, { ok: false, error: 'areaId required' });
-        await convexMutation((api as any).albatross.archiveArea, { ...caller, areaId: body.areaId });
+        await convexMutation(api.albatross.archiveArea, { ...caller, areaId: body.areaId });
         return json(200, { ok: true });
       }
       case 'reindex_areas': {
-        await convexMutation((api as any).albatross.reindexMyAreas, { ...caller, areaId: body.areaId });
+        await convexMutation(api.albatross.reindexMyAreas, { ...caller, areaId: body.areaId });
         return json(200, { ok: true });
       }
       case 'add_fact': {
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
           return json(400, { ok: false, error: 'areaId, kind, and value required' });
         }
         const verified = Boolean(body.verified);
-        const factId = await convexMutation<string>((api as any).albatross.addAreaFact, {
+        const factId = await convexMutation<string>(api.albatross.addAreaFact, {
           ...caller,
           areaId: body.areaId,
           kind: body.kind,
@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
       }
       case 'complete_onboarding':
       case 'reset_onboarding': {
-        await convexMutation((api as any).userData.upsertDoc, {
+        await convexMutation(api.userData.upsertDoc, {
           userId: user.userId,
           kind: ONBOARDING_KIND,
           key: ONBOARDING_KEY,

@@ -16,7 +16,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
   const accounts = await convexQuery<any[]>(api.accounts.listConnectedAccounts, { userId: user.userId });
-  const syncStates = await convexQuery<any[]>((api as any).mailCorpus.listSyncTargets, {
+  const syncStates = await convexQuery<any[]>(api.mailCorpus.listSyncTargets, {
     userId: user.userId,
     limit: 500,
   });

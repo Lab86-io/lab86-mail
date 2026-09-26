@@ -25,7 +25,7 @@ interface BriefQueryDependencies {
 
 const dependencies: BriefQueryDependencies = {
   currentUser: requireCurrentUser,
-  query: (args) => convexQuery((api as any).mobile.queryBriefCatalog, args),
+  query: (args) => convexQuery(api.mobile.queryBriefCatalog, args),
   now: () => new Date(),
 };
 

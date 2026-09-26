@@ -33,9 +33,9 @@ interface MobileCommandDependencies {
 const defaultDependencies: MobileCommandDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
-  beginCommand: (args) => convexMutation<any>((api as any).mobile.beginCommand, args),
-  claimCommand: (args) => convexMutation<any>((api as any).mobile.claimCommand, args),
-  completeCommand: (args) => convexMutation<any>((api as any).mobile.completeCommand, args),
+  beginCommand: (args) => convexMutation<any>(api.mobile.beginCommand, args),
+  claimCommand: (args) => convexMutation<any>(api.mobile.claimCommand, args),
+  completeCommand: (args) => convexMutation<any>(api.mobile.completeCommand, args),
   executeMobileCommand,
   randomUUID,
 };

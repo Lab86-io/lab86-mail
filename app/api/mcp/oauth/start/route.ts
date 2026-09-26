@@ -27,7 +27,7 @@ const defaultDependencies: McpOAuthStartDependencies = {
   enforceUserRateLimit,
   getServerDef,
   beginMcpOAuth,
-  saveOAuthState: (args) => convexMutation((api as any).mcp.saveOAuthState, args),
+  saveOAuthState: (args) => convexMutation(api.mcp.saveOAuthState, args),
   encryptSecret,
   randomState: () => randomBytes(32).toString('base64url'),
   now: Date.now,

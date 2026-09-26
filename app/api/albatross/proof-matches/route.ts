@@ -72,7 +72,7 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
       if (accountId && providerThreadId) {
         let thread: unknown;
         try {
-          thread = await deps.convexQuery<any>((api as any).mailCorpus.getCorpusThread, {
+          thread = await deps.convexQuery<any>(api.mailCorpus.getCorpusThread, {
             userId: user.userId,
             accountId,
             providerThreadId,
@@ -85,7 +85,7 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         }
       }
 
-      const open = await deps.convexQuery<OpenWork[]>((api as any).albatrossWorkV2.openWorkForProof, {
+      const open = await deps.convexQuery<OpenWork[]>(api.albatrossWorkV2.openWorkForProof, {
         userId: user.userId,
         limit: 12,
       });

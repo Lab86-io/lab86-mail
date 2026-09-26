@@ -22,7 +22,7 @@ export function createBriefStatePost(deps = defaultDependencies) {
       });
       const parsed = input.safeParse(await req.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'Invalid brief references.' }, { status: 400 });
-      const inactive = await deps.convexQuery<string[]>((api as any).albatrossWorkV2.inactiveBriefRefs, {
+      const inactive = await deps.convexQuery<string[]>(api.albatrossWorkV2.inactiveBriefRefs, {
         userId: user.userId,
         refs: parsed.data.refs,
       });

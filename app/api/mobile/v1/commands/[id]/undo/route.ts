@@ -28,9 +28,9 @@ interface MobileCommandUndoDependencies {
 
 const defaultDependencies: MobileCommandUndoDependencies = {
   requireCurrentUser,
-  claimCommandUndo: (args) => convexMutation<any>((api as any).mobile.claimCommandUndo, args),
-  completeCommandUndo: (args) => convexMutation<any>((api as any).mobile.completeCommandUndo, args),
-  releaseCommandUndo: (args) => convexMutation<void>((api as any).mobile.releaseCommandUndo, args),
+  claimCommandUndo: (args) => convexMutation<any>(api.mobile.claimCommandUndo, args),
+  completeCommandUndo: (args) => convexMutation<any>(api.mobile.completeCommandUndo, args),
+  releaseCommandUndo: (args) => convexMutation<void>(api.mobile.releaseCommandUndo, args),
   undoOperation,
   randomUUID,
 };

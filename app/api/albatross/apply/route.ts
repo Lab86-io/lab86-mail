@@ -63,12 +63,12 @@ export function createAlbatrossApplyPost(deps: ApplyRouteDependencies = defaultD
         windowMs: 60_000,
       });
 
-      const artifact = await deps.convexQuery<any>((api as any).albatrossIntents.getPlanArtifact, {
+      const artifact = await deps.convexQuery<any>(api.albatrossIntents.getPlanArtifact, {
         userId: user.userId,
         planId: body.planId,
       });
       if (artifact.status === 'applied') return json(409, { ok: false, error: 'Plan already applied.' });
-      const workbench = await deps.convexQuery<any>((api as any).albatrossIntents.getIntentWorkbench, {
+      const workbench = await deps.convexQuery<any>(api.albatrossIntents.getIntentWorkbench, {
         userId: user.userId,
         intentId: artifact.intentId,
       });
@@ -85,7 +85,7 @@ export function createAlbatrossApplyPost(deps: ApplyRouteDependencies = defaultD
       // attempts did not record (WRK-4).
       const applications =
         (await deps
-          .convexQuery<any[]>((api as any).albatrossWork.listPlanApplications, {
+          .convexQuery<any[]>(api.albatrossWork.listPlanApplications, {
             userId: user.userId,
             intentId: String(intent._id),
             limit: 100,
@@ -159,7 +159,7 @@ export function createAlbatrossApplyPost(deps: ApplyRouteDependencies = defaultD
       // recorded without an artifact (nothing to toggle yet).
       const appliedSteps = appliedStepsFromApplyResult(result);
 
-      await deps.convexMutation((api as any).albatrossIntents.markPlanApplied, {
+      await deps.convexMutation(api.albatrossIntents.markPlanApplied, {
         userId: user.userId,
         planId: body.planId,
         applicationId: result.applicationId,

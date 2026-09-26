@@ -94,7 +94,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           );
         }
         const stepKey = typeof body?.stepKey === 'string' ? body.stepKey : '';
-        const detail = await deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, {
+        const detail = await deps.convexQuery<any>(api.albatrossWorkV2.workDetail, {
           userId,
           workId,
         });
@@ -103,7 +103,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         // The Convex ledger supersedes the old row; the remote browser must be
         // released too, or it idles until its timeout on the account.
         const previous = await deps
-          .convexQuery<any>((api as any).albatrossBrowserSessions.activeSessionForWork, {
+          .convexQuery<any>(api.albatrossBrowserSessions.activeSessionForWork, {
             userId,
             workId,
           })
@@ -112,7 +112,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           await deps.releaseBrowserSession(previous.sessionId).catch(() => undefined);
         }
         const session = await deps.createBrowserSession();
-        await deps.convexMutation((api as any).albatrossBrowserSessions.openSession, {
+        await deps.convexMutation(api.albatrossBrowserSessions.openSession, {
           userId,
           workId,
           stepKey: step?.key,
@@ -125,7 +125,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
         deps.schedule(async () => {
           try {
             if (targetUrl) await deps.navigateSession(session.connectUrl, targetUrl);
-            await deps.convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+            await deps.convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
               userId,
               sessionId: session.sessionId,
               status: 'user',
@@ -136,7 +136,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           } catch (error) {
             deps.reportError('[work-session] prepare failed', session.sessionId, error);
             await deps
-              .convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+              .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
                 userId,
                 sessionId: session.sessionId,
                 status: 'user',
@@ -160,8 +160,8 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           return Response.json({ ok: false, error: 'sessionId and stepKey are required.' }, { status: 400 });
         }
         const [detail, session] = await Promise.all([
-          deps.convexQuery<any>((api as any).albatrossWorkV2.workDetail, { userId, workId }),
-          deps.convexQuery<any>((api as any).albatrossBrowserSessions.activeSessionForWork, {
+          deps.convexQuery<any>(api.albatrossWorkV2.workDetail, { userId, workId }),
+          deps.convexQuery<any>(api.albatrossBrowserSessions.activeSessionForWork, {
             userId,
             workId,
           }),
@@ -177,7 +177,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
             { status: 409 },
           );
         }
-        await deps.convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+        await deps.convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
           userId,
           sessionId,
           status: 'verifying',
@@ -222,7 +222,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           checkRan = !verdict.unavailable;
           reason = verdict.reason;
           if (satisfied) {
-            await deps.convexMutation((api as any).albatrossWorkV2.attachProof, {
+            await deps.convexMutation(api.albatrossWorkV2.attachProof, {
               userId,
               workId,
               claim: `${step.title}: ${reason || 'the page shows the completion state'}`.slice(0, 400),
@@ -239,7 +239,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           }
         } finally {
           await deps
-            .convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+            .convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
               userId,
               sessionId,
               status: 'user',
@@ -264,7 +264,7 @@ export function createWorkSessionPost(overrides: Partial<WorkSessionDependencies
           return Response.json({ ok: false, error: 'sessionId is required.' }, { status: 400 });
         }
         await deps.releaseBrowserSession(sessionId).catch(() => undefined);
-        await deps.convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+        await deps.convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
           userId,
           sessionId,
           status: 'ended',

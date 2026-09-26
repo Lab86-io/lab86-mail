@@ -41,7 +41,7 @@ export function createEvidenceReconcilePost(deps: EvidenceReconcileDependencies 
       // Dormant Work keeps its unreconciled evidence. The wake makes it a
       // candidate again, and the proof is read then.
       if (result.status !== 'dormant') {
-        await deps.convexMutation((api as any).albatrossWorkV2.completeEvidenceReconcile, {
+        await deps.convexMutation(api.albatrossWorkV2.completeEvidenceReconcile, {
           userId,
           workId,
           evidenceAt,

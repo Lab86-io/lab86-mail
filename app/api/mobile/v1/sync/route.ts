@@ -21,7 +21,7 @@ interface MobileSyncDependencies {
 
 const defaultDependencies: MobileSyncDependencies = {
   requireCurrentUser,
-  listSync: (args) => convexQuery<any>((api as any).mobile.listSync, args),
+  listSync: (args) => convexQuery<any>(api.mobile.listSync, args),
 };
 
 export function createMobileSyncGet(deps: MobileSyncDependencies = defaultDependencies) {

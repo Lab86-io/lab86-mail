@@ -14,7 +14,7 @@ const defaults = {
     getAiBillingEntitlement()
       .then((entitlement) => entitlement.plan === 'admin')
       .catch(() => false),
-  summary: (since: number) => convexQuery<any>((api as any).dailyReports.editionTelemetrySummary, { since }),
+  summary: (since: number) => convexQuery<any>(api.dailyReports.editionTelemetrySummary, { since }),
   now: () => Date.now(),
 };
 

@@ -16,7 +16,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ docum
       .object({ title: z.string().trim().min(1).max(500) })
       .strict()
       .parse(JSON.parse(new TextDecoder().decode(await readOfficeRequest(request, 4000))));
-    const result = await convexMutation<{ ok: boolean }>((api as any).officeDocuments.rename, {
+    const result = await convexMutation<{ ok: boolean }>(api.officeDocuments.rename, {
       userId: user.userId,
       documentId,
       title: input.title,

@@ -13,7 +13,7 @@ interface MobileCommandGetDependencies {
 
 const defaultDependencies: MobileCommandGetDependencies = {
   requireCurrentUser,
-  getCommand: (args) => convexQuery<any | null>((api as any).mobile.getCommand, args),
+  getCommand: (args) => convexQuery<any | null>(api.mobile.getCommand, args),
 };
 
 export function createMobileCommandGet(deps: MobileCommandGetDependencies = defaultDependencies) {

@@ -13,7 +13,7 @@ import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-const functions = (api as any).narrative;
+const functions = api.narrative;
 const level = z.enum(['observation', 'day', 'week', 'month', 'thread']);
 const command = z.discriminatedUnion('action', [
   z.object({

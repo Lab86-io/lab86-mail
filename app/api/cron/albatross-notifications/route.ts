@@ -77,7 +77,7 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
     let dueNotificationIds: string[] = [];
     let ensuredToday = false;
     if (body.force === true || checkinIsDue(preference, at)) {
-      const ensured = await convexMutation<any>((api as any).albatrossNotifications.ensureCheckin, {
+      const ensured = await convexMutation<any>(api.albatrossNotifications.ensureCheckin, {
         userId,
         localDate: localDateKey(preference.timezone, at),
         timezone: preference.timezone,
@@ -95,12 +95,12 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
             : [];
     }
     if (!checkin) {
-      checkin = await convexQuery<any>((api as any).albatrossNotifications.latestUnansweredCheckin, {
+      checkin = await convexQuery<any>(api.albatrossNotifications.latestUnansweredCheckin, {
         userId,
       });
     }
     if (!checkin) return Response.json({ ok: true, due: false });
-    const context = await convexQuery<any>((api as any).albatrossNotifications.deliveryContext, {
+    const context = await convexQuery<any>(api.albatrossNotifications.deliveryContext, {
       userId,
       checkinId: String(checkin._id),
     });
@@ -144,14 +144,14 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
         } catch (error: any) {
           const statusCode = Number(error?.statusCode || error?.status);
           if (statusCode === 404 || statusCode === 410) {
-            await convexMutation((api as any).albatrossNotifications.expireSubscription, {
+            await convexMutation(api.albatrossNotifications.expireSubscription, {
               endpoint: subscription.endpoint,
             });
           }
           errors.push(error instanceof Error ? error.message : String(error));
         }
       }
-      await convexMutation((api as any).albatrossNotifications.recordDelivery, {
+      await convexMutation(api.albatrossNotifications.recordDelivery, {
         userId,
         notificationId: String(notification._id),
         channel: 'web_push',
@@ -176,7 +176,7 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
         const { to, userName } = await deps.primaryEmail(userId);
         if (!to) throw new Error('No notification email address found.');
         const providerId = await deps.sendCheckinEmail({ envelope, to, userName });
-        await convexMutation((api as any).albatrossNotifications.recordDelivery, {
+        await convexMutation(api.albatrossNotifications.recordDelivery, {
           userId,
           notificationId: String(notification._id),
           channel: 'email',
@@ -185,7 +185,7 @@ export function createAlbatrossNotificationsPost(overrides: Partial<Notification
         });
         results.email = 'sent';
       } catch (error) {
-        await convexMutation((api as any).albatrossNotifications.recordDelivery, {
+        await convexMutation(api.albatrossNotifications.recordDelivery, {
           userId,
           notificationId: String(notification._id),
           channel: 'email',

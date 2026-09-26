@@ -55,7 +55,7 @@ export function createBrowserSessionSweepPost(overrides: Partial<BrowserSessionS
         }
       }
       try {
-        await deps.convexMutation((api as any).albatrossBrowserSessions.setSessionStatus, {
+        await deps.convexMutation(api.albatrossBrowserSessions.setSessionStatus, {
           userId: session.userId,
           sessionId: session.sessionId,
           status: 'ended',

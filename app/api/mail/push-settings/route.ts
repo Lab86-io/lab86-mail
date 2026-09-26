@@ -63,7 +63,7 @@ function failure(error: unknown) {
 
 export function createMailPushSettingsRoute(overrides: Partial<Dependencies> = {}) {
   const deps = { ...defaults, ...overrides };
-  const settingsApi = (api as any).albatrossNotifications;
+  const settingsApi = api.albatrossNotifications;
   return {
     async GET() {
       try {

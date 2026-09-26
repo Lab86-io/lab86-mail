@@ -34,8 +34,8 @@ interface MobileMailThreadsDependencies {
 
 const defaultDependencies: MobileMailThreadsDependencies = {
   requireCurrentUser,
-  pageRecent: (args) => convexQuery<CorpusPage>((api as any).mailCorpus.pageRecentCorpusThreads, args),
-  pageCategory: (args) => convexQuery<CorpusPage>((api as any).mailCorpus.listSmartCategoryThreads, args),
+  pageRecent: (args) => convexQuery<CorpusPage>(api.mailCorpus.pageRecentCorpusThreads, args),
+  pageCategory: (args) => convexQuery<CorpusPage>(api.mailCorpus.listSmartCategoryThreads, args),
 };
 
 export function createMobileMailThreadsGet(deps: MobileMailThreadsDependencies = defaultDependencies) {

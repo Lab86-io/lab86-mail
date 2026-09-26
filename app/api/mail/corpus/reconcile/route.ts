@@ -6,7 +6,7 @@ import { reconcileMailCorpusAccount } from '@/lib/mail/corpus-sync';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const mailCorpusApi = (api as any).mailCorpus;
+const mailCorpusApi = api.mailCorpus;
 
 export async function POST(req: NextRequest) {
   const unauthorized = requireInternalRequest(req);

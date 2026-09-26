@@ -38,9 +38,9 @@ interface WorkProofDependencies {
 const defaults: WorkProofDependencies = {
   requireCurrentUser,
   enforceUserRateLimit,
-  attachProof: (args) => convexMutation<string>((api as any).albatrossWorkV2.attachProof, args),
-  workDetail: (args) => convexQuery<any>((api as any).albatrossWorkV2.workDetail, args),
-  mailThread: (args) => convexQuery<any>((api as any).mailCorpus.getCorpusThread, args),
+  attachProof: (args) => convexMutation<string>(api.albatrossWorkV2.attachProof, args),
+  workDetail: (args) => convexQuery<any>(api.albatrossWorkV2.workDetail, args),
+  mailThread: (args) => convexQuery<any>(api.mailCorpus.getCorpusThread, args),
 };
 
 function isSourceKind(value: unknown): value is SourceKind {
