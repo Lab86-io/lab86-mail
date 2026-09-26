@@ -367,12 +367,19 @@ const PLACEMENT_EFFECTS = new Set<SmartRule['effect']>([
   'never_main',
 ]);
 
-function newestPlacementRule(hits: SmartRule[]) {
+// A label move whose label is disabled or deleted is skipped, so an older
+// valid rule still decides. Mail is never filed under a label that no view
+// shows.
+function newestPlacementRule(hits: SmartRule[], customLabels: SmartLabelDefinition[]) {
   let newest: SmartRule | undefined;
   for (const rule of hits) {
     if (!PLACEMENT_EFFECTS.has(rule.effect)) continue;
     if (rule.effect === 'always_category' && !rule.category) continue;
-    if (rule.effect === 'always_custom_label' && !rule.customLabelId) continue;
+    if (
+      rule.effect === 'always_custom_label' &&
+      !customLabels.some((label) => label._id === rule.customLabelId && label.enabled !== false)
+    )
+      continue;
     if (!newest || Number(rule.createdAt || 0) >= Number(newest.createdAt || 0)) newest = rule;
   }
   return newest;
@@ -396,7 +403,10 @@ export function applyUserRuleOverrides(
   fallback?: SmartCategoryId,
 ): SmartCategory {
   const { filedUnder: _stale, ...base } = smart;
-  const placement = newestPlacementRule((context.rules || []).filter((rule) => matchRule(rule, thread)));
+  const placement = newestPlacementRule(
+    (context.rules || []).filter((rule) => matchRule(rule, thread)),
+    context.customLabels || [],
+  );
   if (!placement) return base;
   const marked = {
     ruleHits: [...new Set([...(base.ruleHits || []), placement._id])],
@@ -404,12 +414,7 @@ export function applyUserRuleOverrides(
   };
   if (placement.effect === 'always_custom_label') {
     const labelId = placement.customLabelId as string;
-    // Never file mail under a disabled or deleted label: it would vanish from
-    // every view.
-    const labelIsLive = (context.customLabels || []).some(
-      (label) => label._id === labelId && label.enabled !== false,
-    );
-    if (!labelIsLive || !(base.customLabels || []).includes(labelId)) return base;
+    if (!(base.customLabels || []).includes(labelId)) return base;
     return { ...base, ...marked, filedUnder: labelId };
   }
   if (placement.effect === 'never_main' && base.primary === 'main') {
@@ -452,7 +457,7 @@ function classifyBaseline(
   const blockingRule = ruleHits.find(
     (rule) => rule.effect === 'always_noise' || rule.effect === 'never_main',
   );
-  const placement = newestPlacementRule(ruleHits);
+  const placement = newestPlacementRule(ruleHits, customLabels);
   const categoryRule = placement?.effect === 'always_category' ? placement : undefined;
 
   if (placement?.effect === 'always_noise') {

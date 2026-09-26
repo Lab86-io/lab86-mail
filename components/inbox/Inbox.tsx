@@ -72,6 +72,7 @@ import { SearchIcon } from '@/components/ui/search';
 import { api } from '@/convex/_generated/api';
 import { callTool } from '@/lib/api-client';
 import { useClientStore } from '@/lib/client-state';
+import { isAttentionView } from '@/lib/jev/contract';
 import { LIST_PREFETCH_MARGIN_PX, shouldRequestNextPage } from '@/lib/mail/list-pagination';
 import { resolveAccountScopedQuery } from '@/lib/mail/search/account-scope';
 import { DEFAULT_MAIL_QUERY } from '@/lib/mail/search/constants';
@@ -163,7 +164,9 @@ function suppressionHides(s: QuickFixSuppression, smartCategory: string | null) 
   if (s.action === 'never_main') return smartCategory === 'main';
   if (s.action === 'always_noise') return smartCategory !== 'noise';
   if (s.action === 'move_to' && s.category) return !!smartCategory && smartCategory !== s.category;
-  if (s.action === 'move_to' && s.customLabelId) return smartCategory !== `custom:${s.customLabelId}`;
+  // Attention views keep filed mail (the server lists it there too).
+  if (s.action === 'move_to' && s.customLabelId)
+    return !isAttentionView(smartCategory) && smartCategory !== `custom:${s.customLabelId}`;
   return false;
 }
 

@@ -93,6 +93,18 @@ describe('a label move files mail out of its category for good', () => {
     }
   });
 
+  test('a newer move to a disabled label does not block an older valid move', () => {
+    const verdict = classifyThreadWithContext(xcodeRow() as any, {
+      rules: [
+        rule({ createdAt: 100 }),
+        rule({ _id: 'rule-dead', customLabelId: 'label-gone', createdAt: 200 }),
+      ],
+      customLabels: [devOps, { ...devOps, _id: 'label-gone', enabled: false }],
+    });
+    expect(verdict.filedUnder).toBe(DEVOPS_LABEL_ID);
+    expect(verdict.ruleHits).toContain('rule-1');
+  });
+
   test('a newer never_custom_label rule for the same label unfiles the mail', () => {
     const result = classifyCorpusThread(xcodeRow(), {
       rules: [rule({}), rule({ _id: 'rule-2', effect: 'never_custom_label', createdAt: 200 })],
