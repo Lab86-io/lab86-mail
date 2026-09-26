@@ -46,6 +46,32 @@ export interface SettingsNavItem {
   description: string;
 }
 
+/** Where the tab bar sits and where the active tab sits in it, in pixels. */
+export interface TabStripGeometry {
+  scrollLeft: number;
+  /** The strip's visible width (clientWidth) and its full width (scrollWidth). */
+  clientWidth: number;
+  scrollWidth: number;
+  /** Left edges on screen (getBoundingClientRect), and the tab's width. */
+  stripLeft: number;
+  tabLeft: number;
+  tabWidth: number;
+}
+
+/**
+ * The scroll position that puts the active tab in the middle of the phone's
+ * horizontal tab bar, clamped to the ends. Null when the bar does not scroll
+ * (the vertical rail from md up) or the tab is already in the middle.
+ */
+export function settingsTabScrollLeft(geometry: TabStripGeometry): number | null {
+  const max = geometry.scrollWidth - geometry.clientWidth;
+  if (max <= 0) return null;
+  const tabStart = geometry.scrollLeft + (geometry.tabLeft - geometry.stripLeft);
+  const centered = tabStart - (geometry.clientWidth - geometry.tabWidth) / 2;
+  const target = Math.round(Math.min(max, Math.max(0, centered)));
+  return target === Math.round(geometry.scrollLeft) ? null : target;
+}
+
 /** The rail, in group order, each group in SETTINGS_TABS order. */
 export function settingsNavGroups(): ReadonlyArray<SettingsGroup & { items: SettingsNavItem[] }> {
   return SETTINGS_GROUPS.map((group) => ({

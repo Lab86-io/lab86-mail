@@ -133,7 +133,7 @@ function SignatureEditor({ row }: { row: SignatureRow }) {
         maxLength={2000}
         rows={3}
         onChange={(event) => setText(event.target.value)}
-        placeholder={'Jakob Langtry\nLab86'}
+        placeholder={'Ann Lee\nExample Co.'}
         aria-label={`Signature for ${mailbox}`}
         className="min-h-20 resize-y text-[13px]"
       />
@@ -148,7 +148,7 @@ function SignatureEditor({ row }: { row: SignatureRow }) {
             rows={3}
             maxLength={10000}
             onChange={(event) => setHtml(event.target.value)}
-            placeholder={'<b>Jakob Langtry</b><br><a href="https://lab86.io">lab86.io</a>'}
+            placeholder={'<b>Ann Lee</b><br><a href="https://example.com">example.com</a>'}
             aria-label={`Formatted signature for ${mailbox}`}
             className="min-h-20 resize-y font-mono text-[12px]"
           />

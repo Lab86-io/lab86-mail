@@ -12,7 +12,7 @@ import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQ
 import { Check, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
@@ -56,7 +56,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/convex/_generated/api';
-import { settingsNavGroups } from '@/lib/albatross/settings-nav';
+import { settingsNavGroups, settingsTabScrollLeft } from '@/lib/albatross/settings-nav';
 import { type SettingsTabId, settingsTabFromSearch } from '@/lib/albatross/teach-ui';
 import { useClientStore } from '@/lib/client-state';
 import { type NotificationPreferences, notificationPreferenceInput } from '@/lib/notifications/preferences';
@@ -180,6 +180,28 @@ function SettingsPageBody() {
     setTab(next);
     window.history.replaceState(null, '', `/settings?tab=${next}`);
   };
+  // On a phone the tabs are one horizontal bar. Bring the active tab into view
+  // on load (a deep link can name the last tab) and each time it changes.
+  const navRef = useRef<HTMLElement>(null);
+  const tabScrolled = useRef(false);
+  useEffect(() => {
+    const nav = navRef.current;
+    const active = nav?.querySelector<HTMLElement>(`[data-settings-tab="${tab}"]`);
+    if (!nav || !active) return;
+    const strip = nav.getBoundingClientRect();
+    const item = active.getBoundingClientRect();
+    const left = settingsTabScrollLeft({
+      scrollLeft: nav.scrollLeft,
+      clientWidth: nav.clientWidth,
+      scrollWidth: nav.scrollWidth,
+      stripLeft: strip.left,
+      tabLeft: item.left,
+      tabWidth: item.width,
+    });
+    const smooth = tabScrolled.current && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    tabScrolled.current = true;
+    if (left !== null) nav.scrollTo({ left, behavior: smooth ? 'smooth' : 'auto' });
+  }, [tab]);
 
   return (
     <main className="app-paper relative min-h-dvh text-[var(--color-text)]">
@@ -212,6 +234,7 @@ function SettingsPageBody() {
               rail in three groups, each tab with its one-line purpose. Text
               only, per the Albatross rail contract. */}
           <nav
+            ref={navRef}
             aria-label="Settings sections"
             className="-mx-5 flex gap-1 overflow-x-auto px-5 md:sticky md:top-8 md:mx-0 md:flex-col md:gap-5 md:self-start md:overflow-visible md:px-0"
           >
@@ -226,6 +249,7 @@ function SettingsPageBody() {
                     <button
                       key={item.id}
                       type="button"
+                      data-settings-tab={item.id}
                       onClick={() => selectTab(item.id)}
                       aria-current={active ? 'page' : undefined}
                       className={cn(
@@ -637,7 +661,7 @@ function NotificationsSection() {
           control={
             <Input
               id="checkin-time"
-              className="w-32"
+              className="w-36"
               type="time"
               value={prefs.eveningCheckinLocalTime}
               onChange={(event) => update('eveningCheckinLocalTime', event.target.value)}

@@ -153,7 +153,7 @@ export function VoiceProfileSettings() {
               value={form.signOff}
               maxLength={120}
               rows={2}
-              placeholder={'Best,\nJakob'}
+              placeholder={'Best,\nAnn'}
               onChange={(event) => setForm((value) => ({ ...value, signOff: event.target.value }))}
               className="min-h-14 max-w-80 resize-y text-[13px]"
             />

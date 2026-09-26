@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { Fragment } from 'react';
 import { toast } from 'sonner';
 import { Ring } from '@/components/loading-ui/ring';
 import { Switch } from '@/components/ui/switch';
@@ -93,8 +94,11 @@ export function StandingOrdersSection() {
           {GROUPS.map((group) => {
             const rows = orders.filter((order) => order.group === group.id);
             if (!rows.length) return null;
+            // No wrapper: each title is a sibling of the cards, so its top
+            // margin separates it from the card above. (Inside a wrapper it
+            // was that wrapper's first child, and first:mt-0 removed it.)
             return (
-              <div key={group.id}>
+              <Fragment key={group.id}>
                 <SettingsGroupTitle>{group.title}</SettingsGroupTitle>
                 <SettingsCard>
                   {rows.map((order) => {
@@ -152,7 +156,7 @@ export function StandingOrdersSection() {
                     );
                   })}
                 </SettingsCard>
-              </div>
+              </Fragment>
             );
           })}
           <SettingsNote>
