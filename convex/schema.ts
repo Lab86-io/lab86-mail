@@ -258,47 +258,6 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_created', ['userId', 'createdAt']),
 
-  threads: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    providerThreadId: v.string(),
-    subject: v.string(),
-    fromAddress: v.string(),
-    lastDate: v.number(),
-    snippet: v.string(),
-    labels: v.array(v.string()),
-    unread: v.boolean(),
-    starred: v.optional(v.boolean()),
-    cachedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_thread', ['accountId', 'providerThreadId']),
-
-  messages: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    providerMessageId: v.string(),
-    providerThreadId: v.string(),
-    subject: v.string(),
-    from: v.string(),
-    to: v.string(),
-    cc: v.optional(v.string()),
-    bcc: v.optional(v.string()),
-    date: v.number(),
-    snippet: v.string(),
-    textBodyEncrypted: v.optional(v.string()),
-    htmlBodyEncrypted: v.optional(v.string()),
-    labels: v.array(v.string()),
-    attachments: v.array(v.any()),
-    headers: v.any(),
-    cachedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_account', ['userId', 'accountId'])
-    .index('by_account_thread', ['accountId', 'providerThreadId'])
-    .index('by_account_message', ['accountId', 'providerMessageId']),
-
   mailCorpusThreads: defineTable({
     userId: v.string(),
     accountId: v.string(),
@@ -1666,31 +1625,6 @@ export default defineSchema({
     .index('by_user_scope_active', ['userId', 'scope', 'active'])
     .index('by_active_available', ['active', 'availableAt']),
 
-  dailyReports: defineTable({
-    userId: v.string(),
-    accountIds: v.array(v.string()),
-    kind: v.string(),
-    title: v.string(),
-    generatedAt: v.number(),
-    payload: v.any(),
-    // Additive v2 projection for consumers that read the typed document
-    // directly. The canonical report payload continues to dual-write it.
-    document: v.optional(v.any()),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_generated', ['userId', 'generatedAt']),
-
-  memories: defineTable({
-    userId: v.string(),
-    email: v.string(),
-    notes: v.string(),
-    sourceAccountIds: v.array(v.string()),
-    userPinned: v.boolean(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_user_email', ['userId', 'email']),
-
   // Calendar corpus: two-way Nylas sync mirroring the mail-corpus pattern.
   // Calendars are listed per grant; events are synced inside a rolling window
   // with expand_recurring, so recurring instances arrive pre-expanded (each
@@ -2653,31 +2587,6 @@ export default defineSchema({
     .index('by_user_status_date', ['userId', 'status', 'localDate'])
     .index('by_reflection_reconcile', ['reflectionReconcileStatus', 'reflectionReconcileNextAt'])
     .index('by_tomorrow_plan', ['tomorrowPlanStatus', 'tomorrowPlanNextAt']),
-
-  auditEvents: defineTable({
-    userId: v.optional(v.string()),
-    accountId: v.optional(v.string()),
-    tool: v.string(),
-    args: v.any(),
-    result: v.string(),
-    detail: v.optional(v.string()),
-    agent: v.string(),
-    ts: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_ts', ['ts']),
-
-  syncJobs: defineTable({
-    userId: v.string(),
-    accountId: v.string(),
-    kind: v.string(),
-    status: v.union(v.literal('queued'), v.literal('running'), v.literal('ok'), v.literal('error')),
-    error: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_user', ['userId'])
-    .index('by_account', ['accountId']),
 
   rateLimits: defineTable({
     userId: v.string(),

@@ -285,8 +285,6 @@ export const updateConnectedAccountAlias = mutation({
 // per-transaction document limits, which is exactly how account removal used
 // to 500 and strand orphan rows).
 export const ACCOUNT_BULK_TABLES = [
-  'threads',
-  'messages',
   'mailCorpusThreads',
   'mailCorpusMessages',
   'mailWebhookEvents',
@@ -428,62 +426,24 @@ export const deleteConnectedAccount = mutation({
     requireInternalSecret(args.internalSecret);
     // Small tables go inline so the account vanishes from the UI immediately;
     // the bulk corpus drains in scheduled batches right after.
-    // Index per table — syncJobs only has by_account; assuming
-    // by_user_account everywhere is exactly how this mutation Server-Errored.
-    const smallTables: Array<[string, 'by_user_account' | 'by_account']> = [
-      ['connectedAccounts', 'by_user_account'],
-      ['providerGrants', 'by_user_account'],
-      ['syncJobs', 'by_account'],
-      ['mailSyncStates', 'by_user_account'],
-      ['calendars', 'by_user_account'],
-      ['calendarSyncStates', 'by_user_account'],
-    ];
-    for (const [table, index] of smallTables) {
-      const rows =
-        index === 'by_account'
-          ? await ctx.db
-              .query(table as any)
-              .withIndex('by_account' as any, (q: any) => q.eq('accountId', args.accountId))
-              .collect()
-          : await ctx.db
-              .query(table as any)
-              .withIndex('by_user_account' as any, (q: any) =>
-                q.eq('userId', args.userId).eq('accountId', args.accountId),
-              )
-              .collect();
-      for (const row of rows) {
-        if (row.userId && row.userId !== args.userId) continue;
-        await ctx.db.delete(row._id);
-      }
+    const smallTables = [
+      'connectedAccounts',
+      'providerGrants',
+      'mailSyncStates',
+      'calendars',
+      'calendarSyncStates',
+    ] as const;
+    for (const table of smallTables) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user_account', (q) => q.eq('userId', args.userId).eq('accountId', args.accountId))
+        .collect();
+      for (const row of rows) await ctx.db.delete(row._id);
     }
     await ctx.scheduler.runAfter(0, internal.accounts.purgeAccountDataBatch, {
       userId: args.userId,
       accountId: args.accountId,
     });
-
-    const reports = await ctx.db
-      .query('dailyReports')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const report of reports) {
-      if (report.accountIds.includes(args.accountId)) await ctx.db.delete(report._id);
-    }
-
-    const memories = await ctx.db
-      .query('memories')
-      .withIndex('by_user', (q) => q.eq('userId', args.userId))
-      .collect();
-    for (const memory of memories) {
-      if (!memory.sourceAccountIds.includes(args.accountId)) continue;
-      const remaining = memory.sourceAccountIds.filter((id) => id !== args.accountId);
-      if (memory.userPinned) {
-        await ctx.db.patch(memory._id, { sourceAccountIds: remaining, updatedAt: now() });
-      } else if (remaining.length) {
-        await ctx.db.patch(memory._id, { sourceAccountIds: remaining, updatedAt: now() });
-      } else {
-        await ctx.db.delete(memory._id);
-      }
-    }
     return { ok: true };
   },
 });
@@ -578,7 +538,7 @@ export const deleteUserCascade = mutation({
 });
 
 // Small per-user tables that deleteUserCascade sweeps inline. Bulk tables
-// ('threads', 'messages', the corpus, calendar events) would blow Convex's
+// (the mail corpus, calendar events) would blow Convex's
 // per-transaction limits on a real mailbox, so they drain through
 // purgeUserDataBatch instead. tests/account-cascade-coverage.test.ts fails when
 // a schema table with a userId field is in neither list.
@@ -592,10 +552,6 @@ export const USER_INLINE_TABLES = [
   'aiEntitlements',
   'aiUsagePeriods',
   'aiUsageEvents',
-  'dailyReports',
-  'memories',
-  'auditEvents',
-  'syncJobs',
   'mailSyncStates',
   'rateLimits',
   'userDocs',
