@@ -3,6 +3,7 @@ import { requireNylas } from '@/lib/nylas/client';
 import { isGrantGoneError, markGrantNeedsReconnect } from '@/lib/nylas/grant-health';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
+import { stripLoneSurrogatesDeep } from '@/lib/shared/text';
 import { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } from './corpus';
 
 const calendarApi = (api as any).calendarData;
@@ -648,7 +649,7 @@ async function listCalendarEventsInWindow(
 }
 
 function toCalendarInput(raw: any): CalendarInputRow {
-  return {
+  return stripLoneSurrogatesDeep({
     providerCalendarId: str(raw.id) || '',
     name: str(raw.name) || '(unnamed calendar)',
     description: str(raw.description),
@@ -656,7 +657,7 @@ function toCalendarInput(raw: any): CalendarInputRow {
     isPrimary: bool(raw.isPrimary ?? raw.is_primary),
     readOnly: bool(raw.readOnly ?? raw.read_only),
     hexColor: str(raw.hexColor ?? raw.hex_color),
-  };
+  });
 }
 
 // Accepts both SDK responses (camelCase) and raw webhook objects (snake_case).
@@ -681,7 +682,9 @@ export function toEventInput(
   const status = str(raw.status);
   const icalUid = str(raw.icalUid ?? raw.ical_uid);
   const htmlLink = str(raw.htmlLink ?? raw.html_link);
-  return {
+  // Provider text enters the system here; a lone surrogate would make Convex
+  // reject the whole event batch.
+  return stripLoneSurrogatesDeep({
     providerEventId,
     providerCalendarId,
     title,
@@ -713,7 +716,7 @@ export function toEventInput(
       icalUid,
       htmlLink,
     }),
-  };
+  });
 }
 
 function whenToTimes(when: any): {

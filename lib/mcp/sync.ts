@@ -1,5 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
-import { truncateText } from '@/lib/shared/text';
+import { stripLoneSurrogatesDeep, truncateText } from '@/lib/shared/text';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
@@ -100,7 +100,9 @@ async function upsertItemsInBatches(
   for (let start = 0; start < items.length; start += UPSERT_BATCH_SIZE) {
     await deps.convexMutation(mcpApi.upsertItems, {
       ...args,
-      items: items.slice(start, start + UPSERT_BATCH_SIZE),
+      // Every MCP and REST connector item passes here before Convex; a lone
+      // surrogate from provider JSON would reject the whole batch.
+      items: stripLoneSurrogatesDeep(items.slice(start, start + UPSERT_BATCH_SIZE)),
     });
   }
 }
