@@ -146,6 +146,7 @@ import {
   saveSavedReplyTool,
   setSignatureTool,
 } from './mail-templates';
+import { getVoiceProfileTool, learnVoiceProfileTool, updateVoiceProfileTool } from './mail-voice';
 import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
@@ -263,6 +264,9 @@ const allTools: AnyTool[] = [
   listSavedRepliesTool,
   saveSavedReplyTool,
   deleteSavedReplyTool,
+  getVoiceProfileTool,
+  updateVoiceProfileTool,
+  learnVoiceProfileTool,
   summarizeThread,
   triageThread,
   draftReply,

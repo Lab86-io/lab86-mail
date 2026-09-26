@@ -28,7 +28,7 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   mailboxes: { group: 'workspace', description: 'Accounts, sync, and the search index.' },
   connections: { group: 'workspace', description: 'Tools that feed the brief and search.' },
   areas: { group: 'workspace', description: 'Where your mail and work belong.' },
-  sending: { group: 'behavior', description: 'Undo window, signatures, and saved replies.' },
+  sending: { group: 'behavior', description: 'Undo window, signatures, replies, and your voice.' },
   notifications: { group: 'behavior', description: 'Check-ins, mail alerts, and quiet hours.' },
   ai: { group: 'behavior', description: 'Models, keys, and your plan.' },
   narrative: { group: 'behavior', description: 'How the brief reads.' },

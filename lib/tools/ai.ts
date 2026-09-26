@@ -11,6 +11,15 @@ import {
 } from '../mail/mail-operations';
 import { applyNaturalLanguageAccountHint } from '../mail/search/account-scope';
 import { parseMailSearchQuery } from '../mail/search/parser';
+import { signatureForAccountRef, signatureIsActive } from '../mail/signature';
+import {
+  getVoiceProfile,
+  greetingFor,
+  learnVoiceProfile,
+  nextLearnAt,
+  type VoiceProfile,
+  voicePromptLines,
+} from '../mail/voice-profile';
 import { recallSender } from '../store/memories';
 import { resolveThreadMessages } from '../store/messages';
 import {
@@ -201,21 +210,45 @@ export const draftReply = defineTool({
     if (!messages.length) return { draft: '', model: 'none' };
     const last = messages[messages.length - 1];
     const memory = await recallSender(last.from);
-    if (!(await hasAiForCurrentUser())) {
+    // The user's voice (FEATURES item 16) and whether the mailbox signature
+    // will close the message when it is sent.
+    const [voice, signature] = await Promise.all([
+      getVoiceProfile().catch(() => null),
+      signatureForAccountRef(account).catch(() => null),
+    ]);
+    const signatureOn = signatureIsActive(signature);
+    const aiAvailable = await hasAiForCurrentUser();
+    if (aiAvailable && ctx.userId) kickVoiceLearning(ctx.userId, voice);
+    if (!aiAvailable) {
       const sender = String(last.from).replace(/<.*?>/g, '').trim().split(/\s+/)[0] || 'there';
       const firstName = contextFirstName();
-      const signoff = firstName ? `\n\nBest,\n${firstName}` : '';
+      const greeting = greetingFor(voice, sender) || `Hi ${sender},`;
+      const signoff = signatureOn
+        ? ''
+        : voice?.signOff
+          ? `\n\n${voice.signOff}`
+          : firstName
+            ? `\n\nBest,\n${firstName}`
+            : '';
       return {
-        draft: `Hi ${sender},\n\nThanks for reaching out. ${instructions || 'I will take a look.'}${signoff}`,
+        draft: `${greeting}\n\nThanks for reaching out. ${instructions || 'I will take a look.'}${signoff}`,
         model: 'local',
       };
     }
+    const voiceLines = voicePromptLines(voice, { signatureOn });
     const prompt = [
       `Draft a reply for the user to the last message in this thread.`,
       tone ? `Tone: ${tone}.` : '',
       instructions ? `The user's instruction: ${instructions}` : '',
       memory ? `Memory about ${memory.email}: ${memory.notes}` : '',
-      "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match the user's style: concise, warm, lower-case openers ok.",
+      ...(voiceLines.length
+        ? ['Return only the message text.', ...voiceLines]
+        : [
+            "Return only the body text — no greeting/signature scaffolding unless the situation needs it. Match the user's style: concise, warm, lower-case openers ok.",
+            signatureOn
+              ? 'Do not add a signature; the mailbox signature is added when the message is sent.'
+              : '',
+          ]),
       '',
       'Thread:',
       concatThread(messages),
@@ -231,6 +264,25 @@ export const draftReply = defineTool({
     return { draft: text.trim(), model: 'fast' };
   },
 });
+
+/**
+ * Learns the voice in the background when the card is missing or a week old,
+ * so the next draft is in the user's voice. An edited card is left alone.
+ */
+const voiceLearning = new Set<string>();
+export function kickVoiceLearning(
+  userId: string,
+  voice: VoiceProfile | null,
+  learn: typeof learnVoiceProfile = learnVoiceProfile,
+) {
+  if (voice?.editedAt || voiceLearning.has(userId)) return false;
+  if (voice && nextLearnAt(voice, Date.now()) !== null) return false;
+  voiceLearning.add(userId);
+  void learn({ userId })
+    .catch(() => undefined)
+    .finally(() => voiceLearning.delete(userId));
+  return true;
+}
 
 /** The most threads one `bulk_triage` call takes. Callers split larger selections. */
 export const BULK_TRIAGE_LIMIT = 40;

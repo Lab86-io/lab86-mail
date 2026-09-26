@@ -143,7 +143,7 @@ export async function withAccountSignature(input: {
  * Signatures are keyed by account id. The assistant and older clients may
  * name the mailbox by email or grant id, so a miss resolves the reference.
  */
-async function signatureForAccountRef(account: string) {
+export async function signatureForAccountRef(account: string) {
   const direct = await getSignature(account);
   if (direct) return direct;
   const userId = getAiRequestContext().userId;

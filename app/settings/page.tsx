@@ -23,6 +23,7 @@ import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
 import { SignatureSettings } from '@/components/settings/SignatureSettings';
+import { VoiceProfileSettings } from '@/components/settings/VoiceProfileSettings';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -86,6 +87,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
       <SendingSection />
       <SignatureSettings />
       <SavedRepliesSettings />
+      <VoiceProfileSettings />
     </>
   ),
   notifications: () => (
