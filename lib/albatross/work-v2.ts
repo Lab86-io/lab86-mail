@@ -4,6 +4,7 @@ import { HORIZON_KINDS, parseHorizonHint, type WorkHorizon } from '@/lib/albatro
 import type { MetricLike } from '@/lib/albatross/practice-review';
 import { parseListHint, parseMetricHint } from '@/lib/albatross/shape-hints';
 import { WORK_SHAPES, type WorkShape } from '@/lib/albatross/work-shape';
+import { parseIsoInTimezone } from '@/lib/shared/timezones';
 
 // The splitter's read of the horizon. Dates arrive as ISO strings because a
 // model writes those more reliably than epoch numbers.
@@ -43,8 +44,16 @@ export const splitMetricSchema = z
 
 export type SplitMetric = z.infer<typeof splitMetricSchema>;
 
-function isoToMs(value: string | null | undefined): number | undefined {
+function isoToMs(value: string | null | undefined, timezone?: string | null): number | undefined {
   if (!value) return undefined;
+  if (timezone) {
+    // A naive ISO date from the splitter is the user's local midnight (WRK-19).
+    try {
+      return parseIsoInTimezone(value, timezone, 'horizon');
+    } catch {
+      return undefined;
+    }
+  }
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : undefined;
 }
@@ -58,10 +67,11 @@ export function horizonForSplitItem(
   horizon: SplitHorizon,
   rawText: string,
   nowMs: number,
+  timezone?: string | null,
 ): WorkHorizon | undefined {
   if (horizon) {
-    const notBefore = isoToMs(horizon.notBeforeIso);
-    const by = isoToMs(horizon.byIso);
+    const notBefore = isoToMs(horizon.notBeforeIso, timezone);
+    const by = isoToMs(horizon.byIso, timezone);
     const label = horizon.label?.trim() || undefined;
     if (horizon.kind !== 'now' || notBefore !== undefined || by !== undefined) {
       return {
@@ -72,7 +82,7 @@ export function horizonForSplitItem(
       };
     }
   }
-  return parseHorizonHint(rawText, nowMs) ?? undefined;
+  return parseHorizonHint(rawText, nowMs, timezone) ?? undefined;
 }
 
 export const workSplitSchema = z.object({
@@ -120,7 +130,12 @@ export interface ShapeRead {
  * item a list with its items, a metric phrase makes it a practice with its
  * metric. An item the model called something else keeps that shape.
  */
-export function shapeForSplitItem(read: ShapeReadInput, rawText: string, nowMs: number): ShapeRead {
+export function shapeForSplitItem(
+  read: ShapeReadInput,
+  rawText: string,
+  nowMs: number,
+  timezone?: string | null,
+): ShapeRead {
   const modelItems = (read.listItems || []).map((item) => item.trim()).filter(Boolean);
   const modelMetric = read.metric
     ? {
@@ -132,7 +147,7 @@ export function shapeForSplitItem(read: ShapeReadInput, rawText: string, nowMs: 
     : undefined;
   const listHint = read.shape === undefined || read.shape === 'list' ? parseListHint(rawText) : null;
   const metricHint =
-    read.shape === undefined || read.shape === 'practice' ? parseMetricHint(rawText, nowMs) : null;
+    read.shape === undefined || read.shape === 'practice' ? parseMetricHint(rawText, nowMs, timezone) : null;
 
   if (read.shape === 'list' || (read.shape === undefined && listHint)) {
     const listItems = modelItems.length ? modelItems : listHint?.items || [];

@@ -6,7 +6,7 @@
 // be plain ("Movie list: Heat, Alien", "Lose fifteen pounds by spring"). Text
 // that does not match stays plain Work.
 
-import { parseHorizonHint, type WorkHorizon } from '@/lib/albatross/horizon';
+import { horizonClock, parseHorizonHint, type WorkHorizon } from '@/lib/albatross/horizon';
 import type { MetricLike } from '@/lib/albatross/practice-review';
 
 export interface ListHint {
@@ -142,16 +142,21 @@ const SEASONS: Record<string, [number, number]> = {
 };
 
 /** "by spring" → the next start of that season, at local midnight. */
-export function parseSeasonHorizon(text: string, nowMs: number): WorkHorizon | null {
+export function parseSeasonHorizon(
+  text: string,
+  nowMs: number,
+  timezone?: string | null,
+): WorkHorizon | null {
   const match = String(text || '')
     .toLowerCase()
     .match(/\b(?:by|before|for)\s+(?:the\s+|this\s+|next\s+)?(spring|summer|fall|autumn|winter)\b/);
   if (!match) return null;
   const [month, day] = SEASONS[match[1]];
-  const now = new Date(nowMs);
-  let target = new Date(now.getFullYear(), month, day);
-  if (target.getTime() <= nowMs) target = new Date(now.getFullYear() + 1, month, day);
-  return { kind: 'now', by: target.getTime(), label: `by ${match[1]}` };
+  const clock = horizonClock(timezone);
+  const { year } = clock.today(nowMs);
+  let target = clock.midnight(year, month, day);
+  if (target <= nowMs) target = clock.midnight(year + 1, month, day);
+  return { kind: 'now', by: target, label: `by ${match[1]}` };
 }
 
 /**
@@ -164,13 +169,14 @@ export function parseSeasonHorizon(text: string, nowMs: number): WorkHorizon | n
  * - "Save $5,000" → savings, usd, up, target.
  * Anything else is null.
  */
-export function parseMetricHint(text: string, nowMs: number): MetricHint | null {
+export function parseMetricHint(text: string, nowMs: number, timezone?: string | null): MetricHint | null {
   const clean = String(text || '')
     .replace(/\s+/g, ' ')
     .trim();
   if (!clean) return null;
   const lower = clean.toLowerCase();
-  const horizon = parseSeasonHorizon(lower, nowMs) ?? parseHorizonHint(lower, nowMs) ?? undefined;
+  const horizon =
+    parseSeasonHorizon(lower, nowMs, timezone) ?? parseHorizonHint(lower, nowMs, timezone) ?? undefined;
   const withHorizon = (metric: MetricLike, delta?: number): MetricHint => ({
     metric,
     ...(delta !== undefined ? { delta } : {}),

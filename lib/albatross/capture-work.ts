@@ -30,6 +30,8 @@ interface CaptureWorkDependencies {
   mutate: typeof convexMutation;
   query: typeof convexQuery;
   now: () => number;
+  /** The user's zone, so "not before Monday" is the user's Monday (WRK-19). */
+  timezone?: (userId: string) => Promise<string | undefined>;
 }
 
 const defaultDependencies: CaptureWorkDependencies = {
@@ -37,6 +39,10 @@ const defaultDependencies: CaptureWorkDependencies = {
   mutate: convexMutation,
   query: convexQuery,
   now: () => Date.now(),
+  timezone: async (userId) => {
+    const zone = await convexQuery<string>((api as any).albatrossNotifications.deliveryTimezone, { userId });
+    return typeof zone === 'string' && zone ? zone : undefined;
+  },
 };
 
 function normalizedName(value: unknown) {
@@ -53,6 +59,9 @@ export async function captureWork(
 ): Promise<CaptureWorkResult> {
   const rawText = input.rawText.trim();
   if (!rawText) throw new Error('rawText required');
+  const timezone = dependencies.timezone
+    ? await dependencies.timezone(user.userId).catch(() => undefined)
+    : undefined;
   const captureId = await dependencies.mutate<string>((api as any).albatrossWorkV2.beginCapture, {
     userId: user.userId,
     rawText,
@@ -71,8 +80,8 @@ export async function captureWork(
           .slice(0, 20_000),
         primaryAreaId: input.areaId || undefined,
         relatedAreaIds: [],
-        horizon: parseHorizonHint(item.rawText, dependencies.now()) ?? undefined,
-        ...shapeForSplitItem({}, item.rawText, dependencies.now()),
+        horizon: parseHorizonHint(item.rawText, dependencies.now(), timezone) ?? undefined,
+        ...shapeForSplitItem({}, item.rawText, dependencies.now(), timezone),
       }));
       if (items.some((item) => !item.rawText)) throw new Error('Reviewed Work cannot be empty.');
       const workIds = await dependencies.mutate<string[]>((api as any).albatrossWorkV2.finishCapture, {
@@ -141,14 +150,15 @@ Return one JSON object only:
       const related = item.relatedAreaNames
         .map((name) => areaByName.get(normalizedName(name)))
         .filter((area): area is any => Boolean(area) && String(area._id) !== String(primary?._id));
-      const read = shapeForSplitItem(item, item.rawText, dependencies.now());
+      const read = shapeForSplitItem(item, item.rawText, dependencies.now(), timezone);
       return {
         title: item.title,
         rawText: item.rawText,
         primaryAreaId: primary?._id,
         relatedAreaIds: [...new Set(related.map((area) => area._id))],
         shape: read.shape,
-        horizon: horizonForSplitItem(item.horizon, item.rawText, dependencies.now()) ?? read.horizon,
+        horizon:
+          horizonForSplitItem(item.horizon, item.rawText, dependencies.now(), timezone) ?? read.horizon,
         ...(read.listItems ? { listItems: read.listItems } : {}),
         ...(read.metric ? { metric: read.metric } : {}),
       };
@@ -169,8 +179,8 @@ Return one JSON object only:
         items: [
           {
             ...captureFallbackItem(rawText, input.areaId),
-            horizon: parseHorizonHint(rawText, dependencies.now()) ?? undefined,
-            ...shapeForSplitItem({}, rawText, dependencies.now()),
+            horizon: parseHorizonHint(rawText, dependencies.now(), timezone) ?? undefined,
+            ...shapeForSplitItem({}, rawText, dependencies.now(), timezone),
           },
         ],
       })
