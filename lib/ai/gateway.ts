@@ -146,17 +146,14 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_MODELS: Record<AiProvider, { primary: string; fast: string; nano: string; classify: string }> =
   {
     openrouter: {
-      primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'openai/gpt-5.5',
-      fast:
-        process.env.LAB86_MAIL_OPENAI_FAST_MODEL ||
-        process.env.MAIL_OS_OPENAI_FAST_MODEL ||
-        'openai/gpt-5-nano',
+      primary: process.env.LAB86_MAIL_OPENAI_MODEL || 'openai/gpt-5.5',
+      fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || 'openai/gpt-5-nano',
       nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'openai/gpt-5-nano',
       classify: process.env.LAB86_MAIL_CLASSIFY_MODEL || 'openai/gpt-5.6-luna',
     },
     openai: {
-      primary: process.env.LAB86_MAIL_OPENAI_MODEL || process.env.MAIL_OS_OPENAI_MODEL || 'gpt-5.5',
-      fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || process.env.MAIL_OS_OPENAI_FAST_MODEL || 'gpt-5-nano',
+      primary: process.env.LAB86_MAIL_OPENAI_MODEL || 'gpt-5.5',
+      fast: process.env.LAB86_MAIL_OPENAI_FAST_MODEL || 'gpt-5-nano',
       nano: process.env.LAB86_MAIL_OPENAI_NANO_MODEL || 'gpt-5-nano',
       classify: process.env.LAB86_MAIL_CLASSIFY_MODEL || 'gpt-5.6-luna',
     },

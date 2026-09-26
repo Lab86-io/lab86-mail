@@ -27,11 +27,7 @@ export interface DailyArt extends DailyArtCandidate {
 // because the brief renders inside an iframe srcDoc (no base URL to resolve
 // relative paths against). These always load whenever the app itself loads.
 function publicBase(): string {
-  return (
-    process.env.LAB86_MAIL_PUBLIC_URL ||
-    process.env.MAIL_OS_PUBLIC_URL ||
-    'https://mail.lab86.io'
-  ).replace(/\/$/, '');
+  return (process.env.LAB86_MAIL_PUBLIC_URL || 'https://mail.lab86.io').replace(/\/$/, '');
 }
 
 function localFallbacks(): string[] {

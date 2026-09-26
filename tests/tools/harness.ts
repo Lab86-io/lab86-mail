@@ -6,7 +6,6 @@ import type { ToolContext } from '../../lib/tools/registry';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'lab86-mail-tools-'));
 process.env.LAB86_MAIL_DATA_DIR = dataDir;
-process.env.MAIL_OS_DATA_DIR = dataDir;
 process.env.OPENROUTER_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.ANTHROPIC_API_KEY = '';

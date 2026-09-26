@@ -5,7 +5,6 @@ import path from 'node:path';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'lab86-mail-test-'));
 process.env.LAB86_MAIL_DATA_DIR = dataDir;
-process.env.MAIL_OS_DATA_DIR = dataDir;
 process.env.OPENROUTER_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.ANTHROPIC_API_KEY = '';

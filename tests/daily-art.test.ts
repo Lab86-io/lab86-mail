@@ -27,6 +27,23 @@ describe('daily art image URLs', () => {
     expect(art.fallbacks.some((url) => url.includes('/art/fallback-1.jpg'))).toBe(true);
   });
 
+  test('bundled fallbacks use the current public URL and ignore the retired MAIL_OS name', () => {
+    const previous = { lab86: process.env.LAB86_MAIL_PUBLIC_URL, old: process.env.MAIL_OS_PUBLIC_URL };
+    try {
+      delete process.env.LAB86_MAIL_PUBLIC_URL;
+      process.env.MAIL_OS_PUBLIC_URL = 'http://127.0.0.1:18837';
+      const at = Date.parse('2026-06-30T05:49:00.000Z');
+      expect(getDailyArt(at).fallbacks).toContain('https://mail.lab86.io/art/fallback-1.jpg');
+      process.env.LAB86_MAIL_PUBLIC_URL = 'https://mail-staging.lab86.io/';
+      expect(getDailyArt(at).fallbacks).toContain('https://mail-staging.lab86.io/art/fallback-1.jpg');
+    } finally {
+      if (previous.lab86 === undefined) delete process.env.LAB86_MAIL_PUBLIC_URL;
+      else process.env.LAB86_MAIL_PUBLIC_URL = previous.lab86;
+      if (previous.old === undefined) delete process.env.MAIL_OS_PUBLIC_URL;
+      else process.env.MAIL_OS_PUBLIC_URL = previous.old;
+    }
+  });
+
   test('ships a deeper catalog with image palettes, provenance and four working sources', () => {
     expect(ART_POOL.length).toBeGreaterThanOrEqual(300);
     expect(new Set(ART_POOL.map((piece) => piece.source)).size).toBe(4);
