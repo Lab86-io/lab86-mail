@@ -42,7 +42,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: 'Sign in required.' }, { status: 401 });
   }
   const state = await convexQuery<any>(api.ai.getRuntimeState, { userId: user.userId });
-  const entitlement = await getAiBillingEntitlement();
+  const entitlement = await getAiBillingEntitlement({ snapshot: state.entitlement ?? null });
   const requireOpenRouter = isUserOpenRouterKeyRequired();
   const monthlyCredits = requireOpenRouter ? 0 : entitlement.monthlyCredits;
   const creditsUsed = state.lab86Usage?.creditsUsed || 0;
@@ -80,6 +80,7 @@ export async function GET() {
       plan: entitlement.plan,
       status: entitlement.status,
       source: entitlement.source,
+      trialEndsAt: entitlement.trialEndsAt ?? null,
     },
     lab86AiDisabled: isLab86AiDisabled(),
     requiresUserOpenRouterKey: requireOpenRouter,

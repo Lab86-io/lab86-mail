@@ -1,4 +1,4 @@
-import { FREE_PLAN_NAME, formatUsd, PAID_PLANS } from '../hosted/plans';
+import { FREE_PLAN_NAME, formatUsd, PAID_PLANS, trialState } from '../hosted/plans';
 
 /**
  * The billing line in Settings, Intelligence. The settings API returns the
@@ -12,6 +12,9 @@ export type BillingSummaryInput = {
   usageStatus?: string | null;
   subscriptionsDisabled?: boolean;
   paidPlan?: { monthlyUsd?: number; annualUsd?: number; byokMonthlyUsd?: number; byokAnnualUsd?: number };
+  /** Set while the app-level Pro trial gives the plan. */
+  trialEndsAt?: number | null;
+  now?: number;
 };
 
 export type BillingSummary = {
@@ -38,6 +41,17 @@ export function billingSummary(input: BillingSummaryInput): BillingSummary {
       showUpgrade: false,
       showManage: false,
     };
+  // A trial is Pro with no subscription behind it: offer Upgrade, not Manage.
+  const trial = plan === 'pro' ? trialState(input.trialEndsAt, input.now ?? Date.now()) : null;
+  if (trial?.active) {
+    const days = trial.daysLeft === 1 ? '1 day' : `${trial.daysLeft} days`;
+    return {
+      line: `Plan: ${PAID_PLANS.pro.name} trial, ${days} left. No card is on file. After the trial, your account moves to ${FREE_PLAN_NAME}.`,
+      planLabel: `${PAID_PLANS.pro.name} trial`,
+      showUpgrade: true,
+      showManage: false,
+    };
+  }
   const p = input.paidPlan;
   const pricesPresent =
     typeof p?.monthlyUsd === 'number' &&

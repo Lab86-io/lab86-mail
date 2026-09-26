@@ -31,7 +31,7 @@ type AiSettingsResponse = {
   key?: { provider: Provider; masked?: string } | null;
   requiresUserOpenRouterKey?: boolean;
   subscriptionsDisabled?: boolean;
-  entitlement?: { plan?: BillingPlan; status?: string; source?: string } | null;
+  entitlement?: { plan?: BillingPlan; status?: string; source?: string; trialEndsAt?: number | null } | null;
   catalog?: CatalogModel[];
   catalogLive?: boolean;
   defaults?: { normal: string; fast: string };
@@ -133,6 +133,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
     usageStatus: ai?.usage?.status,
     subscriptionsDisabled,
     paidPlan: ai?.usage?.paidPlan,
+    trialEndsAt: ai?.entitlement?.trialEndsAt,
   });
 
   // The catalog for the provider in play. The server builds it for the saved

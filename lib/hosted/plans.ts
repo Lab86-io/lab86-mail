@@ -90,3 +90,51 @@ export function trialNoteText(daysLeft: number): string {
   const days = daysLeft === 1 ? '1 day' : `${daysLeft} days`;
   return `${days} left in your ${PAID_PLANS.pro.name} trial. After that, your account moves to ${FREE_PLAN_NAME}.`;
 }
+
+export type PlanId = 'free' | PaidPlanId | 'admin';
+
+/** What a client shows about the user's plan. GET /api/billing/plan returns it. */
+export interface BillingPlanView {
+  plan: PlanId;
+  /** "Free", "Pro", "Pro trial", "Own key", or "Admin". */
+  planName: string;
+  trial: TrialState;
+  /** The quiet "days left" note, only during the last days of a trial. */
+  note: string | null;
+  trialDays: number;
+  prices: Record<PaidPlanId, { name: string; monthlyUsd: number; annualUsd: number; line: string }>;
+}
+
+export function billingPlanView(
+  entitlement: { plan?: string | null; trialEndsAt?: number | null },
+  now: number,
+): BillingPlanView {
+  const plan: PlanId =
+    entitlement.plan === 'pro' || entitlement.plan === 'byok' || entitlement.plan === 'admin'
+      ? entitlement.plan
+      : 'free';
+  const trial = plan === 'pro' ? trialState(entitlement.trialEndsAt, now) : trialState(null, now);
+  const planName =
+    plan === 'free'
+      ? FREE_PLAN_NAME
+      : plan === 'admin'
+        ? 'Admin'
+        : trial.active
+          ? `${PAID_PLANS.pro.name} trial`
+          : PAID_PLANS[plan].name;
+  return {
+    plan,
+    planName,
+    trial,
+    note: trial.showNote ? trialNoteText(trial.daysLeft) : null,
+    trialDays: TRIAL_DAYS,
+    prices: {
+      pro: { ...pick(PAID_PLANS.pro), line: planPriceLine('pro') },
+      byok: { ...pick(PAID_PLANS.byok), line: planPriceLine('byok') },
+    },
+  };
+}
+
+function pick(plan: PaidPlan) {
+  return { name: plan.name, monthlyUsd: plan.monthlyUsd, annualUsd: plan.annualUsd };
+}

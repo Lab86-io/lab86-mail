@@ -221,6 +221,9 @@ export default defineSchema({
     source: v.union(v.literal('manual'), v.literal('clerk')),
     monthlyCredits: v.number(),
     currentPeriodEnd: v.optional(v.number()),
+    // The one app-level Pro trial (no card). Set once by ai.grantTrial.
+    trialStartedAt: v.optional(v.number()),
+    trialEndsAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
