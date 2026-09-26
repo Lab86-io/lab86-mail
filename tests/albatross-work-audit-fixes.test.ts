@@ -4,6 +4,7 @@ import { api, internal } from '../convex/_generated/api';
 import type { Id } from '../convex/_generated/dataModel';
 import schema from '../convex/schema';
 import { isPersonalFallbackReason, isWeakAutomaticAreaLink } from '../lib/albatross/area-home';
+import { planErrorStatus } from '../lib/albatross/intent-plan';
 import { ownedDefaultBoardId, tasksCreateCard } from '../lib/tools/tasks';
 
 // Regression tests for the 2026-09-26 audit findings in Work, Areas, and
@@ -593,5 +594,69 @@ describe('WRK-7 legacy Personal area', () => {
       deletedLinks: 0,
       done: true,
     });
+  });
+});
+
+describe('WRK-12 plan timeouts retry with a backoff', () => {
+  test('a failed run keeps the status the Work had before planning', () => {
+    expect(planErrorStatus('applied', true)).toBe('applied');
+    expect(planErrorStatus('needs_answers', false)).toBe('needs_answers');
+    expect(planErrorStatus('planning', true)).toBe('ready');
+    expect(planErrorStatus(undefined, false)).toBe('captured');
+  });
+
+  test('a timeout schedules retries with a growing delay, and a success clears them', async () => {
+    const t = harness();
+    const intentId = await seedWork(t, { status: 'captured' });
+    const before = Date.now();
+    await t.mutation(api.albatrossIntents.updateIntent, {
+      ...caller,
+      intentId,
+      planError: 'Plan generation timed out after 150s',
+      planRetryable: true,
+    });
+    const first = await t.run((ctx) => ctx.db.get(intentId));
+    expect(first?.planTimeoutRetries).toBe(1);
+    expect(first!.planRetryAt! - before).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(await t.query(internal.albatrossIntents.planRetryCandidates, {})).toEqual([]);
+
+    await t.run((ctx) => ctx.db.patch(intentId, { planRetryAt: Date.now() - 1 }));
+    expect(await t.query(internal.albatrossIntents.planRetryCandidates, {})).toEqual([{ intentId, userId }]);
+    expect(await t.mutation(internal.albatrossIntents.beginPlanRetry, { intentId })).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(intentId)))?.planRetryAt).toBeUndefined();
+
+    const second = Date.now();
+    await t.mutation(api.albatrossIntents.updateIntent, {
+      ...caller,
+      intentId,
+      planError: 'Plan generation timed out after 150s',
+      planRetryable: true,
+    });
+    const next = await t.run((ctx) => ctx.db.get(intentId));
+    expect(next?.planTimeoutRetries).toBe(2);
+    expect(next!.planRetryAt! - second).toBeGreaterThanOrEqual(20 * 60_000);
+
+    // A non-timeout error never schedules a retry.
+    await t.mutation(api.albatrossIntents.updateIntent, { ...caller, intentId, planError: 'Bad JSON' });
+    expect((await t.run((ctx) => ctx.db.get(intentId)))?.planRetryAt).toBeUndefined();
+  });
+
+  test('retries stop after the limit, and closed Work does not retry', async () => {
+    const t = harness();
+    const intentId = await seedWork(t, { planTimeoutRetries: 3 });
+    await t.mutation(api.albatrossIntents.updateIntent, {
+      ...caller,
+      intentId,
+      planError: 'Plan generation timed out after 150s',
+      planRetryable: true,
+    });
+    expect((await t.run((ctx) => ctx.db.get(intentId)))?.planRetryAt).toBeUndefined();
+    const closed = await seedWork(t, {
+      workState: 'released',
+      status: 'archived',
+      planError: 'timed out',
+      planRetryAt: Date.now() - 1,
+    });
+    expect(await t.mutation(internal.albatrossIntents.beginPlanRetry, { intentId: closed })).toBe(false);
   });
 });

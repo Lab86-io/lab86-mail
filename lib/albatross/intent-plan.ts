@@ -994,6 +994,12 @@ async function nearbyEvidence(
   };
 }
 
+/** The status a failed planning run leaves: the one the Work had before it. */
+export function planErrorStatus(previous: string | undefined, hasPlan: boolean) {
+  if (previous && previous !== 'planning') return previous;
+  return hasPlan ? 'ready' : 'captured';
+}
+
 export async function generateIntentPlan(input: GenerateIntentPlanInput) {
   const caller = { userId: input.userId };
   const workbench = await deps.convexQuery<any>(deps.api.albatrossIntents.getIntentWorkbench, {
@@ -1240,12 +1246,16 @@ export async function generateIntentPlan(input: GenerateIntentPlanInput) {
       outcome: generation.outcome,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     await deps
       .convexMutation(deps.api.albatrossIntents.updateIntent, {
         ...caller,
         intentId: input.intentId,
-        status: workbench.plan ? intent.status : 'captured',
-        planError: err instanceof Error ? err.message : String(err),
+        // Keep the status the Work had before this planning run (WRK-12).
+        status: planErrorStatus(intent.status, Boolean(workbench.plan)),
+        planError: message,
+        // A timeout is retried with a backoff by the plan reconcile cron.
+        planRetryable: /timed out/i.test(message),
       })
       .catch(() => {});
     throw err;

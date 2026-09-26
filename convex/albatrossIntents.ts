@@ -351,6 +351,8 @@ export const updateIntent = mutation({
     priority: v.optional(v.number()),
     status: v.optional(intentStatusValidator),
     planError: v.optional(v.string()),
+    // The plan error is a timeout that a later try can pass (WRK-12).
+    planRetryable: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
@@ -372,6 +374,12 @@ export const updateIntent = mutation({
     }
     if (!terminal && args.planError !== undefined)
       patch.planError = bounded(args.planError, 500) || undefined;
+    if (!terminal && patch.planError) {
+      const retries = (intent.planTimeoutRetries ?? 0) + 1;
+      const retry = args.planRetryable === true && retries <= PLAN_TIMEOUT_MAX_RETRIES;
+      patch.planRetryAt = retry ? ts + PLAN_TIMEOUT_BACKOFF_MS * 2 ** (retries - 1) : undefined;
+      if (retry) patch.planTimeoutRetries = retries;
+    }
     await ctx.db.patch(args.intentId, patch);
     await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
     // Completion history (issue #87/#18): only a real transition into 'done'
@@ -687,6 +695,8 @@ export const savePlan = mutation({
       ...(carriedProgress.length ? { stepProgress: carriedProgress } : {}),
       planError: undefined,
       planAttempts: 0,
+      planRetryAt: undefined,
+      planTimeoutRetries: undefined,
       updatedAt: ts,
     });
 
@@ -702,6 +712,33 @@ export const savePlan = mutation({
 
 export const PLAN_STALE_AFTER_MS = 5 * 60_000;
 export const PLAN_MAX_ATTEMPTS = 3;
+// A timed-out generation retries after 10, 20, then 40 minutes (WRK-12).
+export const PLAN_TIMEOUT_MAX_RETRIES = 3;
+export const PLAN_TIMEOUT_BACKOFF_MS = 10 * 60_000;
+
+/** Open Work whose timed-out plan is due for another try. */
+export const planRetryCandidates = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const ts = now();
+    const rows = await ctx.db
+      .query('albatrossIntents')
+      .withIndex('by_plan_retry', (q) => q.gt('planRetryAt', 0).lte('planRetryAt', ts))
+      .take(25);
+    return rows.map((row) => ({ intentId: row._id, userId: row.userId }));
+  },
+});
+
+/** Claim one retry. Closed or already-planned Work only loses its flag. */
+export const beginPlanRetry = internalMutation({
+  args: { intentId: v.id('albatrossIntents') },
+  handler: async (ctx, args) => {
+    const intent = await ctx.db.get(args.intentId);
+    if (!intent?.planRetryAt || intent.planRetryAt > now()) return false;
+    await ctx.db.patch(args.intentId, { planRetryAt: undefined });
+    return !isTerminalWork(intent) && Boolean(intent.planError) && intent.status !== 'planning';
+  },
+});
 
 export const stalePlanningIntents = internalQuery({
   args: {},
@@ -762,8 +799,13 @@ export const planReconcileTick = internalAction({
       return;
     }
     const stale = await ctx.runQuery(internal.albatrossIntents.stalePlanningIntents, {});
-    if (!stale.length) return;
+    const timedOut = await ctx.runQuery(internal.albatrossIntents.planRetryCandidates, {});
+    if (!stale.length && !timedOut.length) return;
     const retry: Array<{ userId: string; intentId: string }> = [];
+    for (const row of timedOut) {
+      if (await ctx.runMutation(internal.albatrossIntents.beginPlanRetry, { intentId: row.intentId }))
+        retry.push({ userId: row.userId, intentId: String(row.intentId) });
+    }
     for (const row of stale) {
       if (row.attempts >= PLAN_MAX_ATTEMPTS) {
         await ctx.runMutation(internal.albatrossIntents.failStalePlan, { intentId: row.intentId });

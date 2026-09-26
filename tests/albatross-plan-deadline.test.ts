@@ -206,6 +206,7 @@ test('provider failures are preserved and do not start a second generation', asy
   expect(harness.mutations.at(-1)?.args).toMatchObject({
     status: 'captured',
     planError: 'Provider authentication failed',
+    planRetryable: false,
   });
 });
 
@@ -216,5 +217,6 @@ test('a stuck final writer still fails at the original overall deadline without 
   expect(harness.mutations.at(-1)?.args).toMatchObject({
     status: 'captured',
     planError: 'Plan generation timed out after 144s',
+    planRetryable: true,
   });
 });
