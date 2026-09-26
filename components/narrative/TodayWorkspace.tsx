@@ -75,6 +75,8 @@ export function TodayWorkspace({ at, revision }: { at: number; revision: number 
   });
   const generation = useMutation({
     mutationFn: () => workspaceRequest({ action: 'generate', at }),
+    // The workspace shows its own error state.
+    meta: { errorToast: false },
     onSuccess: (data) => client.setQueryData(key, data),
   });
   useEffect(() => {

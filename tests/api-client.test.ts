@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { callTool, health, listTools, readSearchSource } from '../lib/api-client';
+import { callTool, failedResultMessage, health, listTools, readSearchSource } from '../lib/api-client';
 
 const originalFetch = globalThis.fetch;
 test('aborting after response headers still propagates cancellation during body parsing', async () => {
@@ -100,4 +100,30 @@ test('health and tool discovery read their existing endpoints', async () => {
   expect(await health()).toEqual({ ok: true });
   expect(await listTools()).toEqual({ ok: true });
   expect(urls).toEqual(['/api/healthz', '/api/tools']);
+});
+test('a tool result that reports ok:false is an error unless the caller opts out', async () => {
+  response('{"ok":true,"result":{"ok":false,"marked":0,"error":"Provider rejected the change"}}');
+  await expect(callTool('mark_thread_read')).rejects.toThrow('Provider rejected the change');
+  response('{"ok":true,"result":{"ok":false,"needsDisambiguation":true,"candidates":[{"id":"a"}]}}');
+  await expect(callTool('calendar_update_event')).rejects.toThrow('More than one item matches');
+  response('{"ok":true,"result":{"ok":false,"needsDisambiguation":true,"candidates":[{"id":"a"}]}}');
+  expect(await callTool('calendar_update_event', {}, {}, undefined, { acceptFailedResult: true })).toEqual({
+    ok: false,
+    needsDisambiguation: true,
+    candidates: [{ id: 'a' }],
+  });
+  response('{"ok":true,"result":{"ok":true,"marked":2}}');
+  expect(await callTool('mark_thread_read')).toEqual({ ok: true, marked: 2 });
+});
+test('failed tool results name the most specific failure field', () => {
+  expect(failedResultMessage('x', { ok: false, summary: ' Nothing changed. ' })).toBe('Nothing changed.');
+  expect(failedResultMessage('x', { ok: false, reason: 'not_configured' })).toBe('not_configured');
+  expect(failedResultMessage('x', { ok: false, errors: ['Standup: delete failed'] })).toBe(
+    'Standup: delete failed',
+  );
+  expect(failedResultMessage('x', { ok: false, errors: [{ error: 'Gone' }] })).toBe('Gone');
+  expect(failedResultMessage('x', { ok: false, errors: [{}] })).toBe('x did not complete');
+  expect(failedResultMessage('calendar_delete_event', { ok: false })).toBe(
+    'calendar_delete_event did not complete',
+  );
 });

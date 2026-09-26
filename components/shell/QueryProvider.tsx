@@ -1,11 +1,13 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { PendingSendProvider } from '@/components/compose/PendingSendProvider';
+import { createMutationErrorFallback } from '@/lib/shell/mutation-errors';
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -24,6 +26,11 @@ export function QueryProvider({
   const [client] = useState(
     () =>
       new QueryClient({
+        // A failed change must never be silent. Mutations with their own
+        // onError keep their own message; this covers the rest.
+        mutationCache: new MutationCache({
+          onError: createMutationErrorFallback((message) => toast.error(message)),
+        }),
         defaultOptions: {
           queries: {
             // Keep recently viewed mail warm. Freshness-sensitive views still
