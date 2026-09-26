@@ -74,6 +74,39 @@ actor CommandOutbox {
         return try modelContext.fetch(descriptor).map(snapshot)
     }
 
+    /// The commands of one owner whose idempotency key starts with `keyPrefix`,
+    /// oldest first. The mail lists read their own actions this way (NAT-10).
+    func commands(ownerID: String, keyPrefix: String) throws -> [PendingCommandSnapshot] {
+        let descriptor = FetchDescriptor<PendingCommandRecord>(
+            predicate: #Predicate { $0.ownerID == ownerID },
+            sortBy: [SortDescriptor(\.clientCreatedAt)]
+        )
+        return try modelContext.fetch(descriptor)
+            .filter { $0.idempotencyKey.hasPrefix(keyPrefix) }
+            .map(snapshot)
+    }
+
+    /// Deletes settled commands with the key prefix that last changed before
+    /// `before`. The mail lists make one command for each action and never
+    /// read a settled one back, so settled ones must not pile up.
+    func pruneSettledCommands(ownerID: String, keyPrefix: String, before: Date) throws {
+        let descriptor = FetchDescriptor<PendingCommandRecord>(
+            predicate: #Predicate { $0.ownerID == ownerID && $0.updatedAt < before }
+        )
+        var removed = false
+        for record in try modelContext.fetch(descriptor) where record.idempotencyKey.hasPrefix(keyPrefix) {
+            let settled = switch status(record) {
+            case .applied, .needsApproval, .conflicted: true
+            case .failed: !record.lastErrorRetryable
+            case .pending, .submitting, .queued: false
+            }
+            guard settled else { continue }
+            modelContext.delete(record)
+            removed = true
+        }
+        if removed { try modelContext.save() }
+    }
+
     func markSubmitting(ownerID: String, idempotencyKey: String) throws {
         let record = try requireRecord(ownerID: ownerID, idempotencyKey: idempotencyKey)
         guard !status(record).isTerminal else { return }

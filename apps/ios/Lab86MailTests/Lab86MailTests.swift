@@ -251,12 +251,6 @@ struct Lab86MailTests {
         }
     }
 
-    private actor FailingMailTools: ToolInvoking {
-        func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
-            throw StubMailError.failed
-        }
-    }
-
     private actor UnauthorizedMailTools: ToolInvoking {
         func invoke(_ name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
             throw BackendError.unauthorized
@@ -1395,9 +1389,13 @@ struct Lab86MailTests {
             from: Data(#"{"providerThreadId":"thread-1","accountId":"account-1","subject":"Keep me","fromAddress":"ari@example.com","snippet":"Important","lastDate":1752600000000}"#.utf8)
         )
         let thread = try #require(MailThreadSummary(json: value))
+        // The outbox reports a final failure from the provider (NAT-10).
+        let queue = FakeMailCommandQueue()
+        queue.flushResult = (.failed, false, "Provider rejected the action.")
         let store = ProductStore(
-            tools: FailingMailTools(),
-            backend: BackendClient(baseURL: nil)
+            tools: RecordingTools(),
+            backend: BackendClient(baseURL: nil),
+            mailCommands: queue
         )
         store.threads = [thread]
         store.searchedThreads = [thread]

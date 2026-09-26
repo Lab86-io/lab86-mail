@@ -58,6 +58,8 @@ struct MacShellView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             environment.navigation.consumeAppIntentRequests()
             Task {
+                // Mail actions saved while offline go out on return (NAT-10).
+                _ = await environment.flushCommandOutbox(ownerID: environment.sessionStore.ownerID)
                 await environment.notifications.retryPendingTextResponses()
                 await ShellNotificationActions.consumePendingMailAction(environment: environment)
                 await environment.pendingSends.reconcile(ownerID: environment.sessionStore.ownerID)
@@ -127,17 +129,18 @@ struct MacShellView: View {
 // list for. Pure, so the rules are testable.
 enum MacSourceSelection {
     // A primary row is selected while its tab is up. An open Area belongs to
-    // its own row, and a label view belongs to the label row.
+    // its own row, and a label view or the Snoozed mailbox belongs to its row.
     static func isPrimarySelected(
         _ destination: PrimaryTab,
         selectedTab: PrimaryTab,
         areaID: String?,
-        mailLabelID: String?
+        mailLabelID: String?,
+        mailbox: MailboxScope = .inbox
     ) -> Bool {
         guard selectedTab == destination else { return false }
         switch destination {
         case .work: return areaID == nil
-        case .mail: return mailLabelID == nil
+        case .mail: return mailLabelID == nil && mailbox != .snoozed
         default: return true
         }
     }
@@ -146,10 +149,18 @@ enum MacSourceSelection {
         selectedTab == .mail && mailLabelID == labelID
     }
 
-    // The Mail row goes back to Main from a label view. Other rows ask the
-    // mail list for nothing.
-    static func mailCategory(forPrimary destination: PrimaryTab, mailLabelID: String?) -> String? {
-        destination == .mail && mailLabelID != nil ? MailCategoryScope.main.rawValue : nil
+    static func isSnoozedSelected(selectedTab: PrimaryTab, mailbox: MailboxScope) -> Bool {
+        selectedTab == .mail && mailbox == .snoozed
+    }
+
+    // The Mail row goes back to Main from a label view or the Snoozed
+    // mailbox. Other rows ask the mail list for nothing.
+    static func mailCategory(
+        forPrimary destination: PrimaryTab,
+        mailLabelID: String?,
+        mailbox: MailboxScope = .inbox
+    ) -> String? {
+        destination == .mail && (mailLabelID != nil || mailbox == .snoozed) ? MailCategoryScope.main.rawValue : nil
     }
 
     // A label row opens Mail on that label (NAT-4).
@@ -180,6 +191,11 @@ struct MacSourceList: View {
                 ForEach(primaries) { destination in
                     sourceRow(destination)
                 }
+            }
+            // Snoozed mail is archived until its time, so no other view
+            // shows it.
+            Section("Mailboxes") {
+                snoozedRow
             }
             // Mail that a label-move rule files leaves Main, so the label
             // view must be reachable from here (NAT-4).
@@ -261,10 +277,15 @@ struct MacSourceList: View {
             destination,
             selectedTab: navigation.selectedTab,
             areaID: navigation.areaRoute?.areaID,
-            mailLabelID: navigation.mailLabelID
+            mailLabelID: navigation.mailLabelID,
+            mailbox: navigation.mailbox
         )
         return Button {
-            let category = MacSourceSelection.mailCategory(forPrimary: destination, mailLabelID: navigation.mailLabelID)
+            let category = MacSourceSelection.mailCategory(
+                forPrimary: destination,
+                mailLabelID: navigation.mailLabelID,
+                mailbox: navigation.mailbox
+            )
             navigation.selectPrimary(destination)
             if let category {
                 navigation.pendingMailCategory = category
@@ -282,6 +303,32 @@ struct MacSourceList: View {
                     .fill(Color.primary.opacity(0.08))
                 : nil
         )
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var snoozedRow: some View {
+        let navigation = environment.navigation
+        let selected = MacSourceSelection.isSnoozedSelected(
+            selectedTab: navigation.selectedTab,
+            mailbox: navigation.mailbox
+        )
+        return Button {
+            navigation.selectPrimary(.mail)
+            navigation.pendingMailbox = .snoozed
+        } label: {
+            Label(MailboxScope.snoozed.title, systemImage: MailboxScope.snoozed.symbol)
+                .fontWeight(selected ? .semibold : .regular)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(
+            selected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                : nil
+        )
+        .accessibilityHint("Shows mail that comes back to the inbox later")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 

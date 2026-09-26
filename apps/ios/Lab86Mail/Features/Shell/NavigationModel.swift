@@ -198,6 +198,11 @@ final class NavigationModel {
     // The custom label the mail list shows, or nil for a built-in scope. The
     // Mac source list highlights that label's row.
     var mailLabelID: String?
+    // A mailbox a source-list row asks the mail list to show (Snoozed).
+    var pendingMailbox: MailboxScope?
+    // The mailbox the mail list shows. The Mac source list highlights the
+    // Snoozed row while it is up.
+    var mailbox: MailboxScope = .inbox
     var pendingCompose: ComposePrefill?
     // macOS presents Albatross chat as a floating corner panel (with a
     // tear-out window), never as a tab. Unused on iOS.

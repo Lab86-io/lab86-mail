@@ -256,27 +256,22 @@ struct MailScopeTests {
                 MailListPage(items: [target], nextCursor: nil, hasMore: false),
             ],
         ])
-        let tools = RecordingTools { name, _ in
-            switch name {
-            case "list_accounts":
-                return .object(["accounts": .array([
-                    .object(["email": .string("o@example.com"), "provider": .string("google"), "authed": .bool(true), "accountId": .string("account-1")]),
-                ])])
-            case "get_thread":
-                return .object(["messages": .array([.object(["_id": .string("m1"), "date": .number(2_000_000)])])])
-            default:
-                return .object(["ok": .bool(true)])
-            }
-        }
+        let queue = FakeMailCommandQueue()
         let store = ProductStore(
-            tools: tools,
+            tools: Self.accountsAndLabels,
             backend: BackendClient(baseURL: nil),
             spotlight: NoopSpotlight(),
-            mailPages: pages
+            mailPages: pages,
+            mailCommands: queue
         )
         await store.refreshMail()
         #expect(store.threads.map(\.id) == ["s1"])
-        await store.snooze(target, until: .now.addingTimeInterval(3_600))
+        let until = Date.now.addingTimeInterval(3_600)
+        await store.snooze(target, until: until)
+        // Snooze needs no message: the server acts on the whole thread.
+        #expect(queue.sentCommands == [
+            .mailSnooze(MailSnoozeCommandPayload(accountID: "account-1", threadID: "s1", untilAt: until)),
+        ])
         #expect(store.mailErrorMessage == nil)
         #expect(store.threads.isEmpty)
         await store.refreshMail()
@@ -292,30 +287,19 @@ struct MailScopeTests {
                 MailListPage(items: [target], nextCursor: nil, hasMore: false),
             ],
         ])
-        let tools = RecordingTools { name, _ in
-            switch name {
-            case "list_accounts":
-                return .object(["accounts": .array([
-                    .object(["email": .string("o@example.com"), "provider": .string("google"), "authed": .bool(true), "accountId": .string("account-1")]),
-                ])])
-            case "get_thread":
-                return .object(["messages": .array([.object(["_id": .string("m1")])])])
-            default:
-                return .object(["ok": .bool(true)])
-            }
-        }
-        let store = ProductStore(tools: tools, backend: BackendClient(baseURL: nil), spotlight: NoopSpotlight(), mailPages: pages)
+        let store = ProductStore(
+            tools: Self.accountsAndLabels,
+            backend: BackendClient(baseURL: nil),
+            spotlight: NoopSpotlight(),
+            mailPages: pages,
+            mailCommands: FakeMailCommandQueue()
+        )
         await store.refreshMail()
         // The server brings the thread back at its time; after that the list shows it.
         await store.snooze(target, until: .now.addingTimeInterval(-1))
         #expect(store.threads.isEmpty)
         await store.refreshMail()
         #expect(store.threads.map(\.id) == ["s2"])
-    }
-
-    @Test
-    func thereIsNoSnoozedMailboxScope() {
-        #expect(!MailboxScope.allCases.compactMap(\.query).contains("label:SNOOZED"))
     }
 
     @Test
