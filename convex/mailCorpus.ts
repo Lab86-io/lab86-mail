@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
 import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
+import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -247,7 +248,7 @@ export const upsertCorpusBatch = mutation({
         bcc: message.bcc,
         receivedAt: message.receivedAt,
         snippet: message.snippet,
-        textBody: String(message.textBody ?? '').slice(0, 32_000),
+        textBody: truncateText(String(message.textBody ?? ''), 32_000),
         searchText: trimCorpusText(message.searchText),
         labels: message.labels,
         unread: message.unread,
@@ -1034,7 +1035,7 @@ export const listRecentCorpusThreads = query({
       subject: row.subject || '(no subject)',
       fromAddress: row.fromAddress || '',
       lastDate: row.lastDate || 0,
-      snippet: (row.snippet || '').slice(0, 200),
+      snippet: truncateText(row.snippet || '', 200),
       labels: row.labels || [],
       unread: Boolean(row.unread),
       starred: Boolean(row.starred),
@@ -1109,17 +1110,19 @@ export const pageRecentCorpusThreads = query({
 });
 
 function trimCorpusText(value: unknown) {
-  return String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 32_000);
+  return truncateText(
+    String(value ?? '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    32_000,
+  );
 }
 
 // HTML keeps its whitespace (markup-significant) and gets a larger budget
 // than search text; 200KB covers effectively all real emails while staying
 // far under the Convex document limit.
 function trimCorpusHtml(value: unknown) {
-  return String(value ?? '').slice(0, 200_000);
+  return truncateText(String(value ?? ''), 200_000);
 }
 
 function yearMonth(ts: unknown) {
@@ -1255,7 +1258,7 @@ async function snoozedThreads(ctx: any, userId: string, limit: number) {
         snoozedAt: row.createdAt,
         subject: thread?.subject || '(no subject)',
         fromAddress: thread?.fromAddress || '',
-        snippet: String(thread?.snippet || '').slice(0, 200),
+        snippet: truncateText(String(thread?.snippet || ''), 200),
         lastDate: thread?.lastDate ?? null,
       };
     }),
@@ -1318,7 +1321,7 @@ export const settleSnooze = mutation({
     }
     const attempts = (row.attempts ?? 0) + 1;
     const status = attempts >= SNOOZE_MAX_ATTEMPTS ? 'failed' : 'active';
-    await ctx.db.patch(row._id, { status, attempts, error: args.error?.slice(0, 300), updatedAt: ts });
+    await ctx.db.patch(row._id, { status, attempts, error: truncateText(args.error, 300), updatedAt: ts });
     return { ok: true, status };
   },
 });
