@@ -236,6 +236,9 @@ export const draftReply = defineTool({
   },
 });
 
+/** The most threads one `bulk_triage` call takes. Callers split larger selections. */
+export const BULK_TRIAGE_LIMIT = 40;
+
 export const bulkTriage = defineTool({
   name: 'bulk_triage',
   description: 'Triage many threads in a single AI call. Returns verdicts keyed by thread id.',
@@ -246,12 +249,14 @@ export const bulkTriage = defineTool({
       .array(
         z.object({
           id: z.string(),
+          /** The mailbox of the thread. With it, the verdict is saved on the thread. */
+          account: z.string().optional(),
           from: z.string().optional(),
           subject: z.string().optional(),
           snippet: z.string().optional(),
         }),
       )
-      .max(40),
+      .max(BULK_TRIAGE_LIMIT),
   }),
   output: z.object({
     verdicts: z.array(
@@ -263,6 +268,8 @@ export const bulkTriage = defineTool({
       }),
     ),
     model: z.string(),
+    /** How many verdicts were saved on their threads. */
+    saved: z.number().optional(),
   }),
   async handler({ items }) {
     if (!items.length) return { verdicts: [], model: 'none' };
@@ -311,15 +318,43 @@ export const bulkTriage = defineTool({
           });
       } catch {}
     }
+    const saved = await saveBulkTriageVerdicts(items, verdicts);
     // Fill in missing ids with defaults so the UI never has gaps.
     for (const it of items) {
       if (!verdicts.find((v) => v.id === it.id)) {
         verdicts.push({ id: it.id, priority: 2 as const, action: 'read', reason: 'no verdict returned' });
       }
     }
-    return { verdicts, model: 'fast' };
+    return { verdicts, model: 'fast', saved };
   },
 });
+
+/**
+ * Save model verdicts on their threads through the same store as
+ * `triage_thread`. Only verdicts for requested ids with a known account are
+ * saved; placeholder verdicts are never saved.
+ */
+export async function saveBulkTriageVerdicts(
+  items: Array<{ id: string; account?: string }>,
+  verdicts: Array<{ id: string; priority: 1 | 2 | 3; action: string; reason: string }>,
+): Promise<number> {
+  const accounts = new Map(items.filter((it) => it.account).map((it) => [it.id, it.account as string]));
+  const at = Date.now();
+  const writes = verdicts
+    .filter((verdict) => accounts.has(verdict.id))
+    .map((verdict) =>
+      setThreadTriage(accounts.get(verdict.id) as string, verdict.id, {
+        priority: verdict.priority,
+        action: verdict.action,
+        reason: verdict.reason.slice(0, 240),
+        at,
+      }).then(
+        () => true,
+        () => false,
+      ),
+    );
+  return (await Promise.all(writes)).filter(Boolean).length;
+}
 
 const SmartCategorySchema = z.enum(SMART_CATEGORY_IDS);
 const SuggestedActionSchema = z.enum(['reply', 'read', 'archive', 'label', 'snooze', 'wait', 'none']);

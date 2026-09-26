@@ -91,6 +91,7 @@ import {
   inboxDateGroupLabel,
   shortFrom,
 } from '@/lib/shared/format';
+import { type BulkTriageResponse, bulkTriageMessage, runBulkTriage } from '@/lib/shell/bulk-triage';
 import { cn } from '@/lib/utils';
 
 // An empty search (or the clear button / Esc) returns to the default unified
@@ -720,16 +721,21 @@ export function Inbox() {
         .filter((it) => selectedIds.includes(rowKey(it)))
         .map((it) => ({
           id: it._id,
+          account: it.account || account,
           from: it.from || it.fromAddress,
           subject: it.subject,
           snippet: it.snippet,
         }));
-      return callTool<{ verdicts: any[] }>('bulk_triage', { items: list });
+      return runBulkTriage(list, (group) => callTool<BulkTriageResponse>('bulk_triage', { items: group }));
     },
-    onSuccess: (res) => {
-      toast.success(`Triaged ${res.verdicts.length}`);
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+    onSuccess: (outcome) => {
+      const message = bulkTriageMessage(outcome);
+      if (message.kind === 'success') toast.success(message.text);
+      else if (message.kind === 'error') toast.error(message.text);
+      else toast.message(message.text);
+      if (outcome.saved) queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: (err: any) => toast.error(err?.message || 'Could not triage these threads.'),
   });
 
   const applyLabels = useMutation({
