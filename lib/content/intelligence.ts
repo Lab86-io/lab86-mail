@@ -5,6 +5,7 @@ import {
 } from '../ai/gateway';
 import { type ClassifierQuestion, evaluateClassifier } from '../classifier/client';
 import { api, convexArgs, convexQuery, requireConvexClient } from '../hosted/convex';
+import { truncateText } from '../shared/text';
 import { type ContentItem, contentChunks, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from './contract';
 
 export function contentQuestions(
@@ -40,7 +41,7 @@ export function contentQuestions(
       criteria: {
         none: 'No clear match to an existing work item.',
         ...Object.fromEntries(
-          works.map((w, i) => [`w${i}`, `${w.title || 'Work'}: ${w.text.slice(0, 700)}`]),
+          works.map((w, i) => [`w${i}`, `${w.title || 'Work'}: ${truncateText(w.text, 700)}`]),
         ),
       },
     },
@@ -66,7 +67,7 @@ export async function classifyContent(
       ownerIdentities: item.ownerIdentities || [],
       title: item.title,
       source: item.source,
-      content: item.text.slice(0, 48_000),
+      content: truncateText(item.text, 48_000),
       partial: item.partial || item.text.length > 48_000,
     },
     questions: contentQuestions(works),

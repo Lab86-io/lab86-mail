@@ -5,7 +5,9 @@ import schema from '../convex/schema';
 import { safeDeltaUrl } from '../lib/content/cloud-sync';
 import {
   contentChunks,
+  contentExcerpt,
   preparedDraftSchema,
+  researchExcerpt,
   sourceLink,
   validatePreparedEvidence,
 } from '../lib/content/contract';
@@ -307,6 +309,64 @@ test('chunk overlap, typed classification and evidence validation preserve retri
   ).toBeNull();
   expect(() => validatePreparedEvidence(preparedDraftSchema.parse(draft('missing')), [])).toThrow();
   expect(() => safeDeltaUrl('https://evil.test/steal')).toThrow();
+});
+test('chunk windows and excerpts never split an emoji at their boundaries', async () => {
+  const emoji = '\u{1F600}';
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  // Put an emoji across each window start (3600, 7200) and end (4000, 7600).
+  const chars = 'x'.repeat(8000).split('');
+  for (const at of [3600, 4000, 7200, 7600]) chars.splice(at - 1, 2, emoji[0], emoji[1]);
+  const text = chars.join('');
+  expect(text.length).toBe(8000);
+  const chunks = contentChunks(text);
+  expect(chunks).toHaveLength(3);
+  for (const chunk of chunks) expect(lone.test(chunk)).toBe(false);
+  expect(chunks.join('').split(emoji).length - 1).toBeGreaterThanOrEqual(4);
+  expect(chunks.every((chunk) => chunk.length <= 4000)).toBe(true);
+
+  const t = convexTest(schema, modules);
+  await seed(t);
+  await t.mutation(content.upsert, {
+    ...scope,
+    items: [{ ...source('2'), externalId: 'owner-emoji', text }],
+  });
+  const claimed = (await t.mutation(content.claimItems, scope)).find(
+    (row: any) => row.externalId === 'owner-emoji',
+  );
+  expect(
+    await t.mutation(content.completeItem, {
+      ...scope,
+      id: claimed._id,
+      version: claimed.version,
+      lease: claimed.lease,
+      labels,
+      vectors: chunks.map(() => Array(1536).fill(0.01)),
+    }),
+  ).toBe(true);
+  const stored = await t.run((ctx) =>
+    ctx.db
+      .query('contentChunks')
+      .withIndex('by_item', (q) => q.eq('itemId', claimed._id))
+      .collect(),
+  );
+  expect(stored).toHaveLength(3);
+  const json = JSON.stringify(stored.map((chunk) => chunk.text));
+  expect(json).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+  for (const chunk of JSON.parse(json)) expect(lone.test(chunk)).toBe(false);
+
+  // The head cut (3000), the tail cut (-2000) and each excerpt edge split an emoji.
+  const long = `${'y'.repeat(2999)}${emoji}${'z'.repeat(20_000)}${emoji}${'b'.repeat(159)}budget${emoji}${'w'.repeat(1999)}`;
+  expect(lone.test(long.slice(0, 3000))).toBe(true);
+  expect(lone.test(long.slice(-2000))).toBe(true);
+  expect(lone.test(long.slice(long.indexOf('budget') - 160))).toBe(true);
+  for (const excerpt of [
+    researchExcerpt(long, ['budget']),
+    contentExcerpt(long, 'budget', 2200),
+    contentExcerpt(`budget${emoji}tail`, 'budget', 7),
+  ])
+    expect(lone.test(excerpt)).toBe(false);
+  expect(contentExcerpt(`budget${emoji}tail`, 'budget', 7)).toBe('budget…');
+  expect(contentExcerpt('plain budget text', 'budget', 6)).toBe('plain …');
 });
 test('bounded downloads reject dishonest and absent lengths and extract text without executing markup', async () => {
   let cancelled = false;
