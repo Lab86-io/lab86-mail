@@ -8,6 +8,7 @@ import { nylasErrorStatus, retryAfterMs, withNylasRetry } from '@/lib/nylas/retr
 import type { Message } from '@/lib/shared/types';
 import { buildCorpusSearchText, extractNylasWebhookMetadata, type NylasWebhookMetadata } from './corpus';
 import { withFolderRoleLabels } from './search/folders';
+import { keptMessageHeaders } from './sender-cleanup';
 import { detectMailSuggestions } from './suggestion-detectors';
 import { scanIngestedMail } from './urgent-detectors';
 
@@ -671,6 +672,9 @@ async function applyWebhookDelta(
         requireNylas().messages.find({
           identifier: row.grantId,
           messageId: metadata.providerMessageId as string,
+          // The refetch is one call either way; with headers it also keeps
+          // the List-Unsubscribe line that one-click unsubscribe needs.
+          queryParams: { fields: 'include_headers' as any },
         }),
       );
       message = raw.data || payload;
@@ -888,7 +892,9 @@ function corpusMessageFromNormalized(
     unread: Boolean(flags.unread) || Boolean(message.unread) || labels.includes('UNREAD'),
     starred: Boolean(flags.starred) || Boolean(message.starred) || labels.includes('STARRED'),
     attachments: message.attachments,
-    headers: message.headers,
+    // Only the list and bulk headers: unsubscribe, the classifier, and reply
+    // watches read them. Received chains and signatures are large and unused.
+    headers: keptMessageHeaders(message.headers),
   };
 }
 

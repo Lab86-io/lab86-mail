@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Mail, MoreHorizontal, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -18,6 +18,12 @@ import { CornerUpLeftIcon } from '@/components/ui/corner-up-left';
 import { CornerUpRightIcon } from '@/components/ui/corner-up-right';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { MaximizeIcon } from '@/components/ui/maximize';
 import { MinimizeIcon } from '@/components/ui/minimize';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -41,6 +47,7 @@ import {
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 import { JevMailDetails } from './JevMailDetails';
+import { blockSenderWithUndo, UnsubscribeDialog } from './UnsubscribeDialog';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
@@ -203,6 +210,28 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       refetchSearch();
     },
     onError: () => toast.error('Could not move this thread to Trash. Try again.'),
+  });
+
+  // Unsubscribe asks first (it cannot be undone); block acts and offers Undo.
+  const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
+  const accountsQuery = useQuery({
+    queryKey: ['accounts'],
+    queryFn: async () => callTool<{ accounts: Array<{ accountId: string; email: string }> }>('list_accounts'),
+    staleTime: 60_000,
+  });
+  const mailboxEmail =
+    accountsQuery.data?.accounts?.find((row) => row.accountId === account)?.email || account || null;
+  const block = useMutation({
+    mutationFn: async () =>
+      blockSenderWithUndo(
+        { account, threadId: threadId || '' },
+        { onUndone: () => queryClient.invalidateQueries({ queryKey: ['search'] }) },
+      ),
+    onSuccess: () => {
+      setSelectedThread(null);
+      queryClient.invalidateQueries({ queryKey: ['search'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Could not block this sender.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
@@ -495,7 +524,38 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
             <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
               <RowIcon icon={DeleteIcon} size={14} />
             </IconBtn>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="More actions"
+                  aria-label="More actions"
+                  className="text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem className="text-[12.5px]" onSelect={() => setUnsubscribeOpen(true)}>
+                  Unsubscribe…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={block.isPending}
+                  onSelect={() => block.mutate()}
+                >
+                  Block sender
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
+          <UnsubscribeDialog
+            target={threadId ? { account, threadId, mailbox: mailboxEmail } : null}
+            open={unsubscribeOpen}
+            onOpenChange={setUnsubscribeOpen}
+          />
           <div className={SEGMENT_GROUP}>
             <IconBtn
               title={threadFullscreen ? 'Exit full screen' : 'Full screen'}

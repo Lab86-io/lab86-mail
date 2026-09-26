@@ -539,6 +539,36 @@ export async function getNylasMessage({
   return normalizeNylasMessage(result.data, row.accountId);
 }
 
+/**
+ * The headers of one message, lowercased. Webhook payloads and list pages do
+ * not carry headers, so unsubscribe reads them once for the message it needs.
+ */
+export async function getNylasMessageHeaders({
+  userId,
+  account,
+  messageId,
+}: {
+  userId?: string | null;
+  account: string;
+  messageId: string;
+}): Promise<Record<string, string> | null> {
+  const row = await getNylasAccount(userId, account);
+  if (!row) return null;
+  const result = await withNylasRetry(() =>
+    requireNylas().messages.find({
+      identifier: row.grantId,
+      messageId,
+      queryParams: { fields: 'include_headers' as any },
+    }),
+  );
+  const headers: Record<string, string> = {};
+  for (const header of (result.data as any)?.headers || []) {
+    if (header?.name && typeof header.value === 'string')
+      headers[String(header.name).toLowerCase()] = header.value;
+  }
+  return headers;
+}
+
 export async function listNylasLabels(userId: string | null | undefined, account: string) {
   const row = await getNylasAccount(userId, account);
   if (!row) return null;

@@ -34,6 +34,7 @@ export const MAILBOXES = [
 export const MAIL_LISTS = [
   { id: 'scheduled', label: 'Scheduled' },
   { id: 'snoozed', label: 'Snoozed' },
+  { id: 'senders', label: 'Sender cleanup' },
 ] as const;
 
 export type MailListId = (typeof MAIL_LISTS)[number]['id'];

@@ -138,6 +138,7 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
+import { blockSenderTool, getUnsubscribeOptions, listSenderCleanup, unsubscribeSender } from './mail-senders';
 import {
   deleteSavedReplyTool,
   listSavedRepliesTool,
@@ -227,6 +228,10 @@ const allTools: AnyTool[] = [
   trashThread,
   restoreFromTrash,
   bulkMoveThreads,
+  getUnsubscribeOptions,
+  unsubscribeSender,
+  blockSenderTool,
+  listSenderCleanup,
   markRead,
   markThreadRead,
   markUnread,

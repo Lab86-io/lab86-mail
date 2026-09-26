@@ -2,6 +2,8 @@ import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
 import { pageEndsInTie, pageThroughTies } from '../lib/mail/search/page-ties';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
+import { keptMessageHeaders, rankSendersForCleanup } from '../lib/mail/sender-cleanup';
+import { emailFromHeader } from '../lib/shared/format';
 import { internal } from './_generated/api';
 import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, now, requireInternalSecret } from './lib';
@@ -1348,5 +1350,138 @@ export const snoozeTick = internalAction({
       return;
     }
     await fanOutInternalPost(`${appUrl}/api/cron/mail-snooze`, secret, [{}], { label: 'mail-snooze cron' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Unsubscribe and sender cleanup (FEATURES item 13), voice profile (item 16).
+// ---------------------------------------------------------------------------
+
+/**
+ * Stores the list headers of one message after the app fetched them from the
+ * provider for an unsubscribe. Webhook payloads carry no headers, so the
+ * first unsubscribe for a sender reads them once and keeps them.
+ */
+export const setMessageListHeaders = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    accountId: v.string(),
+    providerMessageId: v.string(),
+    headers: v.record(v.string(), v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_account_message', (q) =>
+        q.eq('accountId', args.accountId).eq('providerMessageId', args.providerMessageId),
+      )
+      .take(5);
+    const row = rows.find((candidate) => candidate.userId === args.userId);
+    if (!row) return { stored: false };
+    const headers = keptMessageHeaders({ ...(row.headers || {}), ...args.headers }) || {};
+    await ctx.db.patch(row._id, { headers, updatedAt: now() });
+    return { stored: true };
+  },
+});
+
+// Recency window for sender cleanup and block. Matches the reclassify window
+// in convex/smart.ts: it covers everything a paged inbox shows.
+const SENDER_SCAN_LIMIT = 1500;
+
+async function selfEmails(ctx: any, userId: string) {
+  const accounts = await ctx.db
+    .query('connectedAccounts')
+    .withIndex('by_user', (q: any) => q.eq('userId', userId))
+    .collect();
+  return accounts.map((account: any) => String(account.email || '').toLowerCase()).filter(Boolean);
+}
+
+/** The low-value senders of the recent mailbox, ranked (see lib/mail/sender-cleanup). */
+export const senderCleanupCandidates = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(SENDER_SCAN_LIMIT);
+    const senders = rankSendersForCleanup(
+      rows.map((row) => ({
+        accountId: row.accountId,
+        providerThreadId: row.providerThreadId,
+        fromAddress: row.fromAddress,
+        subject: row.subject,
+        lastDate: row.lastDate,
+        unread: row.unread,
+        labels: row.labels,
+        smartPrimary: row.smartPrimary,
+        jev: row.jev ? { purpose: row.jev.purpose } : null,
+      })),
+      { selfEmails: await selfEmails(ctx, args.userId), limit: clampLimit(args.limit, 40, 100) },
+    );
+    return { senders, scanned: rows.length };
+  },
+});
+
+/** Recent inbox threads from one sender address, for block sender. */
+export const inboxThreadsFromSender = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    sender: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const sender = args.sender.trim().toLowerCase();
+    const limit = clampLimit(args.limit, 100, 200);
+    const rows = await ctx.db
+      .query('mailCorpusThreads')
+      .withIndex('by_user_lastDate', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(SENDER_SCAN_LIMIT);
+    const out: Array<{ accountId: string; threadId: string; subject: string }> = [];
+    for (const row of rows) {
+      if (out.length >= limit) break;
+      if (!(row.labels || []).includes('INBOX')) continue;
+      if (emailFromHeader(row.fromAddress) !== sender) continue;
+      out.push({ accountId: row.accountId, threadId: row.providerThreadId, subject: row.subject });
+    }
+    return { threads: out };
+  },
+});
+
+/**
+ * The user's recent sent messages, newest first, for the voice profile. A
+ * sent message is one from a connected mailbox address, which works for every
+ * provider (Gmail SENT labels and Outlook folder ids differ).
+ */
+export const recentSentMessages = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const own = new Set(await selfEmails(ctx, args.userId));
+    const limit = clampLimit(args.limit, 50, 50);
+    if (!own.size) return { messages: [] };
+    const rows = await ctx.db
+      .query('mailCorpusMessages')
+      .withIndex('by_user_received', (q) => q.eq('userId', args.userId))
+      .order('desc')
+      .take(800);
+    const messages = [];
+    for (const row of rows) {
+      if (messages.length >= limit) break;
+      if (!own.has(emailFromHeader(row.from) || '')) continue;
+      messages.push({
+        subject: row.subject,
+        to: row.to,
+        receivedAt: row.receivedAt,
+        textBody: String(row.textBody || row.snippet || '').slice(0, 4000),
+      });
+    }
+    return { messages };
   },
 });
