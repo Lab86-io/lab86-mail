@@ -28,6 +28,16 @@ export const MAILBOXES = [
   { query: QUICK_SEARCH_QUERIES.trash, label: 'Trash' },
 ];
 
+// Lists that open in a dialog from the More menu. They are not thread views:
+// scheduled sends wait at the provider, and snoozed threads stay archived
+// until their time comes.
+export const MAIL_LISTS = [
+  { id: 'scheduled', label: 'Scheduled' },
+  { id: 'snoozed', label: 'Snoozed' },
+] as const;
+
+export type MailListId = (typeof MAIL_LISTS)[number]['id'];
+
 export function mailNavigationSelection(
   category: string | null,
   query: string,

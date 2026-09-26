@@ -1598,7 +1598,9 @@ export default defineSchema({
   })
     .index('by_status_until', ['status', 'untilTs'])
     .index('by_user_account', ['userId', 'accountId'])
-    .index('by_user_account_thread', ['userId', 'accountId', 'threadId']),
+    .index('by_user_account_thread', ['userId', 'accountId', 'threadId'])
+    // The Snoozed list: one user's active snoozes, newest first.
+    .index('by_user_status_created', ['userId', 'status', 'createdAt']),
 
   mailWebhookEvents: defineTable({
     eventId: v.string(),

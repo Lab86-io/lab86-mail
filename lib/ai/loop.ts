@@ -114,6 +114,7 @@ export const AGENT_TOOL_NAMES = new Set([
   'mute_thread',
   'snooze_thread',
   'unsnooze_thread',
+  'list_snoozed',
   'save_draft',
   'update_draft',
   'delete_draft',

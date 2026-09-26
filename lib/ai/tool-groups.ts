@@ -107,10 +107,11 @@ export const TOOL_GROUPS = {
   },
   mail_more: {
     label:
-      'Scheduled send list and cancel, undo send, natural-language search, bulk triage, translation, critique, action items, thread timeline',
+      'Scheduled send list and cancel, snoozed mail list, undo send, natural-language search, bulk triage, translation, critique, action items, thread timeline',
     tools: [
       'list_scheduled',
       'cancel_scheduled',
+      'list_snoozed',
       'undo_send',
       'nl_search',
       'bulk_triage',
