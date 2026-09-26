@@ -27,7 +27,14 @@ test('a 50-row selection is split into groups the tool accepts', async () => {
     return { verdicts: group, model: 'fast', saved: group.length };
   });
   expect(sizes).toEqual([40, 10]);
-  expect(outcome).toEqual({ total: 50, saved: 50, failed: 0, noModel: false, firstError: null });
+  expect(outcome).toEqual({
+    total: 50,
+    saved: 50,
+    failed: 0,
+    noModel: false,
+    firstError: null,
+    operationIds: [],
+  });
   expect(bulkTriageMessage(outcome)).toEqual({ kind: 'success', text: 'Triaged 50' });
 });
 

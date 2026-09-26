@@ -1,4 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { MAIL_UNDO, recordMailOperation } from '@/lib/mail/mail-operations';
 import { moveNylasMessage } from '@/lib/nylas/provider';
 
 const oneTimeCodesApi = (api as any).mailOneTimeCodes;
@@ -34,6 +35,8 @@ export interface ConsumeOneTimeCodeResult {
 interface ConsumeDependencies {
   mutate: typeof convexMutation;
   moveMessage: typeof moveNylasMessage;
+  /** Activity entry with Undo for the cleanup move. */
+  record?: typeof recordMailOperation;
 }
 
 const defaultDependencies: ConsumeDependencies = {
@@ -90,13 +93,36 @@ export async function consumeOneTimeCode(
 
   try {
     // Provider-aware move: Gmail edits labels, other providers change folder.
-    await dependencies.moveMessage({
+    const change = await dependencies.moveMessage({
       userId: input.userId,
       account: used.accountId,
       messageId: used.providerMessageId,
       to: input.cleanup === 'trash' ? 'trash' : 'archive',
     });
     const status = input.cleanup === 'trash' ? 'trashed' : 'archived';
+    // An automatic cleanup is still a change to the user's mail: it shows in
+    // Activity with Undo, like every other mail move.
+    if (change?.before && change.after) {
+      await (dependencies.record ?? recordMailOperation)({
+        userId: input.userId,
+        tool: 'one_time_code_cleanup',
+        summary:
+          status === 'trashed'
+            ? 'Moved a used sign-in code email to Trash'
+            : 'Archived a used sign-in code email',
+        reason: 'The code was filled in, and your settings clear code emails after use.',
+        target: { kind: 'message', id: used.providerMessageId, accountId: used.accountId },
+        inverse: {
+          kind: MAIL_UNDO.messageFolders,
+          payload: {
+            account: used.accountId,
+            messageId: used.providerMessageId,
+            before: change.before,
+            after: change.after,
+          },
+        },
+      }).catch(() => undefined);
+    }
     await dependencies
       .mutate(oneTimeCodesApi.recordCleanup, {
         userId: input.userId,

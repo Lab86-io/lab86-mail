@@ -21,8 +21,12 @@ import { CommandPalette } from '@/components/palette/CommandPalette';
 import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
 import { AiSection } from '@/components/settings/AiSection';
 import { JevSection } from '@/components/settings/JevSection';
+import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
+import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
+import { SignatureSettings } from '@/components/settings/SignatureSettings';
 import { StandingOrdersSection } from '@/components/settings/StandingOrdersSection';
 import { useFilesSurface, useSetFilesSurface } from '@/components/settings/surfaces';
+import { VoiceProfileSettings } from '@/components/settings/VoiceProfileSettings';
 import { SHORTCUTS } from '@/components/shell/ShortcutsSheet';
 import { ThemePanel, useApplyThemeExtras } from '@/components/shell/ThemePanel';
 import {
@@ -81,8 +85,20 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
   mailboxes: () => <MailboxesSection />,
   connections: () => <ConnectionsSection />,
   areas: () => <TeachAreas />,
-  sending: () => <SendingSection />,
-  notifications: () => <NotificationsSection />,
+  sending: () => (
+    <>
+      <SendingSection />
+      <SignatureSettings />
+      <SavedRepliesSettings />
+      <VoiceProfileSettings />
+    </>
+  ),
+  notifications: () => (
+    <>
+      <NotificationsSection />
+      <MailAlertsSettings />
+    </>
+  ),
   orders: () => <StandingOrdersSection />,
   ai: () => (
     <AiSection

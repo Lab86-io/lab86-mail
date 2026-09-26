@@ -2,12 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Mail, MoreHorizontal, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
+import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
+import { MAIL_PUSH_QUERY_KEY, saveMailPushSettings } from '@/components/settings/MailAlertsSettings';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
@@ -17,6 +19,12 @@ import { CornerUpLeftIcon } from '@/components/ui/corner-up-left';
 import { CornerUpRightIcon } from '@/components/ui/corner-up-right';
 import { DeleteIcon } from '@/components/ui/delete';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { MaximizeIcon } from '@/components/ui/maximize';
 import { MinimizeIcon } from '@/components/ui/minimize';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -40,6 +48,7 @@ import {
 } from './attachment-preview';
 import { InlineComposer } from './InlineComposer';
 import { JevMailDetails } from './JevMailDetails';
+import { blockSenderWithUndo, UnsubscribeDialog } from './UnsubscribeDialog';
 
 // One vocabulary for header icon groups: a segmented control strip. The ring
 // offset matches the reader card the header now sits on.
@@ -183,24 +192,72 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
     });
   }, [account, threadId, liveData]);
 
+  const refetchSearch = () => queryClient.invalidateQueries({ queryKey: ['search'] });
   const archive = useMutation({
-    mutationFn: async () => callTool('archive_thread', { account, threadId }),
-    onSuccess: () => {
-      toast.success('Archived');
+    mutationFn: async () => callTool<{ operationId?: string }>('archive_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Archived', result?.operationId, { onUndone: refetchSearch });
       setSelectedThread(null);
-      queryClient.invalidateQueries({ queryKey: ['search'] });
+      refetchSearch();
     },
     onError: () => toast.error('Could not archive this thread. Try again.'),
   });
 
   const trash = useMutation({
-    mutationFn: async () => callTool('trash_thread', { account, threadId }),
+    mutationFn: async () => callTool<{ operationId?: string }>('trash_thread', { account, threadId }),
+    onSuccess: (result) => {
+      toastWithUndo('Moved to Trash', result?.operationId, { onUndone: refetchSearch });
+      setSelectedThread(null);
+      refetchSearch();
+    },
+    onError: () => toast.error('Could not move this thread to Trash. Try again.'),
+  });
+
+  // Unsubscribe asks first (it cannot be undone); block acts and offers Undo.
+  const [unsubscribeOpen, setUnsubscribeOpen] = useState(false);
+  const accountsQuery = useQuery({
+    queryKey: ['accounts'],
+    queryFn: async () => callTool<{ accounts: Array<{ accountId: string; email: string }> }>('list_accounts'),
+    staleTime: 60_000,
+  });
+  const mailboxEmail =
+    accountsQuery.data?.accounts?.find((row) => row.accountId === account)?.email || account || null;
+  const block = useMutation({
+    mutationFn: async () =>
+      blockSenderWithUndo(
+        { account, threadId: threadId || '' },
+        { onUndone: () => queryClient.invalidateQueries({ queryKey: ['search'] }) },
+      ),
     onSuccess: () => {
-      toast.success('Moved to Trash');
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
-    onError: () => toast.error('Could not move this thread to Trash. Try again.'),
+    onError: (error: Error) => toast.error(error.message || 'Could not block this sender.'),
+  });
+
+  // VIP: this sender's mail always pushes, in quiet hours too (item 12).
+  const markVip = useMutation({
+    mutationFn: async (sender: string) => {
+      const settings = await saveMailPushSettings({ addVipSenders: [sender] });
+      queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+      return sender;
+    },
+    onSuccess: (sender) =>
+      toast.success(`Mail from ${sender} always pushes now`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void saveMailPushSettings({ removeVipSenders: [sender] }).then(
+              (settings) => {
+                queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+                toast.success('Undone');
+              },
+              (error: Error) => toast.error(error.message || 'Could not undo this change.'),
+            );
+          },
+        },
+      }),
+    onError: (error: Error) => toast.error(error.message || 'Could not mark this sender as VIP.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
@@ -493,7 +550,48 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
             <IconBtn title="Trash (#)" onClick={() => trash.mutate()}>
               <RowIcon icon={DeleteIcon} size={14} />
             </IconBtn>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="More actions"
+                  aria-label="More actions"
+                  className="text-[var(--color-text-muted)] hover:bg-[var(--color-control-hover)] hover:text-[var(--color-text)]"
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuItem className="text-[12.5px]" onSelect={() => setUnsubscribeOpen(true)}>
+                  Unsubscribe…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={block.isPending}
+                  onSelect={() => block.mutate()}
+                >
+                  Block sender
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={markVip.isPending || !emailFromHeader(newest?.from)}
+                  onSelect={() => {
+                    const sender = emailFromHeader(newest?.from);
+                    if (sender) markVip.mutate(sender);
+                  }}
+                >
+                  Always push this sender
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
+          <UnsubscribeDialog
+            target={threadId ? { account, threadId, mailbox: mailboxEmail } : null}
+            open={unsubscribeOpen}
+            onOpenChange={setUnsubscribeOpen}
+          />
           <div className={SEGMENT_GROUP}>
             <IconBtn
               title={threadFullscreen ? 'Exit full screen' : 'Full screen'}

@@ -38,6 +38,7 @@ import {
   ConfirmationTitle,
 } from '@/components/ai-elements/confirmation';
 import { MailNav } from '@/components/inbox/MailNav';
+import { toastWithUndo, undoMailOperation } from '@/components/inbox/mail-undo-toast';
 import { OrbitRing } from '@/components/loading-ui/orbit-ring';
 import { Ring } from '@/components/loading-ui/ring';
 import { TextShimmer } from '@/components/loading-ui/text-shimmer';
@@ -85,7 +86,7 @@ import {
   inboxDateGroupLabel,
   shortFrom,
 } from '@/lib/shared/format';
-import { bulkMailMessages, settleBulk } from '@/lib/shell/bulk-mail';
+import { type BulkMoveResponse, bulkMailMessages, runBulkMove } from '@/lib/shell/bulk-mail';
 import { type BulkTriageResponse, bulkTriageMessage, runBulkTriage } from '@/lib/shell/bulk-triage';
 import { cn } from '@/lib/utils';
 
@@ -666,18 +667,30 @@ export function Inbox() {
     });
   };
 
+  // One bulk_move_threads call per 100 rows: one Activity entry and one Undo
+  // for the whole selection instead of one per thread.
+  const moveRows = (ids: string[], to: 'archive' | 'trash') =>
+    runBulkMove(
+      ids,
+      (id) => ({ account: accountOfRow(id), threadId: threadIdOfRow(id) }),
+      // A partial move reports ok:false with the moved rows; read it, do not throw.
+      (items) =>
+        callTool<BulkMoveResponse>('bulk_move_threads', { items, to }, {}, undefined, {
+          acceptFailedResult: true,
+        }),
+    );
+  const refetchSearch = () => queryClient.invalidateQueries({ queryKey: ['search'] });
+
   const bulkArchive = useMutation({
-    mutationFn: async (ids: string[]) =>
-      settleBulk(ids, (id) =>
-        callTool('archive_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
-      ),
+    mutationFn: async (ids: string[]) => moveRows(ids, 'archive'),
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
       clearSelected();
     },
     onSuccess: (outcome) => {
       const messages = bulkMailMessages('archive', outcome);
-      if (messages.success) toast.success(messages.success);
+      if (messages.success)
+        toastWithUndo(messages.success, outcome.operationIds, { onUndone: refetchSearch });
       if (messages.error) {
         toast.error(messages.error);
         // Bring back only the rows that did not move.
@@ -691,17 +704,15 @@ export function Inbox() {
   });
 
   const bulkTrash = useMutation({
-    mutationFn: async (ids: string[]) =>
-      settleBulk(ids, (id) =>
-        callTool('trash_thread', { account: accountOfRow(id), threadId: threadIdOfRow(id) }),
-      ),
+    mutationFn: async (ids: string[]) => moveRows(ids, 'trash'),
     onMutate: (ids) => {
       removeRowsFromSearchCache(ids);
       clearSelected();
     },
     onSuccess: (outcome) => {
       const messages = bulkMailMessages('trash', outcome);
-      if (messages.success) toast.success(messages.success);
+      if (messages.success)
+        toastWithUndo(messages.success, outcome.operationIds, { onUndone: refetchSearch });
       if (messages.error) {
         toast.error(messages.error);
         // Bring back only the rows that did not move.
@@ -729,7 +740,7 @@ export function Inbox() {
     },
     onSuccess: (outcome) => {
       const message = bulkTriageMessage(outcome);
-      if (message.kind === 'success') toast.success(message.text);
+      if (message.kind === 'success') toastWithUndo(message.text, outcome.operationIds);
       else if (message.kind === 'error') toast.error(message.text);
       else toast.message(message.text);
       if (outcome.saved) queryClient.invalidateQueries({ queryKey: ['search'] });
@@ -746,8 +757,8 @@ export function Inbox() {
         items: [{ threadId: item._id, labels }],
       });
     },
-    onSuccess: () => {
-      toast.success('Smart labels applied');
+    onSuccess: (result: any) => {
+      toastWithUndo('Smart labels applied', result?.operationId, { onUndone: refetchSearch });
       setLabelPreview(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
@@ -772,8 +783,14 @@ export function Inbox() {
       setSuppressions((prev) => [...prev, suppression]);
       return { suppressionId: suppression.id };
     },
-    onSuccess: () => {
-      toast.success('Smart rule saved');
+    onSuccess: (result: any) => {
+      toastWithUndo('Smart rule saved', result?.operationId, {
+        description: result?.rule ? 'It applies to new and existing mail.' : undefined,
+        onUndone: () => {
+          setSuppressions([]);
+          refetchSearch();
+        },
+      });
       queryClient.invalidateQueries({ queryKey: ['search'] });
       queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
     },
@@ -786,6 +803,13 @@ export function Inbox() {
   });
   const undoLastRule = useMutation({
     mutationFn: async () => {
+      // Undo the newest recorded rule change through the operations log, so
+      // Activity shows it as undone too. Older rules predate the log.
+      const recent = await callTool<{ operations: any[] }>('list_recent_operations', { limit: 50 });
+      const operation = (recent.operations || []).find(
+        (row) => row.undoable && (row.tool === 'apply_smart_correction' || row.tool === 'create_smart_rule'),
+      );
+      if (operation) return undoMailOperation(operation.operationId);
       const res = await callTool<{ rules: any[] }>('list_smart_rules', { includeDisabled: false });
       const latest = res.rules?.[0];
       if (!latest) throw new Error('No rule to undo');

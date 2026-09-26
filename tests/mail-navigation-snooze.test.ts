@@ -16,6 +16,7 @@ test('the More menu offers Snoozed next to Scheduled and opens the snoozed list'
   expect(MAIL_LISTS.map((list) => [list.id, list.label])).toEqual([
     ['scheduled', 'Scheduled'],
     ['snoozed', 'Snoozed'],
+    ['senders', 'Sender cleanup'],
   ]);
   const nav = readFileSync(path.join(process.cwd(), 'components/inbox/MailNav.tsx'), 'utf8');
   expect(nav).toContain('MAIL_LISTS.map');

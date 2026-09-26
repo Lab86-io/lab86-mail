@@ -76,7 +76,7 @@ function isBlockedAddress(ip: string): boolean {
 // SSRF guard: confirm a URL points at a public http(s) host. Resolves DNS and
 // rejects if the host (or any resolved address) is private/reserved/metadata.
 // Returns the validated absolute URL string.
-async function assertPublicHttpUrl(rawUrl: string): Promise<string> {
+export async function assertPublicHttpUrl(rawUrl: string): Promise<string> {
   let url: URL;
   try {
     url = new URL(rawUrl);

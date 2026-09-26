@@ -3,6 +3,7 @@ import { matchReflectionCandidates } from '../lib/albatross/daily-intent';
 import { wakeLine } from '../lib/albatross/horizon';
 import { checkinRetryDelayMs } from '../lib/albatross/retry';
 import { briefReadyFallbackBody } from '../lib/notifications/brief-ready-copy';
+import { digestCopy, mailPushSettingsFromRow, normalizeVipSenders } from '../lib/notifications/mail-push';
 import { truncateText } from '../lib/shared/text';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -1904,5 +1905,277 @@ export const tick = internalAction({
       concurrency: 4,
       timeoutMs: 60_000,
     });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Quiet hours, VIP senders, and priority-only mail push (FEATURES item 12).
+// The ingest scan decides push-or-hold (lib/notifications/mail-push.ts); a
+// held mail notification keeps its in-app row and waits here for the digest.
+// ---------------------------------------------------------------------------
+
+async function preferenceRow(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .unique();
+}
+
+export const mailPushSettings = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    return mailPushSettingsFromRow(await preferenceRow(ctx, args.userId));
+  },
+});
+
+const hourValidator = v.number();
+
+export const saveMailPushSettings = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    mode: v.optional(v.union(v.literal('all'), v.literal('priority'))),
+    quietHoursEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(hourValidator),
+    quietHoursEnd: v.optional(hourValidator),
+    vipSenders: v.optional(v.array(v.string())),
+    addVipSenders: v.optional(v.array(v.string())),
+    removeVipSenders: v.optional(v.array(v.string())),
+    // Used only when the user has no preference row yet.
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    for (const hour of [args.quietHoursStart, args.quietHoursEnd]) {
+      if (hour !== undefined && !(Number.isInteger(hour) && hour >= 0 && hour <= 23)) {
+        throw new Error('Quiet hours must be whole hours from 0 to 23.');
+      }
+    }
+    const existing = await preferenceRow(ctx, args.userId);
+    const current = mailPushSettingsFromRow(existing);
+    let vip = args.vipSenders !== undefined ? normalizeVipSenders(args.vipSenders) : current.vipSenders;
+    if (args.addVipSenders?.length) {
+      const added = normalizeVipSenders(args.addVipSenders);
+      if (!added.length) throw new Error('Enter an email address or a domain.');
+      vip = normalizeVipSenders([...vip, ...added]);
+    }
+    if (args.removeVipSenders?.length) {
+      const removed = new Set(normalizeVipSenders(args.removeVipSenders));
+      vip = vip.filter((entry) => !removed.has(entry));
+    }
+    const ts = now();
+    const patch = {
+      mailPushMode: args.mode ?? current.mode,
+      quietHoursEnabled: args.quietHoursEnabled ?? current.quietHours.enabled,
+      quietHoursStart: args.quietHoursStart ?? current.quietHours.start,
+      quietHoursEnd: args.quietHoursEnd ?? current.quietHours.end,
+      vipSenders: vip,
+      updatedAt: ts,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return mailPushSettingsFromRow({ ...existing, ...patch });
+    }
+    const timezone = args.timezone?.trim() || DEFAULT_TZ;
+    const doc = {
+      userId: args.userId,
+      timezone,
+      eveningCheckinEnabled: true,
+      eveningCheckinLocalTime: DEFAULT_CHECKIN_TIME,
+      inAppEnabled: true,
+      webPushEnabled: false,
+      emailFallbackEnabled: true,
+      emailFallbackDelayMinutes: DEFAULT_EMAIL_DELAY,
+      ...patch,
+      createdAt: ts,
+    };
+    await ctx.db.insert('albatrossNotificationPreferences', doc);
+    return mailPushSettingsFromRow(doc);
+  },
+});
+
+/** Holds the push of one mail notification until `until`. The in-app row stays. */
+export const holdMailPush = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+    until: v.number(),
+    reason: v.union(v.literal('quiet_hours'), v.literal('priority_only')),
+    accountId: v.string(),
+    threadId: v.string(),
+    messageId: v.optional(v.string()),
+    sender: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.notificationId);
+    if (!row || row.userId !== args.userId) throw new Error('Notification not found.');
+    const ts = now();
+    await ctx.db.patch(args.notificationId, {
+      pushHeldUntil: Math.max(args.until, ts),
+      pushHold: {
+        reason: args.reason,
+        accountId: args.accountId,
+        threadId: args.threadId,
+        messageId: args.messageId,
+        sender: args.sender?.slice(0, 180),
+        heldAt: ts,
+      },
+      updatedAt: ts,
+    });
+    return { held: true };
+  },
+});
+
+async function heldRows(ctx: QueryCtx | MutationCtx, userId: string, limit = 200) {
+  return await ctx.db
+    .query('albatrossNotifications')
+    .withIndex('by_user_push_held', (q) => q.eq('userId', userId).gt('pushHeldUntil', 0))
+    .take(limit);
+}
+
+/**
+ * Priority-only holds whose thread now needs a reply or an action. Jev
+ * classifies after ingest, so mail held as ordinary can turn out to matter.
+ */
+export const priorityHeldMail = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const out: string[] = [];
+    for (const row of await heldRows(ctx, args.userId, 50)) {
+      if (row.pushHold?.reason !== 'priority_only') continue;
+      const thread = await ctx.db
+        .query('mailCorpusThreads')
+        .withIndex('by_user_account_thread', (q) =>
+          q
+            .eq('userId', args.userId)
+            .eq('accountId', row.pushHold!.accountId)
+            .eq('providerThreadId', row.pushHold!.threadId),
+        )
+        .first();
+      if (thread?.jevNeedsReply || thread?.jevNeedsAction) out.push(String(row._id));
+    }
+    return { notificationIds: out };
+  },
+});
+
+/** Ends the hold of one notification so its own push can go out now. */
+export const releaseHeldMailPush = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    notificationId: v.id('albatrossNotifications'),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db.get(args.notificationId);
+    if (!row || row.userId !== args.userId || !row.pushHeldUntil || !row.pushHold) return { released: false };
+    const ts = now();
+    await ctx.db.patch(args.notificationId, {
+      pushHeldUntil: undefined,
+      pushHold: { ...row.pushHold, releasedAt: ts },
+      updatedAt: ts,
+    });
+    return { released: true };
+  },
+});
+
+async function dueDigestUserIds(ctx: QueryCtx, at: number, limit: number) {
+  const rows = await ctx.db
+    .query('albatrossNotifications')
+    .withIndex('by_push_held', (q) => q.gt('pushHeldUntil', 0).lte('pushHeldUntil', at))
+    .take(limit);
+  return [...new Set(rows.map((row) => row.userId))];
+}
+
+/** Users with at least one held mail push that is due. */
+export const dueMailDigestUsers = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    now: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 500), 1), 2000);
+    return { userIds: await dueDigestUserIds(ctx, args.now ?? now(), limit) };
+  },
+});
+
+export const hasDueMailDigests = internalQuery({
+  args: {},
+  handler: async (ctx) => (await dueDigestUserIds(ctx, now(), 1)).length > 0,
+});
+
+/**
+ * Sends the held mail of one user as one push. A single held message pushes
+ * as itself; two or more become one digest notification. Every hold clears.
+ */
+export const claimMailDigest = mutation({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const ts = args.now ?? now();
+    const held = await heldRows(ctx, args.userId);
+    if (!held.some((row) => (row.pushHeldUntil ?? 0) <= ts)) return { kind: 'none' as const, count: 0 };
+    if (held.length === 1) {
+      const [row] = held;
+      await ctx.db.patch(row._id, {
+        pushHeldUntil: undefined,
+        pushHold: row.pushHold ? { ...row.pushHold, releasedAt: ts } : undefined,
+        updatedAt: ts,
+      });
+      return { kind: 'single' as const, count: 1, notificationId: String(row._id) };
+    }
+    const copy = digestCopy(
+      held.map((row) => row.pushHold?.sender || row.title),
+      held.length,
+    );
+    const digestId = await ctx.db.insert(
+      'albatrossNotifications',
+      notificationPayload({
+        userId: args.userId,
+        type: 'mail_message',
+        title: copy.title,
+        body: copy.body,
+        deepLink: '/mail',
+        dedupeKey: `mail-digest:${args.userId}:${ts}`,
+        scheduledFor: ts,
+      }),
+    );
+    await ensureInAppDelivery(ctx, {
+      userId: args.userId,
+      notificationId: digestId,
+      enabled: true,
+      timestamp: ts,
+    });
+    for (const row of held) {
+      await ctx.db.patch(row._id, {
+        pushHeldUntil: undefined,
+        pushHold: row.pushHold ? { ...row.pushHold, releasedAt: ts, digestId } : undefined,
+        updatedAt: ts,
+      });
+    }
+    return { kind: 'digest' as const, count: held.length, notificationId: String(digestId) };
+  },
+});
+
+// Every 15 minutes: when a held mail push is due, ask the app to send the
+// digests. The app owns APNs and the quiet-hours check in the user's zone.
+export const mailDigestTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const due = await ctx.runQuery((internal as any).albatrossNotifications.hasDueMailDigests, {});
+    if (!due) return;
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-digest cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    await fanOutInternalPost(`${appUrl}/api/cron/mail-digest`, secret, [{}], { label: 'mail-digest cron' });
   },
 });

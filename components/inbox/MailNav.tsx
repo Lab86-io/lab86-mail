@@ -5,6 +5,7 @@ import { useConvexAuth, useQuery_experimental as useConvexQuery } from 'convex/r
 import { ChevronDown, SquarePen } from 'lucide-react';
 import { useState } from 'react';
 import { ScheduledSends } from '@/components/inbox/ScheduledSends';
+import { SenderCleanup } from '@/components/inbox/SenderCleanup';
 import { SmartLabelsSettings } from '@/components/inbox/SmartLabelsSettings';
 import { SnoozedThreads } from '@/components/inbox/SnoozedThreads';
 import { Button } from '@/components/ui/button';
@@ -89,6 +90,7 @@ export function MailNav() {
           setSelectedThread(row.threadId);
         }}
       />
+      <SenderCleanup open={openList === 'senders'} onOpenChange={listOpenChange('senders')} />
       <SmartLabelsSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

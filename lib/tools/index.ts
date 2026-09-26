@@ -124,6 +124,7 @@ import {
   addLabel,
   applySmartLabels,
   archiveThread,
+  bulkMoveThreads,
   createLabel,
   markRead,
   markThreadRead,
@@ -137,6 +138,15 @@ import {
   unsnoozeThreadTool,
   unstarMessage,
 } from './mail-mutate';
+import { blockSenderTool, getUnsubscribeOptions, listSenderCleanup, unsubscribeSender } from './mail-senders';
+import {
+  deleteSavedReplyTool,
+  listSavedRepliesTool,
+  listSignaturesTool,
+  saveSavedReplyTool,
+  setSignatureTool,
+} from './mail-templates';
+import { getVoiceProfileTool, learnVoiceProfileTool, updateVoiceProfileTool } from './mail-voice';
 import { githubSearch, mcpConnectionStatus, mcpCreateTask, mcpListItems, mcpSearch } from './mcp';
 import { forget, listMemories, recall, remember } from './memories';
 import { NARRATIVE_TOOLS } from './narrative';
@@ -218,6 +228,11 @@ const allTools: AnyTool[] = [
   archiveThread,
   trashThread,
   restoreFromTrash,
+  bulkMoveThreads,
+  getUnsubscribeOptions,
+  unsubscribeSender,
+  blockSenderTool,
+  listSenderCleanup,
   markRead,
   markThreadRead,
   markUnread,
@@ -244,6 +259,14 @@ const allTools: AnyTool[] = [
   scheduleSend,
   cancelScheduled,
   undoSend,
+  listSignaturesTool,
+  setSignatureTool,
+  listSavedRepliesTool,
+  saveSavedReplyTool,
+  deleteSavedReplyTool,
+  getVoiceProfileTool,
+  updateVoiceProfileTool,
+  learnVoiceProfileTool,
   summarizeThread,
   triageThread,
   draftReply,

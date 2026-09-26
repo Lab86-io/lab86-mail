@@ -57,6 +57,8 @@ export const APPROVAL_GATED_TOOLS: ReadonlySet<string> = new Set([
   'calendar_unsubscribe_calendar',
   'tasks_delete_board',
   'tasks_delete_column',
+  // reach_person: the list owner gets the request, and it cannot be undone.
+  'unsubscribe_sender',
 ]);
 
 function rec(value: unknown): Rec {
@@ -103,6 +105,12 @@ export function approvalConditionMet(toolName: string, input: unknown): boolean 
 export function toolNeedsApproval(toolName: string, input: unknown): boolean {
   return APPROVAL_GATED_TOOLS.has(toolName) && approvalConditionMet(toolName, input);
 }
+
+const UNSUBSCRIBE_METHODS: Record<string, string> = {
+  one_click: 'One-click request',
+  mailto: 'An email from your mailbox',
+  link: 'The sender’s web page',
+};
 
 function joinPeople(people: string[], max = 4): string {
   if (people.length <= max) return people.join(', ');
@@ -290,6 +298,18 @@ export function approvalSummary(toolName: string, input: unknown, timeZone?: str
         metadata: [...row('Column', text(args.column))],
         confirmLabel: 'Delete column',
         denyLabel: 'Keep it',
+        intent: 'destructive',
+      };
+    case 'unsubscribe_sender':
+      return {
+        title: 'Unsubscribe from this mailing list',
+        description: 'The sender gets an unsubscribe request. This cannot be undone.',
+        metadata: [
+          ...row('How', UNSUBSCRIBE_METHODS[text(args.method)] || 'The way the sender offers'),
+          ...row('Mailbox', text(args.account)),
+        ],
+        confirmLabel: 'Unsubscribe',
+        denyLabel: 'Keep getting it',
         intent: 'destructive',
       };
     default:

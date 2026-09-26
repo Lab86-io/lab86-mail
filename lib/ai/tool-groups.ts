@@ -107,8 +107,10 @@ export const TOOL_GROUPS = {
   },
   mail_more: {
     label:
-      'Scheduled send list and cancel, snoozed mail list, undo send, natural-language search, bulk triage, translation, critique, action items, thread timeline',
+      "Scheduled send list and cancel, snoozed mail list, undo send, the user's saved replies, natural-language search, bulk triage, bulk archive or trash, translation, critique, action items, thread timeline",
     tools: [
+      'bulk_move_threads',
+      'list_saved_replies',
       'list_scheduled',
       'cancel_scheduled',
       'list_snoozed',
@@ -122,8 +124,18 @@ export const TOOL_GROUPS = {
     ],
   },
   mail_admin: {
-    label: 'Label creation, thread mute, memory list and delete, alias expansion',
-    tools: ['create_label', 'mute_thread', 'list_memories', 'forget', 'expand_alias'],
+    label:
+      'Label creation, thread mute, unsubscribe and block sender, memory list and delete, alias expansion',
+    tools: [
+      'create_label',
+      'mute_thread',
+      'get_unsubscribe_options',
+      'unsubscribe_sender',
+      'block_sender',
+      'list_memories',
+      'forget',
+      'expand_alias',
+    ],
   },
   cloud_files: {
     label: 'Google Drive and OneDrive file search, Google document reads and edits, and file import',

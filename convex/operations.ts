@@ -22,6 +22,7 @@ export const record = mutation({
     tool: v.string(),
     surface: v.union(v.literal('mail'), v.literal('calendar'), v.literal('tasks'), v.literal('albatross')),
     summary: v.string(),
+    reason: v.optional(v.string()),
     batchId: v.optional(v.string()),
     chatId: v.optional(v.string()),
     target: v.any(),
@@ -33,6 +34,7 @@ export const record = mutation({
     const ts = now();
     const id = await ctx.db.insert('aiOperations', {
       ...doc,
+      ...(doc.reason !== undefined ? { reason: doc.reason.trim().slice(0, 300) || undefined } : {}),
       status: 'applied',
       createdAt: ts,
       updatedAt: ts,

@@ -12,7 +12,7 @@ export type BulkTriageItem = {
   snippet?: string;
 };
 
-export type BulkTriageResponse = { verdicts: unknown[]; model: string; saved?: number };
+export type BulkTriageResponse = { verdicts: unknown[]; model: string; saved?: number; operationId?: string };
 
 export type BulkTriageOutcome = {
   total: number;
@@ -21,6 +21,8 @@ export type BulkTriageOutcome = {
   /** True when no model is set up, so no verdict was saved. */
   noModel: boolean;
   firstError: string | null;
+  /** One recorded operation per saved group, for one Undo. */
+  operationIds: string[];
 };
 
 export function chunk<T>(list: T[], size: number): T[][] {
@@ -40,6 +42,7 @@ export async function runBulkTriage(
     failed: 0,
     noModel: false,
     firstError: null,
+    operationIds: [],
   };
   for (const group of chunk(items, BULK_TRIAGE_CHUNK)) {
     try {
@@ -51,6 +54,7 @@ export async function runBulkTriage(
         return outcome;
       }
       outcome.saved += typeof response.saved === 'number' ? response.saved : 0;
+      if (response.operationId) outcome.operationIds.push(response.operationId);
     } catch (error) {
       outcome.failed += group.length;
       outcome.firstError ??= error instanceof Error ? error.message : String(error);
