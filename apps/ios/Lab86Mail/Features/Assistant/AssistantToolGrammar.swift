@@ -125,7 +125,6 @@ enum AssistantToolGrammar {
         "read_thread": fixed("Reading the thread", "Read the thread", "Reading the thread failed"),
         "thread_timeline": fixed("Reading the thread history", "Read the thread history", "Reading the thread history failed"),
         "get_message": fixed("Loading the message", "Read the message", "Loading the message failed"),
-        "recent_threads": fixed("Loading recent threads", "Loaded recent threads", "Loading recent threads failed"),
         "list_account_threads": fixed("Loading the mailbox", "Loaded the mailbox", "Loading the mailbox failed"),
         "list_accounts": fixed("Checking connected accounts", "Checked your connected accounts", "Checking accounts failed"),
         "list_labels": fixed("Listing your labels", "Listed your labels", "Listing labels failed"),
@@ -248,16 +247,10 @@ enum AssistantToolGrammar {
             return ShapeActivity(running: "Moving the task", done: done, failed: "Moving the task failed")
         },
         "tasks_delete_card": fixed("Deleting the task", "Deleted the task", "Deleting the task failed"),
-        "tasks_search_cards": search("your tasks", failed: "Task search failed"),
-        "tasks_list_cards": fixed("Listing your tasks", "Listed your tasks", "Listing tasks failed"),
 
         // Albatross work and areas
-        "albatross_list_work": fixed("Checking your Work", "Checked your Work", "Checking Work failed"),
-        "albatross_work_detail": fixed("Opening the Work", "Read the Work", "Opening the Work failed"),
-        "albatross_capture": fixed("Holding that as Work", "Held that as Work", "Holding the Work failed"),
         "albatross_record_progress": fixed("Recording progress", "Recorded progress", "Recording progress failed"),
         "albatross_replan_work": fixed("Replanning the Work", "Replanned the Work", "Replanning failed"),
-        "albatross_area_brief": fixed("Reading the area brief", "Read the area brief", "Reading the area brief failed"),
         "area_list": fixed("Checking saved areas", "Checked saved areas", "Checking saved areas failed"),
         "area_home": fixed("Opening the area", "Read the area", "Opening the area failed"),
         "area_create": { args, out in
