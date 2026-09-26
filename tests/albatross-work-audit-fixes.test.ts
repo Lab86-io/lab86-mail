@@ -471,3 +471,51 @@ describe('TSK-1 default board ownership', () => {
     expect(ownedDefaultBoardId(boards as any)).toBeUndefined();
   });
 });
+
+describe('WRK-4 and WRK-5 applied steps', () => {
+  test('markPlanApplied accepts a document step and keeps steps an earlier attempt recorded', async () => {
+    const t = harness();
+    const workId = await seedWork(t);
+    const planId = await t.run((ctx) =>
+      ctx.db.insert('albatrossIntentPlans', {
+        userId,
+        intentId: workId,
+        status: 'ready',
+        outcome: 'Moved in',
+        digitalActions: [],
+        physicalActions: [],
+        assumptions: [],
+        sourceRefs: [],
+        createdAt: 1,
+        updatedAt: 1,
+      } as any),
+    );
+    await t.mutation(api.albatrossWork.recordPlanApplication, {
+      ...caller,
+      intentId: String(workId),
+      planId: String(planId),
+      operationBatchId: 'batch_1',
+      status: 'partially_applied',
+      artifacts: [
+        { kind: 'task', id: 'card_1', actionKey: 'a1', stepKey: 'step-1' },
+        { kind: 'approval', id: 'approval_1', actionKey: 'a4', stepKey: 'step-4', stepKind: 'email_send' },
+      ],
+      operationIds: [],
+      pendingApprovalIds: [],
+      unresolvedArtifacts: [],
+    });
+    await t.mutation(api.albatrossIntents.markPlanApplied, {
+      ...caller,
+      planId,
+      applicationId: 'app_2',
+      appliedSteps: [{ stepKey: 'step-3', kind: 'document', documentId: 'doc_1' }],
+    });
+    const plan = await t.run((ctx) => ctx.db.get(planId));
+    expect(plan?.status).toBe('applied');
+    expect(plan?.appliedSteps).toEqual([
+      { stepKey: 'step-1', kind: 'task', cardId: 'card_1' },
+      { stepKey: 'step-4', kind: 'email_send' },
+      { stepKey: 'step-3', kind: 'document', documentId: 'doc_1' },
+    ]);
+  });
+});

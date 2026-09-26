@@ -9,6 +9,7 @@ import {
   type StepProgressEntry,
 } from '../lib/albatross/step-progress';
 import { assertWorkOpen, isTerminalWork } from '../lib/albatross/work-lifecycle';
+import { appliedStepsFromApplicationArtifacts, mergeAppliedSteps } from '../lib/albatross/work-model';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -100,6 +101,8 @@ const appliedStepValidator = v.object({
   cardId: v.optional(v.string()),
   eventId: v.optional(v.string()),
   draftId: v.optional(v.string()),
+  // A document step records its created document (WRK-5).
+  documentId: v.optional(v.string()),
 });
 
 const outcomeContractValidator = v.object({
@@ -920,23 +923,39 @@ export const markPlanApplied = mutation({
       throw new Error('This plan revision was replaced by a newer one.');
     }
     const ts = now();
+    // A retry after a failed step applies only the missing actions. Merge the
+    // steps an earlier attempt recorded for this plan, so the retry does not
+    // drop them (WRK-4).
+    const applications = await ctx.db
+      .query('albatrossPlanApplications')
+      .withIndex('by_user_intent', (q) => q.eq('userId', userId).eq('intentId', String(plan.intentId)))
+      .order('desc')
+      .take(50);
+    const recordedSteps = applications
+      .filter((application) => application.planId === String(plan._id) && application.status !== 'undone')
+      .reverse()
+      .map((application) => appliedStepsFromApplicationArtifacts(application.artifacts || []));
+    const appliedSteps = args.appliedSteps
+      ? mergeAppliedSteps(plan.appliedSteps, ...recordedSteps, args.appliedSteps)
+      : undefined;
     // Apply turned plan steps into real cards. Bind the document's keyed
     // checklist items to them so every checkbox is the live task record.
-    const boundDocument = args.appliedSteps?.length
-      ? bindPlanDocumentSteps(plan.document, args.appliedSteps)
+    const boundDocument = appliedSteps?.length
+      ? bindPlanDocumentSteps(plan.document, appliedSteps)
       : { document: plan.document, bound: 0 };
     await ctx.db.patch(args.planId, {
       status: 'applied',
       appliedApplicationId: bounded(args.applicationId, 180),
       ...(boundDocument.bound ? { document: boundDocument.document } : {}),
-      ...(args.appliedSteps
+      ...(appliedSteps
         ? {
-            appliedSteps: args.appliedSteps.slice(0, 60).map((step) => ({
+            appliedSteps: appliedSteps.slice(0, 60).map((step) => ({
               stepKey: step.stepKey.slice(0, 80),
               kind: step.kind.slice(0, 40),
               cardId: step.cardId ? step.cardId.slice(0, 120) : undefined,
               eventId: step.eventId ? step.eventId.slice(0, 240) : undefined,
               draftId: step.draftId ? step.draftId.slice(0, 240) : undefined,
+              documentId: step.documentId ? step.documentId.slice(0, 240) : undefined,
             })),
           }
         : {}),
