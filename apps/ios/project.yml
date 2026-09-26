@@ -106,6 +106,7 @@ targets:
       - package: Convex
         product: ConvexMobile
       - target: Lab86MailAutoFill
+      - target: Lab86MailWidget
     scheme:
       testTargets:
         - Lab86MailTests
@@ -237,6 +238,28 @@ targets:
         PRODUCT_MODULE_NAME: Lab86MailAutoFill
         INFOPLIST_FILE: Lab86MailAutoFill/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Lab86MailAutoFill/Resources/Lab86MailAutoFill.entitlements
+        GENERATE_INFOPLIST_FILE: false
+        SUPPORTS_MACCATALYST: false
+
+  # The Today widget (round 2): the brief's lead line, the next move, and the
+  # next meeting. It reads the summary the app writes to the shared App Group
+  # and never calls the server, so it depends on one Foundation-only file.
+  Lab86MailWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Lab86MailWidget
+      - path: Lab86Mail/Core/Widget/TodayWidgetSnapshot.swift
+    configFiles:
+      Debug: Config/Debug.xcconfig
+      Release: Config/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lab86.mail.widget
+        PRODUCT_NAME: Lab86MailWidget
+        PRODUCT_MODULE_NAME: Lab86MailWidget
+        INFOPLIST_FILE: Lab86MailWidget/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Lab86MailWidget/Resources/Lab86MailWidget.entitlements
         GENERATE_INFOPLIST_FILE: false
         SUPPORTS_MACCATALYST: false
 
