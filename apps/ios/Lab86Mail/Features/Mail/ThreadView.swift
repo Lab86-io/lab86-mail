@@ -267,7 +267,19 @@ struct ThreadView: View {
             .frame(minHeight: 44)
         }
 
-        Button { dismissedProofOffer = true } label: {
+        Button {
+            dismissedProofOffer = true
+            // Kept on the server for each Work the offer showed, so the
+            // offer does not come back here or on another device.
+            let workIDs = proofCandidates.map(\.workID)
+            Task {
+                await environment.store.dismissProofOffer(
+                    accountID: route.accountID,
+                    threadID: route.threadID,
+                    workIDs: workIDs
+                )
+            }
+        } label: {
             Text("Not related").underline()
         }
             .buttonStyle(.plain)

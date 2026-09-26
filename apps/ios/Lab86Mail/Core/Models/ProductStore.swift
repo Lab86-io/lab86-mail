@@ -1738,6 +1738,23 @@ final class ProductStore {
         }
     }
 
+    /// "Not related" on a mail proof offer. The server keeps each Work and
+    /// thread pair, and the proof matches leave them out on every device
+    /// after that. True when the server saved them.
+    @discardableResult
+    func dismissProofOffer(accountID: String, threadID: String, workIDs: [String]) async -> Bool {
+        guard let body = ProofDismissalRequest.body(accountID: accountID, threadID: threadID, workIDs: workIDs) else {
+            return true
+        }
+        do {
+            let result = try await backend.post(path: ProofDismissalRequest.path, body: body)
+            return result["ok"]?.boolValue == true
+        } catch {
+            // The offer stays hidden in this view; it can come back later.
+            return false
+        }
+    }
+
     func attachMailProof(
         _ candidate: WorkProofCandidate,
         route: ThreadRoute,
@@ -3279,6 +3296,29 @@ final class ProductStore {
     }
 }
 
+
+// The body of `POST /api/albatross/proof-matches/dismissals`: one pair for
+// each Work the offer showed, at most one batch.
+enum ProofDismissalRequest {
+    static let path = "/api/albatross/proof-matches/dismissals"
+    static let batchLimit = 100
+
+    static func body(accountID: String, threadID: String, workIDs: [String]) -> JSONValue? {
+        guard let account = accountID.nilIfBlank, let thread = threadID.nilIfBlank else { return nil }
+        var seen = Set<String>()
+        let ids = workIDs.compactMap(\.nilIfBlank).filter { seen.insert($0).inserted }.prefix(batchLimit)
+        guard !ids.isEmpty else { return nil }
+        return .object([
+            "dismissals": .array(ids.map { workID in
+                JSONValue.object([
+                    "accountId": .string(account),
+                    "providerThreadId": .string(thread),
+                    "workId": .string(workID),
+                ])
+            }),
+        ])
+    }
+}
 
 // Pure rule for the "latest edition" state (brief round 2026-09-22). No
 // known latest id means the app has not asked yet; the shown edition then
