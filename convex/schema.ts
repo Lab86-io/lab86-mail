@@ -1557,6 +1557,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_status_until', ['status', 'untilTs'])
+    .index('by_user_account', ['userId', 'accountId'])
     .index('by_user_account_thread', ['userId', 'accountId', 'threadId']),
 
   mailWebhookEvents: defineTable({

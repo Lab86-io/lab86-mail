@@ -293,6 +293,8 @@ const ACCOUNT_BULK_TABLES = [
   // One-time codes are live authentication secrets. They expire on their own,
   // but a disconnected account's codes must not outlive the disconnection.
   'mailOneTimeCodes',
+  // Snooze rows would otherwise keep waking threads of a removed mailbox.
+  'mailSnoozes',
   'calendarEvents',
   'calendarEventCorpus',
   'areaArtifactLinks',

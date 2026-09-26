@@ -43,12 +43,12 @@ describe('provider-aware moves (MUT-2)', () => {
   test('moveNylasThread resolves Outlook folders by name and updates the thread', async () => {
     await withHttpHarness(async (h) => {
       h.onConvex('accounts:getConnectedAccount', () =>
-        accountRow({ provider: 'microsoft', grantId: 'grant_ms', accountId: 'acct_ms' }),
+        accountRow({ provider: 'microsoft', grantId: 'grant_ms_move', accountId: 'acct_ms' }),
       );
-      h.onNylas('GET', /\/v3\/grants\/grant_ms\/threads\/t1$/, () => ({
+      h.onNylas('GET', /\/v3\/grants\/grant_ms_move\/threads\/t1$/, () => ({
         json: { data: { id: 't1', folders: ['AAMk-inbox'] } },
       }));
-      h.onNylas('GET', /\/v3\/grants\/grant_ms\/folders$/, () => ({
+      h.onNylas('GET', /\/v3\/grants\/grant_ms_move\/folders$/, () => ({
         json: {
           data: [
             { id: 'AAMk-inbox', name: 'Inbox' },
@@ -57,7 +57,7 @@ describe('provider-aware moves (MUT-2)', () => {
           ],
         },
       }));
-      h.onNylas('PUT', /\/v3\/grants\/grant_ms\/threads\/t1$/, () => ({ json: { data: { id: 't1' } } }));
+      h.onNylas('PUT', /\/v3\/grants\/grant_ms_move\/threads\/t1$/, () => ({ json: { data: { id: 't1' } } }));
       expect(
         await moveNylasThread({ userId: 'user_1', account: 'acct_ms', threadId: 't1', to: 'trash' }),
       ).toEqual({
