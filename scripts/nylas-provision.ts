@@ -34,6 +34,7 @@ const WEBHOOK_URI = `${PUBLIC_URL}/api/nylas/webhook`;
 const WEBHOOK_TRIGGERS = [
   'message.created',
   'message.updated',
+  'message.deleted',
   'message.opened',
   'grant.created',
   'grant.updated',

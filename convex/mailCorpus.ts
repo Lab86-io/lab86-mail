@@ -1,8 +1,9 @@
 import { v } from 'convex/values';
 import { buildCorpusSearchText } from '../lib/mail/corpus';
 import { matchingMailExcerpt } from '../lib/mail/search/ranking';
-import { mutation, query } from './_generated/server';
-import { now, requireInternalSecret } from './lib';
+import { internal } from './_generated/api';
+import { internalAction, mutation, query } from './_generated/server';
+import { fanOutInternalPost, now, requireInternalSecret } from './lib';
 import {
   classificationFreshnessPatch,
   classifyCorpusThread,
@@ -477,6 +478,15 @@ export const recordWebhookEvent = mutation({
   },
 });
 
+/** A failed webhook event is retried this many times, then abandoned. */
+export const WEBHOOK_MAX_ATTEMPTS = 6;
+const WEBHOOK_RETRY_BASE_MS = 2 * 60_000;
+const WEBHOOK_RETRY_MAX_MS = 6 * 60 * 60_000;
+
+export function nextWebhookAttemptAt(attempts: number, at: number) {
+  return at + Math.min(WEBHOOK_RETRY_MAX_MS, WEBHOOK_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
+}
+
 export const markWebhookEventProcessed = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -491,12 +501,88 @@ export const markWebhookEventProcessed = mutation({
       .withIndex('by_event', (q) => q.eq('eventId', args.eventId))
       .unique();
     if (!row) return { ok: false, missing: true };
+    const ts = now();
+    if (args.status === 'processed') {
+      await ctx.db.patch(row._id, {
+        status: 'processed',
+        error: undefined,
+        processedAt: ts,
+        nextAttemptAt: undefined,
+      });
+      return { ok: true };
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const abandoned = attempts >= WEBHOOK_MAX_ATTEMPTS;
     await ctx.db.patch(row._id, {
-      status: args.status,
+      status: 'error',
       error: args.error,
-      processedAt: now(),
+      processedAt: ts,
+      attempts,
+      // Abandoned rows sort past every retry window, out of the index range.
+      nextAttemptAt: abandoned ? Number.MAX_SAFE_INTEGER : nextWebhookAttemptAt(attempts, ts),
+      retryAbandoned: abandoned || undefined,
     });
-    return { ok: true };
+    return { ok: true, attempts, abandoned };
+  },
+});
+
+// Failed events whose backoff has passed, plus events stuck in `received`
+// (the process that took them restarted before it finished). Oldest first.
+export const listRetryableWebhookEvents = query({
+  args: {
+    internalSecret: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    stuckAfterMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const limit = clampLimit(args.limit, 25, 100);
+    const ts = now();
+    const failed = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'error').lte('nextAttemptAt', ts))
+      .take(limit * 3);
+    const stuckBefore = ts - Math.max(60_000, args.stuckAfterMs ?? 15 * 60_000);
+    const stuck = await ctx.db
+      .query('mailWebhookEvents')
+      .withIndex('by_status_next_attempt', (q) => q.eq('status', 'received'))
+      .take(limit * 3);
+    return [
+      ...failed.filter((row) => !row.retryAbandoned),
+      ...stuck.filter((row) => row.receivedAt < stuckBefore),
+    ]
+      .slice(0, limit)
+      .map((row) => ({
+        eventId: row.eventId,
+        type: row.type,
+        grantId: row.grantId,
+        attempts: row.attempts ?? 0,
+        payload: row.payload,
+      }));
+  },
+});
+
+// Convex half of the repair cron (SYNC-3). The app owns Nylas, so this only
+// asks it to (1) retry failed webhook events and (2) run the bounded per-user
+// repair sweep. The app route ACKs at once and works in the background.
+export const repairTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const appUrl = (process.env.LAB86_MAIL_PUBLIC_URL || '').replace(/\/$/, '');
+    const secret = process.env.LAB86_CONVEX_INTERNAL_SECRET || '';
+    if (!appUrl || !secret) {
+      console.error('[mail-repair cron] missing LAB86_MAIL_PUBLIC_URL or LAB86_CONVEX_INTERNAL_SECRET');
+      return;
+    }
+    const targets = await ctx.runQuery((internal as any).dailyReports.reportTargets, {});
+    const bodies = [
+      { kind: 'webhooks' },
+      ...targets.map((target: { userId: string }) => ({ kind: 'sweep', userId: target.userId })),
+    ];
+    const ok = await fanOutInternalPost(`${appUrl}/api/cron/mail-repair`, secret, bodies, {
+      label: 'mail-repair cron',
+    });
+    console.log(`[mail-repair cron] requested ${ok}/${bodies.length} repair runs`);
   },
 });
 

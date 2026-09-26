@@ -31,6 +31,7 @@ import {
   normalizeNylasMessage,
   normalizeNylasThread,
 } from './normalize';
+import { RATE_LIMIT_MAX_DELAY_MS, retryAfterMs } from './retry';
 
 const mailCorpusApi = (api as any).mailCorpus;
 
@@ -43,6 +44,8 @@ export interface NylasAccountRow {
   displayName?: string;
   grantId: string;
   scopes: string[];
+  // The reconnect reason when status is `error` (see grant-health.ts).
+  error?: string;
 }
 
 interface UpdateNylasMessageFoldersArgs {
@@ -1001,7 +1004,7 @@ async function withNylasRetry<T>(
     } catch (err) {
       lastError = err;
       if (!shouldRetry(err) || attempt === retries) break;
-      await sleep(baseDelayMs * 2 ** attempt);
+      await sleep(Math.min(RATE_LIMIT_MAX_DELAY_MS, retryAfterMs(err) ?? baseDelayMs * 2 ** attempt));
     }
   }
   throw lastError;

@@ -83,6 +83,8 @@ export interface Message {
   // Provider-agnostic read state from the API (labels like 'UNREAD' are a
   // Gmail-only signal and must not be the sole source).
   unread?: boolean;
+  // Provider star/flag state. Carried so a refresh never clears a star.
+  starred?: boolean;
   attachments: Attachment[];
   headers: Record<string, string>;
   cachedAt: number;

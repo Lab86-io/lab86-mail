@@ -956,7 +956,11 @@ function MailboxCard({
         <div className="truncate text-[11.5px] text-[var(--color-text-muted)]">
           {account.email} · {providerDisplayName(account.provider)}
         </div>
-        <SyncStatusLine sync={sync} connected={connected} />
+        <SyncStatusLine
+          sync={sync}
+          connected={connected}
+          reconnectHref={account.status === 'error' ? reconnectHref : undefined}
+        />
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -1000,7 +1004,25 @@ function MailboxCard({
   );
 }
 
-function SyncStatusLine({ sync, connected }: { sync?: SyncState; connected: boolean }) {
+function SyncStatusLine({
+  sync,
+  connected,
+  reconnectHref,
+}: {
+  sync?: SyncState;
+  connected: boolean;
+  reconnectHref?: string;
+}) {
+  if (reconnectHref) {
+    return (
+      <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">
+        Reconnect needed. Sync is paused until you sign in again.{' '}
+        <a href={reconnectHref} className="underline">
+          Reconnect
+        </a>
+      </div>
+    );
+  }
   if (!connected) {
     return <div className="mt-1 text-[11px] font-medium text-[var(--color-danger)]">Disconnected</div>;
   }

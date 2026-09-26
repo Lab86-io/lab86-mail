@@ -7,6 +7,8 @@ export interface HttpHarness {
   convexCalls: Array<{ path: string; args: Record<string, any> }>;
   nylasCalls: Array<{ method: string; path: string; search: string; body: any; contentType: string }>;
   onConvex: (path: string, handler: (args: Record<string, any>) => unknown) => void;
+  /** Answers any Convex path that has no handler (default: an error). */
+  convexFallback?: (path: string, args: Record<string, any>) => unknown;
   onNylas: (
     method: string,
     pathPattern: RegExp,
@@ -47,7 +49,9 @@ export async function withHttpHarness(fn: (h: HttpHarness) => Promise<void>) {
       const callArgs = { ...((args?.[0] as Record<string, any>) || {}) };
       delete callArgs.internalSecret;
       harness.convexCalls.push({ path, args: callArgs });
-      const handler = convexHandlers.get(path);
+      const handler =
+        convexHandlers.get(path) ??
+        (harness.convexFallback ? (a: Record<string, any>) => harness.convexFallback?.(path, a) : undefined);
       if (!handler) return Response.json({ status: 'error', errorMessage: `no convex handler for ${path}` });
       try {
         return Response.json({ status: 'success', value: (await handler(callArgs)) ?? null });

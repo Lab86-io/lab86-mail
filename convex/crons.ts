@@ -151,6 +151,10 @@ crons.interval(
   {},
 );
 
+// Mail repair (SYNC-3): retry failed Nylas webhook events with backoff, and
+// sweep each connected mailbox's recent mail for changes a lost event missed.
+crons.interval('mail corpus repair', { minutes: 30 }, (internal as any).mailCorpus.repairTick, {});
+
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
 export default crons;

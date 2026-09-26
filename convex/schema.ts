@@ -1556,8 +1556,14 @@ export default defineSchema({
     error: v.optional(v.string()),
     receivedAt: v.number(),
     processedAt: v.optional(v.number()),
+    // Durable retry (SYNC-3): failed events are retried with backoff until
+    // `attempts` reaches the cap; then `retryAbandoned` parks them.
+    attempts: v.optional(v.number()),
+    nextAttemptAt: v.optional(v.number()),
+    retryAbandoned: v.optional(v.boolean()),
   })
     .index('by_event', ['eventId'])
+    .index('by_status_next_attempt', ['status', 'nextAttemptAt'])
     .index('by_user_account', ['userId', 'accountId'])
     .index('by_account', ['accountId'])
     .index('by_grant', ['grantId'])

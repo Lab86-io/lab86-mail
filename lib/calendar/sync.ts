@@ -1,5 +1,6 @@
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { requireNylas } from '@/lib/nylas/client';
+import { isGrantGoneError, markGrantNeedsReconnect } from '@/lib/nylas/grant-health';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { nylasErrorStatus, withNylasRetry } from '@/lib/nylas/retry';
 import { buildCalendarEventSearchText, calendarYearMonthFromTimestamp } from './corpus';
@@ -196,7 +197,8 @@ export async function syncCalendarAccount({
     if (isGrantGoneError(err)) {
       // The provider grant no longer exists (e.g. a partially-failed account
       // removal). Terminal: stop retrying until the account is removed or
-      // reconnected.
+      // reconnected. The shared account state shows Reconnect (CAL-8).
+      await markGrantNeedsReconnect(row.grantId, 'the calendar connection no longer works');
       await markSync(row, {
         status: 'unauthorized',
         error: 'This account’s connection no longer exists. Remove the account or reconnect it.',
@@ -216,10 +218,6 @@ export async function syncCalendarAccount({
     }).catch(() => undefined);
     throw err;
   }
-}
-
-function isGrantGoneError(err: any): boolean {
-  return /no grant found/i.test(String(err?.message || ''));
 }
 
 export async function syncAllCalendarAccounts(
