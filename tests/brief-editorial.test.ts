@@ -383,3 +383,37 @@ test('the daily pipeline settles a failed design as a usable edition with a reco
   expect(result.artifactErrors?.at(-1)?.stage).toBe('document_v2');
   expect(collectBriefRefs(result.document!).some((ref) => ref.id === 'thread-a')).toBe(true);
 });
+
+test('a writer with no credits or plan reports a terminal error; an outage does not', async () => {
+  const { edition, letter } = editorialFixture();
+  const credit = await writeDailyEditorial(edition, letter, {
+    generate: (async () => {
+      throw Object.assign(new Error('Insufficient credits'), { statusCode: 402 });
+    }) as any,
+  });
+  expect(credit.editorial.mode).toBe('fallback');
+  expect(credit.terminalError?.message).toBe('Insufficient credits');
+  const outage = await writeDailyEditorial(edition, letter, {
+    generate: (async () => {
+      throw Object.assign(new Error('Bad gateway'), { statusCode: 502 });
+    }) as any,
+  });
+  expect(outage.editorial.mode).toBe('fallback');
+  expect(outage.terminalError).toBeUndefined();
+});
+
+test('the daily pipeline carries a terminal writer error to the job, not into the edition', async () => {
+  const { edition } = editorialFixture();
+  const composed = await withToolContext(() =>
+    composeDailyBrief(edition, null, {
+      loadMessages: async () => [],
+      loadWeather: async () => null,
+      generate: (async () => {
+        throw Object.assign(new Error('Payment required'), { statusCode: 402 });
+      }) as any,
+    }),
+  );
+  expect(composed.editorial?.mode).toBe('fallback');
+  expect(composed.writerTerminalError?.message).toBe('Payment required');
+  expect(JSON.stringify(finalizeBudgetReport(edition, composed))).not.toContain('Payment required');
+});

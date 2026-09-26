@@ -217,6 +217,8 @@ export async function generateAgentReport(input: {
   userId?: string | null;
   now?: number;
   reportId?: string;
+  /** A retry over a published edition: skip the progress saves so the edition stays ready. */
+  quiet?: boolean;
 }): Promise<DailyReport> {
   // The dateline, the weather, and the week-ahead weekday names all read the
   // context timezone. A usable context value stands; when it is missing or
@@ -231,6 +233,7 @@ async function runAgentReport(input: {
   userId?: string | null;
   now?: number;
   reportId?: string;
+  quiet?: boolean;
 }): Promise<DailyReport> {
   const reportId = input.reportId ?? randomUUID();
   // Fresh source observations precede selection; the editorial writer then
@@ -252,6 +255,7 @@ async function runAgentReport(input: {
       scope: 'week',
       reportId,
       tier,
+      silent: input.quiet === true,
     });
     if (sourceChecks.some((check) => check.status === 'unavailable'))
       structured.errors = [...(structured.errors || []), briefSourceCoverage(sourceChecks)];
@@ -275,13 +279,14 @@ async function runAgentReport(input: {
 
   const composition = compositionFromReport(structured);
   const html = buildNativeDailyReportArtifact(structured, composition);
-  await saveDailyReport({
-    ...structured,
-    composition,
-    html,
-    artifactStatus: 'composing',
-    artifactSource: 'deterministic',
-  }).catch(() => undefined);
+  if (!input.quiet)
+    await saveDailyReport({
+      ...structured,
+      composition,
+      html,
+      artifactStatus: 'composing',
+      artifactSource: 'deterministic',
+    }).catch(() => undefined);
 
   // No model: the document still composes deterministically. The exact
   // availability error is recorded so the UI can explain the plain letter.
@@ -297,6 +302,11 @@ async function runAgentReport(input: {
   try {
     const composed = await composeDailyBrief(structured, input.userId, { generate, previous });
     const report = finalizeBudgetReport(structured, composed);
+    // A writer with no plan, key, or credits is recorded as an availability
+    // error: the brief job reads it and publishes this edition as final.
+    availability ??= composed.writerTerminalError
+      ? artifactError('ai_availability', composed.writerTerminalError)
+      : undefined;
     const settled = availability ? withArtifactError(report, availability) : report;
     await saveDailyReport(settled);
     return settled;
@@ -326,6 +336,8 @@ export interface ComposedBudgetBrief {
   since?: DailyReportSinceLastEdition;
   editorial?: DailyReport['editorial'];
   layoutFailed?: boolean;
+  /** The writer failed in a way another attempt cannot fix. Never persisted. */
+  writerTerminalError?: Error;
   /** Ephemeral writer context; never persisted into the edition. */
   editorialEvidence?: Record<string, unknown>;
 }
@@ -489,7 +501,13 @@ export async function composeDailyBrief(
     name: area.name.slice(0, 500),
     line: area.line.slice(0, 4000),
   }));
-  return { ...composed, document: layout.document, editorial: layout.editorial, layoutFailed: layout.failed };
+  return {
+    ...composed,
+    document: layout.document,
+    editorial: layout.editorial,
+    layoutFailed: layout.failed,
+    ...(layout.terminalError ? { writerTerminalError: layout.terminalError } : {}),
+  };
 }
 
 // Writes the prose back into the stored edition: the lede becomes the
