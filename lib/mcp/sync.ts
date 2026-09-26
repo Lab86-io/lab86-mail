@@ -1,4 +1,5 @@
 import { api, convexMutation } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { loadBitbucketItems } from './bitbucket';
 import { callMcpTool, connectMcp, type McpClientHandle } from './client';
 import { getConnectionToken, listUserConnections, type McpConnectionRow } from './connections';
@@ -37,7 +38,7 @@ const defaultDeps: SyncConnectionDeps = {
 function classifyError(err: unknown): string {
   const code = Number((err as { statusCode?: number; code?: number })?.statusCode ?? (err as any)?.code);
   if (code === 401 || code === 403) return 'auth rejected — reconnect with a valid token';
-  return String((err as { message?: string })?.message || 'sync failed').slice(0, 200);
+  return truncateText(String((err as { message?: string })?.message || 'sync failed'), 200);
 }
 
 /** An MCP tool result that reports a failure in-band (isError) instead of throwing. */

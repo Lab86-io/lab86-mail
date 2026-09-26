@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { truncateText } from '../shared/text';
 import { defineTool } from './registry';
 
 const BROWSERBASE_API_BASE = 'https://api.browserbase.com/v1';
@@ -28,7 +29,7 @@ async function postBrowserbase<T>(path: string, body: Record<string, unknown>): 
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`Browserbase ${path} failed (${response.status}): ${text.slice(0, 240)}`);
+      throw new Error(`Browserbase ${path} failed (${response.status}): ${truncateText(text, 240)}`);
     }
     return (await response.json()) as T;
   } catch (error) {

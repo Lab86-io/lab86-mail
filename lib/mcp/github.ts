@@ -1,3 +1,4 @@
+import { truncateText } from '../shared/text';
 import type { NormalizedMcpItem } from './servers';
 
 interface GitHubUser {
@@ -98,7 +99,7 @@ function compactSummary(value: string | null | undefined, max = 1_200) {
   const clean = String(value || '')
     .replace(/\s+/g, ' ')
     .trim();
-  return clean ? clean.slice(0, max) : undefined;
+  return clean ? truncateText(clean, max) : undefined;
 }
 
 export function normalizeGitHubIssue(
@@ -172,7 +173,7 @@ export function normalizeGitHubProject(row: GitHubProjectLike): NormalizedMcpIte
   return {
     externalId: `github:project:${row.id}`,
     kind: 'project',
-    title: row.title.slice(0, 500),
+    title: truncateText(row.title, 500),
     summary,
     url: row.url,
     state: row.closed ? 'closed' : 'open',
@@ -242,7 +243,7 @@ async function githubJson<T>(
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new GitHubApiError(`GitHub ${response.status}: ${detail.slice(0, 180)}`, response.status);
+    throw new GitHubApiError(`GitHub ${response.status}: ${truncateText(detail, 180)}`, response.status);
   }
   return (await response.json()) as T;
 }

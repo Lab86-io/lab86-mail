@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { api, convexQuery } from '@/lib/hosted/convex';
+import { truncateText } from '@/lib/shared/text';
 import { parseIsoInTimezone } from '@/lib/shared/timezones';
 import { defineTool } from './registry';
 
@@ -80,7 +81,7 @@ function compactTask(card: any, nowMs: number) {
 function compactIntent(intent: any) {
   return {
     intentId: intent._id,
-    title: intent.title || String(intent.rawText || '').slice(0, 120),
+    title: intent.title || truncateText(String(intent.rawText || ''), 120),
     status: intent.status,
     priority: intent.priority,
     areaId: intent.areaId,
@@ -91,7 +92,7 @@ function compactProject(project: any) {
   return {
     projectId: project._id,
     title: project.title,
-    outcome: typeof project.outcome === 'string' ? project.outcome.slice(0, 300) : undefined,
+    outcome: typeof project.outcome === 'string' ? truncateText(project.outcome, 300) : undefined,
     status: project.status,
     areaId: project.areaId,
   };

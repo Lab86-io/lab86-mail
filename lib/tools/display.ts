@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getAiRequestContext } from '../ai/context';
+import { truncateText } from '../shared/text';
 import {
   briefWeather,
   type FetchLike,
@@ -49,7 +50,7 @@ function displayId(component: string): string {
 }
 
 function clip(value: string, max: number): string {
-  return value.length > max ? `${value.slice(0, max)}\n… (truncated)` : value;
+  return value.length > max ? `${truncateText(value, max)}\n… (truncated)` : value;
 }
 
 // ---------------------------------------------------------------------------

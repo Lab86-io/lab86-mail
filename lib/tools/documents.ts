@@ -28,6 +28,7 @@ import {
 } from '@/lib/documents/service';
 import { spreadsheetCapabilities, spreadsheetCommandNames } from '@/lib/documents/spreadsheet-commands';
 import { applySpreadsheetChanges } from '@/lib/documents/spreadsheet-server';
+import { truncateText } from '@/lib/shared/text';
 import { defineTool } from './registry';
 
 function requireUserId(userId: string | null | undefined) {
@@ -192,7 +193,7 @@ export const documentCreate = defineTool({
       } catch (error) {
         publishError =
           error instanceof Error
-            ? error.message.slice(0, 500)
+            ? truncateText(error.message, 500)
             : 'Google publish failed after the Albatross document was created.';
       }
     }
