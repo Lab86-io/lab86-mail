@@ -187,7 +187,7 @@ describe('WRK-1 plan card provenance', () => {
     const cardId = await seedCard(t, { kind: 'chat', intentId: String(workId) });
     await t.mutation(api.albatrossWorkV2.releaseWork, { ...caller, workId });
     expect((await t.run((ctx) => ctx.db.get(cardId)))?.retiredByWorkId).toBe(String(workId));
-    await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
     expect((await t.run((ctx) => ctx.db.get(cardId)))?.retiredAt).toBeUndefined();
   });
 });
@@ -317,7 +317,7 @@ describe('WRK-10 reply watch and step checks', () => {
 
     await t.mutation(api.albatrossWorkV2.releaseWork, { ...caller, workId });
     expect((await t.run((ctx) => ctx.db.get(workId)))?.mailWatchAt).toBeUndefined();
-    await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
     expect((await t.run((ctx) => ctx.db.get(workId)))?.mailWatchAt).toBeNumber();
   });
 });

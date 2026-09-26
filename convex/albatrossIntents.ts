@@ -515,47 +515,6 @@ export const applyAreaVerdicts = mutation({
   },
 });
 
-export const answerQuestions = mutation({
-  args: {
-    ...callerArgs,
-    intentId: v.id('albatrossIntents'),
-    answers: v.array(
-      v.object({ id: v.string(), answer: v.string(), answeredOptionId: v.optional(v.string()) }),
-    ),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const intent = await requireIntent(ctx, args.intentId, userId);
-    assertWorkOpen(intent);
-    const ts = now();
-    const byId = new Map(
-      args.answers.map((entry) => [
-        entry.id,
-        { answer: preserveRaw(entry.answer, 2000), answeredOptionId: entry.answeredOptionId },
-      ]),
-    );
-    const questions = (intent.questions || []).map((question) => {
-      const entry = byId.get(question.id);
-      return entry
-        ? {
-            ...question,
-            answer: entry.answer,
-            answeredOptionId: entry.answeredOptionId,
-            answeredAt: ts,
-          }
-        : question;
-    });
-    const unanswered = questions.some((question) => !question.answer);
-    await ctx.db.patch(args.intentId, {
-      questions,
-      status: unanswered ? 'needs_answers' : intent.status === 'needs_answers' ? 'captured' : intent.status,
-      updatedAt: ts,
-    });
-    await scheduleNarrativeSource(ctx, userId, 'albatrossIntents', String(args.intentId));
-    return { questions, unanswered };
-  },
-});
-
 export const savePlan = mutation({
   args: {
     ...callerArgs,

@@ -18,12 +18,6 @@ const kindValidator = v.union(
   v.literal('task_and_checkin'),
   v.literal('review'),
 );
-const statusValidator = v.union(
-  v.literal('proposed'),
-  v.literal('active'),
-  v.literal('paused'),
-  v.literal('archived'),
-);
 const consentValidator = v.union(v.literal('proposed'), v.literal('enabled'), v.literal('declined'));
 const cadenceValidator = v.union(
   v.literal('daily'),
@@ -326,54 +320,6 @@ export const setConsent = mutation({
   },
 });
 
-export const updateSchedule = mutation({
-  args: {
-    ...callerArgs,
-    routineId: v.id('albatrossRoutines'),
-    title: v.optional(v.string()),
-    purpose: v.optional(v.string()),
-    cadence: v.optional(cadenceValidator),
-    daysOfWeek: v.optional(v.array(v.number())),
-    localTime: v.optional(v.string()),
-    timezone: v.optional(v.string()),
-    status: v.optional(statusValidator),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const routine = await requireRoutine(ctx, args.routineId, userId);
-    if (args.status === 'active') {
-      if (routine.consent !== 'enabled') throw new Error('Enable the routine before activating it.');
-      const project = await ctx.db.get(routine.projectId);
-      if (!project || project.userId !== userId || project.status === 'archived') {
-        throw new Error('The routine project is unavailable.');
-      }
-    }
-    const next = {
-      ...routine,
-      cadence: args.cadence ?? routine.cadence,
-      daysOfWeek: args.daysOfWeek
-        ? normalizedDays(args.daysOfWeek, args.cadence ?? routine.cadence)
-        : routine.daysOfWeek,
-      localTime: args.localTime ? validateClock(args.localTime) : routine.localTime,
-      timezone: args.timezone ? validateTimezone(args.timezone) : routine.timezone,
-    };
-    const ts = now();
-    await ctx.db.patch(args.routineId, {
-      ...(args.title !== undefined ? { title: clean(args.title, 180) || routine.title } : {}),
-      ...(args.purpose !== undefined ? { purpose: clean(args.purpose, 800) } : {}),
-      ...(args.cadence !== undefined ? { cadence: next.cadence } : {}),
-      ...(args.daysOfWeek !== undefined ? { daysOfWeek: next.daysOfWeek } : {}),
-      ...(args.localTime !== undefined ? { localTime: next.localTime } : {}),
-      ...(args.timezone !== undefined ? { timezone: next.timezone } : {}),
-      ...(args.status !== undefined ? { status: args.status } : {}),
-      nextRunAt: requireNextRoutineRunAt(next, ts),
-      updatedAt: ts,
-      ...(args.status === 'archived' ? { archivedAt: ts } : {}),
-    });
-    return { ok: true };
-  },
-});
-
 export const runNow = mutation({
   args: { ...callerArgs, routineId: v.id('albatrossRoutines') },
   handler: async (ctx, args) => {
@@ -383,41 +329,6 @@ export const runNow = mutation({
     await ctx.scheduler.runAfter(0, internal.albatrossRoutines.runOne, {
       routineId: args.routineId,
       force: true,
-    });
-    return { ok: true };
-  },
-});
-
-export const skipNext = mutation({
-  args: { ...callerArgs, routineId: v.id('albatrossRoutines') },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const routine = await requireRoutine(ctx, args.routineId, userId);
-    const scheduled = new Date(routine.nextRunAt);
-    const key = routineRunKey(String(routine._id), routine.timezone, scheduled);
-    const existing = await ctx.db
-      .query('albatrossRoutineRuns')
-      .withIndex('by_routine_runKey', (q) => q.eq('routineId', routine._id).eq('runKey', key))
-      .unique();
-    const ts = now();
-    if (!existing) {
-      await ctx.db.insert('albatrossRoutineRuns', {
-        userId,
-        routineId: routine._id,
-        projectId: routine.projectId,
-        areaId: routine.areaId,
-        runKey: key,
-        localDate: localDateKey(routine.timezone, scheduled),
-        scheduledFor: routine.nextRunAt,
-        status: 'skipped',
-        completedAt: ts,
-        createdAt: ts,
-        updatedAt: ts,
-      });
-    }
-    await ctx.db.patch(routine._id, {
-      nextRunAt: requireNextRoutineRunAt(routine, routine.nextRunAt + 60_000),
-      updatedAt: ts,
     });
     return { ok: true };
   },
@@ -449,40 +360,6 @@ export const listForProject = query({
             .order('desc')
             .take(10),
         })),
-    );
-  },
-});
-
-// The practices a person is keeping. Today shows at most a couple of these,
-// and never as a streak — the point is consistency over time, not a perfect
-// week the user can break.
-export const activePractices = query({
-  args: { ...callerArgs, limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const rows = await ctx.db
-      .query('albatrossRoutines')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .take(60);
-    const areas = await ctx.db
-      .query('areas')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const areaNames = new Map(areas.map((area) => [String(area._id), area.name]));
-    return (
-      rows
-        .filter((row) => row.status === 'active')
-        // A practice with no next run is not the most urgent thing today; `|| 0`
-        // sorted every unscheduled one to the front of the list.
-        .sort((a, b) => (a.nextRunAt ?? Number.POSITIVE_INFINITY) - (b.nextRunAt ?? Number.POSITIVE_INFINITY))
-        .slice(0, Math.min(Math.max(args.limit ?? 2, 1), 10))
-        .map((row) => ({
-          _id: String(row._id),
-          title: row.title,
-          cadence: row.cadence,
-          nextRunAt: row.nextRunAt ?? null,
-          areaName: row.areaId ? (areaNames.get(String(row.areaId)) ?? null) : null,
-        }))
     );
   },
 });

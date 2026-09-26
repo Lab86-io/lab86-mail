@@ -363,7 +363,7 @@ describe('boards Convex runtime', () => {
     );
   });
 
-  test('getCardState requires viewer access and getCardStates skips inaccessible cards', async () => {
+  test('getCardState requires viewer access', async () => {
     const { t, owner } = makeHarness();
     await seedUser(t, 'user_viewer', 'viewer@example.com');
     const boardId = await owner.mutation(api.boards.ensureDefaultBoard, {});
@@ -393,25 +393,6 @@ describe('boards Convex runtime', () => {
     await expect(stranger.query(api.boards.getCardState, { cardId: ownerCard })).rejects.toThrow(
       'Board not found or access denied.',
     );
-
-    const strangerBoard = await stranger.mutation(api.boards.createBoard, { title: 'Mine' });
-    const [strangerColumn] = await boardColumns(t, strangerBoard);
-    const strangerCard = await stranger.mutation(api.boards.createCard, {
-      boardId: strangerBoard,
-      columnId: strangerColumn._id,
-      title: 'My card',
-    });
-    const deletedCard = await stranger.mutation(api.boards.createCard, {
-      boardId: strangerBoard,
-      columnId: strangerColumn._id,
-      title: 'Gone',
-    });
-    await stranger.mutation(api.boards.deleteCard, { cardId: deletedCard });
-
-    const states = await stranger.query(api.boards.getCardStates, {
-      cardIds: [String(strangerCard), String(ownerCard), 'not-a-card-id', String(deletedCard)],
-    });
-    expect(states).toEqual([{ cardId: String(strangerCard), completedAt: null }]);
   });
 
   test('addComment lets viewers post trimmed comments; deleteCard returns a snapshot', async () => {

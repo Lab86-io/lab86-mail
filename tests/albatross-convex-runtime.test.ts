@@ -398,17 +398,6 @@ describe('Area facts lifecycle', () => {
         supersedesFactId: verifiedId,
       });
 
-      const all = await t.query(api.albatross.listAreaFacts, { ...caller(userId), areaId });
-      expect(all).toHaveLength(4);
-      const verifiedOnly = await t.query(api.albatross.listAreaFacts, {
-        ...caller(userId),
-        areaId,
-        status: 'verified',
-      });
-      expect(verifiedOnly.map((fact) => fact.value).sort()).toEqual([
-        'Weekly sync on Fridays',
-        'newops@acme.com',
-      ]);
       const scopedVerified = await t.query(api.albatross.listVerifiedFacts, { ...caller(userId), areaId });
       expect(scopedVerified).toHaveLength(2);
       const globalVerified = await t.query(api.albatross.listVerifiedFacts, { ...caller(userId) });
@@ -423,84 +412,39 @@ describe('Area facts lifecycle', () => {
 });
 
 describe('Artifact links', () => {
-  test('linkArtifactToArea upserts by identity and lists in both scopes', () =>
-    withSecret(async () => {
-      const t = convexTest(schema, convexModules);
-      const userId = 'links_user';
-      const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Ops' });
-      const linkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'mailThread',
-        artifactId: '  thread_1 ',
-        accountId: 'account_1',
-        confidence: 0.5,
-        reason: 'Looks related',
-      });
-      const again = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'mailThread',
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-        confidence: 0.8,
-      });
-      expect(again).toBe(linkId);
-      expect(await t.run((ctx) => ctx.db.get(linkId))).toMatchObject({
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-        status: 'candidate',
-        confidence: 0.8,
+  // Candidate links come from the classifier and the reindex in production.
+  // Seed one directly so the status test starts from that state.
+  async function insertCandidateLink(
+    t: ReturnType<typeof convexTest>,
+    link: {
+      userId: string;
+      areaId: any;
+      artifactKind: 'mailThread' | 'mcpItem';
+      artifactId: string;
+      accountId: string;
+      reason?: string;
+    },
+  ) {
+    return t.run((ctx) =>
+      ctx.db.insert('areaArtifactLinks', {
+        ...link,
         role: 'primary',
-      });
-
-      await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
-        areaId,
-        artifactKind: 'manual',
-        artifactId: 'manual_note_1',
-      });
-      await expect(
-        t.mutation(api.albatross.linkArtifactToArea, {
-          ...caller(userId),
-          areaId,
-          artifactKind: 'manual',
-          artifactId: 'manual_note_2',
-          status: 'verified',
-        }),
-      ).rejects.toThrow(/require explicit user confirmation/);
-
-      const accountScoped = await t.query(api.albatross.listArtifactLinks, {
-        ...caller(userId),
-        artifactKind: 'mailThread',
-        artifactId: 'thread_1',
-        accountId: 'account_1',
-      });
-      expect(accountScoped).toHaveLength(1);
-      const accountless = await t.query(api.albatross.listArtifactLinks, {
-        ...caller(userId),
-        artifactKind: 'manual',
-        artifactId: 'manual_note_1',
-      });
-      expect(accountless).toHaveLength(1);
-      expect(accountless[0].accountId).toBeUndefined();
-      const areaLinks = await t.query(api.albatross.listAreaArtifactLinks, { ...caller(userId), areaId });
-      expect(areaLinks).toHaveLength(2);
-      const candidates = await t.query(api.albatross.listAreaArtifactLinks, {
-        ...caller(userId),
-        areaId,
         status: 'candidate',
-      });
-      expect(candidates).toHaveLength(2);
-    }));
+        sourceRefs: [],
+        confirmationRefs: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+  }
 
   test('setAreaArtifactLinkStatus verifies, rejects, and detaches mcp evidence', () =>
     withSecret(async () => {
       const t = convexTest(schema, convexModules);
       const userId = 'link_status_user';
       const areaId = await t.mutation(api.albatross.createArea, { ...caller(userId), name: 'Repo' });
-      const mailLinkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
+      const mailLinkId = await insertCandidateLink(t, {
+        userId,
         areaId,
         artifactKind: 'mailThread',
         artifactId: 'thread_verify',
@@ -526,8 +470,8 @@ describe('Artifact links', () => {
       expect(verifiedRow).toMatchObject({ status: 'verified', confidence: 1 });
       expect(verifiedRow?.reason).toBe('classifier guess; user response: Yes, this is the client thread');
 
-      const mcpLinkId = await t.mutation(api.albatross.linkArtifactToArea, {
-        ...caller(userId),
+      const mcpLinkId = await insertCandidateLink(t, {
+        userId,
         areaId,
         artifactKind: 'mcpItem',
         artifactId: 'conn_1:ext_9',

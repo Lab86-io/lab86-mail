@@ -1497,15 +1497,6 @@ export const mobileCurrentCheckin = query({
   },
 });
 
-export const getCheckin = query({
-  args: { ...notificationCallerArgs, checkinId: v.id('albatrossDailyCheckins') },
-  handler: async (ctx, args) => {
-    const userId = await notificationCallerUserId(ctx, args);
-    const row = await ctx.db.get(args.checkinId);
-    return row?.userId === userId ? row : null;
-  },
-});
-
 export const targets = internalQuery({
   args: {},
   handler: async (ctx) => {

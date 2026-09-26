@@ -311,7 +311,7 @@ describe('Monro completion', () => {
         source: { intentId: 'invalid' },
       }),
     ).rejects.toThrow('Work not found');
-    await t.mutation(api.albatrossWorkV2.reopenWork, { ...caller, workId });
+    await t.mutation(api.albatrossWorkV2.updateWorkState, { ...caller, workId, state: 'active' });
     expect((await t.run((ctx) => ctx.db.get(ids.owned)))?.retiredAt).toBeUndefined();
     expect((await t.run((ctx) => ctx.db.get(ids.done)))?.completedAt).toBe(2);
     expect((await t.run((ctx) => ctx.db.get(ids.projectId)))?.status).toBe('active');

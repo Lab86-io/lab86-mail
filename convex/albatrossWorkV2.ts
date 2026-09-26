@@ -200,8 +200,8 @@ export const updateWorkState = mutation({
           : work.status === 'done' || work.status === 'archived'
             ? 'ready'
             : work.status,
-      // Picking released work back up clears the release, exactly like
-      // reopenWork — a revived albatross must not keep a release reason.
+      // Picking released work back up clears the release: a revived
+      // albatross must not keep a release reason.
       ...(args.state !== 'archived' && isTerminalWork(work)
         ? {
             releaseReason: undefined,
@@ -370,32 +370,6 @@ export const releaseUnstartedWork = mutation({
     });
     await closeWorkArtifacts(ctx, work, ts);
     return { released: true };
-  },
-});
-
-/** Picking something back up is always allowed, and costs nothing to say. */
-export const reopenWork = mutation({
-  args: { ...callerArgs, workId: v.id('albatrossIntents') },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const work = await requireWork(ctx, args.workId, userId);
-    const ts = now();
-    const rearm =
-      !work.mailWatchAt &&
-      (await mailWatchShouldRun(ctx, { ...work, workState: 'active', replyWatch: undefined }));
-    await ctx.db.patch(args.workId, {
-      workState: 'active',
-      replyWatch: undefined,
-      ...(rearm ? { mailWatchAt: ts } : {}),
-      status: 'ready',
-      releaseReason: undefined,
-      releaseProposedBy: undefined,
-      releasedAt: undefined,
-      reviewAt: undefined,
-      ...userTouch(ts),
-    });
-    await restoreWorkArtifacts(ctx, work, ts);
-    return { reopenedAt: ts };
   },
 });
 
@@ -812,18 +786,6 @@ export const recordLapse = mutation({
   },
 });
 
-/** Did the smaller step actually happen? This is what makes the record teach. */
-export const resolveLapse = mutation({
-  args: { ...callerArgs, lapseId: v.id('albatrossLapses'), held: v.boolean() },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const lapse = await ctx.db.get(args.lapseId);
-    if (!lapse || lapse.userId !== userId) throw new Error('Lapse not found.');
-    const ts = now();
-    await ctx.db.patch(args.lapseId, { revisionHeld: args.held, resolvedAt: ts, updatedAt: ts });
-  },
-});
-
 /** Mark the plan step itself complete; creating its artifact never counts as finishing it. */
 export const completeStep = mutation({
   args: {
@@ -998,54 +960,6 @@ export const completeStep = mutation({
       workState: work.workState || 'active',
       transitioned,
     };
-  },
-});
-
-/** Write or correct what would settle an outcome. */
-export const saveContract = mutation({
-  args: {
-    ...callerArgs,
-    workId: v.id('albatrossIntents'),
-    outcome: v.string(),
-    proofs: v.array(
-      v.object({
-        id: v.string(),
-        what: v.string(),
-        satisfiedBy: v.optional(v.string()),
-        satisfiedAt: v.optional(v.number()),
-      }),
-    ),
-    closeWhen: v.union(
-      v.literal('action_succeeded'),
-      v.literal('outcome_likely'),
-      v.literal('outcome_confirmed'),
-      v.literal('never_automatically'),
-    ),
-    contradictions: v.optional(v.array(v.string())),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
-    const ts = now();
-    await ctx.db.patch(args.workId, {
-      contract: {
-        outcome: args.outcome.slice(0, 600),
-        // The contract lives inside the work document. Capping the array
-        // lengths alone still lets twelve unbounded conditions grow the row
-        // until a later patch of the same work fails, so every string inside
-        // is bounded the way the rest of this file bounds free text.
-        proofs: args.proofs.slice(0, 12).map((proof) => ({
-          ...proof,
-          id: proof.id.slice(0, 120),
-          what: proof.what.slice(0, 300),
-          satisfiedBy: bounded(proof.satisfiedBy, 300),
-        })),
-        closeWhen: args.closeWhen,
-        contradictions: args.contradictions?.slice(0, 12).map((row) => row.slice(0, 300)),
-        updatedAt: ts,
-      },
-      updatedAt: ts,
-    });
   },
 });
 
@@ -1286,19 +1200,6 @@ export const openWorkForProof = query({
       title: row.title || row.rawText.slice(0, 90),
       contract: row.contract ? { outcome: row.contract.outcome, proofs: row.contract.proofs } : null,
     }));
-  },
-});
-
-export const lapsesForWork = query({
-  args: { ...callerArgs, workId: v.id('albatrossIntents'), limit: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireWork(ctx, args.workId, userId);
-    return ctx.db
-      .query('albatrossLapses')
-      .withIndex('by_work', (q) => q.eq('workId', args.workId))
-      .order('desc')
-      .take(Math.min(Math.max(args.limit ?? 20, 1), 100));
   },
 });
 

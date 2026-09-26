@@ -38,7 +38,6 @@ import { internalAction, internalMutation, mutation, query } from './_generated/
 import {
   type AlbatrossConfirmationRef,
   type AlbatrossSourceRef,
-  type AreaArtifactLinkStatus,
   type AreaFactStatus,
   assertFactTransitionAllowed,
   assertVerifiedArtifactLinkAllowed,
@@ -80,7 +79,6 @@ const factStatusValidator = v.union(
   v.literal('superseded'),
 );
 const creatableFactStatusValidator = v.union(v.literal('candidate'), v.literal('verified'));
-const linkStatusValidator = v.union(v.literal('candidate'), v.literal('verified'), v.literal('rejected'));
 const artifactKindValidator = v.union(
   v.literal('mailThread'),
   v.literal('calendarEvent'),
@@ -89,7 +87,6 @@ const artifactKindValidator = v.union(
   v.literal('intent'),
   v.literal('manual'),
 );
-const linkRoleValidator = v.union(v.literal('primary'), v.literal('secondary'), v.literal('supporting'));
 const ARTIFACT_ID_MAX = 500;
 const ACCOUNT_ID_MAX = 120;
 
@@ -833,25 +830,6 @@ export const supersedeAreaFact = mutation({
   },
 });
 
-export const listAreaFacts = query({
-  args: { ...callerArgs, areaId: v.id('areas'), status: v.optional(factStatusValidator) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    return args.status
-      ? await ctx.db
-          .query('areaFacts')
-          .withIndex('by_user_area_status', (q) =>
-            q.eq('userId', userId).eq('areaId', args.areaId).eq('status', args.status!),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaFacts')
-          .withIndex('by_area', (q) => q.eq('areaId', args.areaId))
-          .collect();
-  },
-});
-
 export const listVerifiedFacts = query({
   args: { ...callerArgs, areaId: v.optional(v.id('areas')) },
   handler: async (ctx, args) => {
@@ -869,104 +847,6 @@ export const listVerifiedFacts = query({
       .query('areaFacts')
       .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'verified'))
       .collect();
-  },
-});
-
-export const linkArtifactToArea = mutation({
-  args: {
-    ...callerArgs,
-    areaId: v.id('areas'),
-    externalId: v.optional(v.string()),
-    artifactKind: artifactKindValidator,
-    artifactId: v.string(),
-    accountId: v.optional(v.string()),
-    role: v.optional(linkRoleValidator),
-    status: v.optional(linkStatusValidator),
-    confidence: v.optional(v.number()),
-    reason: v.optional(v.string()),
-    sourceRefs: v.optional(v.array(sourceRefValidator)),
-    confirmationRefs: v.optional(v.array(confirmationRefValidator)),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    const refs = normalizedRefs(args);
-    const ts = now();
-    const { artifactId, accountId } = normalizedArtifactIdentity(args);
-    const status = (args.status || 'candidate') as AreaArtifactLinkStatus;
-    assertVerifiedArtifactLinkAllowed(status, refs.confirmationRefs);
-    const artifactLinks = accountId
-      ? await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_account_artifact', (q) =>
-            q
-              .eq('userId', userId)
-              .eq('accountId', accountId)
-              .eq('artifactKind', args.artifactKind)
-              .eq('artifactId', artifactId),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_artifact', (q) =>
-            q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
-          )
-          .collect();
-    const existing = artifactLinks.find(
-      (link) => link.areaId === args.areaId && (link.accountId || undefined) === accountId,
-    );
-    const patch = {
-      userId,
-      areaId: args.areaId,
-      externalId: args.externalId ? normalizeText(args.externalId) : undefined,
-      artifactKind: args.artifactKind,
-      artifactId,
-      accountId,
-      role: args.role || 'primary',
-      status,
-      confidence: args.confidence,
-      reason: args.reason ? normalizeText(args.reason).slice(0, 700) : undefined,
-      sourceRefs: refs.sourceRefs,
-      confirmationRefs: refs.confirmationRefs,
-      updatedAt: ts,
-    };
-    if (existing) {
-      await ctx.db.patch(existing._id, patch);
-      await upsertAreaEvidence(ctx, {
-        userId,
-        areaId: args.areaId,
-        sourceKind: artifactEvidenceKind(args.artifactKind),
-        sourceId: artifactId,
-        title: `${args.artifactKind} filed to this Area`,
-        summary: patch.reason,
-        occurredAt: ts,
-        trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
-        confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
-        dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
-        metadata: {
-          artifactKind: args.artifactKind,
-          role: patch.role,
-          status,
-          linkId: String(existing._id),
-        },
-      });
-      return existing._id;
-    }
-    const linkId = await ctx.db.insert('areaArtifactLinks', { ...patch, createdAt: ts });
-    await upsertAreaEvidence(ctx, {
-      userId,
-      areaId: args.areaId,
-      sourceKind: artifactEvidenceKind(args.artifactKind),
-      sourceId: artifactId,
-      title: `${args.artifactKind} filed to this Area`,
-      summary: patch.reason,
-      occurredAt: ts,
-      trust: status === 'verified' ? 'confirmed' : status === 'rejected' ? 'rejected' : 'inferred',
-      confidence: args.confidence ?? (status === 'verified' ? 1 : status === 'rejected' ? 0 : 0.65),
-      dedupeKey: `area-link:${String(args.areaId)}:${args.artifactKind}:${accountId || ''}:${artifactId}`,
-      metadata: { artifactKind: args.artifactKind, role: patch.role, status, linkId: String(linkId) },
-    });
-    return linkId;
   },
 });
 
@@ -1122,58 +1002,6 @@ export const moveMailThreadsToArea = mutation({
       moved += 1;
     }
     return { moved, skipped };
-  },
-});
-
-export const listAreaArtifactLinks = query({
-  args: { ...callerArgs, areaId: v.id('areas'), status: v.optional(linkStatusValidator) },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    await requireArea(ctx, args.areaId, userId);
-    return args.status
-      ? await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_area_status', (q) =>
-            q.eq('userId', userId).eq('areaId', args.areaId).eq('status', args.status!),
-          )
-          .collect()
-      : await ctx.db
-          .query('areaArtifactLinks')
-          .withIndex('by_user_area', (q) => q.eq('userId', userId).eq('areaId', args.areaId))
-          .collect();
-  },
-});
-
-export const listArtifactLinks = query({
-  args: {
-    ...callerArgs,
-    artifactKind: artifactKindValidator,
-    artifactId: v.string(),
-    accountId: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const userId = await resolveUserId(ctx, args);
-    const { artifactId, accountId } = normalizedArtifactIdentity(args);
-    if (accountId) {
-      return await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_account_artifact', (q) =>
-          q
-            .eq('userId', userId)
-            .eq('accountId', accountId)
-            .eq('artifactKind', args.artifactKind)
-            .eq('artifactId', artifactId),
-        )
-        .collect();
-    }
-    return (
-      await ctx.db
-        .query('areaArtifactLinks')
-        .withIndex('by_user_artifact', (q) =>
-          q.eq('userId', userId).eq('artifactKind', args.artifactKind).eq('artifactId', artifactId),
-        )
-        .collect()
-    ).filter((link) => !link.accountId);
   },
 });
 

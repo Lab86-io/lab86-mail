@@ -208,7 +208,6 @@ describe('the surfaces carry it', () => {
     expect(schema).toContain('limits: v.optional(v.string())');
     const server = readFileSync('convex/albatrossWorkV2.ts', 'utf8');
     expect(server).toContain('attachProof');
-    expect(server).toContain('saveContract');
   });
 
   test('guided work names what only the user can do', () => {
