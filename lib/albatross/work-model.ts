@@ -471,19 +471,3 @@ export function mergeAppliedSteps(
   }
   return [...byKey.values()];
 }
-
-export function unresolvedArtifactsAfterUndo(
-  application: { artifacts?: unknown[] },
-  operations: Array<{ status?: string; target?: { id?: string; kind?: string } }>,
-) {
-  const undoneTargets = new Set(
-    operations
-      .filter((operation) => operation.status === 'undone')
-      .map((operation) => `${operation.target?.kind || ''}:${operation.target?.id || ''}`),
-  );
-  return (application.artifacts || []).filter((artifact: any) =>
-    undoneTargets.has(
-      `${artifact.kind || artifact.artifactKind || ''}:${artifact.id || artifact.artifactId || ''}`,
-    ),
-  );
-}

@@ -693,7 +693,6 @@ describe('AI tools on fake noreply mail with no provider configured', () => {
         const { upsertMessage } = await import('../lib/store/messages');
         const {
           bulkTriage,
-          classifyThreads,
           draftReply,
           extractActionItems,
           nlSearch,
@@ -758,25 +757,6 @@ describe('AI tools on fake noreply mail with no provider configured', () => {
         );
         expect(batch.model).toBe('local');
         expect(batch.verdicts[0].id).toBe(threadId);
-
-        const classified = await classifyThreads.handler(
-          {
-            threads: [
-              {
-                id: threadId,
-                account,
-                from: 'noreply@example.test',
-                subject: 'Automated account notice',
-                snippet: 'No response is needed.',
-                labels: ['CATEGORY_UPDATES'],
-                unread: true,
-              },
-            ],
-          },
-          { agent: 'codex' },
-        );
-        expect(classified.model).toBe('local');
-        expect(classified.verdicts[0].id).toBe(threadId);
 
         const actions = await extractActionItems.handler({ account, threadId }, { agent: 'codex' });
         expect(actions.model).toBe('local');

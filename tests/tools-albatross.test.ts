@@ -831,10 +831,6 @@ describe('Albatross tools', () => {
     expect(approvalOrder.indexOf('claimApproval')).toBeLessThan(approvalOrder.indexOf('tool:send_message'));
     expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeUndefined();
 
-    await expect(
-      runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_pending' }),
-    ).rejects.toThrow(/did not record an undoable/);
-
     approvalFixture = {
       approvalId: 'approval_reject',
       status: 'pending',
@@ -865,37 +861,6 @@ describe('Albatross tools', () => {
     });
     expect(approvedRsvp.result.operationId).toMatch(/^operation_rsvp_/);
     expect(mutationCalls.at(-1)?.args.undoExpiresAt).toBeGreaterThan(Date.now());
-    const undone = await runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_rsvp' });
-    expect(undone.ok).toBe(true);
-    expect(undoCalls).toEqual([{ userId: 'test_user_tools', operationId: approvedRsvp.result.operationId }]);
-    expect(mutationCalls.at(-1)?.args.status).toBe('undone');
-
-    approvalFixture = {
-      approvalId: 'approval_old',
-      status: 'approved',
-      toolName: 'send_message',
-      undoExpiresAt: Date.now() - 1,
-    };
-    await expect(
-      runTool(albatross.albatrossUndoApproval.handler, { approvalId: 'approval_old' }),
-    ).rejects.toThrow(/Undo window expired/);
-  });
-
-  test('preview undo unresolved returns artifacts whose operations were undone', async () => {
-    const result = await runTool(albatross.albatrossPreviewUndoUnresolved.handler, {
-      application: {
-        artifacts: [
-          { kind: 'project', id: 'project_1', title: 'Project' },
-          { kind: 'task', id: 'task_1', title: 'Task' },
-        ],
-      },
-      operations: [
-        { status: 'undone', target: { kind: 'project', id: 'project_1' } },
-        { status: 'applied', target: { kind: 'task', id: 'task_1' } },
-      ],
-    });
-
-    expect(result.unresolved).toEqual([{ kind: 'project', id: 'project_1', title: 'Project' }]);
   });
 
   test('records user-confirmed progress with source evidence, then versions the same Work plan', async () => {

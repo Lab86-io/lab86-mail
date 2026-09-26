@@ -17,7 +17,6 @@ import {
   type AlbatrossApplicationStep,
   appliedStepsFromApplyResult,
   buildAlbatrossApplicationPlan,
-  unresolvedArtifactsAfterUndo,
 } from '@/lib/albatross/work-model';
 import { summarizeWorkPlanRevision } from '@/lib/albatross/work-revision';
 import { WORK_SHAPES } from '@/lib/albatross/work-shape';
@@ -1392,40 +1391,6 @@ export const albatrossRejectAction = defineTool({
   },
 });
 
-export const albatrossUndoApproval = defineTool({
-  name: 'albatross_undo_approval',
-  description:
-    'Mark an approved Albatross approval as undone during its short undo window. Provider-level undo is delegated to the underlying operation when available.',
-  category: 'tasks',
-  mutating: true,
-  input: z.object({ approvalId: z.string() }),
-  output: z.object({ ok: z.boolean() }),
-  async handler(args, ctx) {
-    const userId = requireUserId(ctx.userId);
-    const approval = await deps.convexQuery<any | null>(albatrossApi().getApproval, {
-      userId,
-      approvalId: args.approvalId,
-    });
-    if (!approval) throw new Error('Approval not found.');
-    if (approval.status !== 'approved') throw new Error(`Only approved actions can be undone.`);
-    if (approval.undoExpiresAt && Date.now() > approval.undoExpiresAt) {
-      throw new Error('Undo window expired.');
-    }
-    const operationId = approval.result?.operationId;
-    if (!operationId) {
-      throw new Error('This approval did not record an undoable provider operation.');
-    }
-    await deps.undoOperation(userId, operationId);
-    await deps.convexMutation(albatrossApi().decideApproval, {
-      userId,
-      approvalId: args.approvalId,
-      status: 'undone',
-      decisionNote: 'Undone from Albatross approval queue.',
-    });
-    return { ok: true };
-  },
-});
-
 export const albatrossCreateProject = defineTool({
   name: 'albatross_create_project',
   description: 'Create or update an Albatross project/epic without creating task cards by itself.',
@@ -1746,19 +1711,6 @@ export const albatrossListSprints = defineTool({
       limit: args.limit,
     });
     return { sprints };
-  },
-});
-
-export const albatrossPreviewUndoUnresolved = defineTool({
-  name: 'albatross_preview_undo_unresolved',
-  description:
-    'Given a stored application artifact list and operation rows, return which artifacts would reappear as unresolved after undo.',
-  category: 'tasks',
-  mutating: false,
-  input: z.object({ application: z.any(), operations: z.array(z.any()) }),
-  output: z.object({ unresolved: z.array(z.any()) }),
-  async handler(args) {
-    return { unresolved: unresolvedArtifactsAfterUndo(args.application, args.operations) };
   },
 });
 

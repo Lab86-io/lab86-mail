@@ -9,7 +9,6 @@ import {
   classificationFreshnessPatch,
   classifierContent,
   classifyCorpusThread,
-  computeCategoryUnreadCounts,
   loadSmartContext,
   normalizeCorpusThread,
   queryCategoryThreads,
@@ -973,23 +972,6 @@ function projectCorpusMessage(row: any) {
   };
 }
 
-// Recent threads with stored verdicts, projected small. Feeds the category
-// stat counters and the command-palette seeds without scanning message rows.
-// Server-tool variant of liveMail.categoryCounts (internal secret instead of
-// Clerk identity) — backs the agent-facing get_smart_category_stats tool.
-export const categoryCountsInternal = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    accountIds: v.optional(v.array(v.string())),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const counts = await computeCategoryUnreadCounts(ctx, args.userId, args.accountIds);
-    return { counts };
-  },
-});
-
 // One thread row in client shape. Light corpus-first identity lookup for
 // tools that act on a thread the UI is showing (quick-fix corrections etc.);
 // the KV thread cache only ever held provider-transport reads, so corpus rows
@@ -1016,38 +998,8 @@ export const getCorpusThread = query({
   },
 });
 
-// Batched latest-message body excerpts, keyed `${accountId}:${providerThreadId}`.
-// Feeds body-grounded classification in the Next tool layer (deterministic +
-// LLM passes) without shipping full message docs over the wire.
-export const threadBodyExcerpts = query({
-  args: {
-    internalSecret: v.optional(v.string()),
-    userId: v.string(),
-    items: v.array(v.object({ accountId: v.string(), providerThreadId: v.string() })),
-    maxChars: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    requireInternalSecret(args.internalSecret);
-    const cap = Math.min(Math.max(Math.floor(args.maxChars ?? 2500), 200), 4000);
-    const out: Record<string, string> = {};
-    for (const item of args.items.slice(0, 100)) {
-      const latest = await ctx.db
-        .query('mailCorpusMessages')
-        .withIndex('by_user_account_thread_received', (q) =>
-          q
-            .eq('userId', args.userId)
-            .eq('accountId', item.accountId)
-            .eq('providerThreadId', item.providerThreadId),
-        )
-        .order('desc')
-        .take(1);
-      const body = String(latest[0]?.textBody || latest[0]?.searchText || '').slice(0, cap);
-      if (body) out[`${item.accountId}:${item.providerThreadId}`] = body;
-    }
-    return out;
-  },
-});
-
+// Recent threads with stored verdicts, projected small, read without
+// scanning message rows.
 export const listRecentCorpusThreads = query({
   args: {
     internalSecret: v.optional(v.string()),

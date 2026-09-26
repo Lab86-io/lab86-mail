@@ -8,7 +8,6 @@ import {
   deleteSmartLabel,
   listSmartLabels,
   listSmartRules,
-  markSenderHuman,
   previewSmartLabel,
   setSmartRuleEnabledTool,
   updateSmartLabel,
@@ -125,7 +124,7 @@ describe('smart label and rule tools', () => {
     ).toBe(true);
   });
 
-  test('apply_smart_correction and mark_sender_human record the new category', async () => {
+  test('apply_smart_correction records the new category', async () => {
     const { account, threadId } = await seedThreadMessage({
       threadId: 'cls14-correction-thread',
       messageId: 'cls14-correction-message',
@@ -143,14 +142,9 @@ describe('smart label and rule tools', () => {
     expect(corrected.ok).toBe(true);
     expect(corrected.rule).toBeTruthy();
 
-    const marked = await runTool(markSenderHuman.handler, { account, threadId });
-    expect(marked.ok).toBe(true);
-    expect(marked.rule.scope).toBe('sender');
-
     const { corrections } = await runTool(listSmartRules.handler, { correctionLimit: 10 });
     const byRule = new Map(corrections.map((item: any) => [item.ruleId, item]));
     expect((byRule.get(corrected.rule._id) as any)?.newCategory).toBe('main');
-    expect((byRule.get(marked.rule._id) as any)?.newCategory).toBe('main');
     // The corpus row is the stored verdict. The unused local thread cache is
     // not written.
     const cached = await withToolContext(() => getThread(account, threadId));

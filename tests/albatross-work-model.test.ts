@@ -7,11 +7,7 @@ import {
   prioritizeHandoffsForIntent,
   summarizeAlbatrossDailyReportContext,
 } from '../lib/albatross/daily-report';
-import {
-  appliedStepsFromApplyResult,
-  buildAlbatrossApplicationPlan,
-  unresolvedArtifactsAfterUndo,
-} from '../lib/albatross/work-model';
+import { appliedStepsFromApplyResult, buildAlbatrossApplicationPlan } from '../lib/albatross/work-model';
 
 describe('Albatross plan application model', () => {
   test('separates executable artifacts, approval-gated actions, and unresolved actions', () => {
@@ -188,23 +184,6 @@ describe('Albatross plan application model', () => {
     expect(plan.executableSteps[0].sourceRefs).toEqual([
       { kind: 'mailThread', id: 'thread-1', label: 'Acme proposal' },
     ]);
-  });
-
-  test('undone operations reappear as unresolved artifacts', () => {
-    const unresolved = unresolvedArtifactsAfterUndo(
-      {
-        artifacts: [
-          { kind: 'task', id: 'card_1', title: 'List missing tax documents' },
-          { kind: 'emailDraft', id: 'draft_1', title: 'Draft Andrew note' },
-        ],
-      },
-      [
-        { status: 'undone', target: { kind: 'task', id: 'card_1' } },
-        { status: 'applied', target: { kind: 'emailDraft', id: 'draft_1' } },
-      ],
-    );
-
-    expect(unresolved).toEqual([{ kind: 'task', id: 'card_1', title: 'List missing tax documents' }]);
   });
 
   test('appliedSteps mapping records created artifact ids and bare keys for approvals', () => {

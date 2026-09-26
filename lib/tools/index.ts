@@ -1,6 +1,5 @@
 import {
   bulkTriage,
-  classifyThreads,
   draftReply,
   extractActionItems,
   nlSearch,
@@ -26,14 +25,12 @@ import {
   albatrossListRoutines,
   albatrossListSprints,
   albatrossMetricLog,
-  albatrossPreviewUndoUnresolved,
   albatrossRecordProgress,
   albatrossRejectAction,
   albatrossReplanWork,
   albatrossRunRoutineNow,
   albatrossSetRoutineConsent,
   albatrossSplitWork,
-  albatrossUndoApproval,
   albatrossUpdateProject,
 } from './albatross';
 import {
@@ -50,7 +47,6 @@ import {
   workHome,
   workList,
 } from './areas';
-import { listAuditEntries } from './audit-tools';
 import {
   calendarCountEvents,
   calendarCreateEvent,
@@ -114,7 +110,6 @@ import { cloudFileSearch, googleFileImport } from './files';
 import { googleDocumentEdit, googleDocumentGet } from './google-documents';
 import {
   getMessage,
-  getSmartCategoryStats,
   getThread,
   listAccounts,
   listAccountThreads,
@@ -122,7 +117,6 @@ import {
   listLabels,
   listSmartCategory,
   readThread,
-  recentThreadsCached,
   searchThreads,
 } from './mail';
 import {
@@ -157,7 +151,6 @@ import {
   deleteSmartLabel,
   listSmartLabels,
   listSmartRules,
-  markSenderHuman,
   previewSmartLabel,
   setSmartRuleEnabledTool,
   updateSmartLabel,
@@ -188,13 +181,7 @@ import {
   tasksSetPublicLink,
   tasksUpdateCard,
 } from './tasks';
-import {
-  getTrackedThreadTool,
-  listTrackedThreadsTool,
-  resolveTrackedThread,
-  trackThread,
-  updateTrackedThreadTool,
-} from './tracked-threads';
+import { resolveTrackedThread, updateTrackedThreadTool } from './tracked-threads';
 import {
   uiCloseBar,
   uiFocusThread,
@@ -221,13 +208,11 @@ const allTools: AnyTool[] = [
   corpusCount,
   threadTimeline,
   listSmartCategory,
-  getSmartCategoryStats,
   getThread,
   readThread,
   getMessage,
   listLabels,
   listAttachments,
-  recentThreadsCached,
   listAccountThreads,
   archiveThread,
   trashThread,
@@ -242,7 +227,6 @@ const allTools: AnyTool[] = [
   createLabel,
   applySmartLabels,
   applySmartCorrection,
-  markSenderHuman,
   muteThread,
   snoozeThreadTool,
   unsnoozeThreadTool,
@@ -262,7 +246,6 @@ const allTools: AnyTool[] = [
   triageThread,
   draftReply,
   bulkTriage,
-  classifyThreads,
   generateDailyReportTool,
   getLatestDailyReportTool,
   listDailyReportsTool,
@@ -281,11 +264,8 @@ const allTools: AnyTool[] = [
   listSmartRules,
   createSmartRule,
   setSmartRuleEnabledTool,
-  trackThread,
   updateTrackedThreadTool,
   resolveTrackedThread,
-  listTrackedThreadsTool,
-  getTrackedThreadTool,
   presentationPlan,
   documentCreate,
   documentEdit,
@@ -333,7 +313,6 @@ const allTools: AnyTool[] = [
   resolvePhotos,
   browserbaseSearch,
   browserbaseFetch,
-  listAuditEntries,
   listRecentOperationsTool,
   undoOperationTool,
   tasksListBoards,
@@ -346,7 +325,6 @@ const allTools: AnyTool[] = [
   albatrossListApprovalQueue,
   albatrossApproveAction,
   albatrossRejectAction,
-  albatrossUndoApproval,
   albatrossCreateProject,
   albatrossListProjects,
   albatrossUpdateProject,
@@ -357,7 +335,6 @@ const allTools: AnyTool[] = [
   albatrossGetProjectPane,
   albatrossCreateSprint,
   albatrossListSprints,
-  albatrossPreviewUndoUnresolved,
   albatrossGetWorkContext,
   albatrossCompleteWork,
   albatrossRecordProgress,

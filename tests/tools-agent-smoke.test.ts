@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import './tools/harness';
 import { getDraft } from '../lib/store/drafts';
 import { getThread } from '../lib/store/threads';
+import { upsertTrackedThread } from '../lib/store/tracked-threads';
 import { deleteDraftTool, listDraftsTool, saveDraftTool, updateDraft } from '../lib/tools/compose';
 import { snoozeThreadTool } from '../lib/tools/mail-mutate';
 import { listMemories, recall, remember } from '../lib/tools/memories';
@@ -11,13 +12,7 @@ import {
   listSmartLabels,
   listSmartRules,
 } from '../lib/tools/smart-labels';
-import {
-  getTrackedThreadTool,
-  listTrackedThreadsTool,
-  resolveTrackedThread,
-  trackThread,
-  updateTrackedThreadTool,
-} from '../lib/tools/tracked-threads';
+import { resolveTrackedThread, updateTrackedThreadTool } from '../lib/tools/tracked-threads';
 import { runTool, seedThreadMessage, withToolContext } from './tools/harness';
 
 describe('representative agent local-store smoke flow', () => {
@@ -93,26 +88,25 @@ describe('representative agent local-store smoke flow', () => {
       ),
     ).toBe(true);
 
-    const tracked = await runTool(trackThread.handler, {
-      account,
-      threadId,
-      reason: 'Waiting on legal review',
-      status: 'open',
-      openLoops: ['Review agreement'],
-      nextAction: 'Read redlines',
-    });
-    expect((await runTool(getTrackedThreadTool.handler, { account, threadId })).tracked?._id).toBe(
-      tracked.tracked._id,
-    );
+    const tracked = {
+      tracked: await withToolContext(() =>
+        upsertTrackedThread({
+          account,
+          threadId,
+          subject: 'Regression contract review',
+          reason: 'Waiting on legal review',
+          status: 'open',
+          openLoops: ['Review agreement'],
+          nextAction: 'Read redlines',
+        }),
+      ),
+    };
     const updated = await runTool(updateTrackedThreadTool.handler, {
       id: tracked.tracked._id,
       status: 'waiting',
       nextAction: 'Wait for counsel',
     });
     expect(updated.tracked.status).toBe('waiting');
-    expect((await runTool(listTrackedThreadsTool.handler, { includeResolved: false })).tracked).toEqual(
-      expect.arrayContaining([expect.objectContaining({ _id: tracked.tracked._id })]),
-    );
     const resolved = await runTool(resolveTrackedThread.handler, {
       id: tracked.tracked._id,
       reason: 'Review complete',

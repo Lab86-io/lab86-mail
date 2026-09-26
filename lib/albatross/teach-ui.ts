@@ -457,7 +457,6 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   nl_search: searchSentences('your mail', 'Mail search failed'),
   get_thread: fixed('Loading the thread', 'Read the thread', 'Loading the thread failed'),
   get_message: fixed('Loading the message', 'Read the message', 'Loading the message failed'),
-  recent_threads: fixed('Loading recent threads', 'Loaded recent threads', 'Loading recent threads failed'),
   list_account_threads: fixed('Loading the mailbox', 'Loaded the mailbox', 'Loading the mailbox failed'),
   list_accounts: fixed(
     'Checking connected accounts',
@@ -603,11 +602,6 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
   ),
   translate_thread: fixed('Translating the thread', 'Translated the thread', 'Translating failed'),
   pre_send_critique: fixed('Reviewing the draft', 'Reviewed the draft', 'Reviewing the draft failed'),
-  classify_threads: fixed(
-    'Re-checking smart categories',
-    'Re-checked smart categories',
-    'Re-checking smart categories failed',
-  ),
 
   // --- Memory ---
   remember: (a) => {
@@ -754,8 +748,6 @@ export const TOOL_SENTENCES: Record<string, SentenceBuilder> = {
       failed: 'Reading the page failed',
     };
   },
-  log_action: fixed('Logging the action', 'Logged the action', 'Logging the action failed'),
-  list_audit: fixed('Checking the audit log', 'Checked the audit log', 'Checking the audit log failed'),
 
   // --- UI actions ---
   ui_focus_thread: fixed(

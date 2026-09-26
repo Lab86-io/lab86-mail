@@ -571,32 +571,6 @@ describe('corpus reads', () => {
     });
     expect(recentScoped).toEqual([]);
   });
-
-  test('threadBodyExcerpts returns capped bodies keyed by account:thread', async () => {
-    const t = newHarness();
-    await ingest(t, [message({ textBody: 'B'.repeat(5000) })]);
-    const out = await t.query(api.mailCorpus.threadBodyExcerpts, {
-      internalSecret: SECRET,
-      userId: USER,
-      items: [
-        { accountId: scope.accountId, providerThreadId: 'thread_1' },
-        { accountId: scope.accountId, providerThreadId: 'missing' },
-      ],
-      maxChars: 300,
-    });
-    expect(Object.keys(out)).toEqual(['account_1:thread_1']);
-    expect(out['account_1:thread_1']).toHaveLength(300);
-  });
-
-  test('categoryCountsInternal proxies the shared unread counter', async () => {
-    const t = newHarness();
-    await ingest(t, [message()]);
-    const { counts } = await t.query(api.mailCorpus.categoryCountsInternal, {
-      internalSecret: SECRET,
-      userId: USER,
-    });
-    expect(typeof counts.main?.unread).toBe('number');
-  });
 });
 
 describe('Smart Category pages', () => {

@@ -78,8 +78,20 @@ describe('tool names agree across the prompt, groups, shapes, and clients', () =
     for (const name of ['work_list', 'area_home', 'area_list', 'albatross_get_work_context'])
       expect(AGENT_TOOL_NAMES.has(name)).toBe(true);
     expect(buildSystemPrompt()).toContain('call work_list to find its Work id');
-    // The model cannot supply this tool's input, so the agent does not get it.
-    expect(AGENT_TOOL_NAMES.has('albatross_preview_undo_unresolved')).toBe(false);
+    // Tools with no agent path and no client caller are gone from the registry.
+    for (const name of [
+      'albatross_preview_undo_unresolved',
+      'albatross_undo_approval',
+      'classify_threads',
+      'get_smart_category_stats',
+      'get_tracked_thread',
+      'list_audit',
+      'list_tracked_threads',
+      'mark_sender_human',
+      'recent_threads',
+      'track_thread',
+    ])
+      expect(TOOLS[name]).toBeUndefined();
   });
 
   test('every tool the native apps call by name is registered', () => {

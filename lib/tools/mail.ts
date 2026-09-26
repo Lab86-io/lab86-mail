@@ -23,12 +23,7 @@ import type { Thread } from '../shared/types';
 import { upsertMessage as upsertMessageRecord } from '../store/messages';
 import { getSmartLabel, listSmartLabels } from '../store/smart-labels';
 import { listSmartRules } from '../store/smart-rules';
-import {
-  getThread as getThreadRecord,
-  listRecentThreads,
-  listThreadsForAccount,
-  upsertThread,
-} from '../store/threads';
+import { getThread as getThreadRecord, listThreadsForAccount, upsertThread } from '../store/threads';
 import { defineTool } from './registry';
 
 const LOCAL_CURSOR_PREFIX = 'local:';
@@ -536,25 +531,6 @@ export const listAttachments = defineTool({
   },
 });
 
-export const recentThreadsCached = defineTool({
-  name: 'recent_threads',
-  description: 'Return up to N recent synced threads used to seed the command palette.',
-  category: 'mail',
-  mutating: false,
-  input: z.object({ limit: z.number().int().min(1).max(200).default(80) }),
-  output: z.object({ threads: z.array(z.any()) }),
-  async handler({ limit }, ctx) {
-    if (ctx.userId && isConvexConfigured()) {
-      const rows = await convexQuery<any[]>((api as any).mailCorpus.listRecentCorpusThreads, {
-        userId: ctx.userId,
-        limit,
-      }).catch(() => null);
-      if (rows?.length) return { threads: rows };
-    }
-    return { threads: await listRecentThreads(limit) };
-  },
-});
-
 export const listAccountThreads = defineTool({
   name: 'list_account_threads',
   description: 'List synced threads for a specific account.',
@@ -572,28 +548,6 @@ export const listAccountThreads = defineTool({
       if (rows?.length) return { threads: rows.map(withThreadSenderEmail) };
     }
     return { threads: (await listThreadsForAccount(account, limit)).map(withThreadSenderEmail) };
-  },
-});
-
-export const getSmartCategoryStats = defineTool({
-  name: 'get_smart_category_stats',
-  description:
-    'Return unread counts per smart category (capped at 100) with a needs-attention flag. Indexed corpus read — instant.',
-  category: 'mail',
-  mutating: false,
-  input: z.object({
-    account: z.string().optional(),
-  }),
-  output: z.object({
-    categories: z.record(z.string(), z.object({ unread: z.number(), attention: z.boolean() })),
-  }),
-  async handler({ account }, ctx) {
-    if (!ctx.userId || !isConvexConfigured()) return { categories: {} };
-    const result = await convexQuery<{ counts: Record<string, { unread: number; attention: boolean }> }>(
-      (api as any).mailCorpus.categoryCountsInternal,
-      { userId: ctx.userId, accountIds: account ? [account] : undefined },
-    );
-    return { categories: result.counts };
   },
 });
 
