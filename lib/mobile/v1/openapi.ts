@@ -107,38 +107,12 @@ export function mobileOpenAPIV1() {
           },
         },
       },
-      '/api/mobile/v1/mail/threads/{threadID}': {
-        get: {
-          operationId: 'getMobileMailThread',
-          parameters: [
-            { name: 'threadID', in: 'path', required: true, schema: { type: 'string' } },
-            { name: 'accountID', in: 'query', required: true, schema: { type: 'string' } },
-          ],
-          responses: {
-            '200': {
-              description: 'A full thread with ordered messages',
-              content: jsonContent('MailThreadDetail'),
-            },
-            ...errorResponses,
-          },
-        },
-      },
       '/api/mobile/v1/commands': {
         post: {
           operationId: 'postMobileCommand',
           requestBody: { required: true, content: jsonContent('MobileCommand') },
           responses: {
             '200': { description: 'Durable command receipt', content: jsonContent('CommandReceipt') },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/commands/{id}': {
-        get: {
-          operationId: 'getMobileCommand',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            '200': { description: 'Current durable command receipt', content: jsonContent('CommandReceipt') },
             ...errorResponses,
           },
         },
@@ -152,16 +126,6 @@ export function mobileOpenAPIV1() {
               description: 'Ask or hold, with confidence',
               content: jsonContent('AssistantRouteVerdict'),
             },
-            ...errorResponses,
-          },
-        },
-      },
-      '/api/mobile/v1/commands/{id}/undo': {
-        post: {
-          operationId: 'undoMobileCommand',
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          responses: {
-            '200': { description: 'Receipt after undo completes', content: jsonContent('CommandReceipt') },
             ...errorResponses,
           },
         },

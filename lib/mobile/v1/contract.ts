@@ -330,15 +330,6 @@ export type MobileSyncExecution = MobileSyncExecutionFor<MobileSyncChange>;
 // Typed paged mail reads. Summaries come from the synced Convex corpus
 // (lastDate-cursor pages); detail reads reuse the corpus-first get_thread
 // path, so a fully-hydrated thread is a pure local read server-side.
-export const MailAttachmentSchema = z
-  .object({
-    id: identifier,
-    name: z.string().max(500),
-    contentType: z.string().max(200),
-    size: z.number().int().nonnegative().optional(),
-  })
-  .strict();
-
 export const MailThreadSummarySchema = z
   .object({
     id: identifier,
@@ -367,38 +358,6 @@ export const MailThreadPageSchema = z
     nextCursor: z.string().optional(),
     hasMore: z.boolean(),
     serverTime: isoTimestamp,
-  })
-  .strict();
-
-export const MailMessageSchema = z
-  .object({
-    id: identifier,
-    threadID: identifier,
-    accountID: identifier,
-    subject: z.string().max(2_000),
-    fromHeader: z.string().max(1_000),
-    fromEmail: z.string().max(320).optional(),
-    to: z.string().max(20_000),
-    cc: z.string().max(20_000),
-    bcc: z.string().max(20_000),
-    sentAt: z.number().int().nonnegative(),
-    snippet: z.string().max(500),
-    bodyText: z.string().max(500_000),
-    bodyHTML: z.string().max(1_000_000).optional(),
-    labels: z.array(z.string().max(240)).max(200),
-    unread: z.boolean(),
-    starred: z.boolean(),
-    attachments: z.array(MailAttachmentSchema).max(100),
-  })
-  .strict();
-
-export const MailThreadDetailSchema = z
-  .object({
-    threadID: identifier,
-    accountID: identifier,
-    subject: z.string().max(2_000),
-    messages: z.array(MailMessageSchema),
-    summary: z.string().max(20_000).optional(),
   })
   .strict();
 
@@ -677,58 +636,18 @@ export const AssistantRouteVerdictSchema = z
 
 export type AssistantRouteVerdict = z.infer<typeof AssistantRouteVerdictSchema>;
 
-export const AssistantEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('messageDelta'), text: z.string() }).strict(),
-  z.object({ type: z.literal('toolStarted'), toolCallID: identifier, toolName: identifier }).strict(),
-  z
-    .object({
-      type: z.literal('toolResult'),
-      toolCallID: identifier,
-      result: z.record(z.string(), z.unknown()),
-    })
-    .strict(),
-  z.object({ type: z.literal('approvalRequested'), approvalID: identifier }).strict(),
-  z.object({ type: z.literal('questionRequested'), questionID: identifier }).strict(),
-  z
-    .object({
-      type: z.literal('displayArtifact'),
-      artifactKind: identifier,
-      artifact: z.record(z.string(), z.unknown()),
-    })
-    .strict(),
-  z.object({ type: z.literal('completed'), conversationID: identifier }).strict(),
-  z.object({ type: z.literal('failed'), error: RecoverableMobileErrorSchema }).strict(),
-]);
-
-export const PushEnvelopeSchema = z
-  .object({
-    version: z.literal(1),
-    notificationID: identifier,
-    category: identifier,
-    route: z.string().min(1).max(2_000),
-    entityReference: z.object({ domain: MobileDomainSchema, kind: identifier, id: identifier }).strict(),
-    allowedActions: z.array(identifier).max(20),
-    dedupeKey: identifier,
-  })
-  .strict();
-
 export const MobileContractV1 = {
   version: 1 as const,
   schemas: {
-    AssistantEvent: AssistantEventSchema,
     AssistantRouteRequest: AssistantRouteRequestSchema,
     AssistantRouteVerdict: AssistantRouteVerdictSchema,
     CommandReceipt: CommandReceiptSchema,
-    MailAttachment: MailAttachmentSchema,
-    MailMessage: MailMessageSchema,
-    MailThreadDetail: MailThreadDetailSchema,
     MailThreadPage: MailThreadPageSchema,
     MailThreadSummary: MailThreadSummarySchema,
     MobileBootstrap: MobileBootstrapSchema,
     MobileCommand: MobileCommandSchema,
     MobileErrorEnvelope: MobileErrorEnvelopeSchema,
     ProviderCapabilitySet: ProviderCapabilitySetSchema,
-    PushEnvelope: PushEnvelopeSchema,
     WorkShape: WorkShapeSchema,
     ...MobileCommandVariantSchemas,
   },

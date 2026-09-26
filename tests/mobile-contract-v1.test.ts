@@ -219,8 +219,14 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(document.components.schemas.MobileCommand.oneOf).toContainEqual({
       $ref: '#/components/schemas/TaskSetCompletedCommand',
     });
-    // Native never pulled changes, so there is no sync endpoint (NAT-10).
-    expect(document.paths).not.toHaveProperty('/api/mobile/v1/sync');
+    // Native never pulled changes, polled a command, undid one, or read the
+    // typed thread detail, so those endpoints are gone (NAT-10).
+    expect(Object.keys(document.paths).sort()).toEqual([
+      '/api/mobile/v1/assistant/route',
+      '/api/mobile/v1/bootstrap',
+      '/api/mobile/v1/commands',
+      '/api/mobile/v1/mail/threads',
+    ]);
     expect(document.components.schemas).not.toHaveProperty('SyncChange');
     expect(document.components.schemas).not.toHaveProperty('SyncEnvelope');
     expect(checkedIn).toEqual(document);
@@ -251,7 +257,6 @@ describe('MobileContractV1 OpenAPI and receipts', () => {
     expect(schema).toContain('mobileSyncTombstones: defineTable');
     expect(schema).toContain(".index('by_user_idempotency'");
     expect(mobile).toContain("insert('mobileSyncChanges'");
-    expect(mobile).toContain('if (command.undoneAt) return command;');
     expect(route).toContain('claimCommand');
     expect(accounts).toContain("'mobileCommands'");
     expect(accounts).toContain("'mobileSyncChanges'");
