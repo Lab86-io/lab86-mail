@@ -279,11 +279,12 @@ export function AssistantChat({
     () =>
       new DefaultChatTransport({
         api: '/api/agent',
-        fetch: async (input, init) => {
+        // The assertion only matters under Bun's types, where fetch also has preconnect.
+        fetch: (async (input, init) => {
           const response = await fetch(input, init);
           activeRunId.current = response.headers.get('x-agent-run-id');
           return response;
-        },
+        }) as typeof fetch,
         body: () => ({
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           briefResponse: useClientStore.getState().assistantBriefContext?.reference,

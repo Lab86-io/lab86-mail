@@ -16,7 +16,11 @@ function createClient(signal?: AbortSignal) {
     logger: false,
     skipConvexDeploymentUrlCheck: convexUrl().startsWith('http://127.0.0.1'),
     ...(signal
-      ? { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, signal }) }
+      ? {
+          // The assertion only matters under Bun's types, where fetch also has preconnect.
+          fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+            fetch(input, { ...init, signal })) as typeof fetch,
+        }
       : {}),
   });
 }
@@ -41,10 +45,12 @@ type LooseIds<T> =
         ? { [Key in keyof T]: LooseIds<T[Key]> }
         : T;
 
+type CallerArgs<Fn extends FunctionReference<any, any>> = Omit<FunctionArgs<Fn>, 'internalSecret'>;
+
 /** The arguments a caller passes; convexArgs adds the internal secret. */
-export type ConvexCallArgs<Fn extends FunctionReference<any, any>> = LooseIds<
-  Omit<FunctionArgs<Fn>, 'internalSecret'>
->;
+export type ConvexCallArgs<Fn extends FunctionReference<any, any>> = {
+  [Key in keyof CallerArgs<Fn>]: LooseIds<CallerArgs<Fn>[Key]>;
+};
 
 export function convexArgs<T extends Record<string, unknown>>(args: T): T & { internalSecret?: string } {
   const internalSecret = convexInternalSecret();

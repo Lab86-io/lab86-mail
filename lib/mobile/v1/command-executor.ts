@@ -68,8 +68,8 @@ const defaultDependencies: MobileCommandExecutorDependencies = {
   setWorkHorizon(input) {
     return convexMutation(api.albatrossWorkV2.setHorizon, input);
   },
+  // The mutation is picked by name, so its own validators check the input.
   workShapeMutation(name, input) {
-    // The mutation is picked by name, so its own validators check the input.
     return convexMutation<unknown>(api.albatrossWorkV2[name], input);
   },
 };

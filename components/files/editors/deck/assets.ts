@@ -3,6 +3,9 @@
  * asset and answers with the reference the deck model keeps. A failure
  * surfaces the server's own message so the user sees why.
  */
+/** The part of fetch these calls use, so a test can pass a plain function. */
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export interface UploadedDeckAsset {
   assetId: string;
   src: string;
@@ -22,7 +25,7 @@ export const MAX_DECK_ASSET_BYTES = 8 * 1024 * 1024;
 
 export async function uploadDeckAsset(
   file: File,
-  fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
+  fetchImpl: FetchLike = (...args) => globalThis.fetch(...args),
 ): Promise<UploadedDeckAsset> {
   if (!file.type.startsWith('image/')) throw new Error('Choose an image file.');
   if (file.size > MAX_DECK_ASSET_BYTES) throw new Error('The image is larger than 8 MB.');
@@ -156,7 +159,7 @@ export function artworkSearchUrl(query: DeckArtworkQuery) {
 
 export async function searchDeckArtworks(
   query: DeckArtworkQuery,
-  fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
+  fetchImpl: FetchLike = (...args) => globalThis.fetch(...args),
   signal?: AbortSignal,
 ): Promise<DeckArtworkCandidate[]> {
   const response = await fetchImpl(artworkSearchUrl(query), { signal });
@@ -168,7 +171,7 @@ export async function searchDeckArtworks(
 
 export async function importDeckArtwork(
   candidate: DeckArtworkCandidate,
-  fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
+  fetchImpl: FetchLike = (...args) => globalThis.fetch(...args),
 ): Promise<ImportedDeckArtwork> {
   const response = await fetchImpl(ARTWORK_IMPORT_ROUTE, {
     method: 'POST',

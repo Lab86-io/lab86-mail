@@ -29,8 +29,11 @@ export const VIEW_OPEN_CLIENT_DEBOUNCE_MS = 30_000;
 // failure copy.
 export const SYNC_SETTLE_CAP_MS = 20_000;
 
+/** The part of fetch the resync calls use, so a test can pass a plain function. */
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
 export async function postCalendarResync(
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   body: { reason: CalendarResyncClientReason; accountId?: string },
 ): Promise<CalendarResyncResult> {
   let response: Response;
@@ -108,7 +111,7 @@ export function syncSettled(states: readonly CalendarSyncStateView[], baseline: 
 }
 
 export interface CalendarResyncHost {
-  fetch: typeof fetch;
+  fetch: FetchLike;
   now: () => number;
   setTimeout: (callback: () => void, delayMs: number) => unknown;
   clearTimeout: (handle: unknown) => void;
