@@ -44,7 +44,7 @@ jobs:
         run: bun run test:coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: coverage-lcov
@@ -52,7 +52,7 @@ jobs:
           retention-days: 14
 
       - name: Coverage summary and PR comment
-        uses: pento/lcov-coverage-check@v3
+        uses: pento/lcov-coverage-check@2cab51dfe13b23eb37aaec0c8963869c25e139d9 # v3.2.0
         if: always()
         with:
           lcov-file: coverage/lcov.info
@@ -77,7 +77,7 @@ jobs:
 
       - name: HTML coverage report
         if: github.event_name == 'pull_request'
-        uses: zgosalvez/github-actions-report-lcov@v4
+        uses: zgosalvez/github-actions-report-lcov@eda775f552bfb2bffbdedea26f19dfb8c24a1648 # v4.1.26
         with:
           coverage-files: coverage/lcov.info
           artifact-name: code-coverage-report

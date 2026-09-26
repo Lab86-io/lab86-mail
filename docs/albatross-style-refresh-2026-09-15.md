@@ -55,7 +55,7 @@ The chat refinement used another Mobbin search: "AI chat conversation with user 
 - `node scripts/check-rail-canvas-browser.mjs` checks the common paint layer with a full-strength background wash. Screenshot pixels confirm no color seam in light/dark themes, with the rail expanded or collapsed. Grain covers the same shared canvas.
 - Screenshots are written to `/tmp/albatross-style-*.png` by the browser check, including the mail/chat, Files, brief, work rows, notifications, and check-in. No production mail or work actions were performed.
 
-Run the local preview with `ALBATROSS_PREVIEW_PORT=18859 bun run dev:preview`. Set `ALBATROSS_PREVIEW_HOST=100.104.121.93` for access through the tailnet. Set `ALBATROSS_STYLE_PREVIEW_URL=http://100.104.121.93:18859` when the browser check targets that address. `/?review=styles` exposes the Work, Brief, Notifications, and check-in fixtures.
+Run the local preview with `ALBATROSS_PREVIEW_PORT=18859 bun run dev:preview`. It serves only this machine by default. To open it from a different device, set `ALBATROSS_PREVIEW_HOST` to an address of this machine that the device can reach. Set `ALBATROSS_STYLE_PREVIEW_URL` to the same address and port when the browser check targets it. The hosted app does not use the tailnet. `/?review=styles` exposes the Work, Brief, Notifications, and check-in fixtures.
 
 The branch is `codex/albatross-style-refresh`, originally based on staging at `82d6f05`. Staging at `10187e8` was merged before release. All newer staging commits remain in the history. The editor, presentation, artwork, and native files from those commits remain unchanged.
 

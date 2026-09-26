@@ -249,7 +249,7 @@ export const updateConnectedAccountAlias = mutation({
 // corpus cannot be deleted inside one Convex transaction (it exceeds the
 // per-transaction document limits, which is exactly how account removal used
 // to 500 and strand orphan rows).
-const ACCOUNT_BULK_TABLES = [
+export const ACCOUNT_BULK_TABLES = [
   'threads',
   'messages',
   'mailCorpusThreads',
@@ -263,7 +263,7 @@ const ACCOUNT_BULK_TABLES = [
   'areaArtifactLinks',
 ] as const;
 
-const USER_BULK_TABLES = [
+export const USER_BULK_TABLES = [
   'briefJobs',
   ...ACCOUNT_BULK_TABLES,
   'areaFacts',
@@ -286,9 +286,35 @@ const USER_BULK_TABLES = [
   // Append-only telemetry with no pruning; an active account outgrows one
   // transaction, so it drains in batches like the other bulk tables.
   'briefItemEvents',
+  // Shared narrative memory and connected content grow with the mailbox.
+  // Each contentItems row takes its contentChunks with it (see below).
+  'narrativeEntries',
+  'narrativeRuns',
+  'contentItems',
+  'briefPreparations',
 ] as const;
 
 const PURGE_BATCH = 250;
+// A content item has at most ~34 embedding chunks, so a few items per pass
+// keep one purge transaction far below the Convex read limits.
+const CONTENT_ITEMS_PER_PASS = 5;
+// Tables expose one of these userId-prefixed indexes; try each in turn.
+export const USER_INDEXES = ['by_user', 'by_user_account', 'by_user_key', 'by_user_created'] as const;
+
+async function takeByUser(ctx: any, table: string, userId: string, limit: number) {
+  let lastErr: unknown;
+  for (const index of USER_INDEXES) {
+    try {
+      return await ctx.db
+        .query(table)
+        .withIndex(index as any, (q: any) => q.eq('userId', userId))
+        .take(limit);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
 
 // Whole-user purge twin of purgeAccountDataBatch: account deletion already
 // batches, and user deletion must too — a populated mailbox exceeds Convex's
@@ -299,20 +325,26 @@ export const purgeUserDataBatch = internalMutation({
     let deleted = 0;
     for (const table of USER_BULK_TABLES) {
       if (deleted >= PURGE_BATCH) break;
-      const rows = await ctx.db
-        .query(table)
-        .withIndex('by_user' as any, (q: any) => q.eq('userId', args.userId))
-        .take(PURGE_BATCH - deleted)
-        .catch(async () =>
-          ctx.db
-            .query(table)
-            .withIndex('by_user_account' as any, (q: any) => q.eq('userId', args.userId))
-            .take(PURGE_BATCH - deleted),
-        );
+      const remaining = PURGE_BATCH - deleted;
+      const rows = await takeByUser(
+        ctx,
+        table,
+        args.userId,
+        table === 'contentItems' ? Math.min(remaining, CONTENT_ITEMS_PER_PASS) : remaining,
+      );
       for (const row of rows) {
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {
           // Metadata must not be deleted before its private binary.
           await ctx.storage.delete(row.storageId as Id<'_storage'>);
+        }
+        if (table === 'contentItems') {
+          // contentChunks has no userId index; it hangs off its item.
+          const chunks = await ctx.db
+            .query('contentChunks')
+            .withIndex('by_item', (q) => q.eq('itemId', row._id as Id<'contentItems'>))
+            .collect();
+          for (const chunk of chunks) await ctx.db.delete(chunk._id);
+          deleted += chunks.length;
         }
         await ctx.db.delete(row._id);
         deleted += 1;
@@ -436,68 +468,8 @@ export const deleteUserCascade = mutation({
       await ctx.db.patch(job._id, { active: false, state: 'cancelled', token: undefined });
 
     const counts: Record<string, number> = {};
-    // Small tables sweep inline. Bulk tables ('threads', 'messages',
-    // 'mailCorpusThreads', 'mailCorpusMessages', 'mailWebhookEvents',
-    // 'calendarEvents', 'calendarEventCorpus') would blow Convex's per-transaction limits on a real
-    // mailbox, so they drain through the scheduled purge instead.
-    const userTables = [
-      'connectedAccounts',
-      'mailOutbox',
-      'providerGrants',
-      'nylasOAuthStates',
-      'aiSettings',
-      'aiProviderKeys',
-      'aiEntitlements',
-      'aiUsagePeriods',
-      'aiUsageEvents',
-      'dailyReports',
-      'memories',
-      'auditEvents',
-      'syncJobs',
-      'mailSyncStates',
-      'rateLimits',
-      'userDocs',
-      'aiOperations',
-      'suggestions',
-      'calendars',
-      'calendarSyncStates',
-      'albatrossDevRecords',
-      'albatrossProjects',
-      'albatrossProjectLinks',
-      'albatrossSprints',
-      'albatrossApprovals',
-      'albatrossPlanApplications',
-      'completionEvents',
-      'albatrossIntents',
-      'albatrossIntentPlans',
-      'albatrossCaptures',
-      'albatrossWorkQuestions',
-      'albatrossAreaBriefs',
-      'albatrossNotifications',
-      'albatrossNotificationPreferences',
-      'webPushSubscriptions',
-      'mobilePushDevices',
-      'mobileSyncHeads',
-      'notificationDeliveries',
-      'albatrossDailyCheckins',
-      'albatrossBrowserSessions',
-      'areas',
-      'mcpConnections',
-      'mcpCredentials',
-      'mcpOAuthStates',
-      'mcpItems',
-      'mcpSyncStates',
-      'mcpTaskLinks',
-      'cloudFileConnections',
-      'cloudFileCredentials',
-      'cloudFileOAuthStates',
-      'cloudFileOAuthCompletions',
-      'documents',
-      'documentSuggestions',
-      'documentImportCancellations',
-    ] as const;
-
-    for (const table of userTables) {
+    // Small tables sweep inline; bulk tables drain through purgeUserDataBatch.
+    for (const table of USER_INLINE_TABLES) {
       const rows = await rowsByUser(ctx, table, args.userId);
       counts[table] = rows.length;
       for (const row of rows) {
@@ -568,11 +540,90 @@ export const deleteUserCascade = mutation({
   },
 });
 
+// Small per-user tables that deleteUserCascade sweeps inline. Bulk tables
+// ('threads', 'messages', the corpus, calendar events) would blow Convex's
+// per-transaction limits on a real mailbox, so they drain through
+// purgeUserDataBatch instead. tests/account-cascade-coverage.test.ts fails when
+// a schema table with a userId field is in neither list.
+export const USER_INLINE_TABLES = [
+  'connectedAccounts',
+  'mailOutbox',
+  'providerGrants',
+  'nylasOAuthStates',
+  'aiSettings',
+  'aiProviderKeys',
+  'aiEntitlements',
+  'aiUsagePeriods',
+  'aiUsageEvents',
+  'dailyReports',
+  'memories',
+  'auditEvents',
+  'syncJobs',
+  'mailSyncStates',
+  'rateLimits',
+  'userDocs',
+  'aiOperations',
+  'suggestions',
+  'calendars',
+  'calendarSyncStates',
+  'albatrossDevRecords',
+  'albatrossProjects',
+  'albatrossProjectLinks',
+  'albatrossSprints',
+  'albatrossApprovals',
+  'albatrossPlanApplications',
+  'completionEvents',
+  'albatrossIntents',
+  'albatrossIntentPlans',
+  'albatrossCaptures',
+  'albatrossWorkQuestions',
+  'albatrossAreaBriefs',
+  'albatrossNotifications',
+  'albatrossNotificationPreferences',
+  'webPushSubscriptions',
+  'mobilePushDevices',
+  'mobileSyncHeads',
+  'notificationDeliveries',
+  'albatrossDailyCheckins',
+  'albatrossBrowserSessions',
+  'areas',
+  'mcpConnections',
+  'mcpCredentials',
+  'mcpOAuthStates',
+  'mcpItems',
+  'mcpSyncStates',
+  'mcpTaskLinks',
+  'cloudFileConnections',
+  'cloudFileCredentials',
+  'cloudFileOAuthStates',
+  'cloudFileOAuthCompletions',
+  'documents',
+  'documentSuggestions',
+  'documentImportCancellations',
+  // Control rows go inline so the narrative and content crons stop
+  // dispatching for this user at once; their bulk rows drain in batches.
+  'narrativeSettings',
+  'narrativeCursors',
+  'narrativeExclusions',
+  'contentSync',
+] as const;
+
+// userId tables that the cascade deletes through their own pass, not through
+// the lists above. The value says where.
+export const CASCADE_SPECIAL_TABLES: Record<string, string> = {
+  agentUploads: 'deleteUserCascade deletes each upload with its stored file (by_user_created).',
+  boardMembers: 'deleteUserCascade removes memberships on owned and foreign boards.',
+  cards: 'deleteUserCascade removes cards on owned boards and cards the user wrote.',
+  contentChunks: 'purgeUserDataBatch deletes the chunks of each contentItems row (by_item).',
+};
+
+// userId tables that stay after account deletion. Each entry must give the
+// reason. Keep this empty unless there is a legal or operational need.
+export const CASCADE_EXEMPT_TABLES: Record<string, string> = {};
+
 async function rowsByUser(ctx: any, table: string, userId: string) {
-  // Tables expose one of these userId-prefixed indexes; try each in turn.
-  const indexes = ['by_user', 'by_user_account', 'by_user_created'];
   let lastErr: unknown;
-  for (const index of indexes) {
+  for (const index of USER_INDEXES) {
     try {
       return await ctx.db
         .query(table)

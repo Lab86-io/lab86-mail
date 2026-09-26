@@ -6,7 +6,10 @@ import { NATIVE_BROWSER_COOKIE, verifyNativeBrowserAccess } from './lib/native/b
 
 const hasClerkKeys = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
-const isPublicRoute = createRouteMatcher([
+// Every route here authenticates its caller in the handler, or is public by
+// design. tests/proxy-public-routes.test.ts fails when a route handler uses a
+// non-Clerk credential but is missing from this list.
+export const isPublicRoute = createRouteMatcher([
   '/__clerk(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
@@ -19,12 +22,22 @@ const isPublicRoute = createRouteMatcher([
   // Convex scheduled actions call these; they authenticate with the internal
   // secret in-handler, so they must bypass Clerk (which would 302 → sign-in).
   '/api/cron(.*)',
+  // Operator and Convex calls with the internal secret, checked in-handler.
+  '/api/mail/corpus/backfill',
+  '/api/mail/corpus/reconcile',
+  // The AutoFill extension has no Clerk session. The handler accepts a
+  // consume-scoped token, or else the Clerk session of the app.
+  '/api/mobile/one-time-codes/consume',
+  // Provider redirects can arrive with no Clerk cookie (native web sessions).
+  // The single-use, short-lived OAuth state is the credential.
+  '/api/mcp/oauth/callback',
+  '/api/files/oauth/callback',
   '/privacy',
   '/terms',
   '/support',
   '/pricing',
   // Public read-only board links: the token in the path is the credential.
-  '/b(.*)',
+  '/b/(.*)',
 ]);
 
 const passthroughProxy = (_req: NextRequest) => NextResponse.next();
