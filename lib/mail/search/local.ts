@@ -1,3 +1,4 @@
+import { truncateText } from '../../shared/text';
 import type { SearchAst, SearchClause, SearchProvider, SearchUnsupportedClause } from './ast';
 import { endOfDayMs, startOfDayMs } from './dates';
 import { type FolderRole, foldLabel, labelsHaveRole, normalizeFolder, SYSTEM_LABEL_ALIASES } from './folders';
@@ -68,8 +69,8 @@ export function corpusMessagesToThreads(
         lastDate: latest.receivedAt,
         snippet:
           (order === 'relevant'
-            ? bestMatch.snippet || bestMatch.textBody?.slice(0, 1600)
-            : latest.snippet || latest.textBody?.slice(0, 240)) || '',
+            ? bestMatch.snippet || truncateText(bestMatch.textBody, 1600)
+            : latest.snippet || truncateText(latest.textBody, 240)) || '',
         searchRank: order === 'relevant' ? messages.indexOf(bestMatch) : undefined,
         labels,
         unread: threadMessages.some((message) => Boolean(message.unread) || hasLabel(message, 'UNREAD')),

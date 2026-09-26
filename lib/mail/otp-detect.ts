@@ -12,6 +12,8 @@
 // heuristic below is biased accordingly: an unlabelled number is never a code,
 // and a labelled one still has to survive the rejection pass.
 
+import { truncateText } from '../shared/text';
+
 export interface OneTimeCodeMessage {
   subject: string;
   from: string;
@@ -414,8 +416,8 @@ export function extractOneTimeCode(message: OneTimeCodeMessage): OneTimeCodeCand
 
   return {
     code: best.code,
-    label: `${issuer} verification code`.slice(0, 120),
-    issuer: issuer.slice(0, 80),
+    label: truncateText(`${issuer} verification code`, 120),
+    issuer: truncateText(issuer, 80),
     serviceIdentifiers: identifiers,
     expiresAt: resolveExpiry(text, message.receivedAt || Date.now()),
     confidence,

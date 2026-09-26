@@ -2,6 +2,7 @@ import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { truncateText } from '@/lib/shared/text';
 import { extractOneTimeCode, type OneTimeCodeMessage } from './otp-detect';
 import { assessUrgency, parseUrgencyConfirmation, URGENCY_CONFIRMATION_SYSTEM_PROMPT } from './urgency';
 
@@ -49,10 +50,10 @@ const CONFIRMATION_TIMEOUT_MS = 8_000;
 const STALE_ARRIVAL_MS = 6 * 60 * 60_000;
 
 async function confirmUrgency(userId: string, message: UrgentScanMessage): Promise<string | null> {
-  const source = [message.subject, message.snippet, message.textBody]
-    .filter(Boolean)
-    .join('\n\n')
-    .slice(0, 4_000);
+  const source = truncateText(
+    [message.subject, message.snippet, message.textBody].filter(Boolean).join('\n\n'),
+    4_000,
+  );
   const abort = AbortSignal.timeout(CONFIRMATION_TIMEOUT_MS);
   const { text } = await generateTextForCurrentUser({
     feature: 'mail_urgency',

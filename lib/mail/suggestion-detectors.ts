@@ -2,6 +2,7 @@ import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
 import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
+import { truncateText } from '@/lib/shared/text';
 
 const suggestionsApi = (api as any).suggestions;
 const notificationsApi = (api as any).albatrossNotifications;
@@ -62,20 +63,14 @@ export function parseInlineEventCandidate(raw: string, now = Date.now()): Inline
     return null;
   }
   if (value?.isEvent !== true || Number(value?.confidence) < 0.82) return null;
-  const title = String(value?.title || '')
-    .trim()
-    .slice(0, 180);
-  const reason = String(value?.reason || '')
-    .trim()
-    .slice(0, 280);
+  const title = truncateText(String(value?.title || '').trim(), 180);
+  const reason = truncateText(String(value?.reason || '').trim(), 280);
   const startAt = Date.parse(String(value?.startIso || ''));
   const endAt = Date.parse(String(value?.endIso || ''));
   if (!title || !reason || !Number.isFinite(startAt) || !Number.isFinite(endAt)) return null;
   if (startAt < now - 15 * 60_000 || startAt > now + 370 * DAY_MS) return null;
   if (endAt <= startAt || endAt - startAt > 31 * DAY_MS) return null;
-  const location = String(value?.location || '')
-    .trim()
-    .slice(0, 280);
+  const location = truncateText(String(value?.location || '').trim(), 280);
   return {
     title,
     startAt,
@@ -92,10 +87,10 @@ async function inferInlineEvent(
   timezone: string,
   message: IngestedMessage,
 ): Promise<InlineEventCandidate | null> {
-  const source = [message.subject, message.snippet, message.textBody]
-    .filter(Boolean)
-    .join('\n\n')
-    .slice(0, 8_000);
+  const source = truncateText(
+    [message.subject, message.snippet, message.textBody].filter(Boolean).join('\n\n'),
+    8_000,
+  );
   const { text } = await generateTextForCurrentUser({
     feature: 'mail_event_suggestion',
     speed: 'nano',

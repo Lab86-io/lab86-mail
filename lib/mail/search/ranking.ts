@@ -1,3 +1,5 @@
+import { safeSlice } from '../../shared/text';
+
 /** The same order must survive database, thread grouping, account merge and UI. */
 export function mailListUsesRelevance(
   items: readonly { searchRank?: number; searchOrder?: 'recent' | 'relevance' }[],
@@ -41,5 +43,5 @@ export function matchingMailExcerpt(body: string, query: string) {
     .map((term) => lower.indexOf(term))
     .filter((index) => index >= 0);
   const start = positions.length ? Math.max(0, Math.min(...positions) - 120) : 0;
-  return body.slice(start, start + 1600);
+  return safeSlice(body, start, start + 1600);
 }

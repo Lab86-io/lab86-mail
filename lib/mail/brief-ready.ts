@@ -1,5 +1,6 @@
 import { api, convexMutation } from '../hosted/convex';
 import { dispatchNativeNotification } from '../notifications/native-delivery';
+import { truncateText } from '../shared/text';
 
 export function localDateForTimezone(generatedAt: number, timezone?: string) {
   const dateParts = new Intl.DateTimeFormat('en-US', {
@@ -26,10 +27,10 @@ export function briefNotificationBody(report: { prose?: { lede?: string }; narra
     .trim();
   if (!text) return '';
   if (text.length <= BRIEF_NOTIFICATION_BODY_MAX) return text;
-  const head = text.slice(0, BRIEF_NOTIFICATION_BODY_MAX);
+  const head = truncateText(text, BRIEF_NOTIFICATION_BODY_MAX);
   const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('? '), head.lastIndexOf('! '));
   if (end > 40) return head.slice(0, end + 1);
-  return `${head.slice(0, BRIEF_NOTIFICATION_BODY_MAX - 1).trimEnd()}…`;
+  return `${truncateText(head, BRIEF_NOTIFICATION_BODY_MAX - 1).trimEnd()}…`;
 }
 
 const defaults = {

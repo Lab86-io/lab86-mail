@@ -1,4 +1,5 @@
 import { stripEmoji } from '../shared/format';
+import { truncateText } from '../shared/text';
 import type { ReportLane, ThreadInsight, TrackedThread } from '../shared/types';
 
 const MAX_RECOMMENDATION_LENGTH = 280;
@@ -14,10 +15,12 @@ export interface RecommendationInput {
 }
 
 export function normalizeRecommendation(value: unknown): string | undefined {
-  const recommendation = stripEmoji(String(value ?? ''))
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_RECOMMENDATION_LENGTH);
+  const recommendation = truncateText(
+    stripEmoji(String(value ?? ''))
+      .replace(/\s+/g, ' ')
+      .trim(),
+    MAX_RECOMMENDATION_LENGTH,
+  );
   if (!recommendation || GENERIC_RECOMMENDATION.test(recommendation)) return undefined;
   return recommendation;
 }
@@ -79,11 +82,13 @@ export function recommendationForInsight(
 }
 
 function cleanPerson(value: unknown): string {
-  return stripEmoji(String(value ?? ''))
-    .replace(/\s*<[^>]+>\s*/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80);
+  return truncateText(
+    stripEmoji(String(value ?? ''))
+      .replace(/\s*<[^>]+>\s*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    80,
+  );
 }
 
 function cleanSubject(value: unknown): string {
@@ -91,10 +96,10 @@ function cleanSubject(value: unknown): string {
     .replace(/\s+/g, ' ')
     .trim();
   if (!subject || subject === '(no subject)') return '';
-  return subject.replace(/^re:\s*/i, '').slice(0, 120);
+  return truncateText(subject.replace(/^re:\s*/i, ''), 120);
 }
 
 function boundedSentence(value: string): string {
-  const clipped = value.replace(/\s+/g, ' ').trim().slice(0, MAX_RECOMMENDATION_LENGTH);
+  const clipped = truncateText(value.replace(/\s+/g, ' ').trim(), MAX_RECOMMENDATION_LENGTH);
   return /[.!?]$/.test(clipped) ? clipped : `${clipped}.`;
 }
