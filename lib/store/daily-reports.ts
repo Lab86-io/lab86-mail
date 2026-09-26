@@ -200,6 +200,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
     generatedAt: raw.generatedAt ?? 0,
     status: raw.status ?? 'ready',
     progress: raw.progress,
+    ...(raw.retrying === true ? { retrying: true } : {}),
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
     services: Array.isArray(raw.services) ? raw.services : undefined,
     title: raw.title ?? 'Daily Report',

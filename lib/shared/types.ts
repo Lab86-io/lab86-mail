@@ -552,6 +552,8 @@ export interface DailyReport {
   // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
+  // A readable edition that waits for another writer attempt (brief jobs).
+  retrying?: boolean;
   accounts: AccountEmail[];
   title: string;
   narrative: string;

@@ -20,6 +20,7 @@ import type { AlbatrossDailyReportContext } from '@/lib/albatross/daily-report';
 import { briefFreshness, briefIsStale } from '@/lib/albatross/today';
 import { callTool } from '@/lib/api-client';
 import { hasLiveBriefSection } from '@/lib/brief/editorial';
+import { BRIEF_RETRY_NOTE, isBriefEditionGenerating, isBriefEditionRetrying } from '@/lib/brief/generation';
 import { BRIEF_LETTER_FAILED_COPY, briefLetterFromReport } from '@/lib/brief/letter';
 import { useClientStore } from '@/lib/client-state';
 import {
@@ -149,6 +150,8 @@ interface DailyReportPayload {
   prose?: { lede: string; weekAhead: string; model: string };
   status?: 'partial' | 'ready';
   progress?: { stage: string; done: number; total: number };
+  // A readable edition that waits for another writer attempt.
+  retrying?: boolean;
   // Agent-authored self-contained HTML artifact (served in a sandboxed iframe).
   html?: string;
   document?: BriefDocumentV2;
@@ -847,8 +850,8 @@ export function DailyReport({
     // edition to land — so the page upgrades live.
     refetchInterval: (query) => {
       const r = query.state.data?.report;
-      if (r?.status === 'partial' || r?.artifactStatus === 'composing') return 2_000;
-      if (r?.artifactStatus === 'enriching') return 3_000;
+      if (isBriefEditionGenerating(r)) return 2_000;
+      if (r?.retrying) return 10_000;
       if (generatingSince && (!r || (r.generatedAt || 0) < generatingSince)) return 1_500;
       return selectedId ? false : 30_000;
     },
@@ -884,11 +887,8 @@ export function DailyReport({
   const displayArtifact = Boolean(report?.html && artifactSource === 'ai' && !displayDocument);
   // True between clicking Generate and the new edition actually appearing.
   const waitingForNew = Boolean(generatingSince && (!report || (report.generatedAt || 0) < generatingSince));
-  const generating =
-    waitingForNew ||
-    composingLetter ||
-    report?.status === 'partial' ||
-    report?.artifactStatus === 'composing';
+  const generating = waitingForNew || isBriefEditionGenerating(report);
+  const retrying = isBriefEditionRetrying(report);
   const showGeneratingState = generating;
   // The letter from the stored sections, for editions without a document of
   // their own: older editions and the ones whose composition failed.
@@ -937,11 +937,7 @@ export function DailyReport({
   // Stop the "generating" state once an edition newer than the click has settled.
   useEffect(() => {
     if (!generatingSince || !report) return;
-    if (
-      (report.generatedAt || 0) >= generatingSince &&
-      report.status !== 'partial' &&
-      report.artifactStatus !== 'composing'
-    ) {
+    if ((report.generatedAt || 0) >= generatingSince && !isBriefEditionGenerating(report)) {
       setGeneratingSince(null);
     }
   }, [report, generatingSince]);
@@ -964,11 +960,7 @@ export function DailyReport({
     },
     onSuccess: (result) => {
       // A completed response can release the refresh control immediately.
-      if (
-        result.report &&
-        result.report.status !== 'partial' &&
-        !['composing', 'enriching'].includes(result.report.artifactStatus || '')
-      ) {
+      if (result.report && !isBriefEditionGenerating(result.report)) {
         setGeneratingSince(null);
       } else if (result.started === false && result.report?.generatedAt) {
         setGeneratingSince(result.report.generatedAt);
@@ -1015,6 +1007,15 @@ export function DailyReport({
             {busy ? 'Writing…' : report ? 'Write it again' : "Write today's brief"}
           </button>
         </div>
+      ) : null}
+
+      {retrying && !busy ? (
+        <p
+          role="status"
+          className={cn('text-[12px] text-[var(--color-text-muted)]', !embedded && 'px-5 pt-3')}
+        >
+          {BRIEF_RETRY_NOTE}
+        </p>
       ) : null}
 
       {/* The letter and the legacy artifact carry their own masthead, so the
