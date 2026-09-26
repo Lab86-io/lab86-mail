@@ -1,5 +1,11 @@
 import { generateTextForCurrentUser } from '@/lib/ai/gateway';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import {
+  DEFAULT_MAIL_PUSH_SETTINGS,
+  decideMailPush,
+  type MailPushSettings,
+  mailPushSettingsFromRow,
+} from '@/lib/notifications/mail-push';
 import { dispatchNativeNotification } from '@/lib/notifications/native-delivery';
 import type { NylasAccountRow } from '@/lib/nylas/provider';
 import { extractOneTimeCode, type OneTimeCodeMessage } from './otp-detect';
@@ -74,6 +80,8 @@ export interface UrgentDetectorDependencies {
   mutate: typeof convexMutation;
   dispatch: typeof dispatchNativeNotification;
   confirm: typeof confirmUrgency;
+  /** The clock for quiet hours and holds. Tests pin it. */
+  clock?: () => number;
 }
 
 const defaultDependencies: UrgentDetectorDependencies = {
@@ -113,19 +121,56 @@ export async function detectUrgentMailAndCodes(
 ) {
   if (!messages.length) return { codes: 0, urgent: 0, newMail: 0 };
 
-  const preference = await dependencies
-    .query<ScanPreferences | null>(notificationsApi.mobilePreferences, {
-      userId: row.userId,
-    })
-    .catch(() => null);
+  const [preference, mailPushRow] = await Promise.all([
+    dependencies
+      .query<ScanPreferences | null>(notificationsApi.mobilePreferences, {
+        userId: row.userId,
+      })
+      .catch(() => null),
+    dependencies
+      .query<MailPushSettings | null>(notificationsApi.mailPushSettings, { userId: row.userId })
+      .catch(() => null),
+  ]);
+  // The settings query returns defaults for a user who never set them.
+  const mailPush: MailPushSettings = mailPushRow?.quietHours
+    ? { ...DEFAULT_MAIL_PUSH_SETTINGS, ...mailPushRow }
+    : mailPushSettingsFromRow(null);
   const nativeEnabled = preference?.nativePushEnabled !== false;
   const pushEnabled = nativeEnabled && preference?.urgentMailPushEnabled !== false;
   const newMailEnabled = nativeEnabled && preference?.newMailPushEnabled !== false;
   const codesEnabled = preference?.oneTimeCodeAutofillEnabled !== false;
   if (!pushEnabled && !codesEnabled && !newMailEnabled) return { codes: 0, urgent: 0, newMail: 0 };
 
-  const now = Date.now();
+  const now = (dependencies.clock ?? Date.now)();
   let codes = 0;
+  let held = 0;
+  // Quiet hours, VIP senders, and priority-only mode decide whether a push
+  // goes now or waits for the digest. The in-app row is written either way.
+  const pushOrHold = async (
+    notificationId: string,
+    message: UrgentScanMessage,
+    priority: boolean,
+    options: { codeAvailable?: true },
+  ) => {
+    const decision = decideMailPush({ now, settings: mailPush, from: message.from, priority });
+    if (decision.action === 'push') {
+      await dependencies.dispatch(row.userId, notificationId, undefined, options).catch(() => undefined);
+      return;
+    }
+    held += 1;
+    await dependencies
+      .mutate(notificationsApi.holdMailPush, {
+        userId: row.userId,
+        notificationId,
+        until: decision.until,
+        reason: decision.reason,
+        accountId: row.accountId,
+        threadId: message.providerThreadId,
+        messageId: message.providerMessageId,
+        sender: message.from,
+      })
+      .catch(() => undefined);
+  };
   let urgent = 0;
   let newMail = 0;
   let confirmations = 0;
@@ -180,9 +225,10 @@ export async function detectUrgentMailAndCodes(
           );
           if (queued.created) {
             newMail += 1;
-            await dependencies
-              .dispatch(row.userId, queued.notificationId, undefined, {})
-              .catch(() => undefined);
+            // Jev has not classified a fresh message yet. A held message that
+            // turns out to need a reply is pushed after classification
+            // (promoteHeldPriorityMail).
+            await pushOrHold(queued.notificationId, message, false, {});
           }
         }
         continue;
@@ -211,12 +257,10 @@ export async function detectUrgentMailAndCodes(
       );
       if (!queued.created) continue;
       urgent += 1;
-      await dependencies
-        .dispatch(row.userId, queued.notificationId, undefined, codeRecorded ? { codeAvailable: true } : {})
-        .catch(() => undefined);
+      await pushOrHold(queued.notificationId, message, true, codeRecorded ? { codeAvailable: true } : {});
     } catch {
       // Detection is advisory. Mail sync owns the corpus and must complete.
     }
   }
-  return { codes, urgent, newMail };
+  return { codes, urgent, newMail, ...(held ? { held } : {}) };
 }

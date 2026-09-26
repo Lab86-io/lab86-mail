@@ -1,6 +1,7 @@
 import { getAiRequestContext, runWithAiRequestContext } from '../ai/context';
 import { isConvexConfigured } from '../hosted/env';
 import { runJevSweep } from '../jev/service';
+import { promoteHeldPriorityMail } from '../notifications/mail-digest';
 
 // Persisted Jev assessments, refreshed when message content changes. Jev keeps
 // the historical llmPending field as its queue flag. Leases and bounded
@@ -38,12 +39,16 @@ type SweepResult = { classified: number; moreRemaining?: boolean };
 export async function runLlmClassificationSweep(
   userId: string,
   sweep: (userId: string) => Promise<SweepResult> = runJevSweep,
+  afterClassified: (userId: string) => Promise<unknown> = promoteHeldPriorityMail,
 ) {
   if (sweeping.has(userId) || !isConvexConfigured()) return { classified: 0 };
   sweeping.add(userId);
   let result: SweepResult = { classified: 0 };
   try {
     result = await runWithAiRequestContext({ userId, agent: 'ai' }, () => sweep(userId));
+    // Priority-only push: mail held as ordinary may now need a reply or an
+    // action. Best effort; classification itself already succeeded.
+    if (result.classified > 0) await afterClassified(userId).catch(() => undefined);
     return result;
   } finally {
     sweeping.delete(userId);

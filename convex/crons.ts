@@ -150,6 +150,15 @@ crons.interval('mail corpus repair', { minutes: 30 }, (internal as any).mailCorp
 // Snoozed threads come back to the inbox when due (MUT-1).
 crons.interval('mail snooze wake', { minutes: 5 }, (internal as any).mailCorpus.snoozeTick, {});
 
+// Held mail pushes (quiet hours, priority-only mode) go out as one digest
+// when their hold ends. It posts to the app only when a hold is due.
+crons.interval(
+  'mail push digest',
+  { minutes: 15 },
+  (internal as any).albatrossNotifications.mailDigestTick,
+  {},
+);
+
 crons.interval('mcp oauth state cleanup', { minutes: 30 }, internal.mcp.sweepExpiredOAuthStates, {});
 
 // Retention for tables that otherwise grow with no limit: expired one-time

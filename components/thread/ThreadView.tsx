@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { MessageResponse } from '@/components/ai-elements/message';
 import { toastWithUndo } from '@/components/inbox/mail-undo-toast';
+import { MAIL_PUSH_QUERY_KEY, saveMailPushSettings } from '@/components/settings/MailAlertsSettings';
 import { ALL_ACCOUNTS } from '@/components/shell/Rail';
 import { ProofOffer } from '@/components/thread/ProofOffer';
 import { ArchiveIcon } from '@/components/ui/archive';
@@ -232,6 +233,31 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
     onError: (error: Error) => toast.error(error.message || 'Could not block this sender.'),
+  });
+
+  // VIP: this sender's mail always pushes, in quiet hours too (item 12).
+  const markVip = useMutation({
+    mutationFn: async (sender: string) => {
+      const settings = await saveMailPushSettings({ addVipSenders: [sender] });
+      queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+      return sender;
+    },
+    onSuccess: (sender) =>
+      toast.success(`Mail from ${sender} always pushes now`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void saveMailPushSettings({ removeVipSenders: [sender] }).then(
+              (settings) => {
+                queryClient.setQueryData(MAIL_PUSH_QUERY_KEY, settings);
+                toast.success('Undone');
+              },
+              (error: Error) => toast.error(error.message || 'Could not undo this change.'),
+            );
+          },
+        },
+      }),
+    onError: (error: Error) => toast.error(error.message || 'Could not mark this sender as VIP.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
@@ -547,6 +573,16 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
                   onSelect={() => block.mutate()}
                 >
                   Block sender
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-[12.5px]"
+                  disabled={markVip.isPending || !emailFromHeader(newest?.from)}
+                  onSelect={() => {
+                    const sender = emailFromHeader(newest?.from);
+                    if (sender) markVip.mutate(sender);
+                  }}
+                >
+                  Always push this sender
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

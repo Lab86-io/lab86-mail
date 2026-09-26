@@ -29,7 +29,7 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   connections: { group: 'workspace', description: 'Tools that feed the brief and search.' },
   areas: { group: 'workspace', description: 'Where your mail and work belong.' },
   sending: { group: 'behavior', description: 'Undo window, signatures, and saved replies.' },
-  notifications: { group: 'behavior', description: 'Check-ins, push, and email fallback.' },
+  notifications: { group: 'behavior', description: 'Check-ins, mail alerts, and quiet hours.' },
   ai: { group: 'behavior', description: 'Models, keys, and your plan.' },
   narrative: { group: 'behavior', description: 'How the brief reads.' },
   appearance: { group: 'you', description: 'Palette, type, and corners.' },

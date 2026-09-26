@@ -2385,11 +2385,29 @@ export default defineSchema({
     updatedAt: v.number(),
     readAt: v.optional(v.number()),
     actedAt: v.optional(v.number()),
+    // A mail push held by quiet hours or priority-only mode (FEATURES item
+    // 12). The row is in the app already; only the push waits. The digest
+    // cron clears pushHeldUntil when it sends the digest or the push.
+    pushHeldUntil: v.optional(v.number()),
+    pushHold: v.optional(
+      v.object({
+        reason: v.union(v.literal('quiet_hours'), v.literal('priority_only')),
+        accountId: v.string(),
+        threadId: v.string(),
+        messageId: v.optional(v.string()),
+        sender: v.optional(v.string()),
+        heldAt: v.number(),
+        releasedAt: v.optional(v.number()),
+        digestId: v.optional(v.id('albatrossNotifications')),
+      }),
+    ),
   })
     .index('by_user', ['userId'])
     .index('by_user_status_created', ['userId', 'status', 'createdAt'])
     .index('by_user_type_created', ['userId', 'type', 'createdAt'])
-    .index('by_user_dedupe', ['userId', 'dedupeKey']),
+    .index('by_user_dedupe', ['userId', 'dedupeKey'])
+    .index('by_push_held', ['pushHeldUntil'])
+    .index('by_user_push_held', ['userId', 'pushHeldUntil']),
 
   albatrossNotificationPreferences: defineTable({
     userId: v.string(),
@@ -2408,6 +2426,13 @@ export default defineSchema({
     // convenience, the second destroys mail, so it is opted into on its own.
     oneTimeCodeAutofillEnabled: v.optional(v.boolean()),
     oneTimeCodeCleanupEnabled: v.optional(v.boolean()),
+    // Mail push (FEATURES item 12): priority-only mode, quiet hours in the
+    // row's timezone (whole hours 0-23), and VIP senders that always push.
+    mailPushMode: v.optional(v.union(v.literal('all'), v.literal('priority'))),
+    quietHoursEnabled: v.optional(v.boolean()),
+    quietHoursStart: v.optional(v.number()),
+    quietHoursEnd: v.optional(v.number()),
+    vipSenders: v.optional(v.array(v.string())),
     emailFallbackEnabled: v.boolean(),
     emailFallbackDelayMinutes: v.number(),
     // Explicitly opted-in approximate iPhone location for morning weather.
