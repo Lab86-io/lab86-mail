@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { generateTextForCurrentUser } from '../ai/gateway';
-import { DEVOPS_LABEL_ID } from '../mail/smart-categories';
+import { DEVOPS_LABEL_ID, SMART_GMAIL_LABEL_PREFIX } from '../mail/smart-categories';
 import type { SmartLabelDefinition } from '../shared/types';
 import { kvCreateIfAbsent, kvDelete, kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
+import { listSmartRules, setSmartRuleEnabled } from './smart-rules';
 
 const now = () => Date.now();
 
@@ -16,7 +17,7 @@ export const DEVOPS_LABEL: SmartLabelDefinition = {
   sidebarVisible: true,
   icon: 'terminal',
   color: 'var(--color-accent)',
-  gmailLabelName: 'MailOS/Dev/Ops',
+  gmailLabelName: `${SMART_GMAIL_LABEL_PREFIX}Dev/Ops`,
   aiMode: 'metadata_snippet',
   positiveExamples: [
     'TestFlight build available to test',
@@ -194,7 +195,7 @@ export async function createSmartLabel(input: {
     icon,
     enabled: true,
     sidebarVisible: input.sidebarVisible ?? true,
-    gmailLabelName: `MailOS/${name}`,
+    gmailLabelName: `${SMART_GMAIL_LABEL_PREFIX}${name}`,
     aiMode: 'metadata_snippet',
     positiveExamples,
     negativeExamples,
@@ -234,7 +235,7 @@ export async function updateSmartLabel(
     ...patch,
     name: trimmedName || existing.name,
     slug: nextSlug,
-    gmailLabelName: trimmedName ? `MailOS/${trimmedName}` : existing.gmailLabelName,
+    gmailLabelName: trimmedName ? `${SMART_GMAIL_LABEL_PREFIX}${trimmedName}` : existing.gmailLabelName,
     positiveExamples:
       patch.positiveExamples?.map((v) => v.trim()).filter(Boolean) || existing.positiveExamples,
     negativeExamples:
@@ -251,10 +252,16 @@ export async function updateSmartLabel(
   return next;
 }
 
-export async function disableSmartLabel(id: string) {
+// Delete is a real delete: the label and its name reservation go away, and
+// each enabled rule that files mail under the label is turned off, so no rule
+// points at a label that does not exist.
+export async function deleteSmartLabel(id: string) {
   const existing = await getSmartLabel(id);
   if (!existing) throw new Error('Smart label not found');
-  const next = { ...existing, enabled: false, updatedAt: now() };
-  await kvUpsert('smartLabel', id, next);
-  return next;
+  const rules = (await listSmartRules()).filter((rule) => rule.customLabelId === id);
+  for (const rule of rules) await setSmartRuleEnabled(rule._id, false);
+  await kvDelete('smartLabel', id);
+  const reservation = await kvGet<SmartLabelSlugIndex>('smartLabelSlug', existing.slug);
+  if (reservation?.labelId === id) await kvDelete('smartLabelSlug', existing.slug);
+  return { label: existing, disabledRuleIds: rules.map((rule) => rule._id) };
 }

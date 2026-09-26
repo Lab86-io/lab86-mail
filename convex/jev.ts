@@ -13,7 +13,7 @@ import { internal } from './_generated/api';
 import { internalAction, internalMutation, mutation, query } from './_generated/server';
 import { nextConnectedUsers } from './content';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
-import { classifyCorpusThread, loadSmartContext, normalizeCorpusThread } from './smart';
+import { classifyCorpusThread, latestThreadContent, loadSmartContext, normalizeCorpusThread } from './smart';
 
 async function preferencesRow(ctx: any, userId: string) {
   return ctx.db
@@ -180,10 +180,10 @@ async function threadInput(ctx: any, row: any, knownAccounts?: any[]): Promise<J
     sourceRevision: mailSourceRevision(messages),
     selfAddresses: accounts.map((account: any) => account.email.toLowerCase()),
     messages,
-    contextComplete:
-      recent.length <= 16 &&
-      (!row.messageCount || row.messageCount <= messages.length) &&
-      [...byId.values()].every((message) => String(message.textBody || message.snippet || '').length <= 2400),
+    // Context is complete when the message window holds the whole thread. A
+    // long body is cut to 2400 characters, but that does not hide a message:
+    // most marketing mail is longer, and a body-length test sent it to Review.
+    contextComplete: recent.length <= 16 && (!row.messageCount || row.messageCount <= messages.length),
   };
 }
 
@@ -297,7 +297,11 @@ export const storeAssessments = mutation({
         continue;
       }
       const assessment = parsed.data;
-      const merged = classifyCorpusThread({ ...row, jev: assessment }, context);
+      const merged = classifyCorpusThread(
+        { ...row, jev: assessment },
+        context,
+        await latestThreadContent(ctx, row),
+      );
       await ctx.db.patch(row._id, {
         ...merged,
         jev: assessment,

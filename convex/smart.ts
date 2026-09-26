@@ -1,10 +1,17 @@
 import { v } from 'convex/values';
-import { assessmentIsCurrent, attentionMatches, isAttentionView } from '../lib/jev/contract';
+import {
+  type AttentionView,
+  assessmentIsCurrent,
+  attentionMatches,
+  isAttentionView,
+} from '../lib/jev/contract';
 import { smartCategoryFromJev } from '../lib/jev/mail';
 import {
   applyUserRuleOverrides,
   classifyThreadWithContext,
+  clipClassifierBody,
   includeInSmartCategory,
+  SMART_CLASSIFIER_VERSION,
   type SmartClassificationContext,
   smartIndexKey,
   smartRuleMatches,
@@ -36,11 +43,37 @@ export async function loadSmartContext(ctx: any, userId: string): Promise<SmartC
   };
 }
 
+// Latest-message content for the classifier: the clipped body and the list
+// headers. Callers that have only a body text can pass it as a string.
+export interface ClassifierContent {
+  bodyText?: string;
+  listId?: string;
+  listUnsubscribe?: string;
+}
+
+function headerValue(headers: unknown, name: string) {
+  if (!headers || typeof headers !== 'object') return undefined;
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() === name && typeof value === 'string' && value.trim())
+      return value.trim().slice(0, 500);
+  }
+  return undefined;
+}
+
+export function classifierContent(message: any): ClassifierContent {
+  return {
+    bodyText: clipClassifierBody(String(message?.textBody || message?.searchText || '')) || undefined,
+    listId: headerValue(message?.headers, 'list-id'),
+    listUnsubscribe: headerValue(message?.headers, 'list-unsubscribe'),
+  };
+}
+
 // The classifier reads thread-summary fields only; corpus rows carry all of
 // them under slightly different names (fromAddress / providerThreadId).
-// bodyText is the latest message body when the caller has it — classification
+// The content is the latest message when the caller has it — classification
 // is grounded in actual content, not just headers and snippets.
-function classifierInput(row: any, bodyText?: string) {
+function classifierInput(row: any, content?: string | ClassifierContent) {
+  const latest = typeof content === 'string' ? { bodyText: content } : content || {};
   return {
     _id: row.providerThreadId,
     subject: row.subject,
@@ -49,12 +82,18 @@ function classifierInput(row: any, bodyText?: string) {
     labels: row.labels || [],
     unread: Boolean(row.unread),
     starred: Boolean(row.starred),
-    bodyText: bodyText || undefined,
+    bodyText: latest.bodyText || undefined,
+    listId: latest.listId,
+    listUnsubscribe: latest.listUnsubscribe,
   };
 }
 
-export function classifyCorpusThread(row: any, context: SmartClassificationContext, bodyText?: string) {
-  const input = classifierInput(row, bodyText) as any;
+export function classifyCorpusThread(
+  row: any,
+  context: SmartClassificationContext,
+  content?: string | ClassifierContent,
+) {
+  const input = classifierInput(row, content) as any;
   const det = classifyThreadWithContext(input, context);
   const ruleDriven = det.model === 'user_rule';
   // Precedence: user rules > persisted LLM verdict > deterministic. Custom
@@ -86,6 +125,7 @@ export function classifyCorpusThread(row: any, context: SmartClassificationConte
     smartCategory: verdict,
     smartPrimary: smartIndexKey(verdict),
     smartCustomKeys: verdict.customLabels || [],
+    smartClassifierVersion: SMART_CLASSIFIER_VERSION,
     classifiedAt: now(),
     // Every latest message gets the lightweight model pass. Exact user rules
     // still override its result, but do not prevent the pass from happening.
@@ -121,10 +161,10 @@ export function classificationFreshnessPatch(
   };
 }
 
-// Latest message body for a corpus thread — the content signal for the
+// Latest message content for a corpus thread — the content signal for the
 // background sweeps, which don't have the message batch in hand the way the
 // write path does.
-export async function latestThreadBody(ctx: any, row: any): Promise<string | undefined> {
+export async function latestThreadContent(ctx: any, row: any): Promise<ClassifierContent | undefined> {
   const latest = await ctx.db
     .query('mailCorpusMessages')
     .withIndex('by_user_account_thread_received', (q: any) =>
@@ -134,7 +174,7 @@ export async function latestThreadBody(ctx: any, row: any): Promise<string | und
     .take(1);
   const message = latest[0];
   if (!message) return undefined;
-  return String(message.textBody || message.searchText || '').slice(0, 4000) || undefined;
+  return classifierContent(message);
 }
 
 export function normalizeCorpusThread(row: any) {
@@ -157,6 +197,17 @@ export function normalizeCorpusThread(row: any) {
     jevLastBriefChangeId: row.jevLastBriefChangeId,
     cachedAt: row.updatedAt || row.lastDate || 0,
   };
+}
+
+// One test for the attention views and their badge: a current Jev verdict with
+// the obligation, not in spam or trash, and not muted by a user rule.
+function attentionRowVisible(row: any, view: AttentionView) {
+  return (
+    assessmentIsCurrent(row.jev, row.latestMessageId) &&
+    attentionMatches(row.jev, view) &&
+    !(row.labels || []).some((label: string) => ['SPAM', 'TRASH'].includes(String(label).toUpperCase())) &&
+    !(row.smartCategory?.model === 'user_rule' && row.smartCategory?.primary === 'noise')
+  );
 }
 
 interface CategoryQueryArgs {
@@ -195,15 +246,7 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
       );
     const page = await source.paginate({ cursor: args.cursor ?? null, numItems: limit });
     return {
-      items: page.page
-        .filter((row: any) => assessmentIsCurrent(row.jev, row.latestMessageId))
-        .map(normalizeCorpusThread)
-        .filter(
-          (thread: any) =>
-            attentionMatches(thread.jev, category) &&
-            !thread.labels.some((label: string) => ['SPAM', 'TRASH'].includes(label.toUpperCase())) &&
-            !(thread.smartCategory?.model === 'user_rule' && thread.smartCategory?.primary === 'noise'),
-        ),
+      items: page.page.filter((row: any) => attentionRowVisible(row, category)).map(normalizeCorpusThread),
       nextBefore: undefined,
       nextCursor: page.isDone ? undefined : page.continueCursor,
     };
@@ -280,19 +323,31 @@ export async function queryCategoryThreads(ctx: any, args: CategoryQueryArgs) {
   return { items: page, nextBefore, nextCursor: undefined };
 }
 
-// Sweeps rows that predate write-time classification. Runs from a cron and
+// Sweeps rows with no verdict or a verdict from older classifier code
+// (smartClassifierVersion below SMART_CLASSIFIER_VERSION). Runs from a cron and
 // chains itself while a full batch keeps coming back, so a deploy over an
-// existing corpus converges in minutes without blocking any read path.
+// existing corpus converges in minutes without blocking any read path, and a
+// classifier change needs no manual resort.
 export const classifyBacklog = internalMutation({
   args: {},
   handler: async (ctx) => {
     // 100/batch (was 200): each row now also reads its latest message body,
     // and message docs carry full bodies — keep the per-mutation read volume
     // well under Convex limits.
+    const BATCH = 100;
     const rows = await ctx.db
       .query('mailCorpusThreads')
-      .withIndex('by_smart_primary', (q: any) => q.eq('smartPrimary', undefined))
-      .take(100);
+      .withIndex('by_smart_classifier_version', (q: any) => q.eq('smartClassifierVersion', undefined))
+      .take(BATCH);
+    if (rows.length < BATCH)
+      rows.push(
+        ...(await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_smart_classifier_version', (q: any) =>
+            q.gte('smartClassifierVersion', 0).lt('smartClassifierVersion', SMART_CLASSIFIER_VERSION),
+          )
+          .take(BATCH - rows.length)),
+      );
     if (!rows.length) return { classified: 0, done: true };
     const contexts = new Map<string, SmartClassificationContext>();
     for (const row of rows) {
@@ -301,12 +356,12 @@ export const classifyBacklog = internalMutation({
         context = await loadSmartContext(ctx, row.userId);
         contexts.set(row.userId, context);
       }
-      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadContent(ctx, row)));
     }
-    if (rows.length === 100) {
+    if (rows.length === BATCH) {
       await ctx.scheduler.runAfter(1_000, internal.smart.classifyBacklog, {});
     }
-    return { classified: rows.length, done: rows.length < 100 };
+    return { classified: rows.length, done: rows.length < BATCH };
   },
 });
 
@@ -338,7 +393,7 @@ export const reclassifyMatchingThreads = mutation({
     let patched = 0;
     for (const row of rows) {
       if (!smartRuleMatches(rule, classifierInput(row))) continue;
-      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadContent(ctx, row)));
       patched += 1;
     }
     return { patched };
@@ -347,8 +402,9 @@ export const reclassifyMatchingThreads = mutation({
 
 // Indexed unread-per-category counts, shared by the authenticated live query
 // (liveMail.categoryCounts) and the internal-secret tool path. Counts cap at
-// CATEGORY_COUNT_CAP; needs_reply and secondary hits derive from the unread
-// Main window (the classifier only attaches secondary to Main verdicts).
+// CATEGORY_COUNT_CAP; secondary hits derive from the unread Main window (the
+// classifier only attaches secondary to Main verdicts). needs_reply reads the
+// Jev reply index, as its view does.
 export const CATEGORY_COUNT_CAP = 100;
 
 export async function computeCategoryUnreadCounts(ctx: any, userId: string, accountIds?: string[] | null) {
@@ -383,16 +439,27 @@ export async function computeCategoryUnreadCounts(ctx: any, userId: string, acco
       .take(CAP);
   };
 
+  const accountSet = accounts.length ? new Set(accounts) : null;
   const counts: Record<string, { unread: number; attention: boolean }> = {};
   const mainRows = await unreadRows('main');
   const SMART_IDS = ['main', 'needs_reply', 'codes', 'orders', 'finance_admin', 'noise', 'review'];
   for (const id of SMART_IDS) {
     if (id === 'needs_reply') {
-      const rows = mainRows.filter((row: any) => row.smartCategory?.secondary?.includes('needs_reply'));
-      counts[id] = {
-        unread: Math.min(rows.length, CAP),
-        attention: rows.some((row: any) => row.smartCategory?.needsAttention),
-      };
+      // The badge counts what the Needs reply view lists: current Jev reply
+      // obligations, through the same index and the same filters, unread only.
+      const rows = (
+        await ctx.db
+          .query('mailCorpusThreads')
+          .withIndex('by_user_jev_reply', (q: any) => q.eq('userId', userId).eq('jevNeedsReply', true))
+          .order('desc')
+          .take(CAP * 3)
+      ).filter(
+        (row: any) =>
+          row.unread &&
+          (!accountSet || accountSet.has(row.accountId)) &&
+          attentionRowVisible(row, 'needs_reply'),
+      );
+      counts[id] = { unread: Math.min(rows.length, CAP), attention: rows.length > 0 };
       continue;
     }
     const rows = id === 'main' ? mainRows : await unreadRows(id);
@@ -411,7 +478,6 @@ export async function computeCategoryUnreadCounts(ctx: any, userId: string, acco
     .withIndex('by_user_lastDate', (q: any) => q.eq('userId', userId))
     .order('desc')
     .take(300);
-  const accountSet = accounts.length ? new Set(accounts) : null;
   for (const row of recent) {
     if (!row.unread || !row.smartCustomKeys?.length) continue;
     if (accountSet && !accountSet.has(row.accountId)) continue;
@@ -426,24 +492,96 @@ export async function computeCategoryUnreadCounts(ctx: any, userId: string, acco
   return counts;
 }
 
-// Rule/label edits change what every existing verdict means; re-run the
-// classifier over the user's corpus in scheduled pages.
+// One resort job record for each user (userDocs kind smartReclassifyJob).
+// `generation` goes up on each rule or label edit. `chain` is the generation
+// that started the page chain that runs now, so each user has one chain.
+const RECLASSIFY_JOB_KIND = 'smartReclassifyJob';
+// A chain writes heartbeatAt on each page. A chain with no page in this time
+// has stopped, and the next edit starts a new one.
+export const RECLASSIFY_STALE_MS = 10 * 60_000;
+
+async function reclassifyJob(ctx: any, userId: string) {
+  return ctx.db
+    .query('userDocs')
+    .withIndex('by_user_kind_key', (q: any) =>
+      q.eq('userId', userId).eq('kind', RECLASSIFY_JOB_KIND).eq('key', 'default'),
+    )
+    .unique();
+}
+
+// Rule/label edits change what every existing verdict means. Each edit asks
+// for a resort. When a chain runs already, the edit only raises the
+// generation, and the chain starts again from the first page with the new
+// rules. Otherwise the edit starts one chain after a short delay, which also
+// collects quick edits into one run.
+export async function requestSmartReclassify(ctx: any, userId: string, delayMs = 5_000) {
+  const job = await reclassifyJob(ctx, userId);
+  const ts = now();
+  const generation = Number(job?.doc?.generation || 0) + 1;
+  const running = Boolean(job?.doc?.running) && ts - Number(job?.doc?.heartbeatAt || 0) < RECLASSIFY_STALE_MS;
+  const doc = running
+    ? { ...job.doc, generation }
+    : { generation, chain: generation, running: true, heartbeatAt: ts };
+  if (job) await ctx.db.patch(job._id, { doc, updatedAt: ts });
+  else
+    await ctx.db.insert('userDocs', {
+      userId,
+      kind: RECLASSIFY_JOB_KIND,
+      key: 'default',
+      doc,
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  if (!running)
+    await ctx.scheduler.runAfter(delayMs, internal.smart.reclassifyUserThreads, {
+      userId,
+      chain: generation,
+      generation,
+    });
+  return { scheduled: !running, generation };
+}
+
+// Re-run the classifier over the user's corpus in scheduled pages. A call
+// with no chain (a manual run) does not read or write the job record.
 export const reclassifyUserThreads = internalMutation({
-  args: { userId: v.string(), cursor: v.optional(v.string()) },
+  args: {
+    userId: v.string(),
+    cursor: v.optional(v.string()),
+    chain: v.optional(v.number()),
+    generation: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
+    let cursor = args.cursor;
+    let generation = args.generation;
+    const job = args.chain === undefined ? null : await reclassifyJob(ctx, args.userId);
+    if (job) {
+      // A newer chain owns the job: stop this one.
+      if (job.doc?.chain !== args.chain) return { reclassified: 0, done: true, superseded: true };
+      // The rules changed during the run: start again with the new rules.
+      if (job.doc?.generation !== generation) {
+        generation = job.doc?.generation;
+        cursor = undefined;
+      }
+    }
     const context = await loadSmartContext(ctx, args.userId);
     // 50/page (was 100): the body lookup per row reads full message docs.
     const page = await ctx.db
       .query('mailCorpusThreads')
       .withIndex('by_user', (q: any) => q.eq('userId', args.userId))
-      .paginate({ cursor: args.cursor ?? null, numItems: 50 });
+      .paginate({ cursor: cursor ?? null, numItems: 50 });
     for (const row of page.page) {
-      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadBody(ctx, row)));
+      await ctx.db.patch(row._id, classifyCorpusThread(row, context, await latestThreadContent(ctx, row)));
     }
+    if (job)
+      await ctx.db.patch(job._id, {
+        doc: { ...job.doc, generation, running: !page.isDone, heartbeatAt: now() },
+        updatedAt: now(),
+      });
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.smart.reclassifyUserThreads, {
         userId: args.userId,
         cursor: page.continueCursor,
+        ...(args.chain === undefined ? {} : { chain: args.chain, generation }),
       });
     }
     return { reclassified: page.page.length, done: page.isDone };

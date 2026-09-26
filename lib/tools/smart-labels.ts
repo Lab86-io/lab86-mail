@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { api, convexMutation } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
-import { classifyThreadWithContext, SMART_CATEGORY_IDS } from '../mail/smart-categories';
+import {
+  classifyThreadWithContext,
+  SMART_CATEGORY_IDS,
+  SMART_GMAIL_LABEL_PREFIX,
+} from '../mail/smart-categories';
 import { emailFromHeader } from '../shared/format';
 import type { SmartRule } from '../shared/types';
 import { requireStoreUserId } from '../store/kv';
@@ -11,7 +15,7 @@ import {
 } from '../store/smart-corrections';
 import {
   createSmartLabel as createSmartLabelRecord,
-  disableSmartLabel,
+  deleteSmartLabel as deleteSmartLabelRecord,
   listSmartLabels as listSmartLabelRecords,
   updateSmartLabel as updateSmartLabelRecord,
 } from '../store/smart-labels';
@@ -20,7 +24,7 @@ import {
   listSmartRules as listSmartRuleRecords,
   setSmartRuleEnabled,
 } from '../store/smart-rules';
-import { listRecentThreads, resolveThread, setThreadSmartCategory } from '../store/threads';
+import { listRecentThreads, resolveThread } from '../store/threads';
 import { defineTool } from './registry';
 
 // Synchronously flip every recent corpus thread the new rule matches before
@@ -88,7 +92,7 @@ export const listSmartLabels = defineTool({
 export const createSmartLabel = defineTool({
   name: 'create_smart_label',
   description:
-    'Create a local AI-only smart label. Requires a description plus positive and negative examples. Does not create Gmail labels.',
+    'Create a local custom label. It matches by keywords: a thread gets the label when every word of the label name or of one positive example is a whole word in its sender, subject, preview, or body, and no negative example matches the same way. The description is not matched. Does not create Gmail labels.',
   category: 'mail',
   mutating: true,
   input: z.object({
@@ -130,7 +134,7 @@ export const previewSmartLabel = defineTool({
       description: args.description,
       enabled: true,
       sidebarVisible: false,
-      gmailLabelName: `MailOS/${args.name}`,
+      gmailLabelName: `${SMART_GMAIL_LABEL_PREFIX}${args.name}`,
       aiMode: 'metadata_snippet' as const,
       positiveExamples: args.positiveExamples,
       negativeExamples: args.negativeExamples,
@@ -177,14 +181,14 @@ export const updateSmartLabel = defineTool({
 
 export const deleteSmartLabel = defineTool({
   name: 'delete_smart_label',
-  description: 'Disable a local custom smart label.',
+  description:
+    'Delete a local custom smart label and turn off the rules that file mail under it. To keep the label but hide it, use update_smart_label with enabled false.',
   category: 'mail',
   mutating: true,
   input: z.object({ id: z.string() }),
-  output: z.object({ label: z.any() }),
+  output: z.object({ label: z.any(), disabledRuleIds: z.array(z.string()) }),
   async handler({ id }) {
-    const label = await disableSmartLabel(id);
-    return { label };
+    return await deleteSmartLabelRecord(id);
   },
 });
 
@@ -305,8 +309,9 @@ export const applySmartCorrection = defineTool({
 
     const rules = await listSmartRuleRecords();
     const labels = await listSmartLabelRecords();
+    // The stored verdict is the corpus row, which reclassifyRuleMatches
+    // updates. This local verdict only records the new category.
     const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
-    await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
     await reclassifyRuleMatches(rule);
     await writeSmartCorrection({
       account,
@@ -349,7 +354,6 @@ export const markSenderHuman = defineTool({
     });
     const [rules, labels] = await Promise.all([listSmartRuleRecords(), listSmartLabelRecords()]);
     const smartCategory = classifyThreadWithContext(thread, { rules, customLabels: labels });
-    await setThreadSmartCategory(account, threadId, smartCategory).catch(() => undefined);
     await reclassifyRuleMatches(rule);
     await writeSmartCorrection({
       account,

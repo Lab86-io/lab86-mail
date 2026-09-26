@@ -50,12 +50,15 @@ export function MailNav() {
       ? (liveCounts.data?.counts as Record<string, { unread: number; attention: boolean }> | undefined)
       : undefined;
 
+  // The settings dialog lists every label, disabled or hidden ones too, so a
+  // disabled label can be enabled again. The rail shows enabled, visible ones.
   const { data: smartLabels } = useQuery({
-    queryKey: ['smart-labels'],
-    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', {}),
+    queryKey: ['smart-labels', 'all'],
+    queryFn: async () => callTool<{ custom: any[] }>('list_smart_labels', { includeDisabled: true }),
     staleTime: 60_000,
   });
-  const customLabels = (smartLabels?.custom || []).filter((label: any) => label.sidebarVisible);
+  const allLabels = smartLabels?.custom || [];
+  const customLabels = railSmartLabels(allLabels);
   return (
     <>
       <MailNavView
@@ -71,13 +74,17 @@ export function MailNav() {
       <SmartLabelsSettings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        labels={customLabels}
+        labels={allLabels}
         onChanged={() => {
           queryClient.invalidateQueries({ queryKey: ['smart-labels'] });
         }}
       />
     </>
   );
+}
+
+export function railSmartLabels<T extends { enabled?: boolean; sidebarVisible?: boolean }>(labels: T[]) {
+  return labels.filter((label) => label.enabled !== false && label.sidebarVisible);
 }
 
 export function MailNavView({
