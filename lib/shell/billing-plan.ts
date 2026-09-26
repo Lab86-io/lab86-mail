@@ -1,7 +1,9 @@
+import { FREE_PLAN_NAME, formatUsd, PAID_PLANS } from '../hosted/plans';
+
 /**
  * The billing line in Settings, Intelligence. The settings API returns the
  * user's plan; a paid plan shows the plan and Manage, never Upgrade and the
- * price list.
+ * price list. Names and price formats come from lib/hosted/plans.ts.
  */
 export type BillingPlan = 'free' | 'byok' | 'pro' | 'admin';
 
@@ -20,8 +22,8 @@ export type BillingSummary = {
 };
 
 const PLAN_LABELS: Record<string, string> = {
-  byok: 'Your own key',
-  pro: 'Pro',
+  byok: PAID_PLANS.byok.name,
+  pro: PAID_PLANS.pro.name,
   admin: 'Admin',
 };
 
@@ -56,10 +58,10 @@ export function billingSummary(input: BillingSummaryInput): BillingSummary {
       showManage: plan !== 'admin',
     };
   const priceLine = pricesPresent
-    ? `Plan: Free. Pro (hosted models) is $${p?.monthlyUsd}/mo or $${p?.annualUsd}/yr. Your own key is $${p?.byokMonthlyUsd}/mo or $${p?.byokAnnualUsd}/yr.`
-    : 'Plan: Free. Upgrade for hosted models, or bring your own key for less.';
+    ? `Plan: ${FREE_PLAN_NAME}. ${PAID_PLANS.pro.name} (hosted models) is ${formatUsd(p?.monthlyUsd ?? 0)}/mo or ${formatUsd(p?.annualUsd ?? 0)}/yr. ${PAID_PLANS.byok.name} is ${formatUsd(p?.byokMonthlyUsd ?? 0)}/mo or ${formatUsd(p?.byokAnnualUsd ?? 0)}/yr.`
+    : `Plan: ${FREE_PLAN_NAME}. Upgrade for hosted models, or bring your own key for less.`;
   return {
-    line: usageLine ? `Plan: Free. ${usageLine}` : priceLine,
+    line: usageLine ? `Plan: ${FREE_PLAN_NAME}. ${usageLine}` : priceLine,
     planLabel,
     showUpgrade: true,
     showManage: true,

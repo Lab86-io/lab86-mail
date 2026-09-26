@@ -85,7 +85,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
       heading={
         <SectionHeading
           title="Intelligence"
-          blurb="Summaries, triage, drafts, and the daily brief. Use Lab86's hosted models or bring your own key."
+          blurb="Summaries, triage, drafts, and the daily brief. Use the hosted models in Pro, or bring your own key."
         />
       }
     />

@@ -226,7 +226,7 @@ export function AiSection({ heading }: { heading: ReactNode }) {
             <div className="space-y-1.5">
               <Label>Provider</Label>
               {aiMode === 'lab86' ? (
-                <Input value="OpenRouter (Lab86 managed)" readOnly />
+                <Input value="OpenRouter (hosted by Lab86)" readOnly />
               ) : (
                 <Select
                   value={provider}

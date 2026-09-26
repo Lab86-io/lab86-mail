@@ -6,7 +6,7 @@ import path from 'node:path';
 // models. Legal pages need their own decision, API routes are not UI, and
 // components/narrative is owned by the narrative pass.
 const ROOTS = ['components', 'app'];
-const SKIP = ['app/api/', 'app/privacy/', 'app/terms/', 'components/narrative/'];
+const SKIP = ['app/api/', 'app/privacy/', 'components/narrative/'];
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

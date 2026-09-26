@@ -13,8 +13,8 @@ import {
   defaultClassifier,
 } from '../classifier/catalog';
 import { loadSelectedClassifier } from '../classifier/selection';
+import { PAID_PLANS, planPriceLine } from '../hosted/plans';
 import {
-  B2C_BYOK_MONTHLY_PRICE_USD,
   BRIEF_GENERATION_FEATURES,
   estimateAiUsageCost,
   resolveAiBudgetPolicy,
@@ -335,7 +335,7 @@ export async function resolveAiRuntime(input: {
       throw new AiAccessError('Add your OpenRouter API key in Intelligence settings to continue.');
     }
     if (mode === 'byok' && state.key) {
-      // BYOK AI is part of the paid tiers ($5 BYOK or $15 Pro). The
+      // Your own key is part of the paid plans (Own key or Pro). The
       // subscriptions-paused escape hatch above stays unmetered. Background
       // work has no session, so the plan comes from the stored snapshot.
       const entitlement = await getAiBillingEntitlement({
@@ -344,7 +344,7 @@ export async function resolveAiRuntime(input: {
       }).catch(() => null);
       if (entitlement && entitlement.plan === 'free') {
         throw new AiAccessError(
-          `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from Settings.`,
+          `Using your own API key needs the ${PAID_PLANS.byok.name} plan (${planPriceLine('byok')}) or ${PAID_PLANS.pro.name}. Upgrade from Settings.`,
         );
       }
       const apiKey = decryptSecret(state.key.encryptedKey);
@@ -819,7 +819,7 @@ function assertLab86Budget(
   feature = 'agent',
 ) {
   if (isLab86AiDisabled()) {
-    throw new AiAccessError('Lab86 Intelligence is paused. Switch to your own API key to continue.');
+    throw new AiAccessError('Hosted Intelligence is paused. Switch to your own API key to continue.');
   }
   const defaults = aiCreditDefaults();
   const entitlement = clerkEntitlement || state.entitlement;
@@ -831,12 +831,12 @@ function assertLab86Budget(
   const policy = resolveAiBudgetPolicy({ monthlyCredits, creditsUsed: used, feature });
   if (!policy.subscribed) {
     throw new AiAccessError(
-      'Choose the Lab86 Mail paid plan, or switch to your own API key, to use Lab86 Intelligence.',
+      `Choose ${PAID_PLANS.pro.name}, or switch to your own API key, to use Intelligence.`,
     );
   }
   if (policy.hardStopped) {
     throw new AiAccessError(
-      'This month’s Lab86 Intelligence chat budget is used up. Mail sorting continues at a reduced cost, or you can switch to your own API key.',
+      'This month’s Intelligence chat budget is used up. Mail sorting continues at a reduced cost, or you can switch to your own API key.',
     );
   }
   return policy;

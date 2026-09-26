@@ -24,6 +24,7 @@ import {
   isUserOpenRouterKeyRequired,
 } from '@/lib/hosted/controls';
 import { api, convexMutation, convexQuery } from '@/lib/hosted/convex';
+import { PAID_PLANS, planPriceLine } from '@/lib/hosted/plans';
 import { enforceUserRateLimit, RateLimitError, rateLimitJson } from '@/lib/rate-limit';
 import { encryptSecret, maskFingerprint, secretFingerprint } from '@/lib/security/crypto';
 
@@ -258,7 +259,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
         return NextResponse.json(
           {
             ok: false,
-            error: `Using your own API key requires the Lab86 Mail BYOK plan ($${B2C_BYOK_MONTHLY_PRICE_USD}/month) or Pro. Upgrade from the pricing page.`,
+            error: `Using your own API key needs the ${PAID_PLANS.byok.name} plan (${planPriceLine('byok')}) or ${PAID_PLANS.pro.name}. Upgrade from the pricing page.`,
           },
           { status: 402 },
         );
@@ -268,7 +269,7 @@ export function createAiSettingsPost(overrides: Partial<typeof postDependencies>
     if (isUserOpenRouterKeyRequired()) {
       if (mode !== 'byok' || provider !== 'openrouter') {
         return NextResponse.json(
-          { ok: false, error: 'OpenRouter BYOK is required while Lab86 AI subscriptions are disabled.' },
+          { ok: false, error: 'Add your own OpenRouter key: hosted-model subscriptions are paused.' },
           { status: 400 },
         );
       }
