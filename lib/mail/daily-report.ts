@@ -24,6 +24,7 @@ import {
 } from '../jev/contract';
 import { explicitReplyRequested } from '../jev/fallback';
 import { loadJevPolicy } from '../jev/service';
+import { labelsHaveRole } from '../mail/search/folders';
 import { bulkSignals, isHumanLike, isNoReplyLike } from '../mail/smart-categories';
 import { listNylasAccounts, searchNylasThreads } from '../nylas/provider';
 import { emailFromHeader, shortFrom, stripEmoji } from '../shared/format';
@@ -140,7 +141,20 @@ const LANE_PRIORITY: Record<ReportLane, number> = {
 // How wide to cast the candidate net. 'week' is the fast first pass (just the
 // last several days, fewer candidates, less enrichment) so a brief appears
 // quickly; 'full' is the broader month sweep run afterward in the background.
-function scopeProfile(scope: 'week' | 'full' = 'full') {
+// 'first' is the first edition after the first mailbox connects (FEATURES
+// item 4): the last 48 hours only, a small candidate set, and no model call.
+function scopeProfile(scope: 'first' | 'week' | 'full' = 'full') {
+  if (scope === 'first') {
+    return {
+      queries: [
+        { q: 'in:inbox newer_than:2d -in:trash -in:spam', max: 60, human: true },
+        { q: 'is:starred newer_than:2d -in:trash -in:spam', max: 20, human: true },
+      ] as typeof RECENT_QUERIES,
+      sentMax: 40,
+      candidateLimit: 40,
+      enrichCap: 0,
+    };
+  }
   if (scope === 'week') {
     return {
       queries: [
@@ -174,7 +188,9 @@ export async function generateDailyReport(input: {
   maxRecentPerAccount?: number;
   includeCalendar?: boolean;
   // 'week' = fast first pass; 'full' = broad month sweep (default).
-  scope?: 'week' | 'full';
+  scope?: 'first' | 'week' | 'full';
+  // Write the edition with no model call at all (the first edition).
+  noModel?: boolean;
   // Reuse an edition id so a later pass overwrites the same report in place.
   reportId?: string;
   // Skip the progressive partial saves (used by the silent background pass so
@@ -289,7 +305,7 @@ export async function generateDailyReport(input: {
     }
   }
 
-  if (input.userId) {
+  if (input.userId && !input.noModel) {
     try {
       const replies = await checkWaitingReplies({ userId: input.userId });
       if (replies.unavailable)
@@ -419,12 +435,25 @@ export async function generateDailyReport(input: {
     scores.set(key, floor.briefEligible ? Math.max(1, scoreBriefCandidate(signals)) : -100);
   }
 
+  // Thread facts the live edition compares against later (FEATURES item 8):
+  // unread and in the inbox when written, and the counterparty's address.
+  const threadFacts = new Map<string, BriefThreadFacts>();
+  for (const thread of bounded) {
+    const key = `${thread.account}:${thread._id}`;
+    const counterparty = floors.get(key)?.counterparty || '';
+    threadFacts.set(key, {
+      unread: Boolean(thread.unread),
+      inInbox: labelsHaveRole(thread.labels || [], 'INBOX'),
+      ...(counterparty && !self.has(counterparty) ? { senderEmail: counterparty } : {}),
+    });
+  }
+
   // ---- Stage 2: pick the threads worth an LLM narrative (promote-only) -----
   const enrichCap = Math.min(
     Number(process.env.LAB86_MAIL_REPORT_MAX_ENRICH || ENRICH_CAP),
     profile.enrichCap,
   );
-  const aiAvailable = await hasAiForCurrentUser();
+  const aiAvailable = !input.noModel && (await hasAiForCurrentUser());
   const enrichKeys = new Set<string>(
     bounded
       .filter((thread) => {
@@ -491,6 +520,7 @@ export async function generateDailyReport(input: {
         scores,
         signals: signalsByKey,
         tier,
+        threadFacts,
       });
       await saveDailyReport(partial);
     } catch {
@@ -587,11 +617,25 @@ export async function generateDailyReport(input: {
     scores,
     signals: signalsByKey,
     tier,
+    threadFacts,
   });
   // Silent callers persist the composed artifact themselves; saving the bare
   // structured doc here would wipe the rendered edition mid-pass.
   if (!input.silent) await saveDailyReport(report);
   return report;
+}
+
+export interface BriefThreadFacts {
+  unread: boolean;
+  inInbox: boolean;
+  senderEmail?: string;
+}
+
+function validEmail(value: string | undefined | null): string | undefined {
+  const email = String(value || '')
+    .trim()
+    .toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 }
 
 async function searchAccountThreads(account: string, query: string, max: number, userId?: string | null) {
@@ -1089,6 +1133,7 @@ export async function composeReport(input: {
   scores?: Map<string, number>;
   signals?: Map<string, BriefScoreSignals>;
   tier?: BriefPlanTier;
+  threadFacts?: Map<string, BriefThreadFacts>;
 }) {
   const trackedKeys = new Map(input.tracked.map((item) => [`${item.account}:${item.threadId}`, item]));
   const threadDismissals = new Map(
@@ -1110,6 +1155,8 @@ export async function composeReport(input: {
   };
   const toItem = (insight: ThreadInsight): DailyReportItem => {
     const tracked = trackedKeys.get(`${insight.account}:${insight.threadId}`);
+    const facts = input.threadFacts?.get(`${insight.account}:${insight.threadId}`);
+    const senderEmail = facts?.senderEmail || validEmail(insight.jev?.sender);
     return {
       account: insight.account,
       threadId: insight.threadId,
@@ -1125,7 +1172,9 @@ export async function composeReport(input: {
         insight.lane === 'bulk'
           ? null
           : insight.commitments.find((c) => c.dueAt)?.dueAt || tracked?.dueAt || null,
-      unread: false,
+      unread: facts?.unread ?? false,
+      ...(facts?.inInbox ? { inInbox: true } : {}),
+      ...(senderEmail ? { senderEmail } : {}),
       trackedThreadId: tracked?._id,
       surfacedBecause: insight.surfacedBecause,
       demotionReason: insight.demotionReason ?? null,
@@ -1420,7 +1469,7 @@ export function dedupeSimilarTasks(tasks: DailyReportTaskItem[]): DailyReportTas
   return result;
 }
 
-async function loadTaskContext(
+export async function loadTaskContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportTaskItem[]> {
@@ -1514,7 +1563,7 @@ function startOfLocalDay(at: number, tz: string): number {
   }
 }
 
-async function loadCalendarContext(
+export async function loadCalendarContext(
   userId: string | null | undefined,
   now: number,
 ): Promise<DailyReportCalendarItem[]> {

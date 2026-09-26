@@ -20,6 +20,7 @@ import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { EXPORT_DESCRIPTION, ExportBeforeDelete, ExportDataButton } from '@/components/settings/AccountData';
 import { AiSection } from '@/components/settings/AiSection';
+import { BriefSection } from '@/components/settings/BriefSection';
 import { JevSection } from '@/components/settings/JevSection';
 import { MailAlertsSettings } from '@/components/settings/MailAlertsSettings';
 import { SavedRepliesSettings } from '@/components/settings/SavedRepliesSettings';
@@ -100,6 +101,7 @@ const TAB_SECTIONS: Record<SettingsTabId, () => ReactNode> = {
     </>
   ),
   orders: () => <StandingOrdersSection />,
+  brief: () => <BriefSection />,
   ai: () => (
     <AiSection
       heading={

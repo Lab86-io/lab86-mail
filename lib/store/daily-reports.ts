@@ -1,4 +1,6 @@
+import { parseBriefEditionBudget } from '../brief/budget';
 import { editorialPlanSchema } from '../brief/editorial';
+import { applySinceOperationStates, loadOperationStates, sinceOperationIds } from '../brief/since';
 import { buildTriageHandoffIndex } from '../brief/triage-index';
 import { api, convexQuery } from '../hosted/convex';
 import { isConvexConfigured } from '../hosted/env';
@@ -24,6 +26,7 @@ import {
 } from '../shared/types';
 import { listDismissedDailyReportTasks, listDismissedDailyReportThreads } from './daily-report-dismissals';
 import { kvGet, kvList, kvUpsert, requireStoreUserId } from './kv';
+import { listTrackedThreads } from './tracked-threads';
 
 const saveDefaults = {
   persist: kvUpsert,
@@ -59,6 +62,8 @@ function slimOverflowItem(item: DailyReportItem): DailyReportItem {
     ...(item.lane ? { lane: item.lane } : {}),
     ...(item.trackedThreadId ? { trackedThreadId: item.trackedThreadId } : {}),
     ...(item.firstSurfacedAt != null ? { firstSurfacedAt: item.firstSurfacedAt } : {}),
+    ...(item.inInbox ? { inInbox: true } : {}),
+    ...(item.senderEmail ? { senderEmail: item.senderEmail } : {}),
     ...(item.jev ? { jev: briefJevDigest(item.jev) } : {}),
   };
 }
@@ -138,12 +143,36 @@ async function loadBriefDismissals(): Promise<BriefHiddenItems> {
   };
 }
 
+// Tracked threads among `ids` that the user resolved or dismissed.
+async function loadClosedTracked(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const wanted = new Set(ids);
+  const rows = await listTrackedThreads({ includeResolved: true, limit: 1000 });
+  return new Set(
+    rows
+      .filter((row) => wanted.has(row._id) && (row.status === 'resolved' || row.status === 'dismissed'))
+      .map((row) => row._id),
+  );
+}
+
+// The user's own addresses. A thread whose newest message is from one of them
+// was answered after the edition.
+async function loadSelfAddresses(userId: string): Promise<Set<string>> {
+  const accounts = await convexQuery<Array<{ email?: string }>>((api as any).accounts.listConnectedAccounts, {
+    userId,
+  });
+  return new Set((accounts || []).map((row) => String(row.email || '').toLowerCase()).filter(Boolean));
+}
+
 const readDefaults = {
   query: convexQuery,
   configured: isConvexConfigured,
   loadPolicy: loadJevPolicy,
   load: getDailyReport,
   loadDismissals: loadBriefDismissals,
+  loadClosedTracked,
+  loadSelfAddresses,
+  loadOperationStates: (userId: string, ids: string[]) => loadOperationStates(userId, ids),
 };
 let readDependencies = readDefaults;
 export function setDailyReportReaderForTest(overrides: Partial<typeof readDefaults> = {}) {
@@ -199,15 +228,35 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
     : await migrateDailyReportForRead(latest);
   if (!report) return null;
   if (!readDependencies.configured()) return report;
-  const hidden = await readDependencies.loadDismissals().catch((): BriefHiddenItems => ({}));
+  const lanes: Partial<DailyReport['sections']> = report.sections ?? {};
+  const trackedIds = [
+    ...new Set(
+      [
+        ...(lanes.answer || []),
+        ...(lanes.today || []),
+        ...(lanes.know || []),
+        ...(lanes.waiting || []),
+        ...(lanes.overflow || []),
+      ]
+        .map((item) => item.trackedThreadId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const [dismissals, closedTracked] = await Promise.all([
+    readDependencies.loadDismissals().catch((): BriefHiddenItems => ({})),
+    readDependencies.loadClosedTracked(trackedIds).catch(() => new Set<string>()),
+  ]);
+  const hidden: BriefHiddenItems = { ...dismissals, closedTracked };
   // Dismissals apply to any latest edition; live mail facts only to a fresh one.
   if (Date.now() - report.generatedAt > 24 * 3600_000)
-    return projectBriefMail(
-      report,
-      [],
-      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
-      Date.now(),
-      hidden,
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [],
+        { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+        Date.now(),
+        hidden,
+      ),
     );
   const items = [
     ...(report.sections.answer || []),
@@ -218,7 +267,7 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
   ];
   try {
     const userId = requireStoreUserId();
-    const [policy, threads, arrivals] = await Promise.all([
+    const [policy, threads, arrivals, selfAddresses] = await Promise.all([
       readDependencies.loadPolicy(userId),
       readDependencies.query<Thread[]>((api as any).jev.threadAssessments, {
         userId,
@@ -231,28 +280,47 @@ export async function getLatestDailyReport(kind?: DailyReport['kind'], summaryFi
           accountIds: report.accounts,
         })
         .catch(() => []),
+      readDependencies.loadSelfAddresses(userId).catch(() => new Set<string>()),
     ]);
-    return projectBriefMail(
-      report,
-      [
-        ...new Map(
-          [...(Array.isArray(threads) ? threads : []), ...(Array.isArray(arrivals) ? arrivals : [])].map(
-            (thread) => [`${thread.account}:${thread._id}`, thread],
-          ),
-        ).values(),
-      ],
-      policy,
-      Date.now(),
-      hidden,
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [
+          ...new Map(
+            [...(Array.isArray(threads) ? threads : []), ...(Array.isArray(arrivals) ? arrivals : [])].map(
+              (thread) => [`${thread.account}:${thread._id}`, thread],
+            ),
+          ).values(),
+        ],
+        policy,
+        Date.now(),
+        { ...hidden, selfAddresses },
+      ),
     );
   } catch {
-    return projectBriefMail(
-      report,
-      [],
-      { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
-      Date.now(),
-      hidden,
+    return withLiveSince(
+      projectBriefMail(
+        report,
+        [],
+        { preferences: DEFAULT_JEV_PREFERENCES, corrections: [] },
+        Date.now(),
+        hidden,
+      ),
     );
+  }
+}
+
+// An operation the user undid since the edition leaves its look back.
+async function withLiveSince(report: DailyReport): Promise<DailyReport> {
+  const ids = sinceOperationIds(report);
+  if (!ids.length) return report;
+  try {
+    return applySinceOperationStates(
+      report,
+      await readDependencies.loadOperationStates(requireStoreUserId(), ids),
+    );
+  } catch {
+    return report;
   }
 }
 
@@ -303,15 +371,30 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
   const migrated: DailyReport = {
     _id: raw._id,
     kind: raw.kind ?? 'manual',
+    ...(raw.light === true ? { light: true } : {}),
+    ...(raw.first === true ? { first: true } : {}),
     generatedAt: raw.generatedAt ?? 0,
     status: raw.status ?? 'ready',
     progress: raw.progress,
     ...(raw.retrying === true ? { retrying: true } : {}),
     accounts: Array.isArray(raw.accounts) ? raw.accounts : [],
     services: Array.isArray(raw.services) ? raw.services : undefined,
+    ...(Array.isArray(raw.sourceChecks)
+      ? {
+          sourceChecks: raw.sourceChecks
+            .filter((check) => typeof check?.source === 'string')
+            .slice(0, 24)
+            .map((check) => ({
+              source: check.source,
+              status: check.status === 'unavailable' ? ('unavailable' as const) : ('checked' as const),
+            })),
+        }
+      : {}),
     title: raw.title ?? 'Daily Report',
     narrative: raw.narrative ?? '',
     tier: raw.tier === 'free' || raw.tier === 'pro' || raw.tier === 'team' ? raw.tier : undefined,
+    ...(raw.budget ? { budget: parseBriefEditionBudget(raw.budget) } : {}),
+    ...(typeof raw.emailedAt === 'number' ? { emailedAt: raw.emailedAt } : {}),
     prose:
       raw.prose && typeof raw.prose === 'object'
         ? {
@@ -352,6 +435,7 @@ export function migrateDailyReport(raw: DailyReport, _now: number = Date.now()):
       ...(Array.isArray(sections.overflow) ? { overflow: items(sections.overflow) } : {}),
       ...(Array.isArray(sections.waiting) ? { waiting: items(sections.waiting) } : {}),
       ...(sections.since ? { since: sections.since } : {}),
+      ...(sections.weekly ? { weekly: sections.weekly } : {}),
       tasks,
       calendar,
       mcp,

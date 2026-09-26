@@ -157,6 +157,18 @@ export function editorialModules(report: DailyReport, letter: BriefDocumentV2): 
       });
       continue;
     }
+    // "What Albatross did" stays one module, so the writer places the whole
+    // look back with its Undo actions in one piece (FEATURES item 7).
+    if (region.id === 'since') {
+      modules.push({
+        id: 'since',
+        section: region.id,
+        title: tree.title || 'What Albatross did',
+        summary: region.summary,
+        presentations: { story: tree, compact: { ...tree, variant: 'compact' } },
+      });
+      continue;
+    }
     // Calendar and task modules can take a temporal/completion form without
     // losing the real actions that their source rows already supply.
     const events = tree.items.filter((item) => item.ref.kind === 'event');

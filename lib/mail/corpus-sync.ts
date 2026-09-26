@@ -43,6 +43,20 @@ export async function kickMailClassifiers(userId: string) {
   ]);
 }
 
+// The first page of mail is enough for a first Daily Brief (FEATURES item 4).
+// The queue ignores this once the user has any edition. A dynamic import keeps
+// the brief pipeline out of the sync module's static graph.
+const defaultFirstEditionLoader = () => import('./brief-jobs');
+let firstEditionLoader = defaultFirstEditionLoader;
+export function __setFirstEditionLoaderForTest(loader = defaultFirstEditionLoader) {
+  firstEditionLoader = loader;
+}
+export async function kickFirstEditionAfterFirstPage(userId: string) {
+  await firstEditionLoader()
+    .then((jobs) => jobs.kickFirstEdition(userId))
+    .catch(() => undefined);
+}
+
 export interface CorpusSyncResult {
   ok: true;
   accountId: string;
@@ -319,6 +333,7 @@ export async function runCorpusBackfill({
     });
     void kickMailClassifiers(userId);
     detectMailSuggestions(row, messages);
+    if (page === 0) void kickFirstEditionAfterFirstPage(userId);
     result = {
       ok: true,
       accountId: row.accountId,

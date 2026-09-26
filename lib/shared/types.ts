@@ -1,5 +1,7 @@
 import type { AlbatrossDailyReportContext } from '../albatross/daily-report';
+import type { BriefEditionBudget } from '../brief/budget';
 import type { EditorialPlan } from '../brief/editorial';
+import type { WeeklyReviewSection } from '../brief/weekly-document';
 import type { JevAssessment, JevBriefDigest } from '../jev/contract';
 import type { BriefComposition } from './brief-composition';
 import type { BriefDocumentV2 } from './brief-document';
@@ -433,6 +435,11 @@ export interface DailyReportItem {
   // When this thread first entered a brief edition (brief round 2026-09-22).
   // Carried from the previous edition so the letter can say "Day 3".
   firstSurfacedAt?: number | null;
+  // The counterparty's address, for "Less from this sender" (FEATURES item 8).
+  senderEmail?: string;
+  // The thread was in the inbox when the edition was written. The live
+  // edition drops it once it leaves the inbox (archived, moved, or trashed).
+  inInbox?: boolean;
 }
 
 export type BriefBudgetLane = 'answer' | 'today' | 'know';
@@ -448,7 +455,18 @@ export interface DailyReportSinceLastEdition {
     areaId?: string;
     completedAt: number;
   }>;
-  agentActions: Array<{ tool: string; surface: string; summary: string; createdAt: number }>;
+  agentActions: Array<{
+    tool: string;
+    surface: string;
+    summary: string;
+    createdAt: number;
+    // The operations log row, for Undo (FEATURES item 7). Absent on editions
+    // written before 2026-09-26.
+    operationId?: string;
+    undoable?: boolean;
+    reason?: string;
+    status?: string;
+  }>;
 }
 
 // The model-written prose of a budget brief. Everything else in the edition is
@@ -547,8 +565,9 @@ export interface DailyReportArtifactError {
   at: number;
 }
 
-/** The edition kinds the brief writes. The scheduler sends morning only. */
-export type BriefEditionKind = 'morning' | 'manual';
+/** The edition kinds the brief writes. The scheduler sends morning and, on
+ * Sunday, the weekly review (FEATURES item 9). */
+export type BriefEditionKind = 'morning' | 'manual' | 'weekly';
 
 export interface DailyReport {
   _id: string;
@@ -556,6 +575,11 @@ export interface DailyReport {
   // now, but history still renders those editions.
   kind: BriefEditionKind | 'evening';
   generatedAt: number;
+  // A weekend edition: lede, answer, today with the calendar, and the week
+  // ahead only (lib/brief/schedule.ts).
+  light?: boolean;
+  // The first edition after the first mailbox connected (FEATURES item 4).
+  first?: boolean;
   // Progressive generation: 'partial' editions stream lanes in as threads are
   // analyzed; 'ready' is the finished edition. Absent on pre-existing docs.
   status?: 'partial' | 'ready';
@@ -594,8 +618,17 @@ export interface DailyReport {
   // Source services used to compose this brief, normalized to ids such as
   // gmail, outlook, github, slack. Used for the branded footer.
   services?: string[];
+  // The source feeds checked before this edition (`mail:<accountId>`,
+  // `calendar:<accountId>`, `mcp:<connectionId>`). The masthead source line
+  // marks which sources the edition read (FEATURES item 18).
+  sourceChecks?: Array<{ source: string; status: 'checked' | 'unavailable' }>;
   // The plan tier that sized this edition's item budget.
   tier?: 'free' | 'pro' | 'team';
+  // Writer time, model cost, tokens, and fallback of this edition, summed over
+  // its attempts (FEATURES item 5; lib/brief/budget.ts).
+  budget?: BriefEditionBudget;
+  // When the edition went out by email (FEATURES item 6). Set once.
+  emailedAt?: number;
   // Model-written prose for the budget brief (2026-09-03).
   prose?: DailyReportProse;
   sections: {
@@ -624,6 +657,8 @@ export interface DailyReport {
     mcp?: DailyReportMcpItem[];
     albatross?: AlbatrossDailyReportContext;
     since?: DailyReportSinceLastEdition;
+    // The weekly review edition (FEATURES item 9; lib/brief/weekly.ts).
+    weekly?: WeeklyReviewSection;
     noiseSummary?: string;
   };
   stats: {

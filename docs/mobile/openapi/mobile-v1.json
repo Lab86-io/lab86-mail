@@ -602,6 +602,73 @@
         }
       }
     },
+    "/api/mobile/v1/today/summary": {
+      "get": {
+        "operationId": "getMobileTodaySummary",
+        "responses": {
+          "200": {
+            "description": "Lead line, next move, next meeting, and edition time, for widgets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodaySummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Command conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MobileErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mobile/v1/commands/{id}/undo": {
       "post": {
         "operationId": "undoMobileCommand",
@@ -872,6 +939,116 @@
           }
         },
         "required": ["route", "confidence"],
+        "additionalProperties": false
+      },
+      "BriefEditionKind": {
+        "type": "string",
+        "enum": ["morning", "manual", "weekly", "evening"]
+      },
+      "TodaySummary": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "reportID": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["morning", "manual", "weekly", "evening"]
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "leadLine": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "nextMove": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "detail": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "refKind": {
+                "type": "string",
+                "enum": ["thread", "task"]
+              },
+              "refID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            },
+            "required": ["title", "refKind", "refID"],
+            "additionalProperties": false
+          },
+          "nextMeeting": {
+            "type": "object",
+            "properties": {
+              "eventID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "accountID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "startAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "endAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "location": {
+                "type": "string",
+                "maxLength": 500
+              }
+            },
+            "required": ["eventID", "title", "startAt", "endAt"],
+            "additionalProperties": false
+          },
+          "sourcesNeedingAttention": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "serverTime": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": ["version", "leadLine", "sourcesNeedingAttention", "serverTime"],
         "additionalProperties": false
       },
       "CommandReceipt": {

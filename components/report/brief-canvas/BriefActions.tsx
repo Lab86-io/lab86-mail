@@ -1,7 +1,15 @@
 'use client';
 
+import { MoreHorizontal } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Popover,
   PopoverContent,
@@ -10,7 +18,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { briefActionTier, isKnownBriefAction } from '@/lib/shared/brief-actions';
+import { briefActionTier, isBriefSteeringAction, isKnownBriefAction } from '@/lib/shared/brief-actions';
 import type { BriefActionV2, BriefSourceRefV2 } from '@/lib/shared/brief-document';
 import { cn } from '@/lib/utils';
 import {
@@ -30,8 +38,10 @@ export function BriefActions({
   onAction: (action: BriefActionV2, payload: BriefActionPayload) => Promise<void> | void;
   compact?: boolean;
 }) {
-  const visible = actions.filter((action) => isKnownBriefAction(action.action));
-  if (!visible.length) return null;
+  const known = actions.filter((action) => isKnownBriefAction(action.action));
+  const visible = known.filter((action) => !isBriefSteeringAction(action.action));
+  const steering = known.filter((action) => isBriefSteeringAction(action.action));
+  if (!known.length) return null;
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', compact && 'gap-1')}>
       {visible.map((action) => (
@@ -43,7 +53,64 @@ export function BriefActions({
           compact={compact}
         />
       ))}
+      {steering.length ? (
+        <BriefSteeringMenu
+          actions={steering}
+          onRun={(action) => onAction(action, payloadForBriefAction(action, sourceRef))}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * The steering choices of one item (FEATURES item 8): "Not for me", "Less
+ * from this sender", "Keep showing". They sit behind the item's overflow
+ * control so the row keeps one clear action. The trigger is an icon with a
+ * label for assistive technology; the choices are text.
+ */
+export function BriefSteeringMenu({
+  actions,
+  onRun,
+  className,
+}: {
+  actions: BriefActionV2[];
+  onRun: (action: BriefActionV2) => Promise<void> | void;
+  className?: string;
+}) {
+  if (!actions.length) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-brief-steering-trigger
+          aria-label="Tune this item in the brief"
+          title="Tune this item"
+          className={cn(
+            'grid size-6 place-items-center rounded-ui text-[var(--color-text-faint)] hover:bg-[var(--color-hover-soft)] hover:text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+            className,
+          )}
+        >
+          <MoreHorizontal className="size-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuLabel className="text-[11px] font-medium text-[var(--color-text-muted)]">
+          In future briefs
+        </DropdownMenuLabel>
+        {actions.map((action) => (
+          <DropdownMenuItem
+            key={`${action.label}:${String(action.payload.mode ?? '')}`}
+            data-brief-steering-choice={String(action.payload.mode ?? '')}
+            className="text-[12.5px]"
+            onSelect={() => void onRun(action)}
+          >
+            {action.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

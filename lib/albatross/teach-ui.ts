@@ -17,6 +17,7 @@ export type SettingsTabId =
   | 'sending'
   | 'notifications'
   | 'orders'
+  | 'brief'
   | 'ai'
   | 'narrative'
   | 'shortcuts'
@@ -32,6 +33,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string }> 
   { id: 'sending', label: 'Sending' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'orders', label: 'Standing orders' },
+  { id: 'brief', label: 'Daily Brief' },
   { id: 'ai', label: 'Intelligence' },
   { id: 'narrative', label: 'Narrative' },
   { id: 'shortcuts', label: 'Shortcuts' },

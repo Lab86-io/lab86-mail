@@ -306,6 +306,8 @@ describe('budget document regions', () => {
       'open_thread',
       'draft_reply',
       'dismiss_thread',
+      'steer_item',
+      'steer_item',
     ]);
 
     const today = document.regions[3].tree as any;
@@ -313,6 +315,8 @@ describe('budget document regions', () => {
       'open_thread',
       'create_task',
       'dismiss_thread',
+      'steer_item',
+      'steer_item',
     ]);
     expect(today.items[0].actions[1].payload).toMatchObject({ title: 'Subject t2', dueAt: NOW + 3_600_000 });
 
@@ -320,6 +324,8 @@ describe('budget document regions', () => {
     expect(know.items[0].actions.map((action: any) => action.action)).toEqual([
       'open_thread',
       'dismiss_thread',
+      'steer_item',
+      'steer_item',
     ]);
 
     const waiting = document.regions[5].tree as any;
@@ -381,10 +387,14 @@ describe('budget document regions', () => {
     expect(threadActions(item('t1'), 'know').map((action) => action.action)).toEqual([
       'open_thread',
       'dismiss_thread',
+      'steer_item',
+      'steer_item',
     ]);
     expect(threadActions(item('t1'), 'today').map((action) => action.action)).toEqual([
       'open_thread',
       'dismiss_thread',
+      'steer_item',
+      'steer_item',
     ]);
     expect(threadActions(item('t1', { receivedAt: 5 }), 'answer')[2].payload).toEqual({
       account: 'jakob@example.com',

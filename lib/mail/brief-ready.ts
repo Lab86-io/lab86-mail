@@ -34,10 +34,16 @@ export function briefNotificationBody(report: { prose?: { lede?: string }; narra
 }
 
 const defaults = {
-  queueBriefReady: (input: { userId: string; reportId: string; localDate: string; body?: string }) =>
-    convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, input),
+  queueBriefReady: (input: {
+    userId: string;
+    reportId: string;
+    localDate: string;
+    body?: string;
+    title?: string;
+  }) => convexMutation<any>((api as any).albatrossNotifications.queueBriefReady, input),
   dispatchNativeNotification,
 };
+export const WEEKLY_REVIEW_READY_TITLE = 'Your weekly review is ready';
 export async function notifyBriefReady(
   userId: string,
   kind: string,
@@ -45,13 +51,15 @@ export async function notifyBriefReady(
   timezone?: string,
   deps = defaults,
 ) {
-  if (kind !== 'morning') return;
+  // The scheduled editions push: the morning edition and the Sunday review.
+  if (kind !== 'morning' && kind !== 'weekly') return;
   try {
     const queued = await deps.queueBriefReady({
       userId,
       reportId: report._id,
       localDate: localDateForTimezone(report.generatedAt, timezone),
       body: briefNotificationBody(report) || undefined,
+      ...(kind === 'weekly' ? { title: WEEKLY_REVIEW_READY_TITLE } : {}),
     });
     return queued?.notificationId
       ? await deps.dispatchNativeNotification(userId, String(queued.notificationId))

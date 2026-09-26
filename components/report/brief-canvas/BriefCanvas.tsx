@@ -71,8 +71,11 @@ export function BriefCanvas({
   surface = 'daily',
   reportId,
   liveSections = false,
+  belowMasthead,
 }: {
   value: unknown;
+  /** A line under the masthead: the daily edition shows its source health. */
+  belowMasthead?: ReactNode;
   hideInactive?: boolean;
   /** Which brief this is. Telemetry records it with each action. */
   surface?: BriefEventSurface;
@@ -236,9 +239,7 @@ export function BriefCanvas({
       }
 
       const key = sourceRef ? briefRefKey(sourceRef) : payloadRefKey(payload);
-      const hides = ['dismiss_task', 'resolve_thread', 'dismiss_thread', 'archive_thread'].includes(
-        action.action,
-      );
+      const hides = briefActionHidesItem(action.action, payload);
       const previousCompleted = key ? completedRefs.get(key) : undefined;
       if (hides && key) setHiddenRefs((current) => new Set(current).add(key));
       if (action.action === 'toggle_task' && key) {
@@ -291,15 +292,28 @@ export function BriefCanvas({
         }
         refresh();
         record(action, payload, sourceRef, meta, 'done');
+        // A steering choice is a logged operation; its Undo runs by id.
+        const undoPayload =
+          result && typeof result === 'object' && 'operationId' in result && result.operationId
+            ? { ...payload, operationId: String(result.operationId) }
+            : payload;
         if (replyAttachFailed) {
           // The warning above is the complete result for this partial failure.
+        } else if (action.action === 'undo_operation') {
+          // An undo has no undo of its own; Activity keeps the record.
+          toast.success('Undone', {
+            description: typeof payload.summary === 'string' ? payload.summary : undefined,
+          });
         } else if (briefActionTier(action.action) === 'immediate') {
-          toast.success(action.label, {
-            description: 'Applied to the live item.',
+          const summary =
+            result && typeof result === 'object' && 'summary' in result ? String(result.summary) : '';
+          toast.success(summary || action.label, {
+            description:
+              action.action === 'steer_item' ? 'Undo is also in Activity.' : 'Applied to the live item.',
             action: {
               label: 'Undo',
               onClick: () => {
-                void undoBriefActionWithFeedback(action.action, payload, {
+                void undoBriefActionWithFeedback(action.action, undoPayload, {
                   onUndone: () => {
                     record(action, payload, sourceRef, meta, 'undone');
                     if (hides && key) {
@@ -426,13 +440,19 @@ export function BriefCanvas({
           generatedAt={document.generatedAt}
           timezone={document.timezone}
           frameId={mastheadFrame}
+          title={letterKind === 'weekly' ? document.title : undefined}
         />
       ) : null}
+      {belowMasthead}
       {headerVisible ? (
         <header
           className={cn(
             'mx-auto mb-7 border-b border-[var(--color-border)] pb-5',
-            letterKind === 'daily' ? 'w-full' : letterKind ? 'max-w-[620px]' : 'max-w-[1760px]',
+            letterKind === 'daily' || letterKind === 'weekly'
+              ? 'w-full'
+              : letterKind
+                ? 'max-w-[620px]'
+                : 'max-w-[1760px]',
           )}
         >
           {notice ? (
@@ -751,11 +771,53 @@ export async function executeBriefAction(
       if (!response.ok) throw new Error(body.error || 'Answer failed.');
       return;
     }
+    case 'steer_item':
+      return callTool<{ operationId: string; summary: string }>('steer_brief_item', {
+        mode: required(payload, 'mode'),
+        account: required(payload, 'account'),
+        threadId: required(payload, 'threadId'),
+        subject: optional(payload, 'subject'),
+        senderEmail: optional(payload, 'senderEmail'),
+        receivedAt: typeof payload.receivedAt === 'number' ? payload.receivedAt : undefined,
+      });
+    case 'undo_operation':
+      return callTool('undo_operation', { operationId: required(payload, 'operationId') });
+    case 'defer_task': {
+      const dueIso = briefEventIso(payload.dueAt);
+      if (!dueIso) throw new Error('The brief omitted dueAt.');
+      return callTool<{ operationId: string }>('tasks_update_card', {
+        cardId: required(payload, 'cardId'),
+        dueIso,
+      });
+    }
+    case 'defer_thread': {
+      const until = Number(payload.until);
+      if (!Number.isFinite(until) || until <= Date.now()) throw new Error('The brief omitted a future time.');
+      return callTool('snooze_thread', {
+        account: required(payload, 'account'),
+        threadId: required(payload, 'threadId'),
+        untilTs: until,
+      });
+    }
     case 'draft_reply':
       return;
     default:
       throw new Error(BRIEF_UNKNOWN_ACTION_COPY);
   }
+}
+
+/** True when the action takes its item out of the live edition. Exported for tests. */
+export function briefActionHidesItem(action: string, payload: BriefActionPayload) {
+  if (action === 'steer_item') return payload.mode !== 'keep_showing';
+  return [
+    'dismiss_task',
+    'resolve_thread',
+    'dismiss_thread',
+    'archive_thread',
+    'undo_operation',
+    'defer_task',
+    'defer_thread',
+  ].includes(action);
 }
 
 export const BRIEF_UNDO_FAILED_COPY = 'Undo did not finish. The item is still changed.';
@@ -810,6 +872,14 @@ async function undoBriefAction(action: string, payload: BriefActionPayload) {
         threadId: required(payload, 'threadId'),
       });
       return;
+    case 'steer_item':
+    case 'defer_task':
+      return callTool('undo_operation', { operationId: required(payload, 'operationId') });
+    case 'defer_thread':
+      return callTool('unsnooze_thread', {
+        account: required(payload, 'account'),
+        threadId: required(payload, 'threadId'),
+      });
   }
 }
 

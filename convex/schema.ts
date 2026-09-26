@@ -1615,11 +1615,16 @@ export default defineSchema({
     userId: v.string(),
     scope: v.string(),
     kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'), v.literal('weekly'))),
     areaId: v.optional(v.id('areas')),
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),
     reportId: v.optional(v.string()),
+    // A weekend edition without the know, waiting, task, and tool sections.
+    light: v.optional(v.boolean()),
+    // The first edition after the first mailbox connects: publish a
+    // deterministic edition first, then let the writer upgrade it in place.
+    first: v.optional(v.boolean()),
     state: v.union(v.literal('queued'), v.literal('running'), v.literal('completed'), v.literal('cancelled')),
     active: v.boolean(),
     availableAt: v.number(),
@@ -2424,6 +2429,13 @@ export default defineSchema({
     urgentMailPushEnabled: v.optional(v.boolean()),
     eventSuggestionPushEnabled: v.optional(v.boolean()),
     morningBriefEnabled: v.optional(v.boolean()),
+    // Brief delivery (FEATURES items 3, 6, 9): the local hour 5-11 (default 7),
+    // the weekend edition (full, light, or off; default light), the Sunday
+    // weekly review (default on), and the edition by email (default off).
+    briefDeliveryHour: v.optional(v.number()),
+    briefWeekendMode: v.optional(v.union(v.literal('full'), v.literal('light'), v.literal('off'))),
+    weeklyReviewEnabled: v.optional(v.boolean()),
+    briefEmailEnabled: v.optional(v.boolean()),
     // One-time code AutoFill. Offering codes above the keyboard and deleting
     // the mail that carried them are separate consents: the first is a
     // convenience, the second destroys mail, so it is opted into on its own.
@@ -2744,6 +2756,29 @@ export default defineSchema({
     .index('by_user', ['userId'])
     .index('by_user_connection', ['userId', 'connectionId'])
     .index('by_connection_external', ['connectionId', 'externalId']),
+
+  // One row per Daily Brief edition (FEATURES item 5): writer time, model
+  // cost, tokens, and whether the edition fell back or ran out of budget.
+  // Updated on each attempt with the edition's running totals. An admin-only
+  // summary reads it (dailyReports.editionTelemetrySummary).
+  briefEditionTelemetry: defineTable({
+    userId: v.string(),
+    reportId: v.string(),
+    kind: v.string(),
+    timeMs: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    calls: v.number(),
+    fallback: v.boolean(),
+    exhausted: v.optional(v.union(v.literal('time'), v.literal('cost'))),
+    attempts: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_user', ['userId'])
+    .index('by_user_report', ['userId', 'reportId'])
+    .index('by_updated', ['updatedAt']),
 
   // One row per user action on a brief item (brief round 2026-09-22). The
   // generator reads nothing from here yet; the rows measure which regions and

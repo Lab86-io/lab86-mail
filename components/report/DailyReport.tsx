@@ -9,6 +9,7 @@ import { ConnectionLogo, GmailLogo, ProviderLogo } from '@/components/icons/prov
 import { Ring } from '@/components/loading-ui/ring';
 import { BriefMailBacklog } from '@/components/report/BriefMailBacklog';
 import { BriefSkeleton } from '@/components/report/BriefSkeleton';
+import { BriefSourceLine, briefEditionNotes } from '@/components/report/BriefSourceLine';
 import { BriefCanvas } from '@/components/report/brief-canvas/BriefCanvas';
 import { useBriefEditionRequest } from '@/components/report/brief-edition-request';
 import { PreparedWork } from '@/components/report/PreparedWork';
@@ -116,7 +117,9 @@ interface DailyReportArtifactError {
 
 interface DailyReportPayload {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
+  first?: boolean;
+  light?: boolean;
   generatedAt: number;
   title: string;
   narrative: string;
@@ -162,7 +165,7 @@ interface DailyReportPayload {
 
 interface ReportSummary {
   _id: string;
-  kind: 'morning' | 'evening' | 'manual';
+  kind: 'morning' | 'evening' | 'manual' | 'weekly';
   generatedAt: number;
   title?: string;
 }
@@ -181,6 +184,7 @@ const EDITION: Record<DailyReportPayload['kind'], string> = {
   morning: 'Morning Edition',
   evening: 'Evening Edition',
   manual: 'Latest Edition',
+  weekly: 'Weekly Review',
 };
 
 // "Tuesday, May 26 · Morning Edition" — the broadsheet dateline.
@@ -1220,6 +1224,15 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        className="daily-brief-layout"
+                      />
+                    )
+                  }
                   footer={
                     <>
                       {!selectedId && !hasLiveBriefSection(report.document, 'prepared_work') ? (
@@ -1252,6 +1265,15 @@ export function DailyReport({
                   masthead={!embedded}
                   embedded={embedded}
                   noiseCount={noiseCount}
+                  belowMasthead={
+                    selectedId ? null : (
+                      <BriefSourceLine
+                        reportId={report._id}
+                        notes={briefEditionNotes(report)}
+                        className="daily-brief-layout"
+                      />
+                    )
+                  }
                   footer={
                     <>
                       {letterFailed ? (
@@ -1338,6 +1360,8 @@ export function DailyReport({
                 Press Write to get today&apos;s brief. The morning run files here each day.
               </EmptyDescription>
             </EmptyHeader>
+            {/* With no edition, the source line still says when a source is broken. */}
+            <BriefSourceLine className="mt-3 max-w-md" />
           </Empty>
         )}
       </div>

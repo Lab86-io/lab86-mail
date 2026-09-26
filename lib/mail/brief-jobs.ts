@@ -4,11 +4,14 @@ import { BRIEF_JOB_MAX_ATTEMPTS } from '../../convex/briefJobState';
 import { runWithAiRequestContext } from '../ai/context';
 import { isTerminalAiError, resolveAiRuntime } from '../ai/gateway';
 import { generateAreaLivingBrief } from '../albatross/area-living-brief';
+import { type BriefEditionBudget, BriefEditionMeter, runWithBriefMeter } from '../brief/budget';
+import { generateWeeklyReview } from '../brief/weekly';
 import { api, convexMutation, convexQuery } from '../hosted/convex';
 import { refreshNarrative } from '../narrative/service';
 import type { BriefEditionKind, DailyReport } from '../shared/types';
 import { getDailyReport } from '../store/daily-reports';
 import { generateAgentReport } from './agent-report';
+import { deliverBriefEmail } from './brief-email';
 import { notifyBriefReady } from './brief-ready';
 
 const functions = (api as any).briefJobs;
@@ -19,8 +22,18 @@ export async function enqueueBriefJob(input: {
   timezone?: string;
   areaId?: string;
   force?: boolean;
+  /** A weekend edition without the know, waiting, task, and tool sections. */
+  light?: boolean;
+  /** The first edition after the first mailbox connects: deterministic first. */
+  first?: boolean;
 }) {
-  return convexMutation<{ jobId: string; reportId?: string; started: boolean }>(functions.enqueue, {
+  return convexMutation<{
+    // Only a skipped first edition (skipped: 'has_edition') answers without a job.
+    jobId: string;
+    reportId?: string;
+    started: boolean;
+    skipped?: 'has_edition';
+  }>(functions.enqueue, {
     ...input,
     ...(input.kind === 'daily' ? { reportId: randomUUID() } : {}),
   });
@@ -48,14 +61,39 @@ async function writerHasNoAccess(userId: string, feature: string) {
   }
 }
 
+// One telemetry row per edition, updated with its running totals. Best effort.
+async function recordEditionTelemetry(
+  userId: string,
+  job: { reportId?: string; edition?: string; attempts?: number },
+  budget: BriefEditionBudget,
+) {
+  if (!job.reportId) return;
+  await convexMutation((api as any).dailyReports.recordEditionTelemetry, {
+    userId,
+    reportId: job.reportId,
+    kind: job.edition || 'manual',
+    timeMs: budget.timeMs,
+    costUsd: budget.costUsd,
+    inputTokens: budget.inputTokens,
+    outputTokens: budget.outputTokens,
+    calls: budget.calls,
+    fallback: budget.fallback,
+    ...(budget.exhausted ? { exhausted: budget.exhausted } : {}),
+    attempts: Number(job.attempts) || 1,
+  }).catch(() => undefined);
+}
+
 const defaults = {
   mutation: convexMutation,
   query: convexQuery,
+  telemetry: recordEditionTelemetry,
   daily: generateAgentReport,
+  weekly: generateWeeklyReview,
   area: generateAreaLivingBrief,
   narrative: refreshNarrative,
   readDaily: getDailyReport,
   notify: notifyBriefReady,
+  email: deliverBriefEmail,
   noAccess: writerHasNoAccess,
   now: () => Date.now(),
 };
@@ -102,21 +140,73 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
       { userId, agent: 'ai', userTimezone: job.timezone, briefJob: { id, token: owner.token } },
       async () => {
         if (job.kind === 'daily') {
-          const saved = await deps.readDaily(job.reportId);
-          const report =
-            saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated'
-              ? saved
-              : await deps.daily({
+          let saved = await deps.readDaily(job.reportId);
+          // The first edition (FEATURES item 4): publish a deterministic
+          // edition at once, then upgrade the same edition with the writer.
+          if (job.first === true && !isPublishedEdition(saved)) {
+            saved = await deps.daily({
+              userId,
+              kind: job.edition,
+              reportId: job.reportId,
+              now: job.createdAt,
+              first: true,
+              deterministic: true,
+            });
+            // No model access: the deterministic edition is the final one.
+            if (await deps.noAccess(userId, 'daily_brief_layout')) return;
+          }
+          let report: DailyReport;
+          if (job.edition === 'weekly') {
+            // The weekly review (FEATURES item 9) is deterministic: one pass,
+            // published as final, then announced.
+            const meter = new BriefEditionMeter({ prior: saved?.budget });
+            report = await runWithBriefMeter(meter, () =>
+              deps.weekly({ userId, reportId: job.reportId, now: job.createdAt }),
+            );
+            await deps.telemetry(userId, job, meter.record(false));
+          } else if (saved?.artifactStatus === 'ready' && saved.editorial?.mode === 'generated')
+            report = saved;
+          else {
+            // The edition budget (FEATURES item 5) runs across attempts: the
+            // meter starts from the time and cost the saved edition used.
+            const meter = new BriefEditionMeter({ prior: saved?.budget });
+            try {
+              report = await runWithBriefMeter(meter, () =>
+                deps.daily({
                   userId,
                   kind: job.edition,
                   reportId: job.reportId,
                   now: job.createdAt,
                   quiet: isPublishedEdition(saved),
-                });
-          if (report.editorial?.mode !== 'generated' && !finalAttempt && !recordedNoAccess(report, startedAt))
+                  ...(job.light === true ? { light: true } : {}),
+                  ...(job.first === true ? { first: true } : {}),
+                }),
+              );
+            } catch (error) {
+              await deps.telemetry(userId, job, meter.record(true));
+              throw error;
+            }
+            await deps.telemetry(
+              userId,
+              job,
+              report.budget ?? meter.record(report.editorial?.mode !== 'generated'),
+            );
+          }
+          // A spent budget is final: the edition publishes what exists.
+          if (
+            job.edition !== 'weekly' &&
+            report.editorial?.mode !== 'generated' &&
+            !finalAttempt &&
+            !recordedNoAccess(report, startedAt) &&
+            !report.budget?.exhausted
+          )
             throw new Error('Editorial writer needs another attempt');
           if (lost || !(await deps.mutation<boolean>(functions.heartbeat, owner))) return;
           await deps.notify(userId, job.edition, report, job.timezone);
+          // Brief by email (FEATURES item 6). A failed send never fails the job.
+          await deps.email(userId, report, job.timezone).catch(() => {
+            console.error('[brief jobs] brief email failed', userId);
+          });
         } else if (job.kind === 'area') {
           const home = await deps.query<any>((api as any).albatross.areaHome, { userId, areaId: job.areaId });
           const saved = home.livingBrief;
@@ -165,5 +255,21 @@ export async function runBriefJob(userId: string, id: string, overrides: Partial
     });
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+// The first edition after the first mailbox connects (FEATURES item 4). The
+// backfill calls this after its first page; the enqueue does nothing once
+// the user has any edition, so every later page and every other mailbox is a
+// no-op.
+export async function kickFirstEdition(
+  userId: string,
+  deps: { enqueue: typeof enqueueBriefJob } = { enqueue: enqueueBriefJob },
+) {
+  try {
+    return await deps.enqueue({ userId, kind: 'daily', edition: 'manual', first: true });
+  } catch {
+    console.error('[brief jobs] first edition could not be queued', userId);
+    return null;
   }
 }

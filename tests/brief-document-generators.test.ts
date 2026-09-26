@@ -216,11 +216,14 @@ describe('Brief Document v2 generators', () => {
       sender: 'Maya',
     });
     // Open first (the row tap), then the review and immediate actions both
-    // clients already run (brief round 2026-09-22).
+    // clients already run (brief round 2026-09-22), then the steering
+    // choices (FEATURES item 8; no sender address, so no "Less from").
     expect(answer.items[0].actions.map((action: any) => [action.action, action.label])).toEqual([
       ['open_thread', 'Open'],
       ['draft_reply', 'Reply'],
       ['dismiss_thread', 'Not needed'],
+      ['steer_item', 'Not for me'],
+      ['steer_item', 'Keep showing'],
     ]);
     expect(answer.items[0].actions[0].payload).toMatchObject({
       account: 'jakob@example.com',

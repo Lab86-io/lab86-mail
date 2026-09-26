@@ -1,17 +1,28 @@
 import { v } from 'convex/values';
+import {
+  BRIEF_CATCH_UP_HOURS,
+  type BriefSchedule,
+  DEFAULT_BRIEF_SCHEDULE,
+  isBriefDeliveryHour,
+  localWeekday,
+  normalizeBriefSchedule,
+  scheduledEditionFor,
+} from '../lib/brief/schedule';
+import { type JevCorrection, jevCorrectionSchema, normalizeJevPreferences } from '../lib/jev/contract';
 import { internal } from './_generated/api';
 import type { QueryCtx } from './_generated/server';
-import { internalAction, internalQuery, query } from './_generated/server';
+import { internalAction, internalQuery, mutation, query } from './_generated/server';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
-// Local hour the scheduled morning edition fires (24h clock, in each user's tz).
-// Evening editions were dropped — mornings + manual generation only.
-export const MORNING_HOUR = 7;
-// Catch-up window (brief round 2026-09-22): when the 07:00 tick failed (a
+// The default local hour of the scheduled edition (24h clock, in each user's
+// zone). Each user can pick 05:00 to 11:00 (lib/brief/schedule.ts). Evening
+// editions were dropped — mornings + manual generation only.
+export const MORNING_HOUR = DEFAULT_BRIEF_SCHEDULE.deliveryHour;
+// Catch-up window (brief round 2026-09-22): when the delivery tick failed (a
 // deploy, a model outage, a timeout), each later hourly tick inside this
-// window fires again for every user who still has no morning edition for the
-// local date. The window closes at noon so a late brief never lands at night.
-export const CATCH_UP_LAST_HOUR = 11;
+// window fires again for every user who still has no edition for the local
+// date. The window is the BRIEF_CATCH_UP_HOURS after the user's hour.
+export const CATCH_UP_LAST_HOUR = MORNING_HOUR + BRIEF_CATCH_UP_HOURS;
 // The clock that schedules users with no known zone. It only picks the hour
 // the cron fires; it is never written into the job as the user's zone.
 const DEFAULT_TZ = 'America/New_York';
@@ -49,12 +60,20 @@ export function pickBriefZone(sources: BriefTimezoneSources): string | undefined
   return isRealZone(sources.lastClient) ? sources.lastClient : undefined;
 }
 
-async function briefTimezoneSourcesFor(ctx: QueryCtx, userId: string): Promise<BriefTimezoneSources> {
+async function briefPreferenceRow(ctx: QueryCtx, userId: string) {
+  return ctx.db
+    .query('albatrossNotificationPreferences')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .unique();
+}
+
+async function briefTimezoneSourcesFor(
+  ctx: QueryCtx,
+  userId: string,
+  knownPreference?: Awaited<ReturnType<typeof briefPreferenceRow>>,
+): Promise<BriefTimezoneSources> {
   const [preference, calendars, jobs] = await Promise.all([
-    ctx.db
-      .query('albatrossNotificationPreferences')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .unique(),
+    knownPreference !== undefined ? Promise.resolve(knownPreference) : briefPreferenceRow(ctx, userId),
     ctx.db
       .query('calendars')
       .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -146,10 +165,17 @@ export const reportTargetPage = internalQuery({
     const userIds = [...new Set(accounts.map((account) => account.userId))];
     const targets = await Promise.all(
       userIds.map(async (userId) => {
-        const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, userId));
+        const preference = await briefPreferenceRow(ctx, userId);
+        const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, userId, preference));
         // `timezone` schedules the tick; `zoneKnown` says whether it is the
-        // user's real zone and may be written into the job.
-        return { userId, timezone: zone ?? SCHEDULE_ONLY_TZ, zoneKnown: Boolean(zone) };
+        // user's real zone and may be written into the job. `schedule` is the
+        // user's delivery hour, weekend edition, and weekly review.
+        return {
+          userId,
+          timezone: zone ?? SCHEDULE_ONLY_TZ,
+          zoneKnown: Boolean(zone),
+          schedule: normalizeBriefSchedule(preference),
+        };
       }),
     );
     return { targets, nextUserId: accounts.length === TARGET_BATCH_SIZE ? userIds.at(-1) : undefined };
@@ -170,14 +196,23 @@ export function localDateKey(timezone: string, at: Date): string {
   }
 }
 
-// True when the user already has a morning edition dated today in their zone.
+// True when the user already has a scheduled edition (morning by default, or
+// the weekly review) dated today in their zone.
 export const hasMorningEdition = internalQuery({
-  args: { userId: v.string(), timezone: v.string(), at: v.number() },
+  args: {
+    userId: v.string(),
+    timezone: v.string(),
+    at: v.number(),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('weekly'))),
+  },
   handler: async (ctx, args) => {
     const latest = await ctx.db
       .query('userDocs')
       .withIndex('by_user_kind_report_edition_generated', (q) =>
-        q.eq('userId', args.userId).eq('kind', 'dailyReport').eq('doc.kind', 'morning'),
+        q
+          .eq('userId', args.userId)
+          .eq('kind', 'dailyReport')
+          .eq('doc.kind', args.edition ?? 'morning'),
       )
       .order('desc')
       .first();
@@ -189,21 +224,53 @@ export const hasMorningEdition = internalQuery({
   },
 });
 
-// Which targets fire on this tick: the morning hour always, and the catch-up
-// hours only when the local date has no morning edition yet. Pure, for tests.
+export interface BriefTarget {
+  userId: string;
+  timezone: string;
+  schedule?: BriefSchedule;
+}
+
+export interface DueBriefTarget {
+  userId: string;
+  kind: 'morning' | 'weekly';
+  timezone: string;
+  catchUp: boolean;
+  light?: true;
+}
+
+// True when `at` is inside the target's catch-up window for its edition.
+function inCatchUpWindow(target: BriefTarget, at: Date) {
+  const schedule = target.schedule ?? DEFAULT_BRIEF_SCHEDULE;
+  const hour = localHour(target.timezone, at);
+  return (
+    hour !== null && hour > schedule.deliveryHour && hour <= schedule.deliveryHour + BRIEF_CATCH_UP_HOURS
+  );
+}
+
+// Which targets fire on this tick: the user's delivery hour always, and the
+// catch-up hours only when the local date has no edition of that kind yet.
+// The local weekday picks the edition: the Sunday weekly review, a light or
+// no weekend edition, or the full morning edition. Pure, for tests.
 export function dueTargets(
-  targets: Array<{ userId: string; timezone: string }>,
+  targets: BriefTarget[],
   at: Date,
-  hasEdition: (target: { userId: string; timezone: string }) => boolean,
+  hasEdition: (target: BriefTarget, kind: 'morning' | 'weekly') => boolean,
 ) {
-  const due: Array<{ userId: string; kind: 'morning'; timezone: string; catchUp: boolean }> = [];
+  const due: DueBriefTarget[] = [];
   for (const target of targets) {
+    const schedule = target.schedule ?? DEFAULT_BRIEF_SCHEDULE;
+    const edition = scheduledEditionFor(schedule, localWeekday(target.timezone, at));
     const hour = localHour(target.timezone, at);
-    if (hour === MORNING_HOUR) {
-      due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone, catchUp: false });
-    } else if (hour !== null && hour > MORNING_HOUR && hour <= CATCH_UP_LAST_HOUR && !hasEdition(target)) {
-      due.push({ userId: target.userId, kind: 'morning', timezone: target.timezone, catchUp: true });
-    }
+    if (!edition || hour === null) continue;
+    const row = {
+      userId: target.userId,
+      kind: edition.kind,
+      timezone: target.timezone,
+      ...(edition.light ? { light: true as const } : {}),
+    };
+    if (hour === schedule.deliveryHour) due.push({ ...row, catchUp: false });
+    else if (inCatchUpWindow(target, at) && !hasEdition(target, edition.kind))
+      due.push({ ...row, catchUp: true });
   }
   return due;
 }
@@ -245,18 +312,23 @@ export const tick = internalAction({
       afterUserId: args.afterUserId,
     });
     const at = new Date(args.at ?? Date.now());
-    // The morning hour fires every target. Inside the catch-up window only
-    // the users with no edition for the local date fire again.
+    // The delivery hour fires every target. Inside the catch-up window only
+    // the users with no edition of that kind for the local date fire again.
     const editionByUser = new Map<string, boolean>();
     for (const target of targets) {
-      const hour = localHour(target.timezone, at);
-      if (hour === null || hour <= MORNING_HOUR || hour > CATCH_UP_LAST_HOUR) continue;
+      if (!inCatchUpWindow(target, at)) continue;
+      const edition = scheduledEditionFor(
+        target.schedule ?? DEFAULT_BRIEF_SCHEDULE,
+        localWeekday(target.timezone, at),
+      );
+      if (!edition) continue;
       editionByUser.set(
         target.userId,
         await ctx.runQuery(internal.dailyReports.hasMorningEdition, {
           userId: target.userId,
           timezone: target.timezone,
           at: at.getTime(),
+          edition: edition.kind,
         }),
       );
     }
@@ -267,7 +339,9 @@ export const tick = internalAction({
       ({ catchUp, ...target }) => {
         if (catchUp) console.log(`[daily-report cron] catch-up edition for ${target.userId}`);
         // Never send the scheduling clock as the user's zone.
-        return unknownZone.has(target.userId) ? { userId: target.userId, kind: target.kind } : target;
+        if (!unknownZone.has(target.userId)) return target;
+        const { timezone: _clock, ...withoutZone } = target;
+        return withoutZone;
       },
     );
     // The morning hour also rewrites every area's living brief so the Daily
@@ -322,5 +396,325 @@ export const areaRefreshTick = internalAction({
     if (nextUserId)
       await ctx.scheduler.runAfter(0, internal.dailyReports.areaRefreshTick, { afterUserId: nextUserId });
     console.log(`[area-refresh cron] refreshed ${refreshed}/${targets.length} users`);
+  },
+});
+
+// ---- Brief preferences (FEATURES items 3, 6, 9) ----------------------------
+// Stored on the notification preference row. The app server reads and saves
+// them for web and native through the brief preference tools.
+
+export const briefPreferences = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await briefPreferenceRow(ctx, args.userId);
+    const zone = pickBriefZone(await briefTimezoneSourcesFor(ctx, args.userId, row));
+    return {
+      ...normalizeBriefSchedule(row),
+      emailEnabled: row?.briefEmailEnabled === true,
+      timezone: zone ?? null,
+    };
+  },
+});
+
+export const saveBriefPreferences = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    deliveryHour: v.optional(v.number()),
+    weekendMode: v.optional(v.union(v.literal('full'), v.literal('light'), v.literal('off'))),
+    weeklyReview: v.optional(v.boolean()),
+    emailEnabled: v.optional(v.boolean()),
+    // The client's zone. Written only when the row is new, so a saved zone
+    // never moves under the user.
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    if (args.deliveryHour !== undefined && !isBriefDeliveryHour(args.deliveryHour))
+      throw new Error('The delivery hour must be a whole hour from 5 to 11.');
+    const patch = {
+      ...(args.deliveryHour !== undefined ? { briefDeliveryHour: args.deliveryHour } : {}),
+      ...(args.weekendMode !== undefined ? { briefWeekendMode: args.weekendMode } : {}),
+      ...(args.weeklyReview !== undefined ? { weeklyReviewEnabled: args.weeklyReview } : {}),
+      ...(args.emailEnabled !== undefined ? { briefEmailEnabled: args.emailEnabled } : {}),
+      updatedAt: Date.now(),
+    };
+    const existing = await briefPreferenceRow(ctx, args.userId);
+    if (existing) await ctx.db.patch(existing._id, patch);
+    else
+      await ctx.db.insert('albatrossNotificationPreferences', {
+        userId: args.userId,
+        // UTC is not a place; the brief zone then comes from the calendars.
+        timezone: isRealZone(args.timezone) ? args.timezone : 'UTC',
+        eveningCheckinEnabled: true,
+        eveningCheckinLocalTime: '19:00',
+        inAppEnabled: true,
+        webPushEnabled: false,
+        emailFallbackEnabled: true,
+        emailFallbackDelayMinutes: 90,
+        createdAt: patch.updatedAt,
+        ...patch,
+      });
+    const row = await briefPreferenceRow(ctx, args.userId);
+    return { ...normalizeBriefSchedule(row), emailEnabled: row?.briefEmailEnabled === true };
+  },
+});
+
+// ---- Source health (FEATURES item 18) --------------------------------------
+// The raw rows behind the masthead source line. Only display fields leave the
+// query: no grant ids, cursors, or credentials.
+export const briefSourceRows = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const byUser = { userId: args.userId };
+    const [accounts, mailSync, calendarSync, connections, connectorSync] = await Promise.all([
+      ctx.db
+        .query('connectedAccounts')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mailSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('calendarSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mcpConnections')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+      ctx.db
+        .query('mcpSyncStates')
+        .withIndex('by_user', (q) => q.eq('userId', byUser.userId))
+        .take(50),
+    ]);
+    return {
+      accounts: accounts.map((row) => ({
+        accountId: row.accountId,
+        email: row.email,
+        provider: row.provider,
+        status: row.status,
+        displayName: row.displayName,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+      mailSync: mailSync.map((row) => ({
+        accountId: row.accountId,
+        status: row.status,
+        corpusReady: row.corpusReady,
+        error: row.error,
+        lastIncrementalSyncAt: row.lastIncrementalSyncAt,
+        lastBackfillAt: row.lastBackfillAt,
+        updatedAt: row.updatedAt,
+      })),
+      calendarSync: calendarSync.map((row) => ({
+        accountId: row.accountId,
+        status: row.status,
+        error: row.error,
+        lastSyncedAt: row.lastSyncedAt,
+        lastIncrementalSyncAt: row.lastIncrementalSyncAt,
+      })),
+      connections: connections.map((row) => ({
+        connectionId: row.connectionId,
+        server: row.server,
+        status: row.status,
+        authKind: row.authKind,
+        displayName: row.displayName,
+        includeInBrief: row.includeInBrief,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+      connectorSync: connectorSync.map((row) => ({
+        connectionId: row.connectionId,
+        status: row.status,
+        lastSyncedAt: row.lastSyncedAt,
+        error: row.error,
+      })),
+    };
+  },
+});
+
+// ---- Per-item steering (FEATURES item 8) -----------------------------------
+// "Not for me", "Less from this sender", and "Keep showing" are Jev brief
+// corrections. This sets or removes one correction by id in one transaction,
+// and returns the one it replaced so the operation log can undo it. A save
+// from Settings that raced this write gets JEV_SETTINGS_CONFLICT and reloads.
+const MAX_JEV_CORRECTIONS = 100;
+export const BRIEF_CORRECTION_PREFIX = 'brief-';
+
+export const setBriefCorrection = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    id: v.string(),
+    // The correction to store under `id`, or null to remove it.
+    correction: v.any(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const row = await ctx.db
+      .query('userDocs')
+      .withIndex('by_user_kind_key', (q) =>
+        q.eq('userId', args.userId).eq('kind', 'jevPreferences').eq('key', 'default'),
+      )
+      .unique();
+    const stored: JevCorrection[] = (Array.isArray(row?.doc?.corrections) ? row.doc.corrections : []).flatMap(
+      (value: unknown) => {
+        const parsed = jevCorrectionSchema.safeParse(value);
+        return parsed.success ? [parsed.data] : [];
+      },
+    );
+    const previous = stored.find((rule) => rule.id === args.id) ?? null;
+    let corrections = stored.filter((rule) => rule.id !== args.id);
+    if (args.correction !== null && args.correction !== undefined) {
+      const correction = jevCorrectionSchema.parse(args.correction);
+      if (correction.id !== args.id) throw new Error('The correction id does not match.');
+      corrections.push(correction);
+      // Room for a new steering rule comes from the oldest steering rule,
+      // never from a correction the user wrote in Settings.
+      while (corrections.length > MAX_JEV_CORRECTIONS) {
+        const oldest = corrections.findIndex(
+          (rule) => rule.id.startsWith(BRIEF_CORRECTION_PREFIX) && rule.id !== args.id,
+        );
+        if (oldest < 0) throw new Error('At most 100 corrections are supported.');
+        corrections = corrections.filter((_, index) => index !== oldest);
+      }
+    }
+    const ts = Math.max(Date.now(), (row?.updatedAt || 0) + 1);
+    const doc = { preferences: normalizeJevPreferences(row?.doc?.preferences), corrections };
+    if (row) await ctx.db.patch(row._id, { doc, updatedAt: ts });
+    else
+      await ctx.db.insert('userDocs', {
+        userId: args.userId,
+        kind: 'jevPreferences',
+        key: 'default',
+        doc,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    return { previous };
+  },
+});
+
+// ---- "Since yesterday" (FEATURES item 7) -----------------------------------
+// The live status of the operations an edition lists, so a row the user undid
+// here or in Activity leaves the edition. Only the caller's rows answer.
+export const operationStates = query({
+  args: { internalSecret: v.optional(v.string()), userId: v.string(), ids: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await Promise.all(
+      args.ids.slice(0, 24).map(async (raw) => {
+        const id = ctx.db.normalizeId('aiOperations', raw);
+        const row = id ? await ctx.db.get(id) : null;
+        return row && row.userId === args.userId ? { id: raw, status: row.status } : null;
+      }),
+    );
+    return rows.filter((row) => row !== null);
+  },
+});
+
+// ---- Edition budget telemetry (FEATURES item 5) ----------------------------
+
+const budgetLimit = v.optional(v.union(v.literal('time'), v.literal('cost')));
+
+export const recordEditionTelemetry = mutation({
+  args: {
+    internalSecret: v.optional(v.string()),
+    userId: v.string(),
+    reportId: v.string(),
+    kind: v.string(),
+    timeMs: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    calls: v.number(),
+    fallback: v.boolean(),
+    exhausted: budgetLimit,
+    attempts: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const { internalSecret: _secret, ...row } = args;
+    const now = Date.now();
+    const existing = await ctx.db
+      .query('briefEditionTelemetry')
+      .withIndex('by_user_report', (q) => q.eq('userId', args.userId).eq('reportId', args.reportId))
+      .unique();
+    if (existing) await ctx.db.patch(existing._id, { ...row, updatedAt: now });
+    else await ctx.db.insert('briefEditionTelemetry', { ...row, createdAt: now, updatedAt: now });
+  },
+});
+
+function percentile(sorted: number[], p: number) {
+  if (!sorted.length) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
+}
+
+/** Pure: the summary of telemetry rows. Exported for tests. */
+export function summarizeEditionTelemetry(
+  rows: Array<{
+    userId: string;
+    kind: string;
+    timeMs: number;
+    costUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    fallback: boolean;
+    exhausted?: 'time' | 'cost';
+  }>,
+) {
+  const times = rows.map((row) => row.timeMs).sort((a, b) => a - b);
+  const costs = rows.map((row) => row.costUsd).sort((a, b) => a - b);
+  const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
+  const round = (value: number) => Math.round(value * 10_000) / 10_000;
+  const byKind: Record<string, number> = {};
+  for (const row of rows) byKind[row.kind] = (byKind[row.kind] ?? 0) + 1;
+  return {
+    editions: rows.length,
+    users: new Set(rows.map((row) => row.userId)).size,
+    byKind,
+    timeMs: {
+      average: rows.length ? Math.round(times.reduce((sum, time) => sum + time, 0) / rows.length) : 0,
+      p50: percentile(times, 0.5),
+      p90: percentile(times, 0.9),
+      max: times.at(-1) ?? 0,
+    },
+    costUsd: {
+      total: round(totalCost),
+      average: rows.length ? round(totalCost / rows.length) : 0,
+      p50: round(percentile(costs, 0.5)),
+      p90: round(percentile(costs, 0.9)),
+      max: round(costs.at(-1) ?? 0),
+      // One edition a day for a month, to hold against the plan price.
+      perUserMonthAtDaily: rows.length ? round((totalCost / rows.length) * 30) : 0,
+    },
+    tokens: {
+      input: rows.reduce((sum, row) => sum + row.inputTokens, 0),
+      output: rows.reduce((sum, row) => sum + row.outputTokens, 0),
+    },
+    fallbackRate: rows.length ? round(rows.filter((row) => row.fallback).length / rows.length) : 0,
+    exhausted: {
+      time: rows.filter((row) => row.exhausted === 'time').length,
+      cost: rows.filter((row) => row.exhausted === 'cost').length,
+    },
+  };
+}
+
+// Internal and admin only: the app route checks the operator plan before it
+// calls this. Reads at most 2000 of the newest rows since `since`.
+export const editionTelemetrySummary = query({
+  args: { internalSecret: v.optional(v.string()), since: v.number() },
+  handler: async (ctx, args) => {
+    requireInternalSecret(args.internalSecret);
+    const rows = await ctx.db
+      .query('briefEditionTelemetry')
+      .withIndex('by_updated', (q) => q.gte('updatedAt', args.since))
+      .order('desc')
+      .take(2000);
+    return { since: args.since, truncated: rows.length === 2000, ...summarizeEditionTelemetry(rows) };
   },
 });

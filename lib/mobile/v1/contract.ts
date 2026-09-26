@@ -17,6 +17,51 @@ export const MobileDomainSchema = z.enum([
 
 export type MobileDomain = z.infer<typeof MobileDomainSchema>;
 
+// The Daily Brief edition kinds a client must decode (FEATURES item 9). The
+// scheduler writes `morning` and, on Sunday, `weekly`; the user writes
+// `manual`; `evening` exists only on editions stored in June 2026.
+export const BriefEditionKindSchema = z.enum(['morning', 'manual', 'weekly', 'evening']);
+export type BriefEditionKindV1 = z.infer<typeof BriefEditionKindSchema>;
+
+// A small Today summary for widgets (FEATURES item 19):
+// GET /api/mobile/v1/today/summary. Every field reads the latest edition after
+// the live read drops handled items, except `nextMeeting`, which reads the
+// calendar now. `leadLine` is never empty: without an edition it says so.
+export const TodaySummarySchema = z
+  .object({
+    version: z.literal(1),
+    reportID: optionalIdentifier,
+    kind: BriefEditionKindSchema.optional(),
+    generatedAt: isoTimestamp.optional(),
+    leadLine: z.string().min(1).max(500),
+    nextMove: z
+      .object({
+        title: z.string().min(1).max(500),
+        detail: z.string().max(500).optional(),
+        refKind: z.enum(['thread', 'task']),
+        refID: identifier,
+        accountID: optionalIdentifier,
+      })
+      .strict()
+      .optional(),
+    nextMeeting: z
+      .object({
+        eventID: identifier,
+        accountID: optionalIdentifier,
+        title: z.string().min(1).max(500),
+        startAt: isoTimestamp,
+        endAt: isoTimestamp,
+        location: z.string().max(500).optional(),
+      })
+      .strict()
+      .optional(),
+    // Sources that need a reconnect or failed to sync (see get_brief_sources).
+    sourcesNeedingAttention: z.number().int().nonnegative(),
+    serverTime: isoTimestamp,
+  })
+  .strict();
+export type TodaySummary = z.infer<typeof TodaySummarySchema>;
+
 export const ProviderSchema = z.enum(['google', 'microsoft', 'icloud', 'imap']);
 
 export const ProviderCapabilitySetSchema = z
@@ -1001,6 +1046,8 @@ export const MobileContractV1 = {
     AssistantEvent: AssistantEventSchema,
     AssistantRouteRequest: AssistantRouteRequestSchema,
     AssistantRouteVerdict: AssistantRouteVerdictSchema,
+    BriefEditionKind: BriefEditionKindSchema,
+    TodaySummary: TodaySummarySchema,
     CommandReceipt: CommandReceiptSchema,
     MailAttachment: MailAttachmentSchema,
     MailMessage: MailMessageSchema,

@@ -31,6 +31,7 @@ export const SETTINGS_TAB_META: Record<SettingsTabId, SettingsTabMeta> = {
   sending: { group: 'behavior', description: 'Undo window, signatures, replies, and your voice.' },
   notifications: { group: 'behavior', description: 'Check-ins, mail alerts, and quiet hours.' },
   orders: { group: 'behavior', description: 'What runs on its own, with a pause for each.' },
+  brief: { group: 'behavior', description: 'When the brief arrives, and weekends.' },
   ai: { group: 'behavior', description: 'Models, keys, and your plan.' },
   narrative: { group: 'behavior', description: 'How the brief reads.' },
   appearance: { group: 'you', description: 'Palette, type, and corners.' },

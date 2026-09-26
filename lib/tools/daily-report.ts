@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import {
+  briefPreferencesInputSchema,
+  loadBriefPreferences,
+  saveBriefPreferences,
+} from '../brief/preferences';
+import { briefSourceHealth, loadBriefSourceRows } from '../brief/source-health';
+import { steerBriefItem, steerBriefItemInputSchema } from '../brief/steering';
 import { isConvexConfigured } from '../hosted/env';
 import { generateAgentReport } from '../mail/agent-report';
 import { enqueueBriefJob, waitForBriefJob } from '../mail/brief-jobs';
@@ -24,7 +31,8 @@ import {
 } from '../store/daily-reports';
 import { defineTool } from './registry';
 
-const ReportKindSchema = z.enum(['morning', 'manual']);
+// 'weekly' writes the weekly review on demand (FEATURES item 9).
+const ReportKindSchema = z.enum(['morning', 'manual', 'weekly']);
 
 export const generateDailyReportTool = defineTool({
   name: 'generate_daily_report',
@@ -271,5 +279,86 @@ export const restoreDailyReportThreadTool = defineTool({
   async handler(args) {
     await restoreDailyReportThread(args);
     return { ok: true };
+  },
+});
+
+function signedInUser(userId: string | null | undefined): string {
+  if (!userId) throw new Error('Sign in required');
+  return userId;
+}
+
+// Brief delivery preferences (FEATURES items 3, 6, 9). Web Settings and native
+// share these two tools.
+export const getBriefPreferencesTool = defineTool({
+  name: 'get_brief_preferences',
+  description:
+    'Read when the Daily Brief arrives: the local delivery hour (5-11), the weekend edition (full, light, off), the Sunday weekly review, and the edition by email with its availability.',
+  category: 'ai',
+  mutating: false,
+  input: z.object({}).optional(),
+  output: z.object({ preferences: z.any() }),
+  async handler(_input, ctx) {
+    return { preferences: await loadBriefPreferences(signedInUser(ctx.userId)) };
+  },
+});
+
+export const saveBriefPreferencesTool = defineTool({
+  name: 'save_brief_preferences',
+  description:
+    'Change when the Daily Brief arrives. Pass only the fields to change: deliveryHour (5-11, local), weekendMode (full, light, off), weeklyReview, emailEnabled.',
+  category: 'ai',
+  mutating: true,
+  risk: 'write_self',
+  input: briefPreferencesInputSchema,
+  output: z.object({ preferences: z.any() }),
+  async handler(input, ctx) {
+    return {
+      preferences: await saveBriefPreferences(signedInUser(ctx.userId), input, {
+        timezone: ctx.userTimezone,
+      }),
+    };
+  },
+});
+
+// The masthead source line (FEATURES item 18): each mailbox, calendar, and
+// connected tool behind the edition, its last sync, and a reconnect path when
+// the user must act.
+export const getBriefSourcesTool = defineTool({
+  name: 'get_brief_sources',
+  description:
+    'List the sources behind the Daily Brief (mailboxes, calendars, connected tools) with their last sync time and whether any needs to reconnect. Pass reportId to mark the sources that edition read.',
+  category: 'ai',
+  mutating: false,
+  input: z.object({ reportId: z.string().min(1).max(240).optional() }).optional(),
+  output: z.object({ health: z.any() }),
+  async handler(input, ctx) {
+    const userId = signedInUser(ctx.userId);
+    const [rows, report] = await Promise.all([
+      loadBriefSourceRows(userId),
+      input?.reportId ? getDailyReportStore(input.reportId).catch(() => null) : Promise.resolve(null),
+    ]);
+    return { health: briefSourceHealth(rows, { report }) };
+  },
+});
+
+// Per-item steering (FEATURES item 8). The result carries the operationId;
+// undo_operation reverses it, and Activity lists it with Undo.
+export const steerBriefItemTool = defineTool({
+  name: 'steer_brief_item',
+  description:
+    'Steer one Daily Brief item. mode not_for_me keeps this conversation out of the brief, less_from_sender keeps the sender out, keep_showing keeps the conversation in even after it is read or handled. Returns an operationId for undo_operation.',
+  category: 'mail',
+  mutating: true,
+  risk: 'write_self',
+  input: steerBriefItemInputSchema,
+  output: z.object({
+    ok: z.boolean(),
+    mode: z.string(),
+    operationId: z.string(),
+    correction: z.any(),
+    summary: z.string(),
+  }),
+  async handler(input, ctx) {
+    return steerBriefItem(signedInUser(ctx.userId), input);
   },
 });

@@ -86,11 +86,15 @@ export const enqueue = mutation({
   args: {
     ...caller,
     kind: v.union(v.literal('daily'), v.literal('area'), v.literal('narrative')),
-    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'))),
+    edition: v.optional(v.union(v.literal('morning'), v.literal('manual'), v.literal('weekly'))),
     areaId: v.optional(v.id('areas')),
     timezone: v.optional(v.string()),
     force: v.optional(v.boolean()),
     reportId: v.optional(v.string()),
+    // A weekend edition without the know, waiting, task, and tool sections.
+    light: v.optional(v.boolean()),
+    // The first edition after the first mailbox connects (FEATURES item 4).
+    first: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
@@ -99,14 +103,26 @@ export const enqueue = mutation({
       if (!area || area.userId !== args.userId) throw new Error('Area not found');
     }
     if (args.kind === 'daily' && (!args.reportId || !args.edition)) throw new Error('Edition required');
+    // The first edition is queued once: never after any edition exists.
+    if (args.first) {
+      const existing = await ctx.db
+        .query('userDocs')
+        .withIndex('by_user_kind', (q) => q.eq('userId', args.userId).eq('kind', 'dailyReport'))
+        .first();
+      if (existing)
+        return { jobId: null, reportId: undefined, started: false, skipped: 'has_edition' as const };
+    }
     const now = Date.now();
     // A slow earlier edition must not prevent tomorrow's cron from starting.
     // Each day's active edition is coalesced independently, without expiring it.
+    // The weekly review has its own scope, so a manual edition on the same
+    // Sunday neither joins nor cancels it.
+    const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: args.timezone || 'UTC' }).format(now);
     const scope =
       args.kind === 'area'
         ? `area:${args.areaId}`
         : args.kind === 'daily'
-          ? `daily:${new Intl.DateTimeFormat('en-CA', { timeZone: args.timezone || 'UTC' }).format(now)}`
+          ? `${args.edition === 'weekly' ? 'weekly' : 'daily'}:${localDate}`
           : args.kind;
     const active = await ctx.db
       .query('briefJobs')
@@ -121,7 +137,8 @@ export const enqueue = mutation({
         .withIndex('by_user_active', (q) => q.eq('userId', args.userId).eq('active', true))
         .collect();
       for (const job of earlier) {
-        if (job.kind !== 'daily' || job.scope === scope) continue;
+        // Only an earlier day's job is replaced; the same day's other scope stays.
+        if (job.kind !== 'daily' || job.scope === scope || job.scope.endsWith(`:${localDate}`)) continue;
         await ctx.db.patch(job._id, {
           state: 'cancelled',
           active: false,
@@ -148,6 +165,8 @@ export const enqueue = mutation({
       timezone: args.timezone,
       force: args.force,
       reportId: args.reportId,
+      ...(args.light ? { light: true } : {}),
+      ...(args.first ? { first: true } : {}),
       state: 'queued',
       active: true,
       availableAt: now,
@@ -166,11 +185,12 @@ export const enqueue = mutation({
         doc: {
           _id: args.reportId,
           kind: args.edition,
+          ...(args.light ? { light: true } : {}),
           generatedAt: now,
           status: 'partial',
           progress: { stage: 'queued', done: 0, total: 1 },
           accounts: [],
-          title: 'Daily Brief',
+          title: args.edition === 'weekly' ? 'Weekly Review' : 'Daily Brief',
           narrative: '',
           sections: {},
           stats: {},
