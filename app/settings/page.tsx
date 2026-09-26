@@ -9,26 +9,13 @@
 import { UserButton, useClerk, useUser } from '@clerk/nextjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useConvexAuth, useMutation as useConvexMutation, useQuery as useConvexQuery } from 'convex/react';
-import {
-  CalendarDays,
-  Check,
-  KeyRound,
-  Loader2,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  ShieldCheck,
-  Trash2,
-} from 'lucide-react';
+import { Check, Loader2, MoreHorizontal, Pencil, Plus, Search, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { TeachAreas } from '@/components/albatross/TeachAreas';
 import { ConnectionLogo, ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
-import { Ring } from '@/components/loading-ui/ring';
 import { NarrativeSettings } from '@/components/narrative/Narrative';
 import { CommandPalette } from '@/components/palette/CommandPalette';
 import { AiSection } from '@/components/settings/AiSection';
@@ -169,7 +156,6 @@ function SettingsPageBody() {
             title="Search everything (⌘/Ctrl F or /)"
             className="absolute right-0 top-0 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            <Search className="size-4" />
             Search
           </button>
           <Link
@@ -864,15 +850,11 @@ function MailboxesSection() {
           >
             {capability.connectable ? (
               <a href={`/api/nylas/connect?provider=${capability.provider}`}>
-                <ProviderLogo provider={capability.provider} className="size-3.5" />
                 Connect {capability.label}
                 <Plus className="size-3 text-[var(--color-text-faint)]" />
               </a>
             ) : (
-              <span>
-                <ProviderLogo provider={capability.provider} className="size-3.5 opacity-50" />
-                {capability.label}
-              </span>
+              <span>{capability.label}</span>
             )}
           </Button>
         ))}
@@ -975,26 +957,20 @@ function MailboxCard({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuItem onSelect={() => onResyncMail()} className="gap-2 text-[12.5px]">
-            <RefreshCw className="size-3.5" />
+          <DropdownMenuItem onSelect={() => onResyncMail()} className="text-[12.5px]">
             Re-index mail
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onResyncCalendar()} className="gap-2 text-[12.5px]">
-            <CalendarDays className="size-3.5" />
+          <DropdownMenuItem onSelect={() => onResyncCalendar()} className="text-[12.5px]">
             Resync calendar
           </DropdownMenuItem>
-          <DropdownMenuItem asChild className="gap-2 text-[12.5px]">
-            <a href={reconnectHref}>
-              <KeyRound className="size-3.5" />
-              Reconnect / update permissions
-            </a>
+          <DropdownMenuItem asChild className="text-[12.5px]">
+            <a href={reconnectHref}>Reconnect / update permissions</a>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => onDisconnect()}
-            className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+            className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
           >
-            <Trash2 className="size-3.5" />
             Remove account & data
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1362,8 +1338,7 @@ function ConnectionsSection() {
                     variant="outline"
                     disabled={!token.trim() || connect.isPending}
                   >
-                    {connect.isPending ? <Ring className="size-3" /> : <Plus className="size-3.5" />}
-                    Connect
+                    {connect.isPending ? 'Connecting…' : 'Connect'}
                   </Button>
                 </div>
               </form>
@@ -1468,8 +1443,7 @@ function AccountSection() {
                   disabled={deleteAccount.isPending}
                   className="shrink-0 border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)]/60 text-[var(--color-danger)] hover:border-[var(--color-danger)]/45 hover:bg-[var(--color-danger-soft)] hover:text-[var(--color-danger)]"
                 >
-                  {deleteAccount.isPending ? <Ring className="size-3" /> : null}
-                  Delete account
+                  {deleteAccount.isPending ? 'Deleting…' : 'Delete account'}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>

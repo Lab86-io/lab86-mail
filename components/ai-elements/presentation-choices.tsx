@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { SlideSurface } from '@/components/files/editors/SlideRenderer';
 import { OptionList } from '@/components/tool-ui/option-list';
@@ -689,7 +689,7 @@ export function PresentationPicker({
       )}
       <div className="presentation-choice-actions">
         <button type="button" disabled={submitted || step === 0} onClick={() => move(step - 1)}>
-          <ArrowLeft size={14} aria-hidden="true" /> Back
+          Back
         </button>
         <button type="button" className="presentation-choice-primary" disabled={submitted} onClick={next}>
           {submitted

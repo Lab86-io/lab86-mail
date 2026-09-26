@@ -2,17 +2,7 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useMutation } from 'convex/react';
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Bell,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  Clock3,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+import { ArrowUpRight, Bell, Check, ChevronRight, CircleHelp, Clock3, ShieldCheck } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Component, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { DailyCheckin } from '@/components/albatross/DailyCheckin';
@@ -475,7 +465,7 @@ export function NotificationsView({
                 className="-ml-2 mb-6 h-11 self-start lg:hidden"
                 onClick={goBack}
               >
-                <ArrowLeft className="size-4" aria-hidden /> Back to notifications
+                Back to notifications
               </Button>
               <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--color-text-muted)]">
                 {selected.source}
@@ -557,7 +547,6 @@ export function NotificationsView({
                         }, 'Could not dismiss this update. It is still here.')
                       }
                     >
-                      <X className="size-4" aria-hidden />
                       Dismiss update
                     </Button>
                   )}

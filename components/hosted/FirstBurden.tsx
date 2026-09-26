@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { AlbatrossMark } from '@/components/albatross/AlbatrossMark';
-import { ProviderLogo, providerDisplayName } from '@/components/icons/provider-logos';
+import { providerDisplayName } from '@/components/icons/provider-logos';
 import { Ring } from '@/components/loading-ui/ring';
 import { Button } from '@/components/ui/button';
 import { ONBOARDING_DISMISSED_STORAGE_KEY } from './onboarding-state';
@@ -145,14 +145,10 @@ export function FirstBurden() {
                 >
                   {capability.connectable ? (
                     <a href={`/api/nylas/connect?provider=${capability.provider}&redirectTo=/welcome`}>
-                      <ProviderLogo provider={capability.provider} className="size-4" />
                       {providerDisplayName(capability.provider)}
                     </a>
                   ) : (
-                    <span>
-                      <ProviderLogo provider={capability.provider} className="size-4" />
-                      {providerDisplayName(capability.provider)}
-                    </span>
+                    <span>{providerDisplayName(capability.provider)}</span>
                   )}
                 </Button>
               ))}

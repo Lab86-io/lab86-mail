@@ -5,7 +5,7 @@
 // The provider rail, animated rows, capability badges and pins come
 // from that component. Its modal/trigger are replaced with a permanent panel;
 // selection is controlled, and pin buttons are siblings of selection buttons.
-// Pins persist on the device (lib/shell/pinned-models).
+// Pins are saved for the user on the server (lib/shell/pinned-models).
 
 import { Brain, Check, Eye, LayoutGrid, Pin, Search, Wrench, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
@@ -16,11 +16,11 @@ import {
   type ReactNode,
   type SetStateAction,
   useContext,
-  useEffect,
   useId,
+  useMemo,
   useState,
 } from 'react';
-import { readPinnedModels, togglePinnedModel, writePinnedModels } from '@/lib/shell/pinned-models';
+import { usePinnedModels } from '@/lib/shell/pinned-models';
 import { cn } from '@/lib/utils';
 
 export interface Provider {
@@ -98,21 +98,15 @@ export function ModelSelector({
   // Switching API providers can remove the active provider from this catalog.
   const activeProvider = providers.some((p) => p.id === providerFilter) ? providerFilter : null;
   const [starredOnly, setStarredOnly] = useState(false);
-  const [starred, setStarred] = useState(() => new Set(models.filter((m) => m.starred).map((m) => m.id)));
-
-  // Read saved pins after mount so the server and first client render match.
-  useEffect(() => {
-    const saved = readPinnedModels();
-    if (saved.size) setStarred((prev) => new Set([...prev, ...saved]));
-  }, []);
+  const { pins, toggle } = usePinnedModels();
+  const starred = useMemo(
+    () => new Set([...models.filter((m) => m.starred).map((m) => m.id), ...pins]),
+    [models, pins],
+  );
 
   const toggleStar = (id: string) => {
     if (disabled) return;
-    setStarred((prev) => {
-      const next = togglePinnedModel(prev, id);
-      writePinnedModels(next);
-      return next;
-    });
+    void toggle(id);
   };
 
   const filtered = models.filter((model) => {

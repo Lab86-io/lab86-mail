@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { convexTest } from 'convex-test';
-import { api } from '../convex/_generated/api';
+import { api, internal } from '../convex/_generated/api';
 import schema from '../convex/schema';
 import { createDefaultDocumentModel } from '../lib/documents/model';
 
@@ -463,7 +463,10 @@ describe('document Convex transactions', () => {
     let rows = await revisions();
     // The create row stays; the four autosaves are one row at revision 5.
     expect(rows.map((row) => row.revision)).toEqual([5, 1]);
-    expect(rows[0].model.blocks[0].text).toBe('draft 4');
+    expect(rows.some((row: any) => 'model' in row)).toBe(false);
+    expect((await t.query(api.documents.get, base))?.model.blocks[0].text).toBe('draft 4');
+    // The merged autosaves wrote one model row in place: one for the create, one for the window.
+    expect(await t.run((ctx) => ctx.db.query('documentModels').collect())).toHaveLength(2);
 
     // A save that is not an autosave starts a new row, and so does a new window.
     await save(5, 'named', 'edit');
@@ -533,10 +536,349 @@ describe('document Convex transactions', () => {
     }
     const left = await t.run(async (ctx) => ({
       revisions: (await ctx.db.query('documentRevisions').collect()).map((row) => row.documentId),
+      models: (await ctx.db.query('documentModels').collect()).map((row) => row.documentId),
       blob: Boolean(await ctx.db.system.get(storageId)),
       importSource: (await ctx.db.query('documents').collect()).find((doc) => doc.documentId === 'gone')
         ?.importSource,
+      modelId: (await ctx.db.query('documents').collect()).find((doc) => doc.documentId === 'gone')?.modelId,
     }));
-    expect(left).toEqual({ revisions: ['keep'], blob: false, importSource: undefined });
+    expect(left).toEqual({
+      revisions: ['keep'],
+      models: ['keep'],
+      blob: false,
+      importSource: undefined,
+      modelId: undefined,
+    });
+  });
+
+  test('models live apart from their rows, and reads load them by id (DOC-4)', async () => {
+    const t = newHarness();
+    const base = { internalSecret: SECRET, userId: USER, documentId: 'big' };
+    const paragraph = (text: string) => ({
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'b1', type: 'paragraph', text }],
+    });
+    const first = paragraph('a'.repeat(200_000));
+    const created = await t.mutation(api.documents.create, {
+      ...base,
+      kind: 'doc',
+      title: 'Big',
+      model: first,
+    });
+    expect(created).toMatchObject({ documentId: 'big', currentRevision: 1, model: first });
+    expect('modelId' in created).toBe(false);
+
+    const stored = await t.run(async (ctx) => ({
+      document: (await ctx.db.query('documents').collect())[0],
+      revision: (await ctx.db.query('documentRevisions').collect())[0],
+      models: await ctx.db.query('documentModels').collect(),
+    }));
+    // The document row is metadata and a pointer; its current revision shares the model row.
+    expect(stored.document.model).toBeUndefined();
+    expect(JSON.stringify(stored.document).length).toBeLessThan(1_000);
+    expect(stored.revision.model).toBeUndefined();
+    expect(stored.revision.modelId).toBe(stored.document.modelId!);
+    expect(stored.models).toHaveLength(1);
+    expect(stored.models[0]).toMatchObject({ userId: USER, documentId: 'big', model: first });
+    expect(stored.document.modelBytes).toBe(stored.models[0].bytes);
+
+    // Round trip: save and load.
+    const second = paragraph('second draft');
+    expect(
+      await t.mutation(api.documents.update, { ...base, expectedRevision: 1, model: second, reason: 'edit' }),
+    ).toMatchObject({ ok: true, document: { model: second, currentRevision: 2 } });
+    const loaded = await t.query(api.documents.get, base);
+    expect(loaded).toMatchObject({ title: 'Big', currentRevision: 2, model: second, suggestions: [] });
+    expect(loaded && ('modelId' in loaded || 'modelBytes' in loaded)).toBe(false);
+    // A stale save gets the current model back to rebase on.
+    expect(
+      await t.mutation(api.documents.update, { ...base, expectedRevision: 1, model: first }),
+    ).toMatchObject({ ok: false, code: 'REVISION_CONFLICT', document: { model: second } });
+
+    // History is metadata only; a restore loads the old model by id.
+    const history = await t.query(api.documents.listRevisions, base);
+    expect(history.map((row) => row.revision)).toEqual([2, 1]);
+    expect(history.some((row: any) => 'model' in row || 'modelId' in row)).toBe(false);
+    expect(
+      await t.mutation(api.documents.restoreRevision, { ...base, revision: 1, expectedRevision: 2 }),
+    ).toEqual({ ok: true });
+    expect((await t.query(api.documents.get, base))?.model).toEqual(first);
+
+    // Each revision has its own model row, the document shares the current one, and nothing is left over.
+    const after = await t.run(async (ctx) => ({
+      document: (await ctx.db.query('documents').collect())[0],
+      revisions: await ctx.db.query('documentRevisions').collect(),
+      models: await ctx.db.query('documentModels').collect(),
+    }));
+    expect(after.models).toHaveLength(3);
+    expect(new Set(after.revisions.map((row) => row.modelId)).size).toBe(3);
+    expect(after.revisions.find((row) => row.revision === 3)?.modelId).toBe(after.document.modelId!);
+  });
+
+  test('the list returns metadata only unless a caller asks for models (DOC-4)', async () => {
+    const t = newHarness();
+    const base = { internalSecret: SECRET, userId: USER };
+    await createDocument(t, 'one');
+    await createDocument(t, 'two', 'sheet');
+    const summaries = await t.query(api.documents.list, { ...base, metadataOnly: true });
+    expect(summaries.map((row: any) => row.documentId).sort()).toEqual(['one', 'two']);
+    for (const row of summaries) {
+      expect(Object.keys(row).filter((key) => key.startsWith('model'))).toEqual([]);
+    }
+    // The metadata list needs no model row at all.
+    await t.run(async (ctx) => {
+      for (const row of await ctx.db.query('documentModels').collect()) await ctx.db.delete(row._id);
+    });
+    expect(await t.query(api.documents.list, { ...base, metadataOnly: true })).toHaveLength(2);
+  });
+
+  test('a full list stops at the byte budget instead of loading every model (DOC-4)', async () => {
+    const t = newHarness();
+    const model = {
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'b1', type: 'paragraph', text: 'x'.repeat(850_000) }],
+    };
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
+      await t.mutation(api.documents.create, {
+        internalSecret: SECRET,
+        userId: USER,
+        documentId: id,
+        kind: 'doc',
+        title: id,
+        model,
+      });
+    const rows = await t.query(api.documents.list, { internalSecret: SECRET, userId: USER });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(8);
+    expect(rows.every((row: any) => row.model?.blocks?.[0]?.text.length === 850_000)).toBe(true);
+    expect(
+      await t.query(api.documents.list, { internalSecret: SECRET, userId: USER, metadataOnly: true }),
+    ).toHaveLength(8);
+  });
+
+  test('inline models from before still read, move on migration, and move once (DOC-4)', async () => {
+    const t = newHarness();
+    const base = { internalSecret: SECRET, userId: USER };
+    const version = (text: string) => ({
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'b1', type: 'paragraph', text }],
+    });
+    await t.run(async (ctx) => {
+      const row = { userId: USER, kind: 'doc' as const, sourceRefs: [], createdAt: 1, updatedAt: 2 };
+      await ctx.db.insert('documents', {
+        ...row,
+        documentId: 'legacy',
+        title: 'Legacy',
+        model: version('current'),
+        currentRevision: 2,
+      });
+      await ctx.db.insert('documents', {
+        ...row,
+        documentId: 'old-archive',
+        title: 'Archived',
+        model: version('archived'),
+        currentRevision: 1,
+        archivedAt: 3,
+      });
+      for (const [revision, text] of [
+        [1, 'first'],
+        [2, 'current'],
+      ] as const)
+        await ctx.db.insert('documentRevisions', {
+          userId: USER,
+          documentId: 'legacy',
+          revision,
+          title: 'Legacy',
+          model: version(text),
+          reason: 'edit',
+          actor: 'user',
+          createdAt: revision,
+        });
+    });
+    // Reads accept the inline form.
+    expect((await t.query(api.documents.get, { ...base, documentId: 'legacy' }))?.model).toEqual(
+      version('current'),
+    );
+    expect((await t.query(api.documents.list, base)).map((row: any) => row.model)).toEqual([
+      version('current'),
+    ]);
+    expect(
+      (await t.query(api.documents.listRevisions, { ...base, documentId: 'legacy' })).some(
+        (row: any) => 'model' in row,
+      ),
+    ).toBe(false);
+
+    // One page at a time, documents first, then revisions.
+    const migrate = internal.documents.migrateInlineModels;
+    let result = await t.mutation(migrate, { batchSize: 1, continue: false });
+    const pages = [result];
+    while (!result.done) {
+      result = await t.mutation(migrate, {
+        ...result.next!,
+        batchSize: 1,
+        moved: result.total,
+        continue: false,
+      });
+      pages.push(result);
+    }
+    expect(result.total).toBe(3);
+    expect(pages.map((page) => page.table)).toContain('documentRevisions');
+
+    const rows = await t.run(async (ctx) => ({
+      documents: await ctx.db.query('documents').collect(),
+      revisions: await ctx.db.query('documentRevisions').collect(),
+      models: await ctx.db.query('documentModels').collect(),
+    }));
+    expect([...rows.documents, ...rows.revisions].some((row) => row.model !== undefined)).toBe(false);
+    const legacy = rows.documents.find((row) => row.documentId === 'legacy')!;
+    const archived = rows.documents.find((row) => row.documentId === 'old-archive')!;
+    // The archived model is dropped, not moved; the current revision shares the document's row.
+    expect(archived.modelId).toBeUndefined();
+    expect(rows.models).toHaveLength(2);
+    expect(rows.revisions.find((row) => row.revision === 2)?.modelId).toBe(legacy.modelId!);
+    expect((await t.query(api.documents.get, { ...base, documentId: 'legacy' }))?.model).toEqual(
+      version('current'),
+    );
+    expect(
+      await t.mutation(api.documents.restoreRevision, {
+        ...base,
+        documentId: 'legacy',
+        revision: 1,
+        expectedRevision: 2,
+      }),
+    ).toEqual({ ok: true });
+    expect((await t.query(api.documents.get, { ...base, documentId: 'legacy' }))?.model).toEqual(
+      version('first'),
+    );
+
+    // A second run finds nothing to move, including through the scheduled chain.
+    await t.mutation(migrate, { batchSize: 8 });
+    for (let round = 0; round < 3; round += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await t.finishInProgressScheduledFunctions();
+    }
+    expect(await t.mutation(migrate, { table: 'documentRevisions', continue: false })).toMatchObject({
+      moved: 0,
+      done: true,
+    });
+    expect(await t.run((ctx) => ctx.db.query('documentModels').collect())).toHaveLength(3);
+  });
+
+  test('a save moves an inline document model and drops a row only the document held (DOC-4)', async () => {
+    const t = newHarness();
+    const base = { internalSecret: SECRET, userId: USER, documentId: 'mixed' };
+    const version = (text: string) => ({
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'b1', type: 'paragraph', text }],
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.insert('documents', {
+        userId: USER,
+        documentId: 'mixed',
+        kind: 'doc',
+        title: 'Mixed',
+        model: version('one'),
+        currentRevision: 1,
+        sourceRefs: [],
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('documentRevisions', {
+        userId: USER,
+        documentId: 'mixed',
+        revision: 1,
+        title: 'Mixed',
+        model: version('one'),
+        reason: 'inline_edit',
+        actor: 'user',
+        createdAt: Date.now(),
+      });
+    });
+    // An autosave merges into the inline revision row and moves both models out.
+    expect(
+      await t.mutation(api.documents.update, {
+        ...base,
+        expectedRevision: 1,
+        model: version('two'),
+        reason: 'inline_edit',
+      }),
+    ).toMatchObject({ ok: true });
+    let rows = await t.run(async (ctx) => ({
+      document: (await ctx.db.query('documents').collect())[0],
+      revisions: await ctx.db.query('documentRevisions').collect(),
+      models: await ctx.db.query('documentModels').collect(),
+    }));
+    expect(rows.revisions).toHaveLength(1);
+    expect(rows.revisions[0]).toMatchObject({ revision: 2, modelId: rows.document.modelId });
+    expect(rows.revisions[0].model).toBeUndefined();
+    expect(rows.document.model).toBeUndefined();
+    expect(rows.models.map((row) => row.model)).toEqual([version('two')]);
+
+    // A document row that holds its own model row (as the migration can leave
+    // it) loses that row when the next save moves the document on.
+    await t.run(async (ctx) => {
+      const own = await ctx.db.insert('documentModels', {
+        userId: USER,
+        documentId: 'mixed',
+        model: version('two'),
+        bytes: 10,
+        createdAt: 1,
+      });
+      await ctx.db.patch(rows.document._id, { modelId: own });
+    });
+    await t.mutation(api.documents.update, { ...base, expectedRevision: 2, title: 'Renamed' });
+    rows = await t.run(async (ctx) => ({
+      document: (await ctx.db.query('documents').collect())[0],
+      revisions: await ctx.db.query('documentRevisions').collect(),
+      models: await ctx.db.query('documentModels').collect(),
+    }));
+    expect(rows.models).toHaveLength(2);
+    expect(rows.models.every((row) => rows.revisions.some((revision) => revision.modelId === row._id))).toBe(
+      true,
+    );
+    expect(await t.query(api.documents.get, base)).toMatchObject({ title: 'Renamed', model: version('two') });
+  });
+
+  test('file indexing and narrative sources read the document model by id (DOC-4)', async () => {
+    const t = convexTest(schema, {
+      ...convexModules,
+      '../convex/content.ts': () => import('../convex/content'),
+      '../convex/narrative.ts': () => import('../convex/narrative'),
+    });
+    const base = { internalSecret: SECRET, userId: USER };
+    const model = {
+      kind: 'doc',
+      version: 1,
+      blocks: [{ id: 'b1', type: 'paragraph', text: 'The launch budget memo for Friday.' }],
+    };
+    await t.mutation(api.documents.create, {
+      ...base,
+      documentId: 'memo',
+      kind: 'doc',
+      title: 'Memo',
+      model,
+    });
+    const page = await t.query((api as any).content.localPage, { ...base, source: 'document' });
+    expect(page.items[0]).toMatchObject({ externalId: 'memo', text: 'The launch budget memo for Friday.' });
+
+    const narrative = (api as any).narrative;
+    await t.mutation(narrative.configure, {
+      ...base,
+      enabled: true,
+      sources: ['documents'],
+      timezone: 'America/New_York',
+      model: 'z-ai/glm-5.3-flash',
+    });
+    await t.finishAllScheduledFunctions(() => {});
+    expect((await t.mutation(narrative.ingest, { ...base, group: 'documents', recent: true })).changed).toBe(
+      1,
+    );
+    const entry = (await t.run((ctx) => ctx.db.query('narrativeEntries').collect()))[0];
+    const read = await t.query(narrative.read, { ...base, id: String(entry._id), sources: true });
+    expect(read.sources[0].detail.text).toContain('The launch budget memo for Friday.');
   });
 });

@@ -1065,7 +1065,8 @@ export function DailyReport({
                 title="Inbox"
                 className="text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text)]"
               >
-                <Inbox className="size-3.5" />
+                {/* Icon when narrow, the word when wide: never an icon before text. */}
+                <Inbox className="size-3.5 @[360px]:hidden" />
                 <span className="hidden @[360px]:inline">Inbox</span>
               </Button>
               <Button
@@ -1076,8 +1077,12 @@ export function DailyReport({
                 aria-label="Write a new brief"
                 title="Write"
               >
-                {busy ? <Ring className="size-3" /> : <RefreshCw className="size-3" />}
-                <span className="hidden @[360px]:inline">Write</span>
+                {busy ? (
+                  <Ring className="size-3 @[360px]:hidden" />
+                ) : (
+                  <RefreshCw className="size-3 @[360px]:hidden" />
+                )}
+                <span className="hidden @[360px]:inline">{busy ? 'Writing…' : 'Write'}</span>
               </Button>
             </div>
           </div>

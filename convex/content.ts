@@ -9,6 +9,7 @@ import {
   mutation,
   query,
 } from './_generated/server';
+import { documentModel } from './documents';
 import { fanOutInternalPost, requireInternalSecret } from './lib';
 
 const caller = { internalSecret: v.optional(v.string()), userId: v.string() };
@@ -392,7 +393,7 @@ export const localPage = query({
                 size: file.size || 0,
                 modifiedAt: message.receivedAt,
               });
-      } else if (args.source === 'document') text = documentText(row.model);
+      } else if (args.source === 'document') text = documentText(await documentModel(ctx, row));
       else {
         text = [
           row.searchText,

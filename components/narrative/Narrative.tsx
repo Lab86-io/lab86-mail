@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowUpRight, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -437,7 +437,7 @@ export function NarrativePage() {
                 disabled={command.isPending}
                 onClick={() => command.mutate({ action: 'refresh' })}
               >
-                <RefreshCw className="size-3.5" /> Refresh
+                Refresh
               </Button>
             </div>
             {command.isSuccess ? (

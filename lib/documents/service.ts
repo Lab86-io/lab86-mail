@@ -239,10 +239,10 @@ export async function archiveDocument(userId: string, documentId: string) {
   return dependencies.convexMutation<{ ok: boolean }>(documentsApi.archive, { userId, documentId });
 }
 
+/** Version history rows: metadata only; the models stay in Convex. */
 export interface DocumentRevision {
   revision: number;
   title: string;
-  model: AlbatrossDocumentModel;
   reason: string;
   actor: 'user' | 'ai' | 'system';
   createdAt: number;

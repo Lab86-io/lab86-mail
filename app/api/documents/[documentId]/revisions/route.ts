@@ -29,11 +29,9 @@ export async function GET(_request: Request, context: Context) {
     const { documentId } = await context.params;
     if (!(await getDocument(user.userId, documentId)))
       return NextResponse.json({ ok: false, error: 'File not found.' }, { status: 404 });
+    // History rows carry no model; a restore loads the one it needs by id.
     const revisions = await listDocumentRevisions(user.userId, documentId);
-    return NextResponse.json({
-      ok: true,
-      revisions: revisions.map(({ model: _model, ...revision }) => revision),
-    });
+    return NextResponse.json({ ok: true, revisions });
   } catch (error) {
     return failure(error);
   }

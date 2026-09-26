@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { runWithAiRequestContext } from '@/lib/ai/context';
 import { evidenceSatisfies } from '@/lib/albatross/evidence-gate';
 import {
   proofCandidatesForMail,
@@ -8,6 +9,7 @@ import {
 import { AuthRequiredError, requireCurrentUser } from '@/lib/auth/current-user';
 import { api, convexQuery } from '@/lib/hosted/convex';
 import { enforceUserRateLimit, RateLimitError, rateLimitResponse } from '@/lib/rate-limit';
+import { dismissedProofWorkIds } from '@/lib/store/proof-dismissals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +32,8 @@ interface ProofMatchesDependencies {
   enforceUserRateLimit: typeof enforceUserRateLimit;
   convexQuery: typeof convexQuery;
   evidenceSatisfies: typeof evidenceSatisfies;
+  /** Work ids the user marked "Not related" for this thread. */
+  dismissedWorkIds: (userId: string, accountId: string, threadId: string) => Promise<Set<string>>;
 }
 
 const defaults: ProofMatchesDependencies = {
@@ -37,6 +41,8 @@ const defaults: ProofMatchesDependencies = {
   enforceUserRateLimit,
   convexQuery,
   evidenceSatisfies,
+  dismissedWorkIds: (userId, accountId, threadId) =>
+    runWithAiRequestContext({ userId, agent: 'user' }, () => dismissedProofWorkIds(accountId, threadId)),
 };
 
 export function createProofMatchesPost(overrides: Partial<ProofMatchesDependencies> = {}) {
@@ -84,6 +90,13 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
         limit: 12,
       });
       const mailText = `${subject} ${snippet}`.trim();
+      // A dismissed pair never reaches the gate, so it costs no model call.
+      const dismissed =
+        accountId && providerThreadId
+          ? await deps
+              .dismissedWorkIds(user.userId, accountId, providerThreadId)
+              .catch(() => new Set<string>())
+          : new Set<string>();
       const ranked = proofCandidatesForMail(
         (open || []).map((work) => ({
           ...work,
@@ -91,7 +104,7 @@ export function createProofMatchesPost(overrides: Partial<ProofMatchesDependenci
           proofs: work.contract?.proofs,
         })),
         mailText,
-      );
+      ).filter((match) => !dismissed.has(match.work._id));
 
       const candidates: Array<{
         workId: string;

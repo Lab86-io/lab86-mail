@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useMemo, useState, useEffect, useRef, memo } from "react";
-import { Loader2, Check, X, MoreHorizontal, ChevronRight } from "lucide-react";
+import { Loader2, Check, X, ChevronRight } from "lucide-react";
 import type { PlanProps, PlanTodo, PlanTodoStatus } from "./schema";
 import {
   cn,
@@ -354,7 +354,8 @@ function PlanRoot({
           <Accordion type="single" collapsible>
             <AccordionItem value="more" className="border-0">
               <AccordionTrigger className="text-muted-foreground hover:text-primary flex cursor-default items-start justify-start gap-2 py-1 text-sm font-normal [&>svg:last-child]:hidden">
-                <MoreHorizontal className="text-muted-foreground/70 mt-0.5 size-4 shrink-0" />
+                {/* A blank column keeps the line under the list's status marks. */}
+                <span aria-hidden className="size-4 shrink-0" />
                 <span>{hiddenTodos.length} more</span>
               </AccordionTrigger>
               <AccordionContent className="pt-2 pb-0">

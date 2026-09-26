@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useQuery_experimental as useConvexQuery } from 'convex/react';
-import { CheckCircle2, ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Mail, X } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1318,8 +1318,8 @@ function LinkedTaskChips({ threadId }: { threadId: string }) {
           className="inline-flex max-w-56 items-center gap-1 truncate rounded-ui border border-[var(--color-border)] px-2 py-0.5 text-[10.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           title="Open the Tasks board"
         >
-          <CheckCircle2 className={card.completedAt ? 'size-3 text-emerald-500' : 'size-3'} />
           <span className={card.completedAt ? 'truncate line-through opacity-70' : 'truncate'}>
+            {card.completedAt ? <span className="sr-only">Done: </span> : null}
             {card.title}
           </span>
         </button>

@@ -315,6 +315,7 @@ export const USER_BULK_TABLES = [
   'mobileSyncTombstones',
   'nativePushDeliveries',
   'documentRevisions',
+  'documentModels',
   'officeDocuments',
   'officeVersions',
   'officeSessions',
@@ -334,6 +335,8 @@ const PURGE_BATCH = 250;
 // A content item has at most ~34 embedding chunks, so a few items per pass
 // keep one purge transaction far below the Convex read limits.
 const CONTENT_ITEMS_PER_PASS = 5;
+// A document model row can be close to 1 MiB.
+const DOCUMENT_MODELS_PER_PASS = 8;
 // Tables expose one of these userId-prefixed indexes; try each in turn.
 export const USER_INDEXES = ['by_user', 'by_user_account', 'by_user_key', 'by_user_created'] as const;
 
@@ -366,7 +369,11 @@ export const purgeUserDataBatch = internalMutation({
         ctx,
         table,
         args.userId,
-        table === 'contentItems' ? Math.min(remaining, CONTENT_ITEMS_PER_PASS) : remaining,
+        table === 'contentItems'
+          ? Math.min(remaining, CONTENT_ITEMS_PER_PASS)
+          : table === 'documentModels'
+            ? Math.min(remaining, DOCUMENT_MODELS_PER_PASS)
+            : remaining,
       );
       for (const row of rows) {
         if ((table === 'officeVersions' || table === 'documentAssets') && 'storageId' in row) {

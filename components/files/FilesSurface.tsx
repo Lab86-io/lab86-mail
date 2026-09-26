@@ -881,7 +881,7 @@ export function FilesSurface() {
                 disabled={importOfficeMutation.isPending}
                 onSelect={() => officeInputRef.current?.click()}
               >
-                <Upload className="size-3.5" /> Import Office working copy
+                Import Office working copy
               </DropdownMenuItem>
             ) : null}
             {officeQuery.data?.enabled ? (
@@ -889,27 +889,25 @@ export function FilesSurface() {
                 disabled={createWordMutation.isPending}
                 onSelect={() => createWordMutation.mutate()}
               >
-                <FileText className="size-3.5" /> Document
+                Document
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('doc')}>
-              <FileText className="size-3.5" /> {officeQuery.data?.enabled ? 'Simple document' : 'Document'}
+              {officeQuery.data?.enabled ? 'Simple document' : 'Document'}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('sheet')}>
-              <FileSpreadsheet className="size-3.5" /> Spreadsheet
+              Spreadsheet
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={importXlsxMutation.isPending}
               onSelect={() => xlsxInputRef.current?.click()}
             >
-              <Upload className="size-3.5" /> Import Excel workbook
+              Import Excel workbook
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => createDocumentMutation.mutate('deck')}>
-              <FilePresentation className="size-3.5" /> Presentation
+              Presentation
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
-              <Upload className="size-3.5" /> Upload files
-            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>Upload files</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
@@ -1519,8 +1517,7 @@ function DriveConnectionsDialog({
                 disabled={icloudBusy}
                 onClick={onChooseICloud}
               >
-                {icloudBusy ? <Ring className="size-3.5" /> : <FolderOpen className="size-3.5" />}
-                Choose
+                {icloudBusy ? 'Choosing…' : 'Choose'}
               </Button>
             </div>
           </div>

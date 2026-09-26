@@ -1,6 +1,6 @@
 'use client';
 
-import { MoreHorizontal, Plus, ZoomIn, ZoomOut } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
 import { AddEditEventDialog } from '@/components/calendar/engine/add-edit-event-dialog';
 import { useCalendar } from '@/components/calendar/engine/calendar-context';
 import { DateNavigator } from '@/components/calendar/engine/date-navigator';
@@ -37,13 +37,13 @@ export function CalendarHeader() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setHourHeight(hourHeight - 16)} disabled={hourHeight <= 40}>
-                  <ZoomOut className="size-4" /> Shrink hours
+                  Shrink hours
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => setHourHeight(hourHeight + 16)}
                   disabled={hourHeight >= 160}
                 >
-                  <ZoomIn className="size-4" /> Grow hours
+                  Grow hours
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -51,9 +51,8 @@ export function CalendarHeader() {
         </div>
         <div className="calendar-toolbar__create">
           <AddEditEventDialog>
-            <Button size="sm" aria-label="Add Event">
-              <Plus className="size-4" />
-              <span>Add</span>
+            <Button size="sm" aria-label="Add event">
+              Add
             </Button>
           </AddEditEventDialog>
         </div>

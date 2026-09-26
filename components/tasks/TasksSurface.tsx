@@ -16,15 +16,12 @@ import {
   GripVertical,
   LayoutList,
   Link2,
-  Mail,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
-  Pencil,
   Plus,
   SquareKanban,
   Trash2,
-  UploadCloud,
   Users,
   X,
 } from 'lucide-react';
@@ -862,17 +859,17 @@ function ColumnMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem onSelect={onRename} className="gap-2 text-[12.5px]">
-          <Pencil className="size-3.5" /> Rename
+        <DropdownMenuItem onSelect={onRename} className="text-[12.5px]">
+          Rename
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <DropdownMenuItem
               onSelect={(event) => event.preventDefault()}
-              className="gap-2 text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
+              className="text-[12.5px] text-[var(--color-danger)] focus:text-[var(--color-danger)]"
             >
-              <Trash2 className="size-3.5" /> Delete column
+              Delete column
             </DropdownMenuItem>
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -1067,7 +1064,7 @@ function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignee
           className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
           title="Created from an email"
         >
-          <Mail className="size-2.5" /> Email
+          Email
         </span>
       ) : null}
       {card.source?.eventId || card.sourceCalendarEventId ? (
@@ -1075,7 +1072,7 @@ function CardMetaChips({ card, hideAssignees }: { card?: BoardCard; hideAssignee
           className="inline-flex items-center gap-1 rounded bg-[var(--color-bg-muted)] px-1 py-0 text-[9.5px] font-medium text-[var(--color-text-muted)]"
           title="Created from a calendar event"
         >
-          <CalendarClock className="size-2.5" /> Event
+          Event
         </span>
       ) : null}
       {card.attachments?.length ? (
@@ -1264,7 +1261,6 @@ function CardAttachments({
               title="Attach a file"
               className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[11.5px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:opacity-60"
             >
-              <Paperclip className="size-3.5" />
               {uploading ? 'Uploading…' : 'Attach'}
             </button>
             <button
@@ -1276,7 +1272,7 @@ function CardAttachments({
                 linkOpen ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)]',
               )}
             >
-              <Link2 className="size-3.5" /> Link
+              Link
             </button>
           </div>
         ) : null}
@@ -1451,8 +1447,7 @@ function CardAttachments({
 
         {!attachments.length && !linkOpen ? (
           canEdit ? (
-            <div className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2.5 text-[12px] text-[var(--color-text-faint)]">
-              <UploadCloud className="size-3.5 shrink-0" />
+            <div className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-2.5 text-[12px] text-[var(--color-text-faint)]">
               Drag files here, or use Attach / Link above.
             </div>
           ) : (
@@ -1860,7 +1855,7 @@ function CardPanel({
                               onClick={openNotesEditor}
                               className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text)]"
                             >
-                              <Pencil className="size-3" /> Edit
+                              Edit
                             </button>
                           ) : null}
                         </div>
@@ -1879,7 +1874,7 @@ function CardPanel({
                             onClick={openNotesEditor}
                             className="flex w-full items-center gap-2 px-3.5 py-3 text-left text-[13px] text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
                           >
-                            <Pencil className="size-3.5 shrink-0" /> Add details, context, or a checklist…
+                            Add details, context, or a checklist…
                           </button>
                         ) : (
                           <p className="px-3.5 py-3 text-[13px] text-[var(--color-text-faint)]">
@@ -2160,7 +2155,7 @@ function CardPanel({
                   }}
                   className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                 >
-                  <Mail className="size-3.5 shrink-0" /> From this email — open thread
+                  From this email — open thread
                 </button>
               </div>
             ) : null}
@@ -2176,7 +2171,6 @@ function CardPanel({
                       rel="noreferrer noopener"
                       className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                     >
-                      <ExternalLink className="size-3.5 shrink-0" />
                       {card.source?.title || 'Open calendar event'}
                     </a>
                   ) : null}
@@ -2188,7 +2182,7 @@ function CardPanel({
                     }}
                     className="inline-flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-left text-[11.5px] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                   >
-                    <CalendarClock className="size-3.5 shrink-0" /> Show calendar
+                    Show calendar
                   </button>
                 </div>
               </div>

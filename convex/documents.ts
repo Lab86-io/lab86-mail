@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 import { recordDocumentEffect } from './agentExecution';
@@ -45,6 +46,75 @@ async function ownedDocument(ctx: QueryCtx | MutationCtx, userId: string, docume
     .unique();
 }
 
+// Models live in documentModels rows (DOC-4), so document and revision rows
+// hold metadata and a pointer, and a list never reads a model. Each revision
+// row has its own model row; the document row points at the model row of its
+// current revision, so a save writes the model once. Rows written before this
+// keep the model inline until migrateInlineModels moves it, and every read
+// accepts both forms. Callers get the same shape as before: `model` inline,
+// no storage fields.
+type ModelHolder = { model?: unknown; modelId?: Id<'documentModels'>; modelBytes?: number };
+
+/** The model of a document or revision row, loaded by id or read inline. */
+export async function documentModel(ctx: QueryCtx | MutationCtx, row: ModelHolder) {
+  if (row.modelId) {
+    const stored = await ctx.db.get(row.modelId);
+    if (stored) return stored.model;
+  }
+  return row.model;
+}
+
+function modelBytes(model: unknown) {
+  return new TextEncoder().encode(JSON.stringify(model ?? null)).byteLength;
+}
+
+async function storeModel(ctx: MutationCtx, userId: string, documentId: string, model: unknown) {
+  const bytes = modelBytes(model);
+  const modelId = await ctx.db.insert('documentModels', {
+    userId,
+    documentId,
+    model,
+    bytes,
+    createdAt: now(),
+  });
+  return { modelId, bytes };
+}
+
+/** A row without its model and storage fields. */
+function metadata<T extends ModelHolder>(row: T): Omit<T, keyof ModelHolder> {
+  const { model: _model, modelId: _modelId, modelBytes: _modelBytes, ...rest } = row;
+  return rest;
+}
+
+async function withModel<T extends ModelHolder>(ctx: QueryCtx | MutationCtx, row: T) {
+  return { ...metadata(row), model: await documentModel(ctx, row) };
+}
+
+/** The newest revision row: the current state, and the only row autosave may merge into. */
+async function latestRevision(ctx: MutationCtx, userId: string, documentId: string) {
+  return ctx.db
+    .query('documentRevisions')
+    .withIndex('by_user_document_revision', (q) => q.eq('userId', userId).eq('documentId', documentId))
+    .order('desc')
+    .first();
+}
+
+/**
+ * After the document moves to a new model row, remove the old one if no
+ * revision row holds it. Only the current revision can share the document's
+ * row, so a row that the migration gave the document alone is the only case.
+ */
+async function releaseDocumentModel(
+  ctx: MutationCtx,
+  previous: ModelHolder,
+  latest: ModelHolder | null,
+  next: Id<'documentModels'>,
+) {
+  if (previous.modelId && previous.modelId !== next && previous.modelId !== latest?.modelId) {
+    if (await ctx.db.get(previous.modelId)) await ctx.db.delete(previous.modelId);
+  }
+}
+
 export const create = mutation({
   args: {
     internalSecret: v.optional(v.string()),
@@ -61,7 +131,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     requireInternalSecret(args.internalSecret);
     const existing = await ownedDocument(ctx, args.userId, args.documentId);
-    if (existing) return existing;
+    if (existing) return withModel(ctx, existing);
     if (args.importSource) {
       const cancelled = await ctx.db
         .query('documentImportCancellations')
@@ -70,12 +140,14 @@ export const create = mutation({
       if (cancelled) throw new Error('This workbook import was cancelled. Import the original file again.');
     }
     const ts = now();
+    const { modelId, bytes } = await storeModel(ctx, args.userId, args.documentId, args.model);
     const row = {
       userId: args.userId,
       documentId: args.documentId,
       kind: args.kind,
       title: args.title,
-      model: args.model,
+      modelId,
+      modelBytes: bytes,
       currentRevision: 1,
       sourceRefs: args.sourceRefs || [],
       ...(args.importSource ? { importSource: { ...args.importSource, revision: 1 } } : {}),
@@ -88,7 +160,7 @@ export const create = mutation({
       documentId: args.documentId,
       revision: 1,
       title: args.title,
-      model: args.model,
+      modelId,
       reason: args.reason || 'create',
       actor: 'user',
       createdAt: ts,
@@ -97,7 +169,7 @@ export const create = mutation({
       documentId: args.documentId,
       revision: 1,
     });
-    return row;
+    return { ...metadata(row), model: args.model };
   },
 });
 
@@ -120,15 +192,24 @@ export const list = query({
     const visible = args.kind
       ? base.filter((q) => q.and(q.eq(q.field('archivedAt'), undefined), q.eq(q.field('kind'), args.kind)))
       : base.filter((q) => q.eq(q.field('archivedAt'), undefined));
-    // Each row holds a full model, so the read is bounded by bytes as well as
-    // rows; a list of large files stops early instead of failing (DOC-4).
+    // Rows written before models moved still hold one inline, so the page
+    // read stays bounded by bytes as well as rows (DOC-4).
     const page = await visible.paginate({
       cursor: null,
       numItems: limit,
       maximumBytesRead: LIST_MAX_BYTES_READ,
     });
-    if (!args.metadataOnly) return page.page;
-    return page.page.map(({ model: _model, ...summary }) => summary);
+    if (args.metadataOnly) return page.page.map(metadata);
+    // A caller that asks for models gets them loaded by id, within the same
+    // byte budget; a list of large files stops early instead of failing.
+    const rows = [];
+    let bytes = 0;
+    for (const row of page.page) {
+      bytes += row.modelId ? (row.modelBytes ?? 0) : 0;
+      if (rows.length && bytes > LIST_MAX_BYTES_READ) break;
+      rows.push(await withModel(ctx, row));
+    }
+    return rows;
   },
 });
 
@@ -155,7 +236,7 @@ export const get = query({
       .order('desc')
       .take(50);
     return {
-      ...document,
+      ...(await withModel(ctx, document)),
       suggestions,
     };
   },
@@ -195,7 +276,7 @@ export const findByGoogleFile = query({
       .order('desc')
       .take(1);
     const document = documents[0];
-    return document && !document.archivedAt ? document : null;
+    return document && !document.archivedAt ? withModel(ctx, document) : null;
   },
 });
 
@@ -217,7 +298,8 @@ export const listRevisions = query({
       )
       .order('desc')
       .take(Math.min(Math.max(args.limit || 50, 1), 200));
-    return rows;
+    // Metadata only: a restore loads the one model it needs by id.
+    return rows.map(metadata);
   },
 });
 
@@ -252,7 +334,7 @@ export const cancelImport = mutation({
       return {
         status: 'attached' as const,
         ...(attached.userId === args.userId && attached.documentId === args.documentId
-          ? { document: attached }
+          ? { document: await withModel(ctx, attached) }
           : {}),
       };
     }
@@ -307,8 +389,10 @@ export const update = mutation({
     requireInternalSecret(args.internalSecret);
     const document = await ownedDocument(ctx, args.userId, args.documentId);
     if (!document || document.archivedAt) return { ok: false, code: 'NOT_FOUND' };
+    const currentModel = await documentModel(ctx, document);
+    const current = { ...metadata(document), model: currentModel };
     if (document.currentRevision !== args.expectedRevision) {
-      return { ok: false, code: 'REVISION_CONFLICT', document };
+      return { ok: false, code: 'REVISION_CONFLICT', document: current };
     }
     // Old native clients decode rich slides as a v1 projection. Even an
     // ordinary rename sends that projection back. Never let it erase the
@@ -316,10 +400,10 @@ export const update = mutation({
     if (
       args.model !== undefined &&
       document.kind === 'deck' &&
-      modelVersion(document.model) === 2 &&
+      modelVersion(currentModel) === 2 &&
       modelVersion(args.model) !== 2
     ) {
-      return { ok: false, code: 'RICH_DECK_REQUIRED', document };
+      return { ok: false, code: 'RICH_DECK_REQUIRED', document: current };
     }
     // A grid-only client (older native build, v1 tooling) must not overwrite an
     // engine workbook with its lossy projection; it would silently drop
@@ -327,63 +411,77 @@ export const update = mutation({
     if (
       args.model !== undefined &&
       !args.allowDowngrade &&
-      isEngineWorkbook(document.model) &&
+      isEngineWorkbook(currentModel) &&
       !isEngineWorkbook(args.model)
     ) {
-      return { ok: false, code: 'ENGINE_MODEL_REQUIRED', document };
+      return { ok: false, code: 'ENGINE_MODEL_REQUIRED', document: current };
     }
     const title = args.title ?? document.title;
-    const model = args.model ?? document.model;
+    const model = args.model ?? currentModel;
     const sourceRefs = args.sourceRefs ?? document.sourceRefs;
     const revision = document.currentRevision + 1;
     await recordDocumentEffect(ctx, args.userId, args.execution, { documentId: args.documentId, revision });
     const ts = now();
-    await ctx.db.patch(document._id, {
-      title,
-      model,
-      sourceRefs,
-      currentRevision: revision,
-      updatedAt: ts,
-    });
     const reason = args.reason || 'edit';
     const actor = args.actor || 'user';
     // Autosave runs after each short pause. Rather than one full copy per
     // pause, the latest autosave row of the same window takes the new state;
     // the row before the window keeps the earlier state for restore.
-    const latest =
-      actor === 'user' && AUTOSAVE_REASONS.has(reason)
-        ? await ctx.db
-            .query('documentRevisions')
-            .withIndex('by_user_document_revision', (q) =>
-              q.eq('userId', args.userId).eq('documentId', args.documentId),
-            )
-            .order('desc')
-            .first()
-        : null;
+    const latest = await latestRevision(ctx, args.userId, args.documentId);
     const windowStartedAt = latest ? (latest.windowStartedAt ?? latest.createdAt) : ts;
-    if (
-      latest &&
+    const merge =
+      latest !== null &&
+      actor === 'user' &&
+      AUTOSAVE_REASONS.has(reason) &&
       latest.revision === document.currentRevision &&
       latest.actor === 'user' &&
       AUTOSAVE_REASONS.has(latest.reason) &&
-      ts - windowStartedAt < AUTOSAVE_REVISION_WINDOW_MS
-    ) {
-      await ctx.db.patch(latest._id, { revision, title, model, reason, createdAt: ts, windowStartedAt });
+      ts - windowStartedAt < AUTOSAVE_REVISION_WINDOW_MS;
+    let modelId: Id<'documentModels'>;
+    let bytes: number;
+    if (merge && latest.modelId && (await ctx.db.get(latest.modelId))) {
+      // The merged row's model row belongs to this window alone: it takes the new state in place.
+      modelId = latest.modelId;
+      bytes = modelBytes(model);
+      if (args.model !== undefined) await ctx.db.patch(modelId, { model, bytes });
+    } else {
+      ({ modelId, bytes } = await storeModel(ctx, args.userId, args.documentId, model));
+    }
+    if (merge) {
+      await ctx.db.patch(latest._id, {
+        revision,
+        title,
+        modelId,
+        model: undefined,
+        reason,
+        createdAt: ts,
+        windowStartedAt,
+      });
     } else {
       await ctx.db.insert('documentRevisions', {
         userId: args.userId,
         documentId: args.documentId,
         revision,
         title,
-        model,
+        modelId,
         reason,
         actor,
         createdAt: ts,
       });
     }
+    await ctx.db.patch(document._id, {
+      title,
+      modelId,
+      modelBytes: bytes,
+      model: undefined,
+      sourceRefs,
+      currentRevision: revision,
+      updatedAt: ts,
+    });
+    await releaseDocumentModel(ctx, document, latest, modelId);
     return {
       ok: true,
-      document: { ...document, title, model, sourceRefs, currentRevision: revision, updatedAt: ts },
+      document: { ...current, title, model, sourceRefs, currentRevision: revision, updatedAt: ts },
     };
   },
 });
@@ -410,6 +508,8 @@ export const archive = mutation({
 });
 
 const PURGE_BATCH_SIZE = 50;
+// A model row can be close to 1 MiB; eight stay far below the transaction read limit.
+const MODEL_PURGE_BATCH_SIZE = 8;
 
 export const purgeArchivedDocument = internalMutation({
   args: { userId: v.string(), documentId: v.string() },
@@ -426,18 +526,32 @@ export const purgeArchivedDocument = internalMutation({
       .query('documentSuggestions')
       .withIndex('by_user_document', (q) => q.eq('userId', args.userId).eq('documentId', args.documentId))
       .take(PURGE_BATCH_SIZE);
-    for (const row of [...revisions, ...suggestions]) await ctx.db.delete(row._id);
-    if (revisions.length === PURGE_BATCH_SIZE || suggestions.length === PURGE_BATCH_SIZE) {
+    const models = await ctx.db
+      .query('documentModels')
+      .withIndex('by_user_document', (q) => q.eq('userId', args.userId).eq('documentId', args.documentId))
+      .take(MODEL_PURGE_BATCH_SIZE);
+    for (const row of [...revisions, ...suggestions, ...models]) await ctx.db.delete(row._id);
+    const deleted = revisions.length + suggestions.length + models.length;
+    if (
+      revisions.length === PURGE_BATCH_SIZE ||
+      suggestions.length === PURGE_BATCH_SIZE ||
+      models.length === MODEL_PURGE_BATCH_SIZE
+    ) {
       await ctx.scheduler.runAfter(0, internal.documents.purgeArchivedDocument, args);
-      return { done: false, deleted: revisions.length + suggestions.length };
+      return { done: false, deleted };
     }
     if (document.importSource) {
       if (await ctx.db.system.get(document.importSource.storageId)) {
         await ctx.storage.delete(document.importSource.storageId);
       }
-      await ctx.db.patch(document._id, { importSource: undefined });
     }
-    return { done: true, deleted: revisions.length + suggestions.length };
+    await ctx.db.patch(document._id, {
+      importSource: undefined,
+      model: undefined,
+      modelId: undefined,
+      modelBytes: undefined,
+    });
+    return { done: true, deleted };
   },
 });
 
@@ -461,11 +575,21 @@ export const restoreRevision = mutation({
       )
       .unique();
     if (!previous) return { ok: false, code: 'NOT_FOUND' };
+    const latest = await latestRevision(ctx, args.userId, args.documentId);
     const revision = document.currentRevision + 1;
     const updatedAt = now();
+    // The restored state gets its own model row, so no two revisions share one.
+    const { modelId, bytes } = await storeModel(
+      ctx,
+      args.userId,
+      args.documentId,
+      await documentModel(ctx, previous),
+    );
     await ctx.db.patch(document._id, {
       title: previous.title,
-      model: previous.model,
+      modelId,
+      modelBytes: bytes,
+      model: undefined,
       currentRevision: revision,
       updatedAt,
     });
@@ -474,11 +598,12 @@ export const restoreRevision = mutation({
       documentId: args.documentId,
       revision,
       title: previous.title,
-      model: previous.model,
+      modelId,
       reason: `Restored revision ${args.revision}`,
       actor: 'user',
       createdAt: updatedAt,
     });
+    await releaseDocumentModel(ctx, document, latest, modelId);
     return { ok: true };
   },
 });
@@ -644,24 +769,29 @@ export const applySuggestion = mutation({
     if (suggestion.status !== 'proposed') {
       return { ok: false, code: 'ALREADY_RESOLVED' };
     }
+    const current = await withModel(ctx, document);
     if (document.currentRevision !== args.expectedRevision) {
-      return { ok: false, code: 'REVISION_CONFLICT', document };
+      return { ok: false, code: 'REVISION_CONFLICT', document: current };
     }
     if (suggestion.baseRevision !== document.currentRevision) {
-      return { ok: false, code: 'REVISION_CONFLICT', document };
+      return { ok: false, code: 'REVISION_CONFLICT', document: current };
     }
     let model = suggestion.proposedModel;
     if (isChangeSet(suggestion.proposedModel)) {
-      if (!isEngineWorkbook(args.model)) return { ok: false, code: 'NEEDS_EDITOR', document };
+      if (!isEngineWorkbook(args.model)) return { ok: false, code: 'NEEDS_EDITOR', document: current };
       model = args.model;
     } else if (args.model !== undefined) {
-      return { ok: false, code: 'NEEDS_EDITOR', document };
+      return { ok: false, code: 'NEEDS_EDITOR', document: current };
     }
+    const latest = await latestRevision(ctx, args.userId, args.documentId);
     const revision = document.currentRevision + 1;
     const ts = now();
+    const { modelId, bytes } = await storeModel(ctx, args.userId, args.documentId, model);
     await ctx.db.patch(document._id, {
       title: suggestion.title,
-      model,
+      modelId,
+      modelBytes: bytes,
+      model: undefined,
       currentRevision: revision,
       updatedAt: ts,
     });
@@ -670,21 +800,95 @@ export const applySuggestion = mutation({
       documentId: args.documentId,
       revision,
       title: suggestion.title,
-      model,
+      modelId,
       reason: suggestion.description,
       actor: 'ai',
       createdAt: ts,
     });
+    await releaseDocumentModel(ctx, document, latest, modelId);
     await ctx.db.patch(suggestion._id, { status: 'applied', resolvedAt: ts });
     return {
       ok: true,
       document: {
-        ...document,
+        ...current,
         title: suggestion.title,
         model,
         currentRevision: revision,
         updatedAt: ts,
       },
     };
+  },
+});
+
+const MIGRATION_BATCH_SIZE = 4;
+
+/**
+ * Move inline models into documentModels rows (DOC-4). Idempotent and
+ * paginated: a row that has no inline model is left as it is, and each pass
+ * moves one page and schedules the next, documents first, then revisions.
+ * A document's current revision shares the document's new model row. An
+ * archived document's inline model is dropped, because nothing reads it.
+ *
+ * Run once after deploy: npx convex run documents:migrateInlineModels '{}'
+ */
+export const migrateInlineModels = internalMutation({
+  args: {
+    table: v.optional(v.union(v.literal('documents'), v.literal('documentRevisions'))),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    batchSize: v.optional(v.number()),
+    moved: v.optional(v.number()),
+    // False runs one page only; tests and manual checks use it.
+    continue: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const table = args.table ?? 'documents';
+    const batchSize = Math.min(Math.max(Math.floor(args.batchSize ?? MIGRATION_BATCH_SIZE), 1), 8);
+    // A page of inline models plus each document's current revision stays far
+    // below the 16 MiB read limit of one transaction.
+    const page = await ctx.db
+      .query(table)
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize, maximumBytesRead: 4_000_000 });
+    let moved = 0;
+    for (const row of page.page) {
+      if (row.model === undefined) continue;
+      moved += 1;
+      if (table === 'documents' && 'archivedAt' in row && row.archivedAt) {
+        await ctx.db.patch(row._id, { model: undefined });
+        continue;
+      }
+      const { modelId, bytes } = await storeModel(ctx, row.userId, row.documentId, row.model);
+      if (table === 'documentRevisions') {
+        await ctx.db.patch(row._id, { modelId, model: undefined });
+        continue;
+      }
+      const document = row as typeof row & { currentRevision: number };
+      await ctx.db.patch(row._id, { modelId, modelBytes: bytes, model: undefined });
+      const current = await ctx.db
+        .query('documentRevisions')
+        .withIndex('by_user_document_revision', (q) =>
+          q
+            .eq('userId', document.userId)
+            .eq('documentId', document.documentId)
+            .eq('revision', document.currentRevision),
+        )
+        .unique();
+      // Every writer stores the same model on a document and its current
+      // revision, so that revision takes the document's row.
+      if (current && !current.modelId) await ctx.db.patch(current._id, { modelId, model: undefined });
+    }
+    const total = (args.moved ?? 0) + moved;
+    const next = !page.isDone
+      ? { table, cursor: page.continueCursor }
+      : table === 'documents'
+        ? { table: 'documentRevisions' as const, cursor: null }
+        : null;
+    if (next && args.continue !== false) {
+      await ctx.scheduler.runAfter(0, internal.documents.migrateInlineModels, {
+        ...next,
+        batchSize,
+        moved: total,
+      });
+    }
+    return { table, moved, total, done: next === null, next };
   },
 });

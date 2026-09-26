@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, FolderOpen, Plus } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -33,7 +33,6 @@ export function FileLocationPicker({
           aria-label="File location"
           className="min-w-0 max-w-[min(100%,240px)]"
         >
-          <FolderOpen className="size-3.5" />
           <span className="truncate">{current?.label ?? 'All files'}</span>
           <ChevronDown className="size-3.5" />
         </Button>
@@ -50,10 +49,7 @@ export function FileLocationPicker({
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onManage}>
-          <Plus className="size-3.5" />
-          Add a drive
-        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onManage}>Add a drive</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
