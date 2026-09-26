@@ -271,20 +271,18 @@ export const tick = internalAction({
       },
     );
     // The morning hour also rewrites every area's living brief so the Daily
-    // Brief and the area views open on the same fresh context. The two
-    // fan-outs run concurrently — neither reads the other's output.
-    const [fired, briefed] = await Promise.all([
-      fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
-        label: 'daily-report cron',
-        concurrency: 2,
-      }),
-      fanOutInternalPost(
-        `${appUrl}/api/cron/area-briefs`,
-        secret,
-        due.map((target) => ({ userId: target.userId })),
-        { label: 'area-briefs cron', concurrency: 2 },
-      ),
-    ]);
+    // Brief and the area views open on the same fresh context. The daily brief
+    // reads the area pulses, so the area jobs are queued first.
+    const briefed = await fanOutInternalPost(
+      `${appUrl}/api/cron/area-briefs`,
+      secret,
+      due.map((target) => ({ userId: target.userId })),
+      { label: 'area-briefs cron', concurrency: 2 },
+    );
+    const fired = await fanOutInternalPost(`${appUrl}/api/cron/daily-report`, secret, due, {
+      label: 'daily-report cron',
+      concurrency: 2,
+    });
     if (nextUserId)
       await ctx.scheduler.runAfter(0, internal.dailyReports.tick, {
         afterUserId: nextUserId,

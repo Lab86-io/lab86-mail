@@ -102,6 +102,34 @@ describe('albatrossAreaPulse', () => {
     expect(await t.query(api.albatrossAreaPulse.listAreaPulses, { ...caller, limit: 5 })).toEqual([]);
   });
 
+  test('lists only active areas, newest pulse first, within the limit', async () => {
+    const t = harness();
+    const ids = [] as any[];
+    for (let i = 0; i < 4; i++) ids.push(await seedArea(t));
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ids[3], { status: 'archived' });
+      for (const [index, areaId] of ids.entries())
+        await ctx.db.insert('albatrossAreaBriefs', {
+          userId,
+          areaId,
+          status: 'ready',
+          lede: '',
+          summary: '',
+          sourceRefs: [],
+          basedOnRevision: 'r',
+          pulse: { ...pulse, prose: `pulse ${index}` },
+          // Insertion order is not recency order.
+          pulseUpdatedAt: [300, 100, 200, 999][index],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+    });
+    const rows = await t.query(api.albatrossAreaPulse.listAreaPulses, { ...caller, limit: 2 });
+    expect(rows.map((row: any) => row.pulse.prose)).toEqual(['pulse 0', 'pulse 2']);
+    const all = await t.query(api.albatrossAreaPulse.listAreaPulses, { ...caller });
+    expect(all.map((row: any) => row.areaId)).not.toContain(ids[3]);
+  });
+
   test('requires the internal secret or an identity', async () => {
     const t = harness();
     await expect(t.query(api.albatrossAreaPulse.listAreaPulses, {})).rejects.toThrow('Not authenticated');

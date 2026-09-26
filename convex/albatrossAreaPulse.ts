@@ -94,12 +94,19 @@ export const listAreaPulses = query({
   },
   handler: async (ctx, args) => {
     const userId = await resolveUserId(ctx, args);
+    const limit = Math.min(Math.max(args.limit ?? 12, 1), 50);
+    // Only active areas, newest pulse first: an unordered take could return
+    // archived areas or old pulses and miss the areas the brief is about.
     const rows = await ctx.db
       .query('albatrossAreaBriefs')
       .withIndex('by_user', (q) => q.eq('userId', userId))
-      .take(Math.min(Math.max(args.limit ?? 12, 1), 50));
-    return rows
-      .filter((row) => row.pulse)
+      .take(500);
+    const withPulse = rows.filter((row) => row.pulse);
+    const areas = await Promise.all(withPulse.map((row) => ctx.db.get(row.areaId)));
+    return withPulse
+      .filter((_, index) => areas[index]?.userId === userId && areas[index]?.status === 'active')
+      .sort((a, b) => (b.pulseUpdatedAt ?? b.updatedAt) - (a.pulseUpdatedAt ?? a.updatedAt))
+      .slice(0, limit)
       .map((row) => ({
         areaId: row.areaId,
         pulse: row.pulse ?? null,

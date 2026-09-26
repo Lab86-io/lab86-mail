@@ -78,6 +78,11 @@ test('both scheduled workflows resume all target pages and preserve the original
         .sort(),
     ).toEqual(Array.from({ length: 7 }, (_, i) => `user-${i}`));
     expect(calls.filter((call) => call.path.endsWith('area-briefs'))).toHaveLength(7);
+    // Area jobs are queued before the daily briefs that read their pulses.
+    const firstDaily = calls.findIndex((call) => call.path.endsWith('daily-report'));
+    const lastArea = calls.findLastIndex((call) => call.path.endsWith('area-briefs'));
+    expect(lastArea).toBeLessThan(calls.findLastIndex((call) => call.path.endsWith('daily-report')));
+    expect(calls.findIndex((call) => call.path.endsWith('area-briefs'))).toBeLessThan(firstDaily);
     // No user here has a known zone: the scheduling clock is never sent as theirs.
     expect(
       calls.filter((call) => call.path.endsWith('daily-report')).every((call) => !('timezone' in call.body)),
