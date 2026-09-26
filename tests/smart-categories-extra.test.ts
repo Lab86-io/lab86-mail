@@ -232,3 +232,29 @@ describe('smart-category helpers', () => {
     expect(labelsForSmartCategory(null)).toEqual([]);
   });
 });
+
+describe('marketplace promotions', () => {
+  const etsy = (subject: string, snippet: string, fromAddress = 'Etsy <email@mail.etsy.com>') =>
+    classifyThreadWithContext({ fromAddress, subject, snippet, labels: [], unread: true } as any);
+
+  test('an Etsy promotion is noise', () => {
+    const verdict = etsy('Gifts they will love', 'Shop staff picks and new arrivals.');
+    expect(verdict.primary).toBe('noise');
+    expect(verdict.signals).toContain('marketplace_promo');
+  });
+
+  test('an Etsy seller message with no promo term is not a promotion', () => {
+    const verdict = etsy(
+      'New message from BlueMoonCeramics',
+      'Hi, a question about the glaze color.',
+      'Etsy <transaction@etsy.com>',
+    );
+    expect(verdict.signals).not.toContain('marketplace_promo');
+  });
+
+  test('an Etsy order update stays an order even when it mentions a gift', () => {
+    const verdict = etsy('Your Etsy order shipped', 'Your gift is on the way. Track your package.');
+    expect(verdict.signals).not.toContain('marketplace_promo');
+    expect(verdict.primary).toBe('orders');
+  });
+});

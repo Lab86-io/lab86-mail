@@ -66,8 +66,10 @@ const PUBLISHER_PATTERNS =
   /\b(wsj|wall street journal|dow jones|nytimes|new york times|substack|newsletter|digest|article|opinion|briefing|the 10-point|morning brief|daily brief)\b/i;
 const REWARDS_PATTERNS =
   /\b(reward|rewards|loyalty|points|miles|member offer|cashback|bonus points|status miles)\b/i;
+// Promo terms only. The marketplace itself is tested separately in
+// isMarketplacePromoNoise, so a seller message with no promo term stays out.
 const MARKETPLACE_PROMO_PATTERNS =
-  /\b(etsy|marketplace|deal|deals|gift|gifts|new arrivals|tailored to your taste|personalized|sale|offer|coupon|promo|promotion|shop now|staff picks|inspiration)\b/i;
+  /\b(marketplace|deal|deals|gift|gifts|new arrivals|tailored to your taste|personalized|sale|offer|coupon|promo|promotion|shop now|staff picks|inspiration)\b/i;
 const ORDER_PROBLEM_PATTERNS =
   /\b(delayed|failed|refund|return|action required|problem|issue|couldn't deliver|cannot deliver|delivery exception|payment failed|charge failed|requires action)\b/i;
 const DEVOPS_PATTERNS =
@@ -276,7 +278,7 @@ function isLinkedInNoise(text: string) {
 }
 
 function isMarketplacePromoNoise(text: string) {
-  return /\betsi\b/i.test(text) && MARKETPLACE_PROMO_PATTERNS.test(text) && !isOrderLike(text);
+  return /\betsy\b/i.test(text) && MARKETPLACE_PROMO_PATTERNS.test(text) && !isOrderLike(text);
 }
 
 export function smartRuleMatches(
