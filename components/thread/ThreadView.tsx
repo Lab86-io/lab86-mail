@@ -199,6 +199,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: () => toast.error('Could not archive this thread. Try again.'),
   });
 
   const trash = useMutation({
@@ -208,6 +209,7 @@ export function ThreadView({ variant = 'split' }: { variant?: ThreadViewVariant 
       setSelectedThread(null);
       queryClient.invalidateQueries({ queryKey: ['search'] });
     },
+    onError: () => toast.error('Could not move this thread to Trash. Try again.'),
   });
 
   // Collect every sender visible in this thread up front so we can resolve
